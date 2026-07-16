@@ -38,6 +38,18 @@ const desktopBridge = {
     clearRecent: () => invoke("recent:clear")
   },
   exportFile: (payload: { defaultName: string; content: string }) => invoke("export:file", payload),
+  exportCenter: {
+    pdf: (payload: { defaultName: string }) => invoke("export:pdf", payload),
+    png: (payload: { defaultName: string }) => invoke("export:png", payload),
+    excel: (payload: { defaultName: string; facility: string; logs: unknown[] }) => invoke("export:excel", payload),
+    zip: (payload: {
+      defaultName: string;
+      facility: string;
+      logs: unknown[];
+      csvs: { name: string; content: string }[];
+      integrityText: string | null;
+    }) => invoke("export:zip", payload)
+  },
   shell: {
     showItemInFolder: (path: string) => invoke("shell:showItemInFolder", path)
   },

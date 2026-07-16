@@ -81,6 +81,22 @@ export interface DesktopBridge {
     clearRecent(): Promise<AppConfig>;
   };
   exportFile(payload: { defaultName: string; content: string }): Promise<IpcResult<{ path: string } | { canceled: true }>>;
+  exportCenter: {
+    pdf(payload: { defaultName: string }): Promise<IpcResult<{ path: string } | { canceled: true }>>;
+    png(payload: { defaultName: string }): Promise<IpcResult<{ path: string } | { canceled: true }>>;
+    excel(payload: {
+      defaultName: string;
+      facility: string;
+      logs: unknown[];
+    }): Promise<IpcResult<{ path: string } | { canceled: true }>>;
+    zip(payload: {
+      defaultName: string;
+      facility: string;
+      logs: unknown[];
+      csvs: { name: string; content: string }[];
+      integrityText: string | null;
+    }): Promise<IpcResult<{ path: string } | { canceled: true }>>;
+  };
   shell: {
     showItemInFolder(path: string): Promise<boolean>;
   };

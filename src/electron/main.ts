@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell } from "electron";
 import path from "path";
 import { registerExcelIpc } from "./ipc/excel";
+import { registerExportIpc } from "./ipc/exportCenter";
 import { registerWindowIpc } from "./ipc/window";
 import { loadConfig, updateConfig } from "./config";
 import { ensureDir, getConfigDir, getDefaultBackupDir, getExportsDir, getLogsDir, log, rotateLogIfNeeded } from "./paths";
@@ -137,6 +138,7 @@ if (!gotLock) {
 
   registerWindowIpc();
   registerExcelIpc();
+  registerExportIpc();
 
   app.whenReady().then(async () => {
     // Materialize the portable folder layout beside the executable.

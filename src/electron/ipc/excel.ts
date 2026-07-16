@@ -300,6 +300,15 @@ export function registerExcelIpc(): void {
       const ext = path.extname(defaultName).replace(".", "") || "json";
       if (!["json", "csv", "txt"].includes(ext)) throw new PayloadError("Only .json/.csv/.txt exports are allowed.");
 
+      // Same test hook as the Export Center: automated tests cannot drive
+      // native dialogs.
+      if (process.env.ENERGY_MONITOR_TEST_EXPORT_DIR) {
+        const dir = await ensureDir(process.env.ENERGY_MONITOR_TEST_EXPORT_DIR);
+        const testPath = path.join(dir, defaultName);
+        await fs.writeFile(testPath, content, "utf8");
+        log.info(`[EXPORT] file -> ${testPath}`);
+        return { ok: true, path: testPath };
+      }
       const exportsDir = await ensureDir(getExportsDir());
       const result = await dialog.showSaveDialog(windowFor(event)!, {
         title: "Export",

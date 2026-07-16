@@ -19,6 +19,8 @@ import type { AppConfig, DeviceLists, FacilityEntry } from "./desktop";
 import FacilitySelector from "./components/FacilitySelector";
 import EntryWorkflowHeader from "./components/EntryWorkflowHeader";
 import StickyEntryToolbar from "./components/StickyEntryToolbar";
+import ExportCenterModal, { ExportKind } from "./components/ExportCenterModal";
+import { buildCombinedCsv, buildIntegrityText, buildSectionCsvs } from "./utils/exportData";
 import { EntrySectionApi, MissingField, computeCompletion, listMissingFields } from "./utils/completion";
 import ToastHost, { notify } from "./components/Toast";
 import WorkbookBar from "./components/WorkbookBar";
@@ -67,12 +69,14 @@ function DashboardViewContainer({
   logs,
   lang,
   isGoogleConnected,
-  googleUserEmail
+  googleUserEmail,
+  onExport
 }: {
   logs: MonthlyLog[];
   lang: "th" | "en";
   isGoogleConnected: boolean;
   googleUserEmail: string | null;
+  onExport?: (format: "pdf" | "excel" | "csv" | "png") => void;
 }) {
   const { selectedReportView, selectedYear, selectedPeriod } = useReport();
 
@@ -90,12 +94,16 @@ function DashboardViewContainer({
   }, [selectedYear, selectedPeriod, logs]);
 
   const handleExport = (format: "pdf" | "excel" | "csv" | "png") => {
-    notify(
-      "info",
-      lang === "th"
-        ? `ระบบกำลังสร้างไฟล์รายงานรูปแบบ ${format.toUpperCase()} เพื่อทำการดาวน์โหลดอัตโนมัติ...`
-        : `Generating report as ${format.toUpperCase()} for automatic download...`
-    );
+    if (onExport) {
+      onExport(format);
+    } else {
+      notify(
+        "info",
+        lang === "th"
+          ? `การส่งออก ${format.toUpperCase()} ใช้ได้ในเวอร์ชันเดสก์ท็อป`
+          : `${format.toUpperCase()} export is available in the desktop app.`
+      );
+    }
   };
 
   return (
@@ -509,6 +517,39 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workbook?.path]);
 
+  // Keyboard shortcuts (RC6/UI-6): Ctrl+S save-all (entry), Ctrl+E export
+  // center, Enter / Shift+Enter move between entry fields.
+  const currentViewRef = useRef(currentView);
+  useEffect(() => {
+    currentViewRef.current = currentView;
+  }, [currentView]);
+  const handleToolbarSaveRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    if (!isDesktopApp) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && (e.key === "s" || e.key === "S")) {
+        e.preventDefault();
+        if (currentViewRef.current === "entry") handleToolbarSaveRef.current();
+      } else if (e.ctrlKey && (e.key === "e" || e.key === "E")) {
+        e.preventDefault();
+        setExportCenterOpen(true);
+      } else if (e.key === "Enter" && !e.ctrlKey && !e.altKey) {
+        const target = e.target as HTMLElement;
+        if (target?.tagName === "INPUT" && target.closest("[id^='entry-section-']")) {
+          e.preventDefault();
+          const inputs = Array.from(document.querySelectorAll<HTMLInputElement>("[id^='entry-section-'] input"));
+          const idx = inputs.indexOf(target as HTMLInputElement);
+          const next = e.shiftKey ? inputs[idx - 1] : inputs[idx + 1];
+          next?.focus();
+          next?.select();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDesktopApp]);
+
   // Window-level drag & drop: dropping an .xlsm/.xlsx anywhere opens it.
   useEffect(() => {
     if (!desktopBridge) return;
@@ -856,24 +897,62 @@ export default function App() {
     }
   };
 
+  useEffect(() => {
+    handleToolbarSaveRef.current = handleToolbarSave;
+  });
+
   const handleToolbarReset = () => {
     Object.values(sectionApisRef.current).forEach((api: EntrySectionApi | null) => api?.reset());
   };
 
-  /** Toolbar Export: active month as JSON (upgraded to the Export Center in RC6). */
+  /** Toolbar Export opens the Export Center (RC6). */
   const handleToolbarExport = () => {
-    if (!desktopBridge || !draftActiveLog) return;
+    setExportCenterOpen(true);
+  };
+
+  // --- EXPORT CENTER (RC6) ---
+  const [exportCenterOpen, setExportCenterOpen] = useState(false);
+
+  const exportBaseName = useMemo(() => {
+    const facility = (activeFacility?.name ?? "Facility").replace(/\s+/g, "");
+    return `${facility}_${selectedMonth || new Date().toISOString().slice(0, 7)}_Report`;
+  }, [activeFacility, selectedMonth]);
+
+  /** One entry point for every export format (toolbar, filter bar, Ctrl+E). */
+  const runExport = async (kind: ExportKind) => {
+    if (!desktopBridge) {
+      notify("info", lang === "th" ? "การส่งออกใช้ได้ในเวอร์ชันเดสก์ท็อป" : "Exports are available in the desktop app.");
+      return;
+    }
+    const logsForExport = syncedLogs ?? loadAllLogs();
     const facility = activeFacility?.name ?? "Facility";
-    void desktopBridge
-      .exportFile({
-        defaultName: `${facility}_${selectedMonth}_Entry.json`,
-        content: JSON.stringify(draftActiveLog, null, 2)
-      })
-      .then(result => {
-        if (result.ok && !("canceled" in result)) {
-          notify("success", lang === "th" ? `ส่งออกแล้ว: ${(result as { path: string }).path}` : `Exported: ${(result as { path: string }).path}`);
-        }
-      });
+    try {
+      let result: { ok: boolean } & Record<string, unknown>;
+      if (kind === "pdf") {
+        result = await desktopBridge.exportCenter.pdf({ defaultName: exportBaseName });
+      } else if (kind === "png") {
+        result = await desktopBridge.exportCenter.png({ defaultName: exportBaseName });
+      } else if (kind === "excel") {
+        result = await desktopBridge.exportCenter.excel({ defaultName: exportBaseName, facility, logs: logsForExport });
+      } else if (kind === "csv") {
+        result = await desktopBridge.exportFile({ defaultName: `${exportBaseName}.csv`, content: buildCombinedCsv(logsForExport) });
+      } else {
+        result = await desktopBridge.exportCenter.zip({
+          defaultName: exportBaseName,
+          facility,
+          logs: logsForExport,
+          csvs: buildSectionCsvs(logsForExport),
+          integrityText: buildIntegrityText(facility, workbook?.sourceLabel ?? "-", workbook?.health, workbook?.integrity)
+        });
+      }
+      if (!result.ok) {
+        notify("error", String((result as { message?: string }).message ?? "Export failed"));
+      } else if (!("canceled" in result)) {
+        notify("success", lang === "th" ? `ส่งออกแล้ว: ${result.path}` : `Exported: ${result.path}`);
+      }
+    } catch (err) {
+      notify("error", err instanceof Error ? err.message : String(err));
+    }
   };
 
   const confirmCreateMonth = () => {
@@ -1570,6 +1649,7 @@ export default function App() {
                 lang={lang}
                 isGoogleConnected={isGoogleConnected}
                 googleUserEmail={googleUserEmail}
+                onExport={isDesktopApp ? format => void runExport(format) : undefined}
               />
             </ReportProvider>
           ) : isDesktopApp ? (
@@ -2051,6 +2131,18 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* --- EXPORT CENTER (RC6) --- */}
+      <ExportCenterModal
+        open={exportCenterOpen}
+        lang={lang}
+        baseName={exportBaseName}
+        onClose={() => setExportCenterOpen(false)}
+        onExport={async kind => {
+          await runExport(kind);
+          setExportCenterOpen(false);
+        }}
+      />
 
       {/* --- APP-WIDE TOASTS --- */}
       <ToastHost />
