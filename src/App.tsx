@@ -19,6 +19,9 @@ import type { AppConfig } from "./desktop";
 import ToastHost, { notify } from "./components/Toast";
 import WorkbookBar from "./components/WorkbookBar";
 import WelcomePanel from "./components/WelcomePanel";
+import SettingsPanel from "./components/SettingsPanel";
+import IntegrityCenter from "./components/IntegrityCenter";
+import type { RecoverySnapshot } from "./desktop";
 import DashboardStats from "./components/DashboardStats";
 import UpsTable from "./components/UpsTable";
 import AirTable from "./components/AirTable";
@@ -134,7 +137,7 @@ export default function App() {
   const [logs, setLogs] = useState<MonthlyLog[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [activeLog, setActiveLog] = useState<MonthlyLog | null>(null);
-  const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "history">("dashboard");
+  const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "history" | "settings">("dashboard");
 
   // --- DESKTOP (EXCEL WORKBOOK) SESSION ---
   // In the desktop app the Excel workbook is the primary data source; the
@@ -147,6 +150,16 @@ export default function App() {
   const [isDirty, setIsDirty] = useState(false);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [lockRetry, setLockRetry] = useState<(() => void) | null>(null);
+  const [recoveryOffer, setRecoveryOffer] = useState<RecoverySnapshot | null>(null);
+  // Live mirrors for timers (auto-save) so intervals never see stale state.
+  const isDirtyRef = useRef(false);
+  const isBusyRef = useRef(false);
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+  useEffect(() => {
+    isBusyRef.current = isWorkbookBusy;
+  }, [isWorkbookBusy]);
   
   // Google Sheets state shared globally
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
@@ -355,14 +368,17 @@ export default function App() {
   /**
    * Persist the full in-memory data set into the workbook (backup + atomic
    * write happen in the main process). Returns true on success.
+   * `silent` (auto-save): failures become toasts instead of the lock modal.
    */
-  const persistWorkbook = async (): Promise<boolean> => {
+  const persistWorkbook = async (silent = false): Promise<boolean> => {
     if (!excelProvider || !workbook) return false;
     setIsWorkbookBusy(true);
     try {
       const outcome = await excelProvider.saveAll(loadAllLogs());
       const snap = await excelProvider.reload();
       applyWorkbookSnapshot(snap);
+      // A committed save supersedes any crash-recovery journal.
+      void desktopBridge?.recovery.clear();
       const backupName = outcome.backupPath ? outcome.backupPath.split(/[\\/]/).pop() : null;
       notify(
         "success",
@@ -372,22 +388,122 @@ export default function App() {
       );
       return true;
     } catch (err) {
-      // The edit stays in memory; surface it and keep the dirty flag on.
+      // The edit stays in memory; surface it, keep the dirty flag on, and
+      // journal the unsaved state so a crash cannot lose it.
       setLogs(loadAllLogs());
       setIsDirty(true);
+      if (desktopBridge && workbook.path) {
+        void desktopBridge.recovery.set({ workbookPath: workbook.path, logs: loadAllLogs() });
+      }
       const pe = err instanceof ProviderError ? err : null;
-      if (pe?.code === "LOCKED") {
+      if (pe?.code === "LOCKED" && !silent) {
         setLockRetry(() => () => {
           void persistWorkbook();
         });
       } else {
-        notify("error", pe?.message ?? (err instanceof Error ? err.message : String(err)));
+        notify(
+          silent && pe?.code === "LOCKED" ? "info" : "error",
+          silent && pe?.code === "LOCKED"
+            ? lang === "th"
+              ? "บันทึกอัตโนมัติถูกข้าม - ไฟล์เปิดอยู่ใน Excel (ข้อมูลยังอยู่ครบ จะลองใหม่รอบถัดไป)"
+              : "Auto-save skipped - the workbook is open in Excel (your data is safe; will retry next cycle)."
+            : pe?.message ?? (err instanceof Error ? err.message : String(err))
+        );
       }
       return false;
     } finally {
       setIsWorkbookBusy(false);
     }
   };
+
+  /** Restore a timestamped backup over the current workbook (Settings page). */
+  const handleRestoreBackup = async (backupPath: string) => {
+    if (!desktopBridge || !workbook?.path) return;
+    setIsWorkbookBusy(true);
+    try {
+      const result = await desktopBridge.backups.restore({ workbookPath: workbook.path, backupPath });
+      if (!result.ok) {
+        const failure = result as { code: string; message: string };
+        notify("error", failure.message);
+        return;
+      }
+      const payload = result as { ok: true } & import("./desktop").OpenWorkbookPayload & { safetyBackupPath: string };
+      applyWorkbookSnapshot({
+        logs: payload.logs,
+        sourceLabel: payload.path.split(/[\\/]/).pop() ?? payload.path,
+        path: payload.path,
+        health: payload.health,
+        integrity: payload.integrity,
+        validation: payload.validation,
+        lock: payload.lock
+      });
+      notify(
+        "success",
+        lang === "th"
+          ? `กู้คืนจากไฟล์สำรองแล้ว (ไฟล์เดิมถูกสำรองไว้ที่ ${payload.safetyBackupPath.split(/[\\/]/).pop()})`
+          : `Backup restored (previous file kept as ${payload.safetyBackupPath.split(/[\\/]/).pop()})`
+      );
+    } catch (err) {
+      notify("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsWorkbookBusy(false);
+    }
+  };
+
+  // Auto Save: on the configured interval, flush unsaved changes silently.
+  useEffect(() => {
+    const minutes = appConfig?.autoSaveIntervalMinutes ?? 0;
+    if (!isDesktopApp || !workbook?.path || minutes <= 0) return;
+    const id = setInterval(() => {
+      if (isDirtyRef.current && !isBusyRef.current) {
+        void persistWorkbook(true);
+      }
+    }, minutes * 60_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDesktopApp, workbook?.path, appConfig?.autoSaveIntervalMinutes]);
+
+  // Crash recovery: once a workbook is open, offer any journaled unsaved
+  // changes that belong to it (written when a save failed / before a crash).
+  useEffect(() => {
+    if (!desktopBridge || !workbook?.path) return;
+    let disposed = false;
+    void desktopBridge.recovery.get().then(result => {
+      if (disposed || !result.ok) return;
+      const snapshot = (result as { ok: true; snapshot: RecoverySnapshot | null }).snapshot;
+      if (snapshot && snapshot.workbookPath === workbook.path && snapshot.logs.length > 0) {
+        setRecoveryOffer(snapshot);
+      }
+    });
+    return () => {
+      disposed = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workbook?.path]);
+
+  // Window-level drag & drop: dropping an .xlsm/.xlsx anywhere opens it.
+  useEffect(() => {
+    if (!desktopBridge) return;
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      try {
+        const path = desktopBridge.files.getPathForFile(file);
+        if (path && /\.(xlsm|xlsx)$/i.test(path)) void openWorkbook(path);
+      } catch {
+        /* not a filesystem file */
+      }
+    };
+    const onDragOver = (e: DragEvent) => e.preventDefault();
+    window.addEventListener("drop", onDrop);
+    window.addEventListener("dragover", onDragOver);
+    return () => {
+      window.removeEventListener("drop", onDrop);
+      window.removeEventListener("dragover", onDragOver);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [desktopBridge]);
 
   const handleWorkbookSaveAs = async () => {
     if (!excelProvider) return;
@@ -781,6 +897,26 @@ export default function App() {
     }
   };
 
+  /** Settings page pushed a new config: mirror the parts held in App state. */
+  const handleConfigChange = (cfg: AppConfig) => {
+    setAppConfig(cfg);
+    setLang(cfg.language);
+  };
+
+  const applyRecovery = () => {
+    if (!recoveryOffer) return;
+    recoveryOffer.logs.forEach(l => saveLogForMonth(l.month, l));
+    setLogs(loadAllLogs());
+    setIsDirty(true);
+    setRecoveryOffer(null);
+    void persistWorkbook();
+  };
+
+  const discardRecovery = () => {
+    setRecoveryOffer(null);
+    void desktopBridge?.recovery.clear();
+  };
+
   // --- LOCALIZATION DICTIONARY ---
   const dict = {
     th: {
@@ -909,8 +1045,12 @@ export default function App() {
           </div>
         </header>
 
-        {/* 3-PART SEGMENTED NAVIGATION BAR */}
-        <nav className="grid grid-cols-1 sm:grid-cols-3 gap-2 bg-slate-900 border border-slate-850 p-1.5 rounded-2xl shadow-md">
+        {/* SEGMENTED NAVIGATION BAR */}
+        <nav
+          className={`grid grid-cols-1 ${
+            isDesktopApp ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3"
+          } gap-2 bg-slate-900 border border-slate-850 p-1.5 rounded-2xl shadow-md`}
+        >
           <button
             onClick={() => setCurrentView("dashboard")}
             className={`px-4 py-3.5 text-xs font-bold rounded-xl flex items-center justify-center gap-2.5 transition-all cursor-pointer ${
@@ -946,6 +1086,20 @@ export default function App() {
             <TableProperties className="w-4 h-4 text-amber-400" />
             <span>{lang === "th" ? "3. ประวัติรายเดือนทั้งหมด" : "3. Historical Logs"}</span>
           </button>
+
+          {isDesktopApp && (
+            <button
+              onClick={() => setCurrentView("settings")}
+              className={`px-4 py-3.5 text-xs font-bold rounded-xl flex items-center justify-center gap-2.5 transition-all cursor-pointer ${
+                currentView === "settings"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/15"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-850/50"
+              }`}
+            >
+              <Settings className="w-4 h-4 text-emerald-400" />
+              <span>{lang === "th" ? "4. ตั้งค่า & ตรวจสอบข้อมูล" : "4. Settings & Integrity"}</span>
+            </button>
+          )}
         </nav>
 
         {/* --- VIEW 1: DATA ENTRY SHEET --- */}
@@ -1184,6 +1338,48 @@ export default function App() {
           )
         )}
 
+        {/* --- VIEW 4: SETTINGS & INTEGRITY CENTER (desktop) --- */}
+        {currentView === "settings" && isDesktopApp && desktopBridge && appConfig && (
+          <div className="space-y-6 animate-fadeIn">
+            {workbook && (
+              <WorkbookBar
+                workbook={workbook}
+                isDirty={isDirty}
+                isBusy={isWorkbookBusy}
+                lang={lang}
+                onOpen={() => void openWorkbook(null, true)}
+                onReload={() => {
+                  if (workbook.path) void openWorkbook(workbook.path);
+                }}
+                onSaveAs={() => void handleWorkbookSaveAs()}
+                onShowInFolder={() => {
+                  if (workbook.path) void desktopBridge.shell.showItemInFolder(workbook.path);
+                }}
+              />
+            )}
+            {workbook && (
+              <IntegrityCenter
+                workbook={workbook}
+                lang={lang}
+                isBusy={isWorkbookBusy}
+                onValidate={() => {
+                  if (workbook.path) void openWorkbook(workbook.path);
+                }}
+              />
+            )}
+            <SettingsPanel
+              bridge={desktopBridge}
+              appConfig={appConfig}
+              workbook={workbook}
+              lang={lang}
+              isBusy={isWorkbookBusy}
+              onConfigChange={handleConfigChange}
+              onRestoreBackup={p => void handleRestoreBackup(p)}
+              onOpenWorkbookDialog={() => void openWorkbook(null, true)}
+            />
+          </div>
+        )}
+
       </div>
 
       {/* --- ADD NEW MONTH MODAL --- */}
@@ -1398,6 +1594,66 @@ export default function App() {
                     className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-bold rounded-xl text-white shadow-lg shadow-indigo-600/15 transition-all cursor-pointer"
                   >
                     {lang === "th" ? "ลองอีกครั้ง" : "Retry"}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- CRASH RECOVERY OFFER (desktop) --- */}
+      <AnimatePresence>
+        {recoveryOffer && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-xl">
+                    <RefreshCw className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-slate-100 text-base">
+                      {lang === "th" ? "พบข้อมูลที่ยังไม่ได้บันทึก" : "Unsaved Changes Found"}
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-semibold font-mono uppercase tracking-wider mt-0.5">
+                      {new Date(recoveryOffer.savedAt).toLocaleString()}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-xs leading-relaxed text-slate-300 bg-slate-950/50 border border-slate-850 p-4 rounded-xl">
+                  <p>
+                    {lang === "th"
+                      ? "โปรแกรมพบข้อมูลที่แก้ไขไว้แต่ยังไม่ถูกบันทึกลงไฟล์ Workbook จากการใช้งานครั้งก่อน (เช่น ปิดโปรแกรมกะทันหัน หรือบันทึกไม่สำเร็จ)"
+                      : "Edits from a previous session were journaled but never written to the workbook (e.g. the app closed unexpectedly or a save failed)."}
+                  </p>
+                  <p className="font-medium text-indigo-300">
+                    {lang === "th"
+                      ? "ต้องการกู้คืนข้อมูลเหล่านี้และบันทึกลง Workbook หรือไม่?"
+                      : "Restore these changes and save them into the workbook now?"}
+                  </p>
+                </div>
+
+                <div className="flex gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={discardRecovery}
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-750 text-xs font-semibold rounded-xl text-slate-300 transition-all cursor-pointer border border-slate-700/50"
+                  >
+                    {lang === "th" ? "ละทิ้งข้อมูลนี้" : "Discard"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyRecovery}
+                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-bold rounded-xl text-white shadow-lg shadow-indigo-600/15 transition-all cursor-pointer"
+                  >
+                    {lang === "th" ? "กู้คืนและบันทึก" : "Restore & Save"}
                   </button>
                 </div>
               </div>
