@@ -17,6 +17,8 @@ import { ExcelProvider } from "./data/ExcelProvider";
 import { getDesktopBridge } from "./data/ProviderFactory";
 import type { AppConfig, DeviceLists, FacilityEntry } from "./desktop";
 import FacilitySelector from "./components/FacilitySelector";
+import EntryWorkflowHeader from "./components/EntryWorkflowHeader";
+import { computeCompletion } from "./utils/completion";
 import ToastHost, { notify } from "./components/Toast";
 import WorkbookBar from "./components/WorkbookBar";
 import WelcomePanel from "./components/WelcomePanel";
@@ -733,6 +735,28 @@ export default function App() {
   const [newMonthInput, setNewMonthInput] = useState("");
   const [addMonthError, setAddMonthError] = useState("");
 
+  // RC2 workflow: picking a month with no record offers to create it.
+  const [pendingCreateMonth, setPendingCreateMonth] = useState<string | null>(null);
+
+  /** Entry completion for the active month (live drafts arrive with RC4). */
+  const entryCompletion = useMemo(() => computeCompletion(activeLog), [activeLog]);
+
+  const handleWorkflowSelectMonth = (month: string, exists: boolean) => {
+    if (exists) {
+      setSelectedMonth(month);
+    } else {
+      setPendingCreateMonth(month);
+    }
+  };
+
+  const confirmCreateMonth = () => {
+    if (!pendingCreateMonth) return;
+    saveLogForMonth(pendingCreateMonth, emptyLogForMonth(pendingCreateMonth));
+    setLogs(loadAllLogs());
+    setSelectedMonth(pendingCreateMonth);
+    setPendingCreateMonth(null);
+  };
+
   const maxMonth = useMemo(() => {
     if (logs.length === 0) return getPreviousMonthStr();
     return logs.reduce((max, log) => log.month > max ? log.month : max, logs[0].month);
@@ -1216,45 +1240,29 @@ export default function App() {
               />
             )}
 
-            {/* MONTH SELECTOR & ACTION CONTAINER */}
-            <section className="bg-slate-900 border border-slate-850 p-5 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-5 shadow-sm">
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
-                <div className="flex items-center gap-2.5">
-                  <Calendar className="w-4 h-4 text-indigo-400 shrink-0" />
-                  <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                    {t.monthSelect}:
-                  </label>
-                </div>
-                
-                <div className="relative">
-                  <select
-                    value={selectedMonth}
-                    onChange={(e) => setSelectedMonth(e.target.value)}
-                    className="w-full sm:w-[180px] bg-slate-950 text-slate-100 font-semibold font-mono text-sm border border-slate-800 rounded-xl px-4 py-2 focus:outline-none focus:border-indigo-500 cursor-pointer appearance-none"
-                  >
-                    {logs.filter(log => log.month === maxMonth || log.month === editingMonth).map((log) => (
-                      <option key={log.month} value={log.month}>
-                        {formatMonthYear(log.month)} ({log.month})
-                      </option>
-                    ))}
-                  </select>
-                  <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-slate-400">
-                    <span className="text-[10px]">▼</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action buttons */}
-              <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+            {/* WORKFLOW HEADER (RC2): Facility → Year → Month → Entry */}
+            <div className="space-y-2">
+              <EntryWorkflowHeader
+                lang={lang}
+                facilityName={activeFacility?.name ?? null}
+                facilityLogo={activeFacility?.profile.logo ?? null}
+                workbookLabel={workbook?.sourceLabel ?? null}
+                months={logs.map(l => l.month)}
+                selectedMonth={selectedMonth}
+                completion={entryCompletion}
+                health={workbook?.health ?? null}
+                onSelectMonth={handleWorkflowSelectMonth}
+              />
+              <div className="flex justify-end">
                 <button
                   onClick={() => setShowAddMonthModal(true)}
-                  className="px-4 py-2 bg-indigo-650 hover:bg-indigo-600 active:bg-indigo-700 text-xs text-white font-bold rounded-xl shadow-lg shadow-indigo-600/10 flex items-center gap-2 transition-all cursor-pointer w-full sm:w-auto justify-center"
+                  className="px-3 py-1.5 text-[11px] text-slate-400 hover:text-slate-200 font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
                 >
-                  <Plus className="w-4 h-4" />
+                  <Plus className="w-3.5 h-3.5" />
                   <span>{t.addMonth}</span>
                 </button>
               </div>
-            </section>
+            </div>
 
             {/* HISTORICAL EDIT NOTICE BANNER */}
             {selectedMonth !== maxMonth && (
@@ -1678,6 +1686,57 @@ export default function App() {
                     className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-bold rounded-xl text-white shadow-lg shadow-indigo-600/15 transition-all cursor-pointer"
                   >
                     {lang === "th" ? "ลองอีกครั้ง" : "Retry"}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- CREATE MONTHLY RECORD PROMPT (RC2) --- */}
+      <AnimatePresence>
+        {pendingCreateMonth && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 rounded-xl">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-slate-100 text-base">
+                      {lang === "th" ? "สร้างบันทึกรายเดือน" : "Create Monthly Record"}
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-semibold font-mono uppercase tracking-wider mt-0.5">
+                      {formatMonthYear(pendingCreateMonth)} ({pendingCreateMonth})
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs leading-relaxed text-slate-300 bg-slate-950/50 border border-slate-850 p-4 rounded-xl">
+                  {lang === "th"
+                    ? "ยังไม่มีบันทึกของเดือนนี้ในฐานข้อมูล ต้องการสร้างบันทึกใหม่สำหรับกรอกข้อมูลหรือไม่?"
+                    : "No record exists for this month yet. Create a new monthly record to start entering data?"}
+                </p>
+                <div className="flex gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setPendingCreateMonth(null)}
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-750 text-xs font-semibold rounded-xl text-slate-300 transition-all cursor-pointer border border-slate-700/50"
+                  >
+                    {t.cancel}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmCreateMonth}
+                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-bold rounded-xl text-white shadow-lg shadow-indigo-600/15 transition-all cursor-pointer"
+                  >
+                    {lang === "th" ? "สร้างบันทึก" : "Create"}
                   </button>
                 </div>
               </div>
