@@ -1,9 +1,31 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+/*
+ * Fully offline: no external font/CDN requests. System font stacks with
+ * Thai coverage (Leelawadee UI ships with Windows 10/11).
+ */
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", "Leelawadee UI", "Noto Sans Thai", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI", "Leelawadee UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", "Leelawadee UI", ui-monospace, SFMono-Regular, monospace;
 }
 
+/*
+ * Light theme (Settings > Theme). Tailwind v4 utilities resolve colors
+ * through CSS variables, so remapping the slate scale on the root flips the
+ * whole app. Charts keep their own series colors and remain dark-optimized.
+ */
+html.theme-light {
+  --color-slate-950: #eef2f7;
+  --color-slate-900: #ffffff;
+  --color-slate-800: #e2e8f0;
+  --color-slate-700: #cbd5e1;
+  --color-slate-600: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-400: #475569;
+  --color-slate-300: #334155;
+  --color-slate-200: #1e293b;
+  --color-slate-100: #0f172a;
+  --color-slate-50: #020617;
+  color-scheme: light;
+}

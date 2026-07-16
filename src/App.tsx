@@ -83,9 +83,11 @@ function DashboardViewContainer({
   }, [selectedYear, selectedPeriod, logs]);
 
   const handleExport = (format: "pdf" | "excel" | "csv" | "png") => {
-    alert(lang === "th" 
-      ? `ระบบกำลังสร้างไฟล์รายงานรูปแบบ ${format.toUpperCase()} เพื่อทำการดาวน์โหลดอัตโนมัติ...` 
-      : `Generating report as ${format.toUpperCase()} for automatic download...`
+    notify(
+      "info",
+      lang === "th"
+        ? `ระบบกำลังสร้างไฟล์รายงานรูปแบบ ${format.toUpperCase()} เพื่อทำการดาวน์โหลดอัตโนมัติ...`
+        : `Generating report as ${format.toUpperCase()} for automatic download...`
     );
   };
 
@@ -243,7 +245,7 @@ export default function App() {
 
       const timeStr = new Date().toLocaleTimeString();
       setLastSyncedTime(timeStr);
-      localStorage.setItem("google_sheets_last_synced", timeStr);
+      if (!isDesktopApp) localStorage.setItem("google_sheets_last_synced", timeStr);
 
       return imported;
     } catch (err: any) {
@@ -282,7 +284,14 @@ export default function App() {
   // The effect below reacts to this change and re-runs the single import automatically.
   const handleSpreadsheetIdChange = (id: string) => {
     setSpreadsheetId(id);
-    localStorage.setItem("google_sheets_spreadsheet_id", id);
+    if (isDesktopApp && desktopBridge) {
+      void desktopBridge.config
+        .update({ googleSheets: { enabled: appConfig?.googleSheets.enabled ?? false, spreadsheetId: id } })
+        .then(setAppConfig)
+        .catch(() => undefined);
+    } else {
+      localStorage.setItem("google_sheets_spreadsheet_id", id);
+    }
   };
 
   // --- EXCEL WORKBOOK PIPELINE (desktop only) ---
@@ -408,6 +417,16 @@ export default function App() {
         const cfg = await desktopBridge.config.get();
         if (disposed) return;
         setAppConfig(cfg);
+
+        // Preferences that lived in localStorage in the browser build come
+        // from the portable config file on desktop.
+        setLang(cfg.language);
+        if (cfg.googleSheets.spreadsheetId) setSpreadsheetId(cfg.googleSheets.spreadsheetId);
+        if (cfg.security.pinEnabled && cfg.security.pinHash) {
+          setSecurityConfig({ pinEnabled: true, pinHash: cfg.security.pinHash });
+          setIsAppLocked(true);
+        }
+
         let target: string | null = null;
         if (cfg.startupBehavior === "default") target = cfg.defaultWorkbookPath;
         else if (cfg.startupBehavior === "last") target = cfg.lastWorkbookPath ?? cfg.defaultWorkbookPath;
@@ -530,20 +549,23 @@ export default function App() {
     return logs.reduce((max, log) => log.month > max ? log.month : max, logs[0].month);
   }, [logs]);
 
-  // --- LOCAL STORAGE DATA LOAD ---
+  // --- IN-MEMORY DATA (RE)LOAD ---
   const reloadData = () => {
-    // Check security config first
-    const savedSecurity = localStorage.getItem("facility_security_config");
-    if (savedSecurity) {
-      try {
-        const parsed = JSON.parse(savedSecurity) as SecurityConfig;
-        setSecurityConfig(parsed);
-        // If PIN is enabled, set lock screen
-        if (parsed.pinEnabled && parsed.pinHash) {
-          setIsAppLocked(true);
+    // Security config: desktop reads it from config/config.json (see the
+    // desktop startup effect); the browser build keeps using localStorage.
+    if (!isDesktopApp) {
+      const savedSecurity = localStorage.getItem("facility_security_config");
+      if (savedSecurity) {
+        try {
+          const parsed = JSON.parse(savedSecurity) as SecurityConfig;
+          setSecurityConfig(parsed);
+          // If PIN is enabled, set lock screen
+          if (parsed.pinEnabled && parsed.pinHash) {
+            setIsAppLocked(true);
+          }
+        } catch (e) {
+          console.error("Error loading security config", e);
         }
-      } catch (e) {
-        console.error("Error loading security config", e);
       }
     }
 
@@ -611,6 +633,12 @@ export default function App() {
       setActiveLog(log);
     }
   }, [selectedMonth, logs]);
+
+  // Apply the configured theme (desktop). Tailwind color variables are
+  // remapped by the html.theme-light rules in index.css.
+  useEffect(() => {
+    document.documentElement.classList.toggle("theme-light", appConfig?.theme === "light");
+  }, [appConfig?.theme]);
 
   // --- ACTION HANDLERS ---
   // After the in-memory store is updated, desktop persists straight into the
@@ -735,7 +763,22 @@ export default function App() {
 
   const handleUpdateSecurity = (newConfig: SecurityConfig) => {
     setSecurityConfig(newConfig);
-    localStorage.setItem("facility_security_config", JSON.stringify(newConfig));
+    if (isDesktopApp && desktopBridge) {
+      // Desktop: persist to the portable config file, never localStorage.
+      void desktopBridge.config
+        .update({ security: { pinEnabled: newConfig.pinEnabled, pinHash: newConfig.pinHash } })
+        .then(setAppConfig)
+        .catch(err => notify("error", `Could not save PIN settings: ${err instanceof Error ? err.message : err}`));
+    } else {
+      localStorage.setItem("facility_security_config", JSON.stringify(newConfig));
+    }
+  };
+
+  const handleLanguageChange = (next: "th" | "en") => {
+    setLang(next);
+    if (isDesktopApp && desktopBridge) {
+      void desktopBridge.config.update({ language: next }).then(setAppConfig).catch(() => undefined);
+    }
   };
 
   // --- LOCALIZATION DICTIONARY ---
@@ -837,7 +880,7 @@ export default function App() {
           <div className="flex flex-wrap items-center gap-3">
             {/* Language Switcher */}
             <button
-              onClick={() => setLang(lang === "th" ? "en" : "th")}
+              onClick={() => handleLanguageChange(lang === "th" ? "en" : "th")}
               className="px-3 py-2 bg-slate-900 hover:bg-slate-800 text-xs font-semibold rounded-xl border border-slate-800 hover:border-slate-700 flex items-center gap-2 transition-all cursor-pointer"
             >
               <Globe className="w-3.5 h-3.5 text-indigo-400" />
