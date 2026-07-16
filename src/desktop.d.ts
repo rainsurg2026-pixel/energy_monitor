@@ -24,7 +24,14 @@ export type {
 
 export interface DesktopBridge {
   app: {
-    getInfo(): Promise<{ version: string; platform: string; appRoot: string; portable: boolean }>;
+    getInfo(): Promise<{
+      version: string;
+      platform: string;
+      appRoot: string;
+      portable: boolean;
+      /** Workbook found beside the executable (opened on first launch). */
+      bundledWorkbookPath: string | null;
+    }>;
   };
   excel: {
     open(path: string | null): Promise<IpcResult<OpenWorkbookPayload | { canceled: true }>>;

@@ -1,0 +1,42 @@
+# Electron Builder - portable internal-tool build (no installer, no admin).
+# Output: release/Energy Monitor.exe
+# The renderer (dist/) and the bundled main process (dist-electron/) are the
+# only runtime payload; all npm packages are compiled in by Vite/esbuild, so
+# node_modules never ships.
+
+appId: com.internal.energymonitor
+productName: Energy Monitor
+copyright: Internal enterprise tool - not for commercial distribution
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+  - "!node_modules/**/*"
+
+asar: true
+compression: normal
+npmRebuild: false
+nodeGypRebuild: false
+
+# Trim unused Chromium locale files from the payload
+electronLanguages:
+  - en-US
+
+win:
+  icon: build/icon.ico
+  # Portable = runs from any folder without admin rights
+  requestedExecutionLevel: asInvoker
+  target:
+    - target: portable
+      arch:
+        - x64
+
+portable:
+  artifactName: "Energy Monitor.exe"
+  # Faster startup: reuse the same extraction dir across runs
+  unpackDirName: energy-monitor-runtime

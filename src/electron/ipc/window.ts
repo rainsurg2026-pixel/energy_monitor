@@ -4,6 +4,7 @@
  */
 
 import { app, ipcMain, shell } from "electron";
+import { promises as fs } from "fs";
 import path from "path";
 import { AppConfig, DEFAULT_CONFIG, loadConfig, saveConfig, updateConfig } from "../config";
 import { getAppRoot, log } from "../paths";
@@ -46,12 +47,28 @@ function sanitizeConfigPatch(raw: unknown): Partial<AppConfig> {
 }
 
 export function registerWindowIpc(): void {
-  ipcMain.handle("app:info", () => ({
-    version: app.getVersion(),
-    platform: process.platform,
-    appRoot: getAppRoot(),
-    portable: Boolean(process.env.PORTABLE_EXECUTABLE_DIR)
-  }));
+  ipcMain.handle("app:info", async () => {
+    // "Extract the ZIP and run": if a workbook ships beside the executable,
+    // report it so first launch (no config yet) can open it automatically.
+    let bundledWorkbookPath: string | null = null;
+    for (const name of ["RST_Dashboard.xlsm", "RST_Dashboard.xlsx"]) {
+      const candidate = path.join(getAppRoot(), name);
+      try {
+        await fs.access(candidate);
+        bundledWorkbookPath = candidate;
+        break;
+      } catch {
+        /* not present */
+      }
+    }
+    return {
+      version: app.getVersion(),
+      platform: process.platform,
+      appRoot: getAppRoot(),
+      portable: Boolean(process.env.PORTABLE_EXECUTABLE_DIR),
+      bundledWorkbookPath
+    };
+  });
 
   ipcMain.handle("config:get", async () => loadConfig());
 

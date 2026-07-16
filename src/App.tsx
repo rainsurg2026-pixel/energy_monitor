@@ -546,6 +546,12 @@ export default function App() {
         let target: string | null = null;
         if (cfg.startupBehavior === "default") target = cfg.defaultWorkbookPath;
         else if (cfg.startupBehavior === "last") target = cfg.lastWorkbookPath ?? cfg.defaultWorkbookPath;
+        if (!target && cfg.startupBehavior !== "ask") {
+          // First launch of the portable app: open the workbook that ships
+          // beside the executable, so "extract and run" just works.
+          const info = await desktopBridge.app.getInfo();
+          target = info.bundledWorkbookPath;
+        }
         if (target) await openWorkbook(target);
       } catch (err) {
         notify("error", `Could not load configuration: ${err instanceof Error ? err.message : String(err)}`);

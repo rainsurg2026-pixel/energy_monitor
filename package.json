@@ -15,14 +15,23 @@
     "desktop": "npm run desktop:build && node node_modules/electron/cli.js .",
     "desktop:dev": "node scripts/desktop-dev.mjs",
     "desktop:build": "npm run build && node scripts/build-electron.mjs",
-    "desktop:package": "npm run desktop:build && node scripts/run-electron-builder.mjs --win --dir",
-    "desktop:dist": "npm run desktop:build && node scripts/run-electron-builder.mjs --win"
+    "portable": "npm run desktop:build && node scripts/run-electron-builder.mjs --win portable",
+    "portable:build": "node scripts/run-electron-builder.mjs --win portable",
+    "portable:zip": "node scripts/make-portable-zip.mjs",
+    "test:excel": "node node_modules/tsx/dist/cli.mjs scripts/test-excel-roundtrip.ts",
+    "test:e2e": "node scripts/e2e-cdp.mjs"
   },
-  "dependencies": {
+  "devDependencies": {
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.1.14",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.4",
+    "autoprefixer": "^10.4.21",
     "dotenv": "^17.2.3",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.25.0",
     "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "firebase": "^12.16.0",
@@ -32,15 +41,6 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.9.2",
-    "vite": "^6.2.3"
-  },
-  "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/node": "^22.14.0",
-    "autoprefixer": "^10.4.21",
-    "electron": "^43.1.1",
-    "electron-builder": "^26.15.3",
-    "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
