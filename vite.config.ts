@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // Relative asset paths so the built bundle also works from file:// in Electron.
+    base: './',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
