@@ -1,0 +1,6 @@
+{
+  "name": "Monthly Power & Energy Logger",
+  "description": "Enterprise-grade Energy & Facility Monitor with advanced KPI dashboards, predictive forecasting, real-time cooling efficiency benchmarks, and secure offline-first storage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

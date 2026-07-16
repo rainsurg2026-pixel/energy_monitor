@@ -1,0 +1,362 @@
+# Troubleshooting Guide
+
+Solutions to common issues and error conditions.
+
+## Table of Contents
+
+- [API Authentication Errors](#api-authentication-errors)
+  - [API Key Not Configured](#api-key-not-configured)
+  - [Invalid API Key](#invalid-api-key)
+- [Learning System Issues](#learning-system-issues)
+  - [No Suggestions Generated](#no-suggestions-generated)
+- [Database Issues](#database-issues)
+  - [Database Not Found](#database-not-found)
+  - [Database Locked](#database-locked)
+  - [Corrupted Database](#corrupted-database)
+  - [Missing Tables](#missing-tables)
+- [Common Pitfalls](#common-pitfalls)
+  - [1. Stage Order Confusion](#1-stage-order-confusion)
+  - [2. Overwriting Imports](#2-overwriting-imports)
+  - [3. Ignoring Learned Suggestions](#3-ignoring-learned-suggestions)
+  - [4. Testing on Large Files](#4-testing-on-large-files)
+  - [5. Manual Database Edits Without Validation](#5-manual-database-edits-without-validation)
+  - [6. Committing .db Files to Git](#6-committing-db-files-to-git)
+  - [7. Leftover `_stage1.md` / `_dryrun.md` Files](#7-leftover-_stage1md--_dryrunmd-files)
+- [Validation Commands](#validation-commands)
+  - [Quick Health Check](#quick-health-check)
+  - [Detailed Diagnostics](#detailed-diagnostics)
+- [Getting Help](#getting-help)
+
+## API Authentication Errors
+
+### API Key Not Configured
+
+**Symptom**:
+```
+❌ API key not configured. Please add it to the config file:
+   ~/.transcript-fixer/config.json
+   { "api": { "api_key": "your-key" } }
+   Or set GLM_API_KEY / ANTHROPIC_API_KEY environment variable.
+```
+
+**Solution**:
+```bash
+# 1. Make sure the config directory exists
+uv run scripts/fix_transcription.py --init
+
+# 2. Edit the config file and set api.api_key
+# ~/.transcript-fixer/config.json
+```
+
+**Quick override** (not recommended for long-term use):
+```bash
+export GLM_API_KEY="your-api-key-here"
+# or
+export ANTHROPIC_API_KEY="your-api-key-here"
+```
+
+See `glm_api_setup.md` for detailed API key management.
+
+### Invalid API Key
+
+**Symptom**: API calls fail with 401/403 errors
+
+**Solutions**:
+1. Verify key is correct (copy from https://open.bigmodel.cn/)
+2. Check for extra spaces or quotes in the config file
+3. Confirm the config uses `api.api_key`, not a top-level key
+4. Regenerate key if compromised
+5. Verify API quota hasn't been exceeded
+
+## Learning System Issues
+
+### No Suggestions Generated
+
+**Symptom**: Running `--review-learned` shows no suggestions after multiple corrections.
+
+**Requirements**:
+- Repeated Stage 2 / AI changes saved in `correction_history` + `correction_changes`
+- Minimum frequency is 3, but the current confidence formula usually needs more repeated occurrences before crossing the 0.8 review threshold
+- Learning confidence threshold ≥0.8 (default)
+
+**Diagnostic steps**:
+
+```bash
+# Check successful correction history count
+sqlite3 ~/.transcript-fixer/corrections.db "SELECT COUNT(*) FROM correction_history WHERE success = 1;"
+
+# If 0, no corrections have been run yet
+# If the repeated AI pattern count is still low, run more similar corrections
+
+# Check repeated AI patterns visible to --review-learned
+sqlite3 ~/.transcript-fixer/corrections.db "
+SELECT c.from_text, c.to_text, h.domain, COUNT(*) AS frequency
+FROM correction_changes c
+JOIN correction_history h ON h.id = c.history_id
+WHERE c.rule_type = 'ai' AND h.success = 1
+GROUP BY c.from_text, c.to_text, h.domain
+ORDER BY frequency DESC;
+"
+
+# Check pending review file produced by --review-learned
+cat ~/.transcript-fixer/learned/pending_review.json
+
+# Check system configuration
+sqlite3 ~/.transcript-fixer/corrections.db "SELECT key, value FROM system_config WHERE key LIKE 'learning%';"
+```
+
+**Solutions**:
+1. Run more similar correction sessions until repeated AI patterns cross the review threshold
+2. Ensure patterns repeat (same error → same correction)
+3. Verify database permissions (should be readable/writable)
+4. Check `correction_history` and `correction_changes` have successful AI entries
+
+## Database Issues
+
+### Database Not Found
+
+**Symptom**:
+```
+⚠️  Database not found: ~/.transcript-fixer/corrections.db
+```
+
+**Solution**:
+```bash
+uv run scripts/fix_transcription.py --init
+```
+
+This creates the database with the complete schema.
+
+### Database Locked
+
+**Symptom**:
+```
+Error: database is locked
+```
+
+**Causes**:
+- Another process is accessing the database
+- Unfinished transaction from crashed process
+- File permissions issue
+
+**Solutions**:
+
+```bash
+# Check for processes using the database
+lsof ~/.transcript-fixer/corrections.db
+
+# If processes found, kill them or wait for completion
+
+# If database is corrupted, backup and recreate
+cp ~/.transcript-fixer/corrections.db ~/.transcript-fixer/corrections_backup.db
+sqlite3 ~/.transcript-fixer/corrections.db "VACUUM;"
+```
+
+### Corrupted Database
+
+**Symptom**: SQLite errors, integrity check failures
+
+**Solutions**:
+
+```bash
+# Check integrity
+sqlite3 ~/.transcript-fixer/corrections.db "PRAGMA integrity_check;"
+
+# If corrupted, attempt recovery
+sqlite3 ~/.transcript-fixer/corrections.db ".recover" | sqlite3 ~/.transcript-fixer/corrections_new.db
+
+# Replace database with recovered version
+mv ~/.transcript-fixer/corrections.db ~/.transcript-fixer/corrections_corrupted.db
+mv ~/.transcript-fixer/corrections_new.db ~/.transcript-fixer/corrections.db
+```
+
+### Missing Tables
+
+**Symptom**:
+```
+❌ Database missing tables: ['corrections', ...]
+```
+
+**Solution**: Reinitialize schema (safe, uses IF NOT EXISTS):
+
+```bash
+python -c "from core import CorrectionRepository; from pathlib import Path; CorrectionRepository(Path.home() / '.transcript-fixer' / 'corrections.db')"
+```
+
+Or delete database and reinitialize:
+
+```bash
+# Backup first
+cp ~/.transcript-fixer/corrections.db ~/corrections_backup_$(date +%Y%m%d).db
+
+# Reinitialize
+uv run scripts/fix_transcription.py --init
+```
+
+## Common Pitfalls
+
+### Stage 1 reports "Applied: 0" (usually correct, not a bug)
+
+Safe mode is the default, so Stage 1 only auto-applies **low-risk** (non-word, high-confidence) corrections. On a clean transcript — or one from a strong ASR engine — there may be no low-risk dictionary hits, so `Applied: 0` is expected. Any medium/high-risk candidates are written to `*_needs_review.md` for you to confirm. To apply every risk level (the pre-safe-mode behavior), pass `--apply-all`.
+
+### 1. Stage Order Confusion
+
+**Problem**: Running Stage 2 without Stage 1 output.
+
+**Solution**: Use `--stage 3` for full pipeline, or run stages sequentially:
+
+```bash
+# Wrong: Stage 2 on raw file
+uv run scripts/fix_transcription.py --input file.md --stage 2  # ❌
+
+# Correct: Full pipeline
+uv run scripts/fix_transcription.py --input file.md --stage 3  # ✅
+
+# Or sequential stages
+uv run scripts/fix_transcription.py --input file.md --stage 1
+uv run scripts/fix_transcription.py --input file_stage1.md --stage 2
+```
+
+### 2. Overwriting Imports
+
+**Problem**: Using `--import` without `--merge` overwrites existing corrections.
+
+**Solution**: Always use `--merge` flag:
+
+```bash
+# Wrong: Overwrites existing
+uv run scripts/fix_transcription.py --import team.json  # ❌
+
+# Correct: Merges with existing
+uv run scripts/fix_transcription.py --import team.json --merge  # ✅
+```
+
+### 3. Ignoring Learned Suggestions
+
+**Problem**: Not reviewing learned patterns, missing free optimizations.
+
+**Impact**: Patterns detected by AI remain expensive (Stage 2) instead of cheap (Stage 1).
+
+**Solution**: Review suggestions every 3-5 runs:
+
+```bash
+uv run scripts/fix_transcription.py --review-learned
+uv run scripts/fix_transcription.py --approve "错误" "正确"
+```
+
+### 4. Testing on Large Files
+
+**Problem**: Testing dictionary changes on large files wastes API quota.
+
+**Solution**: Start with `--stage 1` on small files (100-500 lines):
+
+```bash
+# Test dictionary changes first
+uv run scripts/fix_transcription.py --input small_sample.md --stage 1
+
+# Review output, adjust corrections
+# Then run full pipeline
+uv run scripts/fix_transcription.py --input large_file.md --stage 3
+```
+
+### 5. Manual Database Edits Without Validation
+
+**Problem**: Direct SQL edits might violate schema constraints.
+
+**Solution**: Always validate after manual changes:
+
+```bash
+sqlite3 ~/.transcript-fixer/corrections.db
+# ... make changes ...
+.quit
+
+# Validate
+uv run scripts/fix_transcription.py --validate
+```
+
+### 6. Committing .db Files to Git
+
+**Problem**: Binary database files in Git cause merge conflicts and bloat repository.
+
+**Solution**: Use JSON exports for version control:
+
+```bash
+# .gitignore
+*.db
+*.db-journal
+*.bak
+
+# Export for version control instead
+uv run scripts/fix_transcription.py --export corrections_$(date +%Y%m%d).json
+git add corrections_*.json
+```
+
+### 7. Leftover `_stage1.md` / `_dryrun.md` Files
+
+**Problem**: After correction you end up with multiple intermediate files (`file_stage1.md`, `file_dryrun.md`, `file_changes.md`, `file_needs_review.md`) in the working directory.
+
+**Preferred solution**: Re-run `--stage 1` on the original `file.md` — plain, **without `--apply-all`** (an explicit `--apply-all` always runs corrections and never takes the promote path, so it won't finalize). If `file_stage1.md` is newer than `file.md`, transcript-fixer automatically promotes it to `file.md` and removes the sidecars. It skips promotion if `file.md` has been edited more recently, so it never overwrites your manual changes. This is the recommended finalize path.
+
+```bash
+uv run scripts/fix_transcription.py --input file.md --stage 1
+```
+
+**Manual fallback**: In the native AI-correction workflow, edit the original `file.md` directly, archive it, then delete the sidecars with a Python one-liner (avoids macOS `mv` alias hazards):
+
+```bash
+uv run python -c "
+from pathlib import Path
+stem = 'file'
+for suffix in ['_stage1.md','_dryrun.md','_changes.md','_needs_review.md','_uncertain.md','_stage2.md','_对比.html']:
+    p = Path(f'{stem}{suffix}')
+    p.exists() and p.unlink()
+"
+```
+
+**Why not a bare `mv`**: On macOS, `mv` is commonly aliased to `mv -i`. A bare `mv file_stage1.md file.md && echo done` can skip the overwrite (still exit 0) when the target already exists, leaving the uncorrected file in place. Use the Python one-liner above, or `/bin/mv -f`, if you must use the shell:
+
+```bash
+/bin/mv -f file_stage1.md file.md          # /bin/mv ignores the alias; -f forces overwrite
+grep -c '<a-term-you-corrected>' file.md   # confirm the corrected version is what remains
+```
+
+## Validation Commands
+
+### Quick Health Check
+
+```bash
+uv run scripts/fix_transcription.py --validate
+```
+
+### Detailed Diagnostics
+
+```bash
+# Check database integrity
+sqlite3 ~/.transcript-fixer/corrections.db "PRAGMA integrity_check;"
+
+# Check table counts
+sqlite3 ~/.transcript-fixer/corrections.db "
+SELECT 'corrections' as table_name, COUNT(*) as count FROM corrections
+UNION ALL
+SELECT 'context_rules', COUNT(*) FROM context_rules
+UNION ALL
+SELECT 'learned_suggestions', COUNT(*) FROM learned_suggestions
+UNION ALL
+SELECT 'correction_history', COUNT(*) FROM correction_history;
+"
+
+# Check configuration
+sqlite3 ~/.transcript-fixer/corrections.db "SELECT * FROM system_config;"
+```
+
+## Getting Help
+
+If issues persist:
+
+1. Run `--validate` to collect diagnostic information
+2. Check `correction_history` and `audit_log` tables for errors
+3. Review `references/file_formats.md` for schema details
+4. Check `references/architecture.md` for component details
+5. Verify Python and uv versions are up to date
+
+For database corruption, automatic backups are created before migrations. Check for `.bak` files in `~/.transcript-fixer/`.

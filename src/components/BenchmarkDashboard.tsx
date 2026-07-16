@@ -1,0 +1,395 @@
+import React, { useMemo } from "react";
+import { useReport } from "../ReportContext";
+import { MonthlyLog } from "../types";
+import { computeAllMetrics, ComputedMonthMetrics } from "../utils/analytics";
+import { formatMonthYear } from "../utils";
+import { 
+  Building, 
+  ChevronRight, 
+  Compass, 
+  Goal, 
+  HelpCircle, 
+  Info, 
+  Lightbulb, 
+  Scale, 
+  TrendingDown, 
+  TrendingUp 
+} from "lucide-react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, Cell } from "recharts";
+
+interface BenchmarkDashboardProps {
+  logs: MonthlyLog[];
+  lang: "th" | "en";
+}
+
+export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardProps) {
+  const { selectedYear, selectedPeriod } = useReport();
+
+  // Compute all history metrics
+  const allMetrics = useMemo(() => {
+    return computeAllMetrics(logs).sort((a, b) => a.month.localeCompare(b.month));
+  }, [logs]);
+
+  // Current selected month metric
+  const currentMonthMetric = useMemo(() => {
+    const target = `${selectedYear}-${selectedPeriod === "Entire Year" || selectedPeriod === "YTD" ? "06" : selectedPeriod}`; // fallbacks
+    // Try to find exact selected month or the latest available log
+    const match = allMetrics.find(m => m.month === `${selectedYear}-${selectedPeriod}`) || 
+                  allMetrics.find(m => m.month.startsWith(selectedYear)) || 
+                  allMetrics[allMetrics.length - 1];
+    return match || null;
+  }, [allMetrics, selectedYear, selectedPeriod]);
+
+  // Benchmark metrics
+  const benchmarks = useMemo(() => {
+    if (!currentMonthMetric || allMetrics.length === 0) return null;
+
+    const curVal = currentMonthMetric;
+
+    // 1. Find Best Month (lowest PUE or lowest total energy in all history)
+    const bestMonth = [...allMetrics].reduce((best, m) => {
+      if (m.pue > 1.0 && m.pue < best.pue) return m;
+      return best;
+    }, allMetrics[0]);
+
+    // 2. Find Worst Month (highest PUE in all history)
+    const worstMonth = [...allMetrics].reduce((worst, m) => {
+      if (m.pue > worst.pue) return m;
+      return worst;
+    }, allMetrics[0]);
+
+    // 3. Find Rolling Average of previous 3 months
+    const curIdx = allMetrics.findIndex(m => m.month === curVal.month);
+    let rollingAvgPue = 1.5;
+    let rollingAvgEnergy = 120000;
+    if (curIdx >= 3) {
+      const last3 = allMetrics.slice(curIdx - 3, curIdx);
+      rollingAvgPue = last3.reduce((acc, m) => acc + m.pue, 0) / 3;
+      rollingAvgEnergy = last3.reduce((acc, m) => acc + m.totalEnergyKwh, 0) / 3;
+    } else {
+      // fallback to global average
+      rollingAvgPue = allMetrics.reduce((acc, m) => acc + m.pue, 0) / allMetrics.length;
+      rollingAvgEnergy = allMetrics.reduce((acc, m) => acc + m.totalEnergyKwh, 0) / allMetrics.length;
+    }
+
+    // 4. Industry Standard PUE Target
+    const industryPueTarget = 1.50;
+    // 5. Company PUE Target
+    const companyPueTarget = 1.40;
+
+    return {
+      best: {
+        month: bestMonth.month,
+        pue: bestMonth.pue,
+        energy: bestMonth.totalEnergyKwh
+      },
+      worst: {
+        month: worstMonth.month,
+        pue: worstMonth.pue,
+        energy: worstMonth.totalEnergyKwh
+      },
+      rolling: {
+        pue: rollingAvgPue,
+        energy: rollingAvgEnergy
+      },
+      industry: {
+        pue: industryPueTarget,
+        energy: rollingAvgEnergy * 0.95 // assume 5% saving target
+      },
+      company: {
+        pue: companyPueTarget,
+        energy: rollingAvgEnergy * 0.90 // assume 10% saving target
+      }
+    };
+  }, [allMetrics, currentMonthMetric]);
+
+  const dict = {
+    th: {
+      title: "เปรียบเทียบเกณฑ์มาตรฐาน (Benchmark)",
+      desc: "วิเคราะห์และเปรียบเทียบประสิทธิภาพพลังงาน (PUE) ของรอบระยะเวลาปัจจุบันกับเกณฑ์อ้างอิงและกลุ่มประวัติข้อมูล",
+      parameter: "พารามิเตอร์",
+      current: "ปัจจุบัน",
+      target: "เปรียบเทียบเกณฑ์",
+      difference: "ผลต่าง",
+      status: "สถานะ",
+      bestMonth: "เดือนที่ดีที่สุด (Best Month)",
+      worstMonth: "เดือนที่แย่ที่สุด (Worst Month)",
+      rollingAvg: "ค่าเฉลี่ยเคลื่อนที่ย้อนหลัง 3 เดือน",
+      industryStd: "มาตรฐานอุตสาหกรรม (Industry Target)",
+      companyGoal: "เป้าหมายองค์กร (Company Goal)",
+      better: "ดีกว่าเกณฑ์",
+      worse: "ต่ำกว่าเกณฑ์",
+      suggestionTitle: "ข้อแนะนำทางวิศวกรรมเพื่อความยั่งยืน",
+      pueTitle: "กราฟเปรียบเทียบ PUE เทียบกับเป้าหมาย",
+      pueLegend: "ประสิทธิภาพ PUE"
+    },
+    en: {
+      title: "Energy Benchmarking Dashboard",
+      desc: "Analyze and benchmark current operations (PUE & Energy) against historical extremes, rolling averages, and carbon-reduction targets.",
+      parameter: "Benchmark Indicator",
+      current: "Current",
+      target: "Reference Value",
+      difference: "Variance",
+      status: "Status",
+      bestMonth: "Best Month (Lowest PUE)",
+      worstMonth: "Worst Month (Highest PUE)",
+      rollingAvg: "Rolling 3-Month Average",
+      industryStd: "Industry Standard Target",
+      companyGoal: "Company Efficiency Goal",
+      better: "Better / Within Target",
+      worse: "Exceeds Threshold / Worse",
+      suggestionTitle: "Engineering Actionable Insights",
+      pueTitle: "PUE Performance Benchmarking",
+      pueLegend: "PUE Rating"
+    }
+  };
+
+  const t = dict[lang];
+
+  if (!currentMonthMetric || !benchmarks) {
+    return (
+      <div className="bg-slate-900 border border-slate-800 p-12 rounded-3xl text-center space-y-4">
+        <Scale className="w-12 h-12 text-slate-500 mx-auto animate-bounce" />
+        <p className="text-slate-300 font-medium">Insufficient monthly logs to run comparative benchmarks.</p>
+      </div>
+    );
+  }
+
+  const cur = currentMonthMetric;
+  const b = benchmarks;
+
+  // Comparison Rows
+  const benchmarkRows = [
+    {
+      id: "best",
+      name: t.bestMonth,
+      refLabel: `(${formatMonthYear(b.best.month)})`,
+      currentPue: cur.pue,
+      targetPue: b.best.pue,
+      currentEnergy: cur.totalEnergyKwh,
+      targetEnergy: b.best.energy,
+      type: "lower-better"
+    },
+    {
+      id: "rolling",
+      name: t.rollingAvg,
+      refLabel: "(Prev 3 Months)",
+      currentPue: cur.pue,
+      targetPue: b.rolling.pue,
+      currentEnergy: cur.totalEnergyKwh,
+      targetEnergy: b.rolling.energy,
+      type: "lower-better"
+    },
+    {
+      id: "industry",
+      name: t.industryStd,
+      refLabel: "(Green DC Standard)",
+      currentPue: cur.pue,
+      targetPue: b.industry.pue,
+      currentEnergy: cur.totalEnergyKwh,
+      targetEnergy: b.industry.energy,
+      type: "lower-better"
+    },
+    {
+      id: "company",
+      name: t.companyGoal,
+      refLabel: "(ESG Target)",
+      currentPue: cur.pue,
+      targetPue: b.company.pue,
+      currentEnergy: cur.totalEnergyKwh,
+      targetEnergy: b.company.energy,
+      type: "lower-better"
+    },
+    {
+      id: "worst",
+      name: t.worstMonth,
+      refLabel: `(${formatMonthYear(b.worst.month)})`,
+      currentPue: cur.pue,
+      targetPue: b.worst.pue,
+      currentEnergy: cur.totalEnergyKwh,
+      targetEnergy: b.worst.energy,
+      type: "lower-better"
+    }
+  ];
+
+  // Chart data
+  const chartData = [
+    { name: "Current Month", PUE: parseFloat(cur.pue.toFixed(3)) },
+    { name: "Best Month", PUE: parseFloat(b.best.pue.toFixed(3)) },
+    { name: "3-Mo Rolling Avg", PUE: parseFloat(b.rolling.pue.toFixed(3)) },
+    { name: "Industry Standard", PUE: parseFloat(b.industry.pue.toFixed(3)) },
+    { name: "Company ESG Target", PUE: parseFloat(b.company.pue.toFixed(3)) },
+    { name: "Worst Month", PUE: parseFloat(b.worst.pue.toFixed(3)) },
+  ];
+
+  // Compute smart actionable insights based on PUE score
+  const smartInsights = useMemo(() => {
+    const list: string[] = [];
+    if (cur.pue > 1.6) {
+      list.push(
+        lang === "th"
+          ? "ค่า PUE สูงเกินเกณฑ์มาตรฐาน 1.5: ควรตรวจสอบประสิทธิภาพระบายความร้อนของระบบปรับอากาศ ชั้น 4 (EB41A-B, EB42A-B) ว่ามีปริมาณความต้องการลมเย็นเกินสภาวะปกติหรือไม่"
+          : "PUE exceeds standard threshold (>1.5): Audit 4th floor cooling subsystems (EB41A-B, EB42A-B) to verify if air-flow velocity or ambient setpoints are misaligned with IT heat loads."
+      );
+      list.push(
+        lang === "th"
+          ? "แนะนำระบบปิดกั้นช่องทางลมร้อน/ลมเย็น (Hot/Cold Aisle Containment) เพื่อป้องกันการผสมกันของอากาศและเพิ่มประสิทธิภาพพัดลมคอยล์เย็น"
+          : "Implement Hot/Cold Aisle Containment protocols to prevent bypass cold air mixing and optimize chillers coil return temperature."
+      );
+    } else {
+      list.push(
+        lang === "th"
+          ? "ค่าประสิทธิภาพ PUE อยู่ในเกณฑ์ดีเยี่ยม: แนะนำให้รักษาระดับอุณหภูมิห้องเครื่องไว้ที่ 22-24°C และรักษามาตรฐานพฤติกรรมการบันทึกข้อมูลอย่างสมบูรณ์แบบ"
+          : "PUE meets high-efficiency targets: Maintain current temperature setpoints (22-24°C) and secure consistent historical log data accuracy."
+      );
+    }
+
+    // Load imbalance warning
+    const ups11 = cur.alerts.some(a => a.includes("UPS 11"));
+    const ups15 = cur.alerts.some(a => a.includes("UPS 15"));
+    if (ups11 || ups15) {
+      list.push(
+        lang === "th"
+          ? "ตรวจพบโหลดไม่สมมาตรในกลุ่ม UPS: ตรวจสอบการกระจายโหลดแผงจ่ายไฟฟ้ากระแสสลับ (A/B lines) เพื่อยืดอายุการทำงานของแบตเตอรี่และคาปาซิเตอร์"
+          : "Unbalanced UPS load distribution detected: Verify branch circuits across dual-corded servers (A/B feeds) to protect long-term battery lifespan."
+      );
+    }
+    return list;
+  }, [cur, lang]);
+
+  return (
+    <div className="space-y-6 animate-fadeIn">
+      
+      {/* HEADER BANNER */}
+      <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex items-center justify-between shadow-xl">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-indigo-500/10 text-indigo-400 rounded-xl">
+            <Scale className="w-6 h-6 animate-pulse" />
+          </div>
+          <div>
+            <h2 className="text-base font-display font-bold text-slate-100 uppercase tracking-wider">{t.title}</h2>
+            <p className="text-xs text-slate-400 mt-1 max-w-2xl">{t.desc}</p>
+          </div>
+        </div>
+        <div className="hidden sm:block text-right">
+          <span className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Current Month PUE</span>
+          <div className="text-2xl font-mono font-black text-indigo-400 leading-none">{cur.pue.toFixed(3)}</div>
+        </div>
+      </div>
+
+      {/* BENCHMARKING GRID */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        {/* Benchmarking Table List */}
+        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl lg:col-span-7 flex flex-col justify-between">
+          <div>
+            <h3 className="font-display font-bold text-sm text-slate-200 uppercase tracking-wider mb-4 flex items-center gap-1.5">
+              <Compass className="w-4 h-4 text-emerald-400" />
+              <span>Comparative Analytics Matrix</span>
+            </h3>
+            
+            <div className="space-y-3.5">
+              {benchmarkRows.map((row) => {
+                const diffPue = row.currentPue - row.targetPue;
+                const isPueBetter = diffPue <= 0; // lower PUE is better
+                const diffPct = (diffPue / row.targetPue) * 100;
+
+                return (
+                  <div 
+                    key={row.id} 
+                    className="p-4 bg-slate-950/60 border border-slate-850 hover:border-slate-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all"
+                  >
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-slate-200">{row.name}</span>
+                        <span className="text-[10px] text-slate-500 font-semibold font-mono">{row.refLabel}</span>
+                      </div>
+                      <div className="mt-1 text-slate-400 text-[10px] font-medium leading-none">
+                        Ref Target PUE: <strong className="font-mono text-slate-300">{row.targetPue.toFixed(2)}</strong>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4 self-end sm:self-auto">
+                      <div className="text-right">
+                        <div className="text-xs font-mono font-bold text-slate-300">
+                          {row.currentPue.toFixed(2)} vs {row.targetPue.toFixed(2)}
+                        </div>
+                        <div className="text-[10px] text-slate-500 font-medium">PUE Ratio</div>
+                      </div>
+
+                      {/* Variance Status Badge */}
+                      <div className={`px-2.5 py-1.5 rounded-lg text-right text-[10px] font-bold border ${
+                        isPueBetter 
+                          ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/15" 
+                          : "bg-rose-500/10 text-rose-400 border-rose-500/15"
+                      } flex items-center gap-1 min-w-[110px] justify-center`}>
+                        {isPueBetter ? <TrendingDown className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
+                        <span>
+                          {isPueBetter ? t.better : t.worse} ({Math.abs(diffPct).toFixed(1)}%)
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Benchmarking Recharts Bar Chart */}
+        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl lg:col-span-5 flex flex-col justify-between">
+          <div>
+            <h3 className="font-display font-bold text-sm text-slate-200 uppercase tracking-wider mb-1">{t.pueTitle}</h3>
+            <p className="text-[11px] text-slate-400">Comparing PUE against industry guidelines and targets.</p>
+          </div>
+
+          <div className="h-64 my-4 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <XAxis dataKey="name" stroke="#475569" style={{ fontSize: 9, fontFamily: "sans-serif" }} />
+                <YAxis stroke="#475569" domain={[1.0, 2.2]} style={{ fontSize: 10, fontFamily: "monospace" }} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: "#020617", borderColor: "#1e293b", borderRadius: 12 }}
+                  labelStyle={{ color: "#94a3b8", fontWeight: "bold" }}
+                  itemStyle={{ color: "#818cf8" }}
+                />
+                <Bar dataKey="PUE" fill="#6366f1" radius={[4, 4, 0, 0]}>
+                  {chartData.map((entry, index) => {
+                    let fill = "#6366f1"; // base default
+                    if (entry.name === "Current Month") fill = "#818cf8";
+                    else if (entry.name === "Best Month" || entry.name === "Company ESG Target") fill = "#10b981";
+                    else if (entry.name === "Worst Month") fill = "#ef4444";
+                    return <Cell key={`cell-${index}`} fill={fill} />;
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="flex items-center gap-1 bg-slate-950 p-2.5 rounded-xl border border-slate-850 text-[10px] text-slate-400">
+            <Info className="w-4 h-4 text-indigo-400 shrink-0" />
+            <span>PUE = 1.0 represents perfect efficiency (zero auxiliary power overhead). Green standard threshold is &lt; 1.5.</span>
+          </div>
+        </div>
+
+      </div>
+
+      {/* ACTIONABLE ADVICE BAR */}
+      <div className="bg-indigo-950/20 border border-indigo-900/30 rounded-2xl p-5 shadow-sm">
+        <h4 className="text-xs font-display font-bold text-indigo-300 uppercase tracking-wider flex items-center gap-2 mb-3">
+          <Lightbulb className="w-5 h-5 text-indigo-400 animate-pulse" />
+          <span>{t.suggestionTitle}</span>
+        </h4>
+        <ul className="space-y-2.5 text-xs text-slate-300 leading-relaxed">
+          {smartInsights.map((insight, idx) => (
+            <li key={idx} className="flex gap-2.5 items-start">
+              <ChevronRight className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+              <span>{insight}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+    </div>
+  );
+}

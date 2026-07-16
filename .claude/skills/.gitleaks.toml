@@ -1,0 +1,62 @@
+# Gitleaks custom rules for claude-code-skills repo
+# Catches personal info that shouldn't be in an open source repo
+
+title = "claude-code-skills sensitive data rules"
+
+[extend]
+useDefault = true
+
+# Global allowlist: files that are allowed to contain patterns
+# (the config file itself, hooks, and contribution guides)
+[allowlist]
+paths = [
+  '''\.gitleaks\.toml$''',
+  '''\.githooks/''',
+  '''CONTRIBUTING\.md$''',
+  '''CLAUDE\.md$''',
+]
+regexes = [
+  # Douban mobile app's public API key (documented as public, hardcoded for zero-config usage)
+  '''0dad551ec0f84ed02907ff5c42e8ec70''',
+  # Standard example JWT header from jwt.io. Base64URL-decodes to:
+  #   {"alg":"HS256","typ":"JWT"}
+  # It is public metadata, not a secret, and appears in repomix-safe-mixer
+  # documentation as a placeholder (literally written with "..." suffix).
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.\.\.''',
+  # Repo owner's public contact email in README/marketplace metadata
+  '''daymadev89@gmail\.com''',
+  # Common placeholder user paths used in documentation examples
+  '''/Users/(?:username|name|you|user)/''',
+  '''/home/username/''',
+  '''C:\\Users\\(?:username|name)\\''',
+]
+
+[[rules]]
+id = "absolute-user-path-macos"
+description = "Hardcoded macOS user home directory path"
+regex = '''/Users/[a-zA-Z][a-zA-Z0-9_-]+/'''
+tags = ["pii", "path"]
+
+[[rules]]
+id = "absolute-user-path-linux"
+description = "Hardcoded Linux home directory path"
+regex = '''/home/[a-zA-Z][a-zA-Z0-9_-]+/'''
+tags = ["pii", "path"]
+
+[[rules]]
+id = "windows-user-path"
+description = "Hardcoded Windows user profile path"
+regex = '''C:\\Users\\[a-zA-Z][a-zA-Z0-9_-]+\\'''
+tags = ["pii", "path"]
+
+[[rules]]
+id = "phone-number-cn"
+description = "Chinese mobile phone number"
+regex = '''\b1[3-9]\d{9}\b'''
+tags = ["pii", "phone"]
+
+[[rules]]
+id = "email-personal"
+description = "Personal email address"
+regex = '''[a-zA-Z0-9._%+-]+@(?:gmail|qq|163|126|outlook|hotmail|yahoo|icloud|foxmail)\.[a-zA-Z]{2,}'''
+tags = ["pii", "email"]
