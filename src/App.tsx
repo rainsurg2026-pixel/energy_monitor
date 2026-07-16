@@ -15,7 +15,8 @@ import { MonthlyLog, SecurityConfig, UpsRecord, AirRecord, DcRecord, EnergyCostR
 import { DataSnapshot, ProviderError } from "./data/IDataProvider";
 import { ExcelProvider } from "./data/ExcelProvider";
 import { getDesktopBridge } from "./data/ProviderFactory";
-import type { AppConfig } from "./desktop";
+import type { AppConfig, DeviceLists, FacilityEntry } from "./desktop";
+import FacilitySelector from "./components/FacilitySelector";
 import ToastHost, { notify } from "./components/Toast";
 import WorkbookBar from "./components/WorkbookBar";
 import WelcomePanel from "./components/WelcomePanel";
@@ -151,6 +152,28 @@ export default function App() {
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [lockRetry, setLockRetry] = useState<(() => void) | null>(null);
   const [recoveryOffer, setRecoveryOffer] = useState<RecoverySnapshot | null>(null);
+
+  // --- MULTI-FACILITY (RC1) ---
+  // Each facility has its own independent workbook + profile; the active
+  // profile drives device lists, labels and thresholds everywhere.
+  const [facilities, setFacilities] = useState<FacilityEntry[]>([]);
+  const [activeFacilityId, setActiveFacilityId] = useState<string | null>(null);
+  const activeFacility = useMemo(
+    () => facilities.find(f => f.id === activeFacilityId) ?? null,
+    [facilities, activeFacilityId]
+  );
+  // Ref mirror so one-time effects/closures always see the current lists.
+  const deviceListsRef = useRef<DeviceLists | null>(null);
+  useEffect(() => {
+    deviceListsRef.current = activeFacility
+      ? { upsIds: activeFacility.profile.devices.ups, dcIds: activeFacility.profile.devices.dc }
+      : null;
+    excelProvider?.setDeviceLists(deviceListsRef.current ?? undefined);
+  }, [activeFacility, excelProvider]);
+
+  /** createEmptyLog honoring the active facility's device profile. */
+  const emptyLogForMonth = (month: string) =>
+    createEmptyLog(month, deviceListsRef.current?.upsIds, deviceListsRef.current?.dcIds);
   // Live mirrors for timers (auto-save) so intervals never see stale state.
   const isDirtyRef = useRef(false);
   const isBusyRef = useRef(false);
@@ -319,7 +342,7 @@ export default function App() {
     // (it is only written to the workbook when the user actually saves data).
     const prevMonth = getPreviousMonthStr();
     if (!snap.logs.some(l => l.month === prevMonth)) {
-      saveLogForMonth(prevMonth, createEmptyLog(prevMonth));
+      saveLogForMonth(prevMonth, emptyLogForMonth(prevMonth));
     }
     const all = loadAllLogs();
     setLogs(all);
@@ -505,6 +528,36 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [desktopBridge]);
 
+  /**
+   * Switch the active facility (RC1): swaps the workbook and reloads every
+   * view (dashboard/reports/history/forecast/integrity) - no restart.
+   * Facility data is never mixed: the in-memory store is fully replaced by
+   * the new facility's workbook snapshot.
+   */
+  const switchFacility = async (id: string) => {
+    if (!desktopBridge || !excelProvider || id === activeFacilityId) return;
+    if (isDirty) {
+      notify(
+        "error",
+        lang === "th"
+          ? "มีข้อมูลที่ยังไม่ได้บันทึก - กรุณาบันทึกให้สำเร็จก่อนสลับศูนย์ข้อมูล"
+          : "You have unsaved changes - save them before switching facilities."
+      );
+      return;
+    }
+    const result = await desktopBridge.facilities.setActive(id);
+    if (!result.ok) {
+      notify("error", (result as { message: string }).message);
+      return;
+    }
+    const facility = (result as { ok: true; facility: FacilityEntry }).facility;
+    setActiveFacilityId(facility.id);
+    deviceListsRef.current = { upsIds: facility.profile.devices.ups, dcIds: facility.profile.devices.dc };
+    excelProvider.setDeviceLists(deviceListsRef.current);
+    setEditingMonth(null);
+    await openWorkbook(facility.workbook);
+  };
+
   const handleWorkbookSaveAs = async () => {
     if (!excelProvider) return;
     setIsWorkbookBusy(true);
@@ -523,8 +576,8 @@ export default function App() {
     }
   };
 
-  // Desktop startup: load config, open the startup workbook, and listen for
-  // "Open With"/second-instance file requests from Windows.
+  // Desktop startup: load config + facility registry, open the active
+  // facility's workbook, and listen for "Open With" file requests.
   useEffect(() => {
     if (!desktopBridge) return;
     let disposed = false;
@@ -543,16 +596,30 @@ export default function App() {
           setIsAppLocked(true);
         }
 
-        let target: string | null = null;
-        if (cfg.startupBehavior === "default") target = cfg.defaultWorkbookPath;
-        else if (cfg.startupBehavior === "last") target = cfg.lastWorkbookPath ?? cfg.defaultWorkbookPath;
-        if (!target && cfg.startupBehavior !== "ask") {
-          // First launch of the portable app: open the workbook that ships
-          // beside the executable, so "extract and run" just works.
-          const info = await desktopBridge.app.getInfo();
-          target = info.bundledWorkbookPath;
+        // Facility registry (RC1): the active facility decides the workbook.
+        const registry = await desktopBridge.facilities.list();
+        if (disposed) return;
+        setFacilities(registry.facilities);
+        setActiveFacilityId(registry.activeFacilityId);
+        const facility = registry.facilities.find(f => f.id === registry.activeFacilityId) ?? null;
+        if (facility) {
+          deviceListsRef.current = {
+            upsIds: facility.profile.devices.ups,
+            dcIds: facility.profile.devices.dc
+          };
+          excelProvider?.setDeviceLists(deviceListsRef.current);
         }
-        if (target) await openWorkbook(target);
+
+        let target: string | null = facility?.workbook ?? null;
+        if (!target) {
+          if (cfg.startupBehavior === "default") target = cfg.defaultWorkbookPath;
+          else if (cfg.startupBehavior === "last") target = cfg.lastWorkbookPath ?? cfg.defaultWorkbookPath;
+          if (!target && cfg.startupBehavior !== "ask") {
+            const info = await desktopBridge.app.getInfo();
+            target = info.bundledWorkbookPath;
+          }
+        }
+        if (target && cfg.startupBehavior !== "ask") await openWorkbook(target);
       } catch (err) {
         notify("error", `Could not load configuration: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -873,7 +940,7 @@ export default function App() {
       return;
     }
 
-    const newLog = createEmptyLog(newMonthInput);
+    const newLog = emptyLogForMonth(newMonthInput);
     saveLogForMonth(newMonthInput, newLog);
     
     // Refresh states
@@ -1020,6 +1087,17 @@ export default function App() {
 
           {/* UTILITY BAR CONTROLS */}
           <div className="flex flex-wrap items-center gap-3">
+            {/* Facility Switcher (desktop, RC1) */}
+            {isDesktopApp && (
+              <FacilitySelector
+                facilities={facilities}
+                activeId={activeFacilityId}
+                isBusy={isWorkbookBusy}
+                lang={lang}
+                onSelect={id => void switchFacility(id)}
+              />
+            )}
+
             {/* Language Switcher */}
             <button
               onClick={() => handleLanguageChange(lang === "th" ? "en" : "th")}

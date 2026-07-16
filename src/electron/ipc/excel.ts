@@ -16,6 +16,7 @@ import { WorkbookReadResult, readWorkbookFromFile } from "../../excel/WorkbookRe
 import { WorkbookError, checkWorkbookLock, saveWorkbook } from "../../excel/WorkbookWriter";
 import { PayloadError, summarizeWorkbookHealth, validateLogsPayload } from "../../excel/WorkbookValidator";
 import { WorkbookHealth } from "../../excel/WorkbookValidator";
+import { DeviceLists } from "../../excel/SheetMapper";
 import { listBackups, restoreBackup } from "../sync/BackupManager";
 import { addRecentFile, loadConfig, resolveBackupDir } from "../config";
 import { ensureDir, getExportsDir, getRecoveryPath, log } from "../paths";
@@ -65,6 +66,18 @@ function windowFor(event: IpcMainInvokeEvent): BrowserWindow | undefined {
   return BrowserWindow.fromWebContents(event.sender) ?? undefined;
 }
 
+/** Optional per-facility device lists sent with workbook operations. */
+function sanitizeDevices(raw: unknown): DeviceLists | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const o = raw as Record<string, unknown>;
+  const list = (v: unknown): string[] | null =>
+    Array.isArray(v) ? v.filter(x => typeof x === "string" && x.length > 0 && x.length <= 100).slice(0, 50) : null;
+  const upsIds = list(o.upsIds);
+  const dcIds = list(o.dcIds);
+  if (!upsIds || upsIds.length === 0 || !dcIds || dcIds.length === 0) return undefined;
+  return { upsIds, dcIds };
+}
+
 // ---------------------------------------------------------------------------
 // Payload shapes shared with the renderer (via `import type`)
 // ---------------------------------------------------------------------------
@@ -90,8 +103,8 @@ export interface RecoverySnapshot {
   logs: MonthlyLog[];
 }
 
-async function buildOpenPayload(filePath: string): Promise<{ ok: true } & OpenWorkbookPayload> {
-  const read = await readWorkbookFromFile(filePath);
+async function buildOpenPayload(filePath: string, devices?: DeviceLists): Promise<{ ok: true } & OpenWorkbookPayload> {
+  const read = await readWorkbookFromFile(filePath, devices);
   if (!read.validation.ok) {
     throw new WorkbookError(
       "INVALID_WORKBOOK",
@@ -119,8 +132,9 @@ async function buildOpenPayload(filePath: string): Promise<{ ok: true } & OpenWo
 
 export function registerExcelIpc(): void {
   // --- Open (native picker when no path is given) ---
-  ipcMain.handle("excel:open", (event, rawPath: unknown) =>
+  ipcMain.handle("excel:open", (event, rawPath: unknown, rawDevices?: unknown) =>
     wrap<OpenWorkbookPayload | { canceled: true }>("excel:open", async () => {
+      const devices = sanitizeDevices(rawDevices);
       let filePath: string;
       if (rawPath === null || rawPath === undefined) {
         const result = await dialog.showOpenDialog(windowFor(event)!, {
@@ -136,15 +150,15 @@ export function registerExcelIpc(): void {
       } else {
         filePath = ensureWorkbookPath(rawPath);
       }
-      return buildOpenPayload(filePath);
+      return buildOpenPayload(filePath, devices);
     })
   );
 
   // --- Reload current workbook from disk ---
-  ipcMain.handle("excel:reload", (_event, rawPath: unknown) =>
+  ipcMain.handle("excel:reload", (_event, rawPath: unknown, rawDevices?: unknown) =>
     wrap<OpenWorkbookPayload>("excel:reload", async () => {
       const filePath = ensureWorkbookPath(rawPath);
-      return buildOpenPayload(filePath);
+      return buildOpenPayload(filePath, sanitizeDevices(rawDevices));
     })
   );
 
@@ -157,7 +171,8 @@ export function registerExcelIpc(): void {
       const config = await loadConfig();
       const result = await saveWorkbook(filePath, logs, {
         backupDir: resolveBackupDir(config),
-        backupKeep: config.backupKeep
+        backupKeep: config.backupKeep,
+        devices: sanitizeDevices(body.devices)
       });
       log.info(`workbook saved: ${filePath} (${result.months} months, backup: ${result.backupPath ?? "none"})`);
       return { ok: true, path: result.path, backupPath: result.backupPath, savedAt: new Date().toISOString() };
@@ -183,7 +198,8 @@ export function registerExcelIpc(): void {
       const saved = await saveWorkbook(sourcePath, logs, {
         backupDir: resolveBackupDir(config),
         backupKeep: config.backupKeep,
-        targetPath
+        targetPath,
+        devices: sanitizeDevices(body.devices)
       });
       await addRecentFile(targetPath);
       app.addRecentDocument(targetPath);
@@ -201,12 +217,12 @@ export function registerExcelIpc(): void {
   );
 
   // --- Standalone validation (Integrity Center "Validate now") ---
-  ipcMain.handle("excel:validate", (_event, rawPath: unknown) =>
+  ipcMain.handle("excel:validate", (_event, rawPath: unknown, rawDevices?: unknown) =>
     wrap<{ health: WorkbookHealth; integrity: WorkbookReadResult["integrity"]; validation: WorkbookReadResult["validation"] }>(
       "excel:validate",
       async () => {
         const filePath = ensureWorkbookPath(rawPath);
-        const read = await readWorkbookFromFile(filePath);
+        const read = await readWorkbookFromFile(filePath, sanitizeDevices(rawDevices));
         return { ok: true, health: summarizeWorkbookHealth(read), integrity: read.integrity, validation: read.validation };
       }
     )

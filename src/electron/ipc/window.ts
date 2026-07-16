@@ -7,6 +7,7 @@ import { app, ipcMain, shell } from "electron";
 import { promises as fs } from "fs";
 import path from "path";
 import { AppConfig, DEFAULT_CONFIG, loadConfig, saveConfig, updateConfig } from "../config";
+import { loadFacilities } from "../facilities";
 import { getAppRoot, log } from "../paths";
 
 function sanitizeConfigPatch(raw: unknown): Partial<AppConfig> {
@@ -14,6 +15,8 @@ function sanitizeConfigPatch(raw: unknown): Partial<AppConfig> {
   const input = raw as Record<string, unknown>;
   const patch: Partial<AppConfig> = {};
 
+  if (typeof input.activeFacilityId === "string" || input.activeFacilityId === null)
+    patch.activeFacilityId = input.activeFacilityId as string | null;
   if (typeof input.defaultWorkbookPath === "string" || input.defaultWorkbookPath === null)
     patch.defaultWorkbookPath = input.defaultWorkbookPath as string | null;
   if (typeof input.lastWorkbookPath === "string" || input.lastWorkbookPath === null)
@@ -71,6 +74,24 @@ export function registerWindowIpc(): void {
   });
 
   ipcMain.handle("config:get", async () => loadConfig());
+
+  // --- Multi-facility registry (config/facilities.json + per-facility profiles) ---
+  ipcMain.handle("facilities:list", async () => {
+    const [registry, config] = await Promise.all([loadFacilities(), loadConfig()]);
+    const active =
+      registry.facilities.find(f => f.id === config.activeFacilityId)?.id ?? registry.defaultFacility;
+    return { ...registry, activeFacilityId: active };
+  });
+
+  ipcMain.handle("facilities:setActive", async (_event, raw: unknown) => {
+    const id = typeof raw === "string" ? raw : null;
+    const registry = await loadFacilities();
+    const facility = registry.facilities.find(f => f.id === id);
+    if (!facility) return { ok: false, code: "UNKNOWN_FACILITY", message: `Unknown facility: ${id}` };
+    await updateConfig({ activeFacilityId: facility.id });
+    log.info(`active facility -> ${facility.id}`);
+    return { ok: true, facility };
+  });
 
   ipcMain.handle("config:update", async (_event, raw: unknown) => {
     const patch = sanitizeConfigPatch(raw);

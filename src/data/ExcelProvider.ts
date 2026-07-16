@@ -5,7 +5,7 @@
  */
 
 import { MonthlyLog } from "../types";
-import type { DesktopBridge, IpcResult, OpenWorkbookPayload } from "../desktop";
+import type { DesktopBridge, DeviceLists, IpcResult, OpenWorkbookPayload } from "../desktop";
 import { DataSnapshot, IDataProvider, ProviderCapabilities, ProviderError, SaveOutcome } from "./IDataProvider";
 
 /**
@@ -45,9 +45,15 @@ export class ExcelProvider implements IDataProvider {
 
   private bridge: DesktopBridge;
   private currentPath: string | null = null;
+  /** Active facility's canonical device lists; undefined = built-in defaults. */
+  private devices: DeviceLists | undefined;
 
   constructor(bridge: DesktopBridge) {
     this.bridge = bridge;
+  }
+
+  setDeviceLists(devices: DeviceLists | undefined): void {
+    this.devices = devices;
   }
 
   getSourceLabel(): string | null {
@@ -64,7 +70,9 @@ export class ExcelProvider implements IDataProvider {
     if (!target && !options?.openDialog) {
       throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
     }
-    const result = unwrap(target ? await this.bridge.excel.open(target) : await this.bridge.excel.open(null));
+    const result = unwrap(
+      target ? await this.bridge.excel.open(target, this.devices) : await this.bridge.excel.open(null, this.devices)
+    );
     if ("canceled" in result && result.canceled) return null;
     const payload = result as { ok: true } & OpenWorkbookPayload;
     this.currentPath = payload.path;
@@ -74,13 +82,13 @@ export class ExcelProvider implements IDataProvider {
   /** Re-read the currently open workbook from disk. */
   async reload(): Promise<DataSnapshot> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
-    const result = unwrap(await this.bridge.excel.reload(this.currentPath));
+    const result = unwrap(await this.bridge.excel.reload(this.currentPath, this.devices));
     return toSnapshot(result);
   }
 
   async saveAll(logs: MonthlyLog[]): Promise<SaveOutcome> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
-    const result = unwrap(await this.bridge.excel.save({ path: this.currentPath, logs }));
+    const result = unwrap(await this.bridge.excel.save({ path: this.currentPath, logs, devices: this.devices }));
     return { savedAt: result.savedAt, backupPath: result.backupPath, path: result.path };
   }
 
@@ -91,7 +99,7 @@ export class ExcelProvider implements IDataProvider {
 
   async saveAs(logs: MonthlyLog[]): Promise<SaveOutcome | null> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
-    const result = unwrap(await this.bridge.excel.saveAs({ sourcePath: this.currentPath, logs }));
+    const result = unwrap(await this.bridge.excel.saveAs({ sourcePath: this.currentPath, logs, devices: this.devices }));
     if ("canceled" in result && result.canceled) return null;
     const saved = result as { ok: true; path: string; backupPath: string | null; savedAt: string };
     this.currentPath = saved.path;

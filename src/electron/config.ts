@@ -10,6 +10,8 @@ import path from "path";
 import { ensureDir, getAppRoot, getConfigDir, log } from "./paths";
 
 export interface AppConfig {
+  /** Active facility (multi-facility mode); null = pre-facility behavior. */
+  activeFacilityId: string | null;
   /** Workbook opened when startupBehavior is "default". */
   defaultWorkbookPath: string | null;
   /** Last successfully opened workbook (startupBehavior "last"). */
@@ -36,6 +38,7 @@ export interface AppConfig {
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
+  activeFacilityId: null,
   defaultWorkbookPath: null,
   lastWorkbookPath: null,
   startupBehavior: "last",

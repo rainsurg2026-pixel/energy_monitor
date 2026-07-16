@@ -20,3 +20,5 @@ backup/
 logs/
 exports/
 *.appmeta.json
+DC_Rangsit.xlsm
+DC_Srinakarin.xlsm

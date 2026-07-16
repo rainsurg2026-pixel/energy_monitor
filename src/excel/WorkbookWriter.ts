@@ -38,7 +38,7 @@ import {
   resolveSheetNames,
   yyyyMmToExcelSerial
 } from "./ExcelSchema";
-import { SheetRow, logsToRows, rowKey } from "./SheetMapper";
+import { DEFAULT_DEVICE_LISTS, DeviceLists, SheetRow, logsToRows, rowKey } from "./SheetMapper";
 import { readWorkbookFromBuffer } from "./WorkbookReader";
 import { writeWorkbookMeta } from "./WorkbookVersion";
 
@@ -465,12 +465,16 @@ async function patchSheetTables(zip: JSZip, sheetXmlPath: string, sheetXml: stri
 // Workbook-level patching
 // ---------------------------------------------------------------------------
 
-export async function patchWorkbookBuffer(original: Buffer, logs: MonthlyLog[]): Promise<{ buffer: Buffer; stats: PatchStats[] }> {
+export async function patchWorkbookBuffer(
+  original: Buffer,
+  logs: MonthlyLog[],
+  devices: DeviceLists = DEFAULT_DEVICE_LISTS
+): Promise<{ buffer: Buffer; stats: PatchStats[] }> {
   const zip = await JSZip.loadAsync(original);
   const sheets = await locateSheets(zip);
   const resolved = resolveSheetNames(sheets.map(s => s.name));
   const sharedStrings = parseSharedStrings(await entryText(zip, "xl/sharedStrings.xml"));
-  const rowsByTab = logsToRows(logs);
+  const rowsByTab = logsToRows(logs, devices);
   const stats: PatchStats[] = [];
 
   for (const schema of SHEET_SCHEMAS) {
@@ -575,6 +579,8 @@ export interface SaveWorkbookOptions {
   backupKeep: number;
   /** Target path; defaults to sourcePath (Save). Different path = Save As. */
   targetPath?: string;
+  /** Facility device lists (canonical order); defaults to the RST lists. */
+  devices?: DeviceLists;
 }
 
 export interface SaveWorkbookResult {
@@ -624,7 +630,7 @@ export async function createBackup(sourcePath: string, backupDir: string, keep: 
   return backupPath;
 }
 
-function logsMatch(a: MonthlyLog[], b: MonthlyLog[]): boolean {
+function logsMatch(a: MonthlyLog[], b: MonthlyLog[], devices: DeviceLists): boolean {
   // Both sides are canonicalized through the same writer expansion, so device
   // order/naming differences can never produce a false mismatch.
   const num = (v: unknown) => {
@@ -633,7 +639,7 @@ function logsMatch(a: MonthlyLog[], b: MonthlyLog[]): boolean {
     return Number.isFinite(n) ? Math.round(n * 1e6) / 1e6 : String(v);
   };
   const canon = (logs: MonthlyLog[]) => {
-    const rows = logsToRows(logs);
+    const rows = logsToRows(logs, devices);
     return JSON.stringify(
       (Object.keys(rows) as TabKey[]).map(tab =>
         rows[tab].map(r => [
@@ -669,19 +675,21 @@ export async function saveWorkbook(
     throw new WorkbookError("NOT_FOUND", `Workbook not found: ${sourcePath}`);
   }
 
+  const devices = options.devices ?? DEFAULT_DEVICE_LISTS;
+
   // 1. Patch in memory.
-  const { buffer } = await patchWorkbookBuffer(original, logs);
+  const { buffer } = await patchWorkbookBuffer(original, logs, devices);
 
   // 2. Validate the patched result by re-reading it. A workbook that cannot
   //    be re-read, or that does not round-trip the data, never hits disk.
-  const reread = await readWorkbookFromBuffer(buffer);
+  const reread = await readWorkbookFromBuffer(buffer, devices);
   if (!reread.validation.ok) {
     throw new WorkbookError(
       "VALIDATION_FAILED",
       `Save aborted - patched workbook failed validation: ${reread.validation.errors.join("; ")}`
     );
   }
-  if (!logsMatch(logs, reread.logs)) {
+  if (!logsMatch(logs, reread.logs, devices)) {
     throw new WorkbookError("VALIDATION_FAILED", "Save aborted - data did not round-trip identically.");
   }
 

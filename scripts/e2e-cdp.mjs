@@ -62,7 +62,8 @@ async function main() {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   const electron = path.join(root, "node_modules", "electron", "dist", "electron.exe");
-  const app = spawn(electron, [".", `--remote-debugging-port=${PORT}`], { cwd: root, env, stdio: "ignore" });
+  const userData = path.join(process.env.TEMP ?? root, "energy-monitor-e2e-data");
+  const app = spawn(electron, [".", `--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`], { cwd: root, env, stdio: "ignore" });
 
   try {
     const ws = await connect();

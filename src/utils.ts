@@ -33,8 +33,12 @@ export const DEFAULT_DC_IDS = [
   "DC PDB42B"
 ];
 
-export function createEmptyLog(month: string): MonthlyLog {
-  const ups: UpsRecord[] = DEFAULT_UPS_IDS.map(id => ({
+export function createEmptyLog(
+  month: string,
+  upsIds: string[] = DEFAULT_UPS_IDS,
+  dcIds: string[] = DEFAULT_DC_IDS
+): MonthlyLog {
+  const ups: UpsRecord[] = upsIds.map(id => ({
     upsId: id,
     voltage: null,
     current: null,
@@ -49,7 +53,7 @@ export function createEmptyLog(month: string): MonthlyLog {
     eb42b: null
   };
 
-  const dc: DcRecord[] = DEFAULT_DC_IDS.map(id => ({
+  const dc: DcRecord[] = dcIds.map(id => ({
     panelId: id,
     voltage: null,
     current: null

@@ -9,6 +9,8 @@ import type { AppConfig } from "./electron/config";
 import type { BackupEntry } from "./electron/sync/BackupManager";
 import type { WorkbookHealth } from "./excel/WorkbookValidator";
 import type { ExcelIntegrityReport, WorkbookValidation } from "./excel/WorkbookReader";
+import type { DeviceLists } from "./excel/SheetMapper";
+import type { FacilityEntry, FacilityProfile } from "./electron/facilities";
 
 export type {
   OpenWorkbookPayload,
@@ -19,8 +21,17 @@ export type {
   BackupEntry,
   WorkbookHealth,
   ExcelIntegrityReport,
-  WorkbookValidation
+  WorkbookValidation,
+  DeviceLists,
+  FacilityEntry,
+  FacilityProfile
 };
+
+export interface FacilitiesPayload {
+  defaultFacility: string;
+  activeFacilityId: string;
+  facilities: FacilityEntry[];
+}
 
 export interface DesktopBridge {
   app: {
@@ -33,13 +44,21 @@ export interface DesktopBridge {
       bundledWorkbookPath: string | null;
     }>;
   };
+  facilities: {
+    list(): Promise<FacilitiesPayload>;
+    setActive(id: string): Promise<IpcResult<{ facility: FacilityEntry }>>;
+  };
   excel: {
-    open(path: string | null): Promise<IpcResult<OpenWorkbookPayload | { canceled: true }>>;
-    reload(path: string): Promise<IpcResult<OpenWorkbookPayload>>;
-    save(payload: { path: string; logs: unknown[] }): Promise<IpcResult<SaveWorkbookPayload>>;
-    saveAs(payload: { sourcePath: string; logs: unknown[] }): Promise<IpcResult<SaveWorkbookPayload | { canceled: true }>>;
+    open(path: string | null, devices?: DeviceLists): Promise<IpcResult<OpenWorkbookPayload | { canceled: true }>>;
+    reload(path: string, devices?: DeviceLists): Promise<IpcResult<OpenWorkbookPayload>>;
+    save(payload: { path: string; logs: unknown[]; devices?: DeviceLists }): Promise<IpcResult<SaveWorkbookPayload>>;
+    saveAs(payload: {
+      sourcePath: string;
+      logs: unknown[];
+      devices?: DeviceLists;
+    }): Promise<IpcResult<SaveWorkbookPayload | { canceled: true }>>;
     checkLock(path: string): Promise<IpcResult<{ locked: boolean; excelOwnerFilePresent: boolean }>>;
-    validate(path: string): Promise<
+    validate(path: string, devices?: DeviceLists): Promise<
       IpcResult<{ health: WorkbookHealth; integrity: ExcelIntegrityReport; validation: WorkbookValidation }>
     >;
   };

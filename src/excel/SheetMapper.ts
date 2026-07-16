@@ -21,6 +21,18 @@ export const DEFAULT_UPS_IDS = [
 
 export const DEFAULT_DC_IDS = ["DC PDB41A", "DC PDB41B", "DC PDB42A", "DC PDB42B"];
 
+/**
+ * Canonical device lists for one facility. Everything in this module takes
+ * them as a parameter (defaulting to the historical RST lists), so device
+ * sets are configuration-driven per facility - never hardcoded site logic.
+ */
+export interface DeviceLists {
+  upsIds: string[];
+  dcIds: string[];
+}
+
+export const DEFAULT_DEVICE_LISTS: DeviceLists = { upsIds: DEFAULT_UPS_IDS, dcIds: DEFAULT_DC_IDS };
+
 export function matchUpsId(a: string, b: string): boolean {
   if (!a || !b) return false;
   const ca = String(a).replace(/\s+/g, "").toLowerCase();
@@ -55,10 +67,10 @@ export interface SheetRow {
   values: Partial<Record<FieldId, string | number | null>>;
 }
 
-export function createEmptyLog(month: string): MonthlyLog {
+export function createEmptyLog(month: string, devices: DeviceLists = DEFAULT_DEVICE_LISTS): MonthlyLog {
   return {
     month,
-    ups: DEFAULT_UPS_IDS.map(id => ({
+    ups: devices.upsIds.map(id => ({
       upsId: id,
       voltage: null,
       current: null,
@@ -66,7 +78,7 @@ export function createEmptyLog(month: string): MonthlyLog {
       loadKva: null
     })),
     air: { eb41a: null, eb41b: null, eb42a: null, eb42b: null },
-    dc: DEFAULT_DC_IDS.map(id => ({ panelId: id, voltage: null, current: null })),
+    dc: devices.dcIds.map(id => ({ panelId: id, voltage: null, current: null })),
     energyCost: { buildingEnergyKwh: null, buildingElectricityCostThb: null },
     lastSavedUps: null,
     lastSavedAir: null,
@@ -80,12 +92,12 @@ export function createEmptyLog(month: string): MonthlyLog {
  * are ignored (reported upstream by the integrity report); missing devices
  * stay at their null defaults.
  */
-export function rowsToLogs(rowsByTab: Record<TabKey, SheetRow[]>): MonthlyLog[] {
+export function rowsToLogs(rowsByTab: Record<TabKey, SheetRow[]>, devices: DeviceLists = DEFAULT_DEVICE_LISTS): MonthlyLog[] {
   const logs = new Map<string, MonthlyLog>();
   const getLog = (month: string): MonthlyLog => {
     let log = logs.get(month);
     if (!log) {
-      log = createEmptyLog(month);
+      log = createEmptyLog(month, devices);
       logs.set(month, log);
     }
     return log;
@@ -140,12 +152,12 @@ export function rowsToLogs(rowsByTab: Record<TabKey, SheetRow[]>): MonthlyLog[] 
  * Expand MonthlyLog[] to the flat row lists the writer emits, in canonical
  * order (months ascending; devices in their canonical order).
  */
-export function logsToRows(logs: MonthlyLog[]): Record<TabKey, SheetRow[]> {
+export function logsToRows(logs: MonthlyLog[], devices: DeviceLists = DEFAULT_DEVICE_LISTS): Record<TabKey, SheetRow[]> {
   const sorted = [...logs].sort((a, b) => a.month.localeCompare(b.month));
   const result: Record<TabKey, SheetRow[]> = { UPS: [], AIR: [], DC: [], ENERGY: [] };
 
   for (const log of sorted) {
-    const orderedUps: UpsRecord[] = DEFAULT_UPS_IDS.map(
+    const orderedUps: UpsRecord[] = devices.upsIds.map(
       id =>
         log.ups.find(u => matchUpsId(u.upsId, id)) ?? {
           upsId: id,
@@ -180,7 +192,7 @@ export function logsToRows(logs: MonthlyLog[]): Record<TabKey, SheetRow[]> {
       }
     });
 
-    const orderedDc: DcRecord[] = DEFAULT_DC_IDS.map(
+    const orderedDc: DcRecord[] = devices.dcIds.map(
       id => log.dc.find(d => matchDcId(d.panelId, id)) ?? { panelId: id, voltage: null, current: null }
     );
     for (const dc of orderedDc) {

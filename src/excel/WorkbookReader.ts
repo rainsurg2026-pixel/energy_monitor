@@ -21,7 +21,7 @@ import {
   resolveSheetNames
 } from "./ExcelSchema";
 import { checkWorkbookVersion } from "./WorkbookVersion";
-import { SheetRow, matchDcId, matchUpsId, rowsToLogs, DEFAULT_UPS_IDS, DEFAULT_DC_IDS } from "./SheetMapper";
+import { DEFAULT_DEVICE_LISTS, DeviceLists, SheetRow, matchDcId, matchUpsId, rowsToLogs } from "./SheetMapper";
 
 export interface WorkbookValidation {
   ok: boolean;
@@ -140,7 +140,7 @@ function parseTab(worksheet: ExcelJS.Worksheet, schema: SheetSchema, validation:
   return parsed;
 }
 
-function buildIntegrityReport(tabs: Record<TabKey, ParsedTab>): ExcelIntegrityReport {
+function buildIntegrityReport(tabs: Record<TabKey, ParsedTab>, devices: DeviceLists): ExcelIntegrityReport {
   const report: ExcelIntegrityReport = {
     duplicateKeys: [],
     missingMonths: [],
@@ -174,8 +174,8 @@ function buildIntegrityReport(tabs: Record<TabKey, ParsedTab>): ExcelIntegrityRe
         const rawId = raw.rawDeviceId ?? "";
         const canonical =
           tab === "UPS"
-            ? DEFAULT_UPS_IDS.find(id => matchUpsId(id, rawId))
-            : DEFAULT_DC_IDS.find(id => matchDcId(id, rawId));
+            ? devices.upsIds.find(id => matchUpsId(id, rawId))
+            : devices.dcIds.find(id => matchDcId(id, rawId));
         if (!canonical) {
           report.invalidIds.push({ tab, rowNumber: raw.rowNumber, rawId });
           continue;
@@ -195,7 +195,7 @@ function buildIntegrityReport(tabs: Record<TabKey, ParsedTab>): ExcelIntegrityRe
 
     // Missing devices per month
     if (isDeviceTab) {
-      const expected = tab === "UPS" ? DEFAULT_UPS_IDS : DEFAULT_DC_IDS;
+      const expected = tab === "UPS" ? devices.upsIds : devices.dcIds;
       const byMonth = new Map<string, string[]>();
       for (const raw of rawRows) {
         if (!raw.month) continue;
@@ -225,7 +225,7 @@ function buildIntegrityReport(tabs: Record<TabKey, ParsedTab>): ExcelIntegrityRe
   return report;
 }
 
-export async function readWorkbookFromBuffer(buffer: Buffer): Promise<WorkbookReadResult> {
+export async function readWorkbookFromBuffer(buffer: Buffer, devices: DeviceLists = DEFAULT_DEVICE_LISTS): Promise<WorkbookReadResult> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
 
@@ -250,15 +250,15 @@ export async function readWorkbookFromBuffer(buffer: Buffer): Promise<WorkbookRe
   validation.ok = validation.errors.length === 0;
 
   const logs = validation.ok
-    ? rowsToLogs({ UPS: tabs.UPS.rows, AIR: tabs.AIR.rows, DC: tabs.DC.rows, ENERGY: tabs.ENERGY.rows })
+    ? rowsToLogs({ UPS: tabs.UPS.rows, AIR: tabs.AIR.rows, DC: tabs.DC.rows, ENERGY: tabs.ENERGY.rows }, devices)
     : [];
 
-  return { logs, validation, integrity: buildIntegrityReport(tabs) };
+  return { logs, validation, integrity: buildIntegrityReport(tabs, devices) };
 }
 
-export async function readWorkbookFromFile(filePath: string): Promise<WorkbookReadResult> {
+export async function readWorkbookFromFile(filePath: string, devices: DeviceLists = DEFAULT_DEVICE_LISTS): Promise<WorkbookReadResult> {
   const buffer = await fs.readFile(filePath);
-  const result = await readWorkbookFromBuffer(buffer);
+  const result = await readWorkbookFromBuffer(buffer, devices);
 
   // Merge sidecar metadata (last-saved timestamps), upgrading it if it came
   // from an older app version.

@@ -4,19 +4,23 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 // Every capability is an explicit, named function - the renderer never gets a
 // raw ipcRenderer, filesystem, or Node API.
 
-const invoke = (channel: string, payload?: unknown) => ipcRenderer.invoke(channel, payload);
+const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args);
 
 const desktopBridge = {
   app: {
     getInfo: () => invoke("app:info")
   },
+  facilities: {
+    list: () => invoke("facilities:list"),
+    setActive: (id: string) => invoke("facilities:setActive", id)
+  },
   excel: {
-    open: (path: string | null) => invoke("excel:open", path),
-    reload: (path: string) => invoke("excel:reload", path),
-    save: (payload: { path: string; logs: unknown[] }) => invoke("excel:save", payload),
-    saveAs: (payload: { sourcePath: string; logs: unknown[] }) => invoke("excel:saveAs", payload),
+    open: (path: string | null, devices?: unknown) => invoke("excel:open", path, devices),
+    reload: (path: string, devices?: unknown) => invoke("excel:reload", path, devices),
+    save: (payload: { path: string; logs: unknown[]; devices?: unknown }) => invoke("excel:save", payload),
+    saveAs: (payload: { sourcePath: string; logs: unknown[]; devices?: unknown }) => invoke("excel:saveAs", payload),
     checkLock: (path: string) => invoke("excel:checkLock", path),
-    validate: (path: string) => invoke("excel:validate", path)
+    validate: (path: string, devices?: unknown) => invoke("excel:validate", path, devices)
   },
   backups: {
     list: (workbookPath: string) => invoke("backup:list", workbookPath),
