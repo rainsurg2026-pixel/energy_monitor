@@ -19,7 +19,7 @@ import type { AppConfig, DeviceLists, FacilityEntry } from "./desktop";
 import FacilitySelector from "./components/FacilitySelector";
 import EntryWorkflowHeader from "./components/EntryWorkflowHeader";
 import StickyEntryToolbar from "./components/StickyEntryToolbar";
-import { EntrySectionApi, computeCompletion } from "./utils/completion";
+import { EntrySectionApi, MissingField, computeCompletion, listMissingFields } from "./utils/completion";
 import ToastHost, { notify } from "./components/Toast";
 import WorkbookBar from "./components/WorkbookBar";
 import WelcomePanel from "./components/WelcomePanel";
@@ -755,6 +755,13 @@ export default function App() {
   const reportDraft = <K extends "ups" | "air" | "dc" | "energy">(name: K) => (draft: unknown) => {
     (draftsRef.current as Record<string, unknown>)[name] = draft;
     setDraftTick(t => t + 1);
+    // Editing a flagged section clears its missing-field highlight.
+    setHighlightSections(prev => {
+      if (!prev.has(name)) return prev;
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
   };
 
   /** The active month's record with any unsaved table drafts overlaid. */
@@ -778,6 +785,39 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [draftTick]
   );
+
+  // RC4: required-field validation. Rules come from the facility profile
+  // (configuration-driven); saves of incomplete records are rejected with a
+  // popup listing every missing field, highlights and scroll-to-first.
+  const [validationIssues, setValidationIssues] = useState<MissingField[] | null>(null);
+  const [highlightSections, setHighlightSections] = useState<Set<string>>(new Set());
+
+  type SectionName = "ups" | "air" | "dc" | "energy";
+
+  const validateSections = (log: MonthlyLog, sections: SectionName[]): MissingField[] => {
+    const rules = activeFacility?.profile.validation;
+    if (!rules || !rules.requireAllFields) return [];
+    const target = sections.filter(sec => rules.requiredSections.includes(sec));
+    if (target.length === 0) return [];
+    return listMissingFields(log).filter(m => target.includes(m.section));
+  };
+
+  const raiseValidation = (fields: MissingField[]) => {
+    setValidationIssues(fields);
+    setHighlightSections(new Set(fields.map(f => f.section)));
+  };
+
+  const closeValidation = () => {
+    const first = validationIssues?.[0];
+    setValidationIssues(null);
+    if (first) {
+      document.getElementById(`entry-section-${first.section}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setTimeout(() => {
+        const input = document.querySelector<HTMLInputElement>(`#entry-section-${first.section} input:placeholder-shown`);
+        input?.focus();
+      }, 450);
+    }
+  };
 
   const handleWorkflowSelectMonth = (month: string, exists: boolean) => {
     if (exists) {
@@ -803,6 +843,10 @@ export default function App() {
   };
 
   const handleToolbarSave = () => {
+    if (draftActiveLog) {
+      const missing = validateSections(draftActiveLog, ["ups", "air", "dc", "energy"]);
+      if (missing.length > 0) return raiseValidation(missing);
+    }
     const isHistorical = selectedMonth !== maxMonth;
     if (isHistorical || editingMonth) {
       // One confirmation for the whole batch (not one per section).
@@ -953,6 +997,10 @@ export default function App() {
 
   const handleSaveUps = (records: UpsRecord[]) => {
     if (!activeLog) return;
+    if (!batchSaveRef.current) {
+      const missing = validateSections({ ...activeLog, ups: records }, ["ups"]);
+      if (missing.length > 0) return raiseValidation(missing);
+    }
     const isHistorical = selectedMonth !== maxMonth;
     const saveAction = () => {
       const timestamp = formatTimestamp(new Date());
@@ -974,6 +1022,10 @@ export default function App() {
 
   const handleSaveAir = (record: AirRecord) => {
     if (!activeLog) return;
+    if (!batchSaveRef.current) {
+      const missing = validateSections({ ...activeLog, air: record }, ["air"]);
+      if (missing.length > 0) return raiseValidation(missing);
+    }
     const isHistorical = selectedMonth !== maxMonth;
     const saveAction = () => {
       const timestamp = formatTimestamp(new Date());
@@ -995,6 +1047,10 @@ export default function App() {
 
   const handleSaveDc = (records: DcRecord[]) => {
     if (!activeLog) return;
+    if (!batchSaveRef.current) {
+      const missing = validateSections({ ...activeLog, dc: records }, ["dc"]);
+      if (missing.length > 0) return raiseValidation(missing);
+    }
     const isHistorical = selectedMonth !== maxMonth;
     const saveAction = () => {
       const timestamp = formatTimestamp(new Date());
@@ -1016,6 +1072,10 @@ export default function App() {
 
   const handleSaveEnergyCost = (record: EnergyCostRecord) => {
     if (!activeLog) return;
+    if (!batchSaveRef.current) {
+      const missing = validateSections({ ...activeLog, energyCost: record }, ["energy"]);
+      if (missing.length > 0) return raiseValidation(missing);
+    }
     const isHistorical = selectedMonth !== maxMonth;
     const saveAction = () => {
       const timestamp = formatTimestamp(new Date());
@@ -1386,7 +1446,7 @@ export default function App() {
               <div className="space-y-8">
                 
                 {/* UPS Logging Section */}
-                <div id="entry-section-ups">
+                <div id="entry-section-ups" className={highlightSections.has("ups") ? "highlight-missing" : ""}>
                   <UpsTable
                     monthStr={selectedMonth}
                     initialRecords={activeLog.ups}
@@ -1398,7 +1458,7 @@ export default function App() {
                 </div>
 
                 {/* Air Conditioning section */}
-                <div id="entry-section-air">
+                <div id="entry-section-air" className={highlightSections.has("air") ? "highlight-missing" : ""}>
                   <AirTable
                     monthStr={selectedMonth}
                     initialRecord={activeLog.air}
@@ -1410,7 +1470,7 @@ export default function App() {
                 </div>
 
                 {/* DC Power Panel section */}
-                <div id="entry-section-dc">
+                <div id="entry-section-dc" className={highlightSections.has("dc") ? "highlight-missing" : ""}>
                   <DcTable
                     monthStr={selectedMonth}
                     initialRecords={activeLog.dc}
@@ -1422,7 +1482,7 @@ export default function App() {
                 </div>
 
                 {/* Building Energy & Cost section */}
-                <div id="entry-section-energy">
+                <div id="entry-section-energy" className={highlightSections.has("energy") ? "highlight-missing" : ""}>
                   <EnergyCostTable
                     monthStr={selectedMonth}
                     initialRecord={activeLog.energyCost}
@@ -1821,6 +1881,60 @@ export default function App() {
                     {lang === "th" ? "ลองอีกครั้ง" : "Retry"}
                   </button>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- INCOMPLETE DATA VALIDATION POPUP (RC4) --- */}
+      <AnimatePresence>
+        {validationIssues && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-slate-100 text-base">
+                      {lang === "th" ? "ข้อมูลไม่ครบถ้วน" : "Incomplete Data"}
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-semibold font-mono uppercase tracking-wider mt-0.5">
+                      {validationIssues.length} {lang === "th" ? "ช่องที่ยังว่าง" : "missing fields"} · {formatMonthYear(selectedMonth)}
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-xs leading-relaxed text-slate-300">
+                  {lang === "th"
+                    ? "กรุณากรอกข้อมูลให้ครบทุกช่องที่จำเป็นก่อนบันทึก ระบบจะไม่บันทึกข้อมูลที่ไม่สมบูรณ์"
+                    : "Please complete all required fields. Incomplete records are never saved."}
+                </p>
+
+                <div className="max-h-56 overflow-y-auto bg-slate-950/50 border border-slate-850 rounded-xl p-3 space-y-1">
+                  {validationIssues.map((f, i) => (
+                    <p key={i} className="text-[11px] text-rose-300 font-mono flex items-center gap-2">
+                      <span className="w-1 h-1 bg-rose-500 rounded-full shrink-0" />
+                      <span className="uppercase text-[9px] font-bold text-slate-500 w-14 shrink-0">{f.section}</span>
+                      {f.label}
+                    </p>
+                  ))}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeValidation}
+                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-bold rounded-xl text-white shadow-lg shadow-indigo-600/15 transition-all cursor-pointer"
+                >
+                  {lang === "th" ? "ไปยังช่องแรกที่ยังว่าง" : "Go to first missing field"}
+                </button>
               </div>
             </motion.div>
           </div>

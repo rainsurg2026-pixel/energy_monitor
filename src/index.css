@@ -15,6 +15,12 @@
  * through CSS variables, so remapping the slate scale on the root flips the
  * whole app. Charts keep their own series colors and remain dark-optimized.
  */
+/* RC4: sections failing save-validation outline their empty inputs. */
+.highlight-missing input:placeholder-shown {
+  border-color: rgb(244 63 94 / 0.75) !important;
+  box-shadow: 0 0 0 1px rgb(244 63 94 / 0.4);
+}
+
 html.theme-light {
   --color-slate-950: #eef2f7;
   --color-slate-900: #ffffff;
