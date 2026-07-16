@@ -207,7 +207,6 @@ export default function UniversalFilterBar({ onExport, lang }: UniversalFilterBa
               <option value="Last 3 Months">{t.last3}</option>
               <option value="Last 6 Months">{t.last6}</option>
               <option value="Last 12 Months">{t.last12}</option>
-              <option value="Rolling Window">{t.rollingWindow}</option>
             </select>
             <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>

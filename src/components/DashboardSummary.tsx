@@ -25,7 +25,7 @@ interface DashboardSummaryProps {
   googleUserEmail?: string | null;
 }
 
-type TrendPeriod = "monthly" | "quarterly" | "annual";
+type TrendPeriod = "last3" | "last6" | "last12";
 type TrendMetric = "total_energy" | "ups_energy" | "air_energy" | "dc_energy" | "floor_cost" | "electricity_rate";
 
 // Helper to calculate days in month
@@ -51,7 +51,7 @@ function getPreviousMonthStr(monthStr: string): string {
 }
 
 export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleConnected = false, googleUserEmail = null }: DashboardSummaryProps) {
-  const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>("monthly");
+  const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>("last12");
   const [trendMetric, setTrendMetric] = useState<TrendMetric>("total_energy");
   // RC3: sections are always expanded (no hidden accordion).
 
@@ -108,9 +108,9 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
       // Trend Section
       trendTitle: "เทรนด์และสถิติย้อนหลัง",
       trendDesc: "วิเคราะห์การใช้พลังงานแบบแยกประเภท เลือกช่วงเวลาเปรียบเทียบได้ตามต้องการ",
-      monthly: "รายเดือน",
-      quarterly: "รายไตรมาส",
-      annual: "รายปี",
+      last3: "ย้อนหลัง 3 เดือน",
+      last6: "ย้อนหลัง 6 เดือน",
+      last12: "ย้อนหลัง 12 เดือน",
       metricLabel: "เลือกตัวชี้วัด",
       
       // Metric translations
@@ -175,9 +175,9 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
       // Trend Section
       trendTitle: "Trend Analytics & Historical Charts",
       trendDesc: "Interactive trends across facility parameters by custom duration blocks.",
-      monthly: "Monthly",
-      quarterly: "Quarterly",
-      annual: "Annual",
+      last3: "Last 3 Months",
+      last6: "Last 6 Months",
+      last12: "Last 12 Months",
       metricLabel: "Select Parameter",
       
       // Metric translations
@@ -447,78 +447,18 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
       };
     });
 
-    if (trendPeriod === "monthly") {
-      return processedMonths.map(d => ({
-        label: d.monthLabel,
-        value: 
-          trendMetric === "total_energy" ? d.totalEnergy :
-          trendMetric === "ups_energy" ? d.upsKwh :
-          trendMetric === "air_energy" ? d.airKwh :
-          trendMetric === "dc_energy" ? d.dcKwh :
-          trendMetric === "floor_cost" ? d.floorCost :
-          d.rate
-      }));
-    } else if (trendPeriod === "quarterly") {
-      // Group by Quarter
-      const quartersMap: Record<string, typeof processedMonths> = {};
-      processedMonths.forEach(d => {
-        if (!quartersMap[d.quarter]) quartersMap[d.quarter] = [];
-        quartersMap[d.quarter].push(d);
-      });
-
-      return Object.entries(quartersMap).map(([qKey, items]) => {
-        const sumTotalEnergy = items.reduce((acc, i) => acc + i.totalEnergy, 0);
-        const sumUps = items.reduce((acc, i) => acc + i.upsKwh, 0);
-        const sumAir = items.reduce((acc, i) => acc + i.airKwh, 0);
-        const sumDc = items.reduce((acc, i) => acc + i.dcKwh, 0);
-        const sumFloorCost = items.reduce((acc, i) => acc + i.floorCost, 0);
-        
-        const sumBEnergy = items.reduce((acc, i) => acc + i.bEnergy, 0);
-        const sumBCost = items.reduce((acc, i) => acc + i.bCost, 0);
-        const avgRate = sumBEnergy > 0 ? sumBCost / sumBEnergy : 0;
-
-        return {
-          label: qKey,
-          value: 
-            trendMetric === "total_energy" ? sumTotalEnergy :
-            trendMetric === "ups_energy" ? sumUps :
-            trendMetric === "air_energy" ? sumAir :
-            trendMetric === "dc_energy" ? sumDc :
-            trendMetric === "floor_cost" ? sumFloorCost :
-            avgRate
-        };
-      }).sort((a, b) => a.label.localeCompare(b.label));
-    } else {
-      // Annual
-      const yearsMap: Record<number, typeof processedMonths> = {};
-      processedMonths.forEach(d => {
-        if (!yearsMap[d.year]) yearsMap[d.year] = [];
-        yearsMap[d.year].push(d);
-      });
-
-      return Object.entries(yearsMap).map(([yKey, items]) => {
-        const sumTotalEnergy = items.reduce((acc, i) => acc + i.totalEnergy, 0);
-        const sumUps = items.reduce((acc, i) => acc + i.upsKwh, 0);
-        const sumAir = items.reduce((acc, i) => acc + i.airKwh, 0);
-        const sumDc = items.reduce((acc, i) => acc + i.dcKwh, 0);
-        const sumFloorCost = items.reduce((acc, i) => acc + i.floorCost, 0);
-        
-        const sumBEnergy = items.reduce((acc, i) => acc + i.bEnergy, 0);
-        const sumBCost = items.reduce((acc, i) => acc + i.bCost, 0);
-        const avgRate = sumBEnergy > 0 ? sumBCost / sumBEnergy : 0;
-
-        return {
-          label: yKey,
-          value: 
-            trendMetric === "total_energy" ? sumTotalEnergy :
-            trendMetric === "ups_energy" ? sumUps :
-            trendMetric === "air_energy" ? sumAir :
-            trendMetric === "dc_energy" ? sumDc :
-            trendMetric === "floor_cost" ? sumFloorCost :
-            avgRate
-        };
-      }).sort((a, b) => a.label.localeCompare(b.label));
-    }
+    // Rolling windows only (RC5): the last 3/6/12 months, monthly points.
+    const windowSize = trendPeriod === "last3" ? 3 : trendPeriod === "last6" ? 6 : 12;
+    return processedMonths.slice(-windowSize).map(d => ({
+      label: d.monthLabel,
+      value:
+        trendMetric === "total_energy" ? d.totalEnergy :
+        trendMetric === "ups_energy" ? d.upsKwh :
+        trendMetric === "air_energy" ? d.airKwh :
+        trendMetric === "dc_energy" ? d.dcKwh :
+        trendMetric === "floor_cost" ? d.floorCost :
+        d.rate
+    }));
   }, [logs, trendPeriod, trendMetric]);
 
   const maxTrendVal = useMemo(() => {
@@ -969,9 +909,9 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
           <div className="flex p-1 bg-slate-950 rounded-xl border border-slate-850">
             {(
               [
-                { id: "monthly", label: t.monthly },
-                { id: "quarterly", label: t.quarterly },
-                { id: "annual", label: t.annual }
+                { id: "last3", label: t.last3 },
+                { id: "last6", label: t.last6 },
+                { id: "last12", label: t.last12 }
               ] as const
             ).map((p) => (
               <button
