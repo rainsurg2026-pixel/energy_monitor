@@ -1,20 +1,46 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Data Center Energy & Facility Monitor — "Energy Monitor"
 
-# Run and deploy your AI Studio app
+Offline-first **portable Windows desktop application** for monthly data
+center power & energy logging, reporting and forecasting. The Excel workbook
+**`RST_Dashboard.xlsm` is the primary database** — the app reads and writes
+it directly while preserving its VBA macros, pivot tables, charts and Excel
+Tables. Google Sheets sync remains available as an optional secondary
+provider, and the original browser build still works unchanged.
 
-This contains everything you need to run your app locally.
+## Quick start (development)
 
-View your app in AI Studio: https://ai.studio/apps/6be0d55d-8157-4944-904e-859176aaa434
+```bash
+npm install
+npm run desktop:dev     # Electron + Vite dev server (HMR)
+npm run dev             # browser build (legacy Google Sheets mode)
+```
 
-## Run Locally
+## Building the portable app
 
-**Prerequisites:**  Node.js
+```bash
+npm run portable        # → release/Energy Monitor.exe
+npm run portable:zip    # → release/EnergyMonitor_Portable.zip
+```
 
+Extract the ZIP anywhere and double-click `Energy Monitor.exe` — no
+installer, no admin rights, fully offline. Config, backups, logs and exports
+live beside the executable.
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Verification
+
+```bash
+npm run lint            # typecheck renderer + main process
+npm run test:excel      # 35-assertion workbook round-trip (VBA/pivot safety)
+npm run test:e2e        # CDP-driven UI walkthrough of the built app
+```
+
+## Documentation
+
+Full docs in [`docs/desktop/`](docs/desktop/README.md): User Guide,
+Developer Guide, Deployment Guide, Architecture (system/IPC/data-flow
+diagrams), Migration Summary, Regression Report, Production Readiness.
+
+> Note: `docs/` also contains extensive platform-vision documents from an
+> earlier planning phase (Supabase/Next.js multi-tenant platform). Those do
+> **not** describe this application — for the current architecture see
+> `docs/desktop/ARCHITECTURE.md`.
