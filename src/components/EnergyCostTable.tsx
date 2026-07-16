@@ -2,19 +2,26 @@ import { useState, useEffect } from "react";
 import { EnergyCostRecord } from "../types";
 import { Save, Check, RotateCcw } from "lucide-react";
 import { formatMonthYear } from "../utils";
+import { EntrySectionApi } from "../utils/completion";
 
 interface EnergyCostTableProps {
   monthStr: string;
   initialRecord: EnergyCostRecord;
   lastSaved: string | null;
   onSave: (record: EnergyCostRecord) => void;
+  /** RC3: register imperative save/reset for the sticky toolbar. */
+  registerApi?: (api: EntrySectionApi | null) => void;
+  /** RC3/RC4: live draft updates for completion + validation. */
+  onDraftChange?: (draft: EnergyCostRecord) => void;
 }
 
 export default function EnergyCostTable({
   monthStr,
   initialRecord,
   lastSaved,
-  onSave
+  onSave,
+  registerApi,
+  onDraftChange
 }: EnergyCostTableProps) {
   const [record, setRecord] = useState<EnergyCostRecord>({
     buildingEnergyKwh: null,
@@ -41,6 +48,28 @@ export default function EnergyCostTable({
       setRecord(prev => ({ ...prev, [field]: isNaN(parsed) ? null : parsed }));
     }
   };
+
+  // RC3: expose commit/reset to the sticky toolbar; report live drafts.
+  useEffect(() => {
+    registerApi?.({
+      commit: () => {
+        if (hasChanges) handleSaveRef.current();
+      },
+      reset: () => handleResetRef.current(),
+      hasChanges: () => hasChangesRef.current
+    });
+  });
+  useEffect(() => {
+    return () => registerApi?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    onDraftChange?.(record);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [record]);
+  const hasChangesRef = { current: hasChanges };
+  const handleSaveRef = { current: () => handleSave() };
+  const handleResetRef = { current: () => handleReset() };
 
   const handleSave = () => {
     onSave(record);

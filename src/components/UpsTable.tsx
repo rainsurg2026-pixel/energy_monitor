@@ -3,19 +3,26 @@ import { UpsRecord } from "../types";
 import { Save, Check, RotateCcw, AlertCircle } from "lucide-react";
 import { motion } from "motion/react";
 import { formatMonthYear } from "../utils";
+import { EntrySectionApi } from "../utils/completion";
 
 interface UpsTableProps {
   monthStr: string;
   initialRecords: UpsRecord[];
   lastSaved: string | null;
   onSave: (records: UpsRecord[]) => void;
+  /** RC3: register imperative save/reset for the sticky toolbar. */
+  registerApi?: (api: EntrySectionApi | null) => void;
+  /** RC3/RC4: live draft updates for completion + validation. */
+  onDraftChange?: (draft: UpsRecord[]) => void;
 }
 
 export default function UpsTable({
   monthStr,
   initialRecords,
   lastSaved,
-  onSave
+  onSave,
+  registerApi,
+  onDraftChange
 }: UpsTableProps) {
   const [records, setRecords] = useState<UpsRecord[]>([]);
   const [isSaved, setIsSaved] = useState(false);
@@ -61,6 +68,28 @@ export default function UpsTable({
 
     setRecords(updated);
   };
+
+  // RC3: expose commit/reset to the sticky toolbar; report live drafts.
+  useEffect(() => {
+    registerApi?.({
+      commit: () => {
+        if (hasChanges) handleSaveRef.current();
+      },
+      reset: () => handleResetRef.current(),
+      hasChanges: () => hasChangesRef.current
+    });
+  });
+  useEffect(() => {
+    return () => registerApi?.(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    onDraftChange?.(records);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [records]);
+  const hasChangesRef = { current: hasChanges };
+  const handleSaveRef = { current: () => handleSave() };
+  const handleResetRef = { current: () => handleReset() };
 
   const handleSave = () => {
     onSave(records);

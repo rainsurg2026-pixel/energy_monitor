@@ -18,7 +18,8 @@ import { getDesktopBridge } from "./data/ProviderFactory";
 import type { AppConfig, DeviceLists, FacilityEntry } from "./desktop";
 import FacilitySelector from "./components/FacilitySelector";
 import EntryWorkflowHeader from "./components/EntryWorkflowHeader";
-import { computeCompletion } from "./utils/completion";
+import StickyEntryToolbar from "./components/StickyEntryToolbar";
+import { EntrySectionApi, computeCompletion } from "./utils/completion";
 import ToastHost, { notify } from "./components/Toast";
 import WorkbookBar from "./components/WorkbookBar";
 import WelcomePanel from "./components/WelcomePanel";
@@ -153,6 +154,7 @@ export default function App() {
   const [isDirty, setIsDirty] = useState(false);
   const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
   const [lockRetry, setLockRetry] = useState<(() => void) | null>(null);
+  const [lastPersistAt, setLastPersistAt] = useState<string | null>(null);
   const [recoveryOffer, setRecoveryOffer] = useState<RecoverySnapshot | null>(null);
 
   // --- MULTI-FACILITY (RC1) ---
@@ -404,6 +406,7 @@ export default function App() {
       applyWorkbookSnapshot(snap);
       // A committed save supersedes any crash-recovery journal.
       void desktopBridge?.recovery.clear();
+      setLastPersistAt(formatTimestamp(new Date()));
       const backupName = outcome.backupPath ? outcome.backupPath.split(/[\\/]/).pop() : null;
       notify(
         "success",
@@ -738,8 +741,43 @@ export default function App() {
   // RC2 workflow: picking a month with no record offers to create it.
   const [pendingCreateMonth, setPendingCreateMonth] = useState<string | null>(null);
 
-  /** Entry completion for the active month (live drafts arrive with RC4). */
-  const entryCompletion = useMemo(() => computeCompletion(activeLog), [activeLog]);
+  // RC3: entry sections register commit/reset APIs; drafts feed live
+  // completion; batch saves suppress per-section persistence so the sticky
+  // toolbar writes the workbook exactly once.
+  const sectionApisRef = useRef<Record<string, EntrySectionApi | null>>({});
+  const draftsRef = useRef<{ ups?: UpsRecord[]; air?: AirRecord; dc?: DcRecord[]; energy?: EnergyCostRecord }>({});
+  const [draftTick, setDraftTick] = useState(0);
+  const batchSaveRef = useRef(false);
+
+  const registerSection = (name: "ups" | "air" | "dc" | "energy") => (api: EntrySectionApi | null) => {
+    sectionApisRef.current[name] = api;
+  };
+  const reportDraft = <K extends "ups" | "air" | "dc" | "energy">(name: K) => (draft: unknown) => {
+    (draftsRef.current as Record<string, unknown>)[name] = draft;
+    setDraftTick(t => t + 1);
+  };
+
+  /** The active month's record with any unsaved table drafts overlaid. */
+  const draftActiveLog = useMemo<MonthlyLog | null>(() => {
+    if (!activeLog) return null;
+    return {
+      ...activeLog,
+      ups: draftsRef.current.ups ?? activeLog.ups,
+      air: draftsRef.current.air ?? activeLog.air,
+      dc: draftsRef.current.dc ?? activeLog.dc,
+      energyCost: draftsRef.current.energy ?? activeLog.energyCost
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLog, draftTick]);
+
+  /** Live entry completion for the active month (drafts included). */
+  const entryCompletion = useMemo(() => computeCompletion(draftActiveLog), [draftActiveLog]);
+
+  const hasDraftChanges = useMemo(
+    () => Object.values(sectionApisRef.current).some((api: EntrySectionApi | null) => api?.hasChanges()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [draftTick]
+  );
 
   const handleWorkflowSelectMonth = (month: string, exists: boolean) => {
     if (exists) {
@@ -747,6 +785,51 @@ export default function App() {
     } else {
       setPendingCreateMonth(month);
     }
+  };
+
+  /** Sticky toolbar Save: commit every section's draft, then persist once. */
+  const runBatchSave = () => {
+    batchSaveRef.current = true;
+    try {
+      Object.values(sectionApisRef.current).forEach((api: EntrySectionApi | null) => api?.commit());
+    } finally {
+      batchSaveRef.current = false;
+    }
+    if (isDesktopApp && workbook) {
+      void persistWorkbook();
+    } else {
+      reloadData();
+    }
+  };
+
+  const handleToolbarSave = () => {
+    const isHistorical = selectedMonth !== maxMonth;
+    if (isHistorical || editingMonth) {
+      // One confirmation for the whole batch (not one per section).
+      setPendingSave({ type: "ups", execute: runBatchSave });
+    } else {
+      runBatchSave();
+    }
+  };
+
+  const handleToolbarReset = () => {
+    Object.values(sectionApisRef.current).forEach((api: EntrySectionApi | null) => api?.reset());
+  };
+
+  /** Toolbar Export: active month as JSON (upgraded to the Export Center in RC6). */
+  const handleToolbarExport = () => {
+    if (!desktopBridge || !draftActiveLog) return;
+    const facility = activeFacility?.name ?? "Facility";
+    void desktopBridge
+      .exportFile({
+        defaultName: `${facility}_${selectedMonth}_Entry.json`,
+        content: JSON.stringify(draftActiveLog, null, 2)
+      })
+      .then(result => {
+        if (result.ok && !("canceled" in result)) {
+          notify("success", lang === "th" ? `ส่งออกแล้ว: ${(result as { path: string }).path}` : `Exported: ${(result as { path: string }).path}`);
+        }
+      });
   };
 
   const confirmCreateMonth = () => {
@@ -858,6 +941,9 @@ export default function App() {
   // workbook (with backup + lock handling); the browser build keeps the
   // original in-memory + Google Sheets behavior.
   const commitEntrySave = () => {
+    // During a toolbar batch save, sections only update the in-memory store;
+    // the toolbar persists the workbook once at the end.
+    if (batchSaveRef.current) return;
     if (isDesktopApp && workbook) {
       void persistWorkbook();
     } else {
@@ -879,7 +965,7 @@ export default function App() {
       commitEntrySave();
     };
 
-    if (isHistorical || editingMonth) {
+    if ((isHistorical || editingMonth) && !batchSaveRef.current) {
       setPendingSave({ type: "ups", execute: saveAction });
     } else {
       saveAction();
@@ -900,7 +986,7 @@ export default function App() {
       commitEntrySave();
     };
 
-    if (isHistorical || editingMonth) {
+    if ((isHistorical || editingMonth) && !batchSaveRef.current) {
       setPendingSave({ type: "air", execute: saveAction });
     } else {
       saveAction();
@@ -921,7 +1007,7 @@ export default function App() {
       commitEntrySave();
     };
 
-    if (isHistorical || editingMonth) {
+    if ((isHistorical || editingMonth) && !batchSaveRef.current) {
       setPendingSave({ type: "dc", execute: saveAction });
     } else {
       saveAction();
@@ -942,7 +1028,7 @@ export default function App() {
       commitEntrySave();
     };
 
-    if (isHistorical || editingMonth) {
+    if ((isHistorical || editingMonth) && !batchSaveRef.current) {
       setPendingSave({ type: "energy", execute: saveAction });
     } else {
       saveAction();
@@ -1221,7 +1307,7 @@ export default function App() {
           />
         )}
         {currentView === "entry" && !(isDesktopApp && !workbook) && (
-          <div className="space-y-8">
+          <div className="space-y-8 pb-24">
             {/* WORKBOOK STATUS & FILE ACTIONS (desktop) */}
             {isDesktopApp && workbook && (
               <WorkbookBar
@@ -1300,36 +1386,52 @@ export default function App() {
               <div className="space-y-8">
                 
                 {/* UPS Logging Section */}
-                <UpsTable
-                  monthStr={selectedMonth}
-                  initialRecords={activeLog.ups}
-                  lastSaved={activeLog.lastSavedUps}
-                  onSave={handleSaveUps}
-                />
+                <div id="entry-section-ups">
+                  <UpsTable
+                    monthStr={selectedMonth}
+                    initialRecords={activeLog.ups}
+                    lastSaved={activeLog.lastSavedUps}
+                    onSave={handleSaveUps}
+                    registerApi={registerSection("ups")}
+                    onDraftChange={reportDraft("ups")}
+                  />
+                </div>
 
                 {/* Air Conditioning section */}
-                <AirTable
-                  monthStr={selectedMonth}
-                  initialRecord={activeLog.air}
-                  lastSaved={activeLog.lastSavedAir}
-                  onSave={handleSaveAir}
-                />
+                <div id="entry-section-air">
+                  <AirTable
+                    monthStr={selectedMonth}
+                    initialRecord={activeLog.air}
+                    lastSaved={activeLog.lastSavedAir}
+                    onSave={handleSaveAir}
+                    registerApi={registerSection("air")}
+                    onDraftChange={reportDraft("air")}
+                  />
+                </div>
 
                 {/* DC Power Panel section */}
-                <DcTable
-                  monthStr={selectedMonth}
-                  initialRecords={activeLog.dc}
-                  lastSaved={activeLog.lastSavedDc}
-                  onSave={handleSaveDc}
-                />
+                <div id="entry-section-dc">
+                  <DcTable
+                    monthStr={selectedMonth}
+                    initialRecords={activeLog.dc}
+                    lastSaved={activeLog.lastSavedDc}
+                    onSave={handleSaveDc}
+                    registerApi={registerSection("dc")}
+                    onDraftChange={reportDraft("dc")}
+                  />
+                </div>
 
                 {/* Building Energy & Cost section */}
-                <EnergyCostTable
-                  monthStr={selectedMonth}
-                  initialRecord={activeLog.energyCost}
-                  lastSaved={activeLog.lastSavedEnergyCost}
-                  onSave={handleSaveEnergyCost}
-                />
+                <div id="entry-section-energy">
+                  <EnergyCostTable
+                    monthStr={selectedMonth}
+                    initialRecord={activeLog.energyCost}
+                    lastSaved={activeLog.lastSavedEnergyCost}
+                    onSave={handleSaveEnergyCost}
+                    registerApi={registerSection("energy")}
+                    onDraftChange={reportDraft("energy")}
+                  />
+                </div>
 
               </div>
             ) : (
@@ -1363,6 +1465,37 @@ export default function App() {
             {/* DATA MANAGEMENT BAR (browser build only - the desktop app
                 manages its database through the workbook + backups) */}
             {!isDesktopApp && <DataManagement onDataChange={reloadData} />}
+
+            {/* STICKY BOTTOM TOOLBAR (RC3) */}
+            <StickyEntryToolbar
+              lang={lang}
+              completion={entryCompletion}
+              lastSaved={
+                lastPersistAt ??
+                activeLog?.lastSavedUps ??
+                activeLog?.lastSavedAir ??
+                activeLog?.lastSavedDc ??
+                activeLog?.lastSavedEnergyCost ??
+                null
+              }
+              workbookStatus={
+                !isDesktopApp
+                  ? "saved"
+                  : !workbook
+                    ? "none"
+                    : isWorkbookBusy
+                      ? "busy"
+                      : workbook.lock?.locked || workbook.lock?.excelOwnerFilePresent
+                        ? "locked"
+                        : isDirty || hasDraftChanges
+                          ? "dirty"
+                          : "saved"
+              }
+              hasDraftChanges={hasDraftChanges || isDirty}
+              onSaveAll={handleToolbarSave}
+              onResetAll={handleToolbarReset}
+              onExport={handleToolbarExport}
+            />
           </div>
         )}
 

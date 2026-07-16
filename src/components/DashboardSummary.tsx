@@ -53,7 +53,7 @@ function getPreviousMonthStr(monthStr: string): string {
 export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleConnected = false, googleUserEmail = null }: DashboardSummaryProps) {
   const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>("monthly");
   const [trendMetric, setTrendMetric] = useState<TrendMetric>("total_energy");
-  const [expandedSection, setExpandedSection] = useState<string | null>("ups");
+  // RC3: sections are always expanded (no hidden accordion).
 
   const dict = {
     th: {
@@ -645,17 +645,17 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
         {/* SECTION 1: UPS LOAD STATUS */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
-            onClick={() => setExpandedSection(expandedSection === "ups" ? null : "ups")}
+            type="button"
             className="w-full px-5 py-4 flex justify-between items-center bg-slate-900 hover:bg-slate-850 transition-colors text-left font-display font-bold text-slate-200 cursor-pointer text-sm"
           >
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-indigo-400 shrink-0" />
               <span>{t.upsSection}</span>
             </div>
-            {expandedSection === "ups" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            
           </button>
 
-          {expandedSection === "ups" && (
+          {(
             <div className="p-5 border-t border-slate-850 bg-slate-950/40 space-y-6">
               
               {/* Table 1: Summary UPS */}
@@ -784,17 +784,17 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
         {/* SECTION 2: AIR CONDITIONING */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
-            onClick={() => setExpandedSection(expandedSection === "air" ? null : "air")}
+            type="button"
             className="w-full px-5 py-4 flex justify-between items-center bg-slate-900 hover:bg-slate-850 transition-colors text-left font-display font-bold text-slate-200 cursor-pointer text-sm"
           >
             <div className="flex items-center gap-2">
               <Thermometer className="w-4 h-4 text-teal-400 shrink-0" />
               <span>{t.airSection}</span>
             </div>
-            {expandedSection === "air" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            
           </button>
 
-          {expandedSection === "air" && (
+          {(
             <div className="p-5 border-t border-slate-850 bg-slate-950/40 space-y-4">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs font-sans">
@@ -849,17 +849,17 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
         {/* SECTION 3: DC POWER PANELS */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
-            onClick={() => setExpandedSection(expandedSection === "dc" ? null : "dc")}
+            type="button"
             className="w-full px-5 py-4 flex justify-between items-center bg-slate-900 hover:bg-slate-850 transition-colors text-left font-display font-bold text-slate-200 cursor-pointer text-sm"
           >
             <div className="flex items-center gap-2">
               <Database className="w-4 h-4 text-amber-400 shrink-0" />
               <span>{t.dcSection}</span>
             </div>
-            {expandedSection === "dc" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            
           </button>
 
-          {expandedSection === "dc" && (
+          {(
             <div className="p-5 border-t border-slate-850 bg-slate-950/40 space-y-4">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs font-sans">
@@ -908,17 +908,17 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
         {/* SECTION 4: OVERALL ENERGY & COST */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
-            onClick={() => setExpandedSection(expandedSection === "overall" ? null : "overall")}
+            type="button"
             className="w-full px-5 py-4 flex justify-between items-center bg-slate-900 hover:bg-slate-850 transition-colors text-left font-display font-bold text-slate-200 cursor-pointer text-sm"
           >
             <div className="flex items-center gap-2">
               <Coins className="w-4 h-4 text-emerald-400 shrink-0" />
               <span>{t.overallSection}</span>
             </div>
-            {expandedSection === "overall" ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            
           </button>
 
-          {expandedSection === "overall" && (
+          {(
             <div className="p-5 border-t border-slate-850 bg-slate-950/40 space-y-4">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs font-sans">

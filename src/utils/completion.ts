@@ -25,6 +25,16 @@ export interface MissingField {
   label: string;
 }
 
+/**
+ * Imperative surface each entry table registers with the App so the sticky
+ * toolbar (RC3) can Save/Reset all sections at once.
+ */
+export interface EntrySectionApi {
+  commit: () => void;
+  reset: () => void;
+  hasChanges: () => boolean;
+}
+
 const isFilled = (v: number | null | undefined): boolean => v !== null && v !== undefined && !Number.isNaN(v);
 
 function section(filled: number, total: number): SectionCompletion {
