@@ -12,6 +12,13 @@ import {
 } from "./utils";
 import { importLogsFromGoogleSheets, DEFAULT_SPREADSHEET_ID } from "./sheetsService";
 import { MonthlyLog, SecurityConfig, UpsRecord, AirRecord, DcRecord, EnergyCostRecord } from "./types";
+import { DataSnapshot, ProviderError } from "./data/IDataProvider";
+import { ExcelProvider } from "./data/ExcelProvider";
+import { getDesktopBridge } from "./data/ProviderFactory";
+import type { AppConfig } from "./desktop";
+import ToastHost, { notify } from "./components/Toast";
+import WorkbookBar from "./components/WorkbookBar";
+import WelcomePanel from "./components/WelcomePanel";
 import DashboardStats from "./components/DashboardStats";
 import UpsTable from "./components/UpsTable";
 import AirTable from "./components/AirTable";
@@ -126,6 +133,18 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [activeLog, setActiveLog] = useState<MonthlyLog | null>(null);
   const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "history">("dashboard");
+
+  // --- DESKTOP (EXCEL WORKBOOK) SESSION ---
+  // In the desktop app the Excel workbook is the primary data source; the
+  // Google Sheets pipeline below remains the browser fallback / optional sync.
+  const desktopBridge = useMemo(() => getDesktopBridge(), []);
+  const isDesktopApp = desktopBridge !== null;
+  const excelProvider = useMemo(() => (desktopBridge ? new ExcelProvider(desktopBridge) : null), [desktopBridge]);
+  const [workbook, setWorkbook] = useState<DataSnapshot | null>(null);
+  const [isWorkbookBusy, setIsWorkbookBusy] = useState(false);
+  const [isDirty, setIsDirty] = useState(false);
+  const [appConfig, setAppConfig] = useState<AppConfig | null>(null);
+  const [lockRetry, setLockRetry] = useState<(() => void) | null>(null);
   
   // Google Sheets state shared globally
   const [isGoogleConnected, setIsGoogleConnected] = useState(false);
@@ -266,6 +285,147 @@ export default function App() {
     localStorage.setItem("google_sheets_spreadsheet_id", id);
   };
 
+  // --- EXCEL WORKBOOK PIPELINE (desktop only) ---
+  // Mirrors the Google Sheets pipeline's role: one place loads data, one
+  // place persists it, and every view refreshes from the resulting snapshot.
+
+  /** Push a freshly read workbook snapshot into every store the UI reads. */
+  const applyWorkbookSnapshot = (snap: DataSnapshot) => {
+    loadAllLogs().forEach(l => deleteLogForMonth(l.month));
+    snap.logs.forEach(l => saveLogForMonth(l.month, l));
+    // Keep the entry sheet usable: the previous month always exists in memory
+    // (it is only written to the workbook when the user actually saves data).
+    const prevMonth = getPreviousMonthStr();
+    if (!snap.logs.some(l => l.month === prevMonth)) {
+      saveLogForMonth(prevMonth, createEmptyLog(prevMonth));
+    }
+    const all = loadAllLogs();
+    setLogs(all);
+    setWorkbook(snap);
+    setSyncedLogs(snap.logs);
+    setIsDirty(false);
+    const latestMonth = all.reduce((max, log) => (log.month > max ? log.month : max), all[0]?.month ?? prevMonth);
+    setSelectedMonth(prev => (prev && all.some(l => l.month === prev) ? prev : latestMonth));
+  };
+
+  const openWorkbook = async (target: string | null, viaDialog = false) => {
+    if (!excelProvider || !desktopBridge) return;
+    setIsWorkbookBusy(true);
+    try {
+      const snap = viaDialog
+        ? await excelProvider.load({ openDialog: true })
+        : await excelProvider.load({ target });
+      if (snap) {
+        applyWorkbookSnapshot(snap);
+        setAppConfig(await desktopBridge.config.get());
+        notify(
+          "success",
+          lang === "th"
+            ? `เปิดไฟล์ ${snap.sourceLabel} แล้ว (${snap.logs.length} เดือน)`
+            : `Opened ${snap.sourceLabel} (${snap.logs.length} months)`
+        );
+        if (snap.validation?.warnings?.length) {
+          notify("info", snap.validation.warnings.join("\n"));
+        }
+        if (snap.lock?.locked || snap.lock?.excelOwnerFilePresent) {
+          notify(
+            "info",
+            lang === "th"
+              ? "ไฟล์นี้กำลังเปิดอยู่ใน Excel - อ่านข้อมูลได้ แต่การบันทึกจะทำไม่ได้จนกว่าจะปิดไฟล์ใน Excel"
+              : "This workbook is currently open in Excel - you can read data, but saving will fail until it is closed in Excel."
+          );
+        }
+      }
+    } catch (err) {
+      notify("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsWorkbookBusy(false);
+    }
+  };
+
+  /**
+   * Persist the full in-memory data set into the workbook (backup + atomic
+   * write happen in the main process). Returns true on success.
+   */
+  const persistWorkbook = async (): Promise<boolean> => {
+    if (!excelProvider || !workbook) return false;
+    setIsWorkbookBusy(true);
+    try {
+      const outcome = await excelProvider.saveAll(loadAllLogs());
+      const snap = await excelProvider.reload();
+      applyWorkbookSnapshot(snap);
+      const backupName = outcome.backupPath ? outcome.backupPath.split(/[\\/]/).pop() : null;
+      notify(
+        "success",
+        lang === "th"
+          ? `บันทึกลง ${snap.sourceLabel} สำเร็จ${backupName ? ` (สำรองไฟล์: ${backupName})` : ""}`
+          : `Saved to ${snap.sourceLabel}${backupName ? ` (backup: ${backupName})` : ""}`
+      );
+      return true;
+    } catch (err) {
+      // The edit stays in memory; surface it and keep the dirty flag on.
+      setLogs(loadAllLogs());
+      setIsDirty(true);
+      const pe = err instanceof ProviderError ? err : null;
+      if (pe?.code === "LOCKED") {
+        setLockRetry(() => () => {
+          void persistWorkbook();
+        });
+      } else {
+        notify("error", pe?.message ?? (err instanceof Error ? err.message : String(err)));
+      }
+      return false;
+    } finally {
+      setIsWorkbookBusy(false);
+    }
+  };
+
+  const handleWorkbookSaveAs = async () => {
+    if (!excelProvider) return;
+    setIsWorkbookBusy(true);
+    try {
+      const outcome = await excelProvider.saveAs(loadAllLogs());
+      if (outcome) {
+        const snap = await excelProvider.reload();
+        applyWorkbookSnapshot(snap);
+        setAppConfig(await desktopBridge!.config.get());
+        notify("success", lang === "th" ? `บันทึกเป็น ${outcome.path} แล้ว` : `Saved as ${outcome.path}`);
+      }
+    } catch (err) {
+      notify("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsWorkbookBusy(false);
+    }
+  };
+
+  // Desktop startup: load config, open the startup workbook, and listen for
+  // "Open With"/second-instance file requests from Windows.
+  useEffect(() => {
+    if (!desktopBridge) return;
+    let disposed = false;
+    (async () => {
+      try {
+        const cfg = await desktopBridge.config.get();
+        if (disposed) return;
+        setAppConfig(cfg);
+        let target: string | null = null;
+        if (cfg.startupBehavior === "default") target = cfg.defaultWorkbookPath;
+        else if (cfg.startupBehavior === "last") target = cfg.lastWorkbookPath ?? cfg.defaultWorkbookPath;
+        if (target) await openWorkbook(target);
+      } catch (err) {
+        notify("error", `Could not load configuration: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+    const unsubscribe = desktopBridge.events.onOpenFilePath(p => {
+      void openWorkbook(p);
+    });
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const renderReportingUnavailableFallback = () => {
     return (
       <div className="p-12 text-center bg-slate-900/90 border border-slate-800 rounded-3xl max-w-xl mx-auto my-12 space-y-6 shadow-2xl animate-fadeIn">
@@ -322,7 +482,13 @@ export default function App() {
         </div>
         <div className="space-y-2">
           <h3 className="text-xl font-bold text-slate-100 tracking-tight">
-            {lang === "th" ? "กำลังดึงข้อมูลล่าสุดจาก Google Sheets..." : "Fetching latest metrics from Google Sheets..."}
+            {isDesktopApp
+              ? lang === "th"
+                ? "กำลังอ่านข้อมูลจากไฟล์ Workbook..."
+                : "Reading data from the workbook..."
+              : lang === "th"
+                ? "กำลังดึงข้อมูลล่าสุดจาก Google Sheets..."
+                : "Fetching latest metrics from Google Sheets..."}
           </h3>
           <p className="text-xs text-slate-400 max-w-sm mx-auto leading-relaxed">
             {lang === "th"
@@ -430,11 +596,13 @@ export default function App() {
   // Single startup / spreadsheet-change import trigger. Fires exactly once whenever
   // authentication completes or the target spreadsheet changes - this is the only
   // place that automatically triggers a Google Sheets import.
+  // Desktop: the workbook is the source of truth for reports, so the Google
+  // import never runs automatically there (Sheets stays a manual, optional sync).
   useEffect(() => {
-    if (accessToken) {
+    if (accessToken && !isDesktopApp) {
       runGoogleSheetsImport(accessToken, spreadsheetId).catch(() => {});
     }
-  }, [accessToken, spreadsheetId]);
+  }, [accessToken, spreadsheetId, isDesktopApp]);
 
   // Update activeLog state when selectedMonth changes
   useEffect(() => {
@@ -445,6 +613,17 @@ export default function App() {
   }, [selectedMonth, logs]);
 
   // --- ACTION HANDLERS ---
+  // After the in-memory store is updated, desktop persists straight into the
+  // workbook (with backup + lock handling); the browser build keeps the
+  // original in-memory + Google Sheets behavior.
+  const commitEntrySave = () => {
+    if (isDesktopApp && workbook) {
+      void persistWorkbook();
+    } else {
+      reloadData();
+    }
+  };
+
   const handleSaveUps = (records: UpsRecord[]) => {
     if (!activeLog) return;
     const isHistorical = selectedMonth !== maxMonth;
@@ -456,7 +635,7 @@ export default function App() {
         lastSavedUps: timestamp
       };
       saveLogForMonth(selectedMonth, updatedLog);
-      reloadData();
+      commitEntrySave();
     };
 
     if (isHistorical || editingMonth) {
@@ -477,7 +656,7 @@ export default function App() {
         lastSavedAir: timestamp
       };
       saveLogForMonth(selectedMonth, updatedLog);
-      reloadData();
+      commitEntrySave();
     };
 
     if (isHistorical || editingMonth) {
@@ -498,7 +677,7 @@ export default function App() {
         lastSavedDc: timestamp
       };
       saveLogForMonth(selectedMonth, updatedLog);
-      reloadData();
+      commitEntrySave();
     };
 
     if (isHistorical || editingMonth) {
@@ -519,7 +698,7 @@ export default function App() {
         lastSavedEnergyCost: timestamp
       };
       saveLogForMonth(selectedMonth, updatedLog);
-      reloadData();
+      commitEntrySave();
     };
 
     if (isHistorical || editingMonth) {
@@ -727,8 +906,35 @@ export default function App() {
         </nav>
 
         {/* --- VIEW 1: DATA ENTRY SHEET --- */}
-        {currentView === "entry" && (
+        {currentView === "entry" && isDesktopApp && !workbook && (
+          <WelcomePanel
+            lang={lang}
+            recentFiles={appConfig?.recentFiles ?? []}
+            isBusy={isWorkbookBusy}
+            onOpenDialog={() => void openWorkbook(null, true)}
+            onOpenPath={p => void openWorkbook(p)}
+          />
+        )}
+        {currentView === "entry" && !(isDesktopApp && !workbook) && (
           <div className="space-y-8">
+            {/* WORKBOOK STATUS & FILE ACTIONS (desktop) */}
+            {isDesktopApp && workbook && (
+              <WorkbookBar
+                workbook={workbook}
+                isDirty={isDirty}
+                isBusy={isWorkbookBusy}
+                lang={lang}
+                onOpen={() => void openWorkbook(null, true)}
+                onReload={() => {
+                  if (workbook.path) void openWorkbook(workbook.path);
+                }}
+                onSaveAs={() => void handleWorkbookSaveAs()}
+                onShowInFolder={() => {
+                  if (workbook.path) void desktopBridge?.shell.showItemInFolder(workbook.path);
+                }}
+              />
+            )}
+
             {/* MONTH SELECTOR & ACTION CONTAINER */}
             <section className="bg-slate-900 border border-slate-850 p-5 rounded-2xl flex flex-col md:flex-row justify-between items-start md:items-center gap-5 shadow-sm">
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
@@ -849,27 +1055,31 @@ export default function App() {
               </div>
             )}
 
-            {/* GOOGLE SHEETS SYNC BOARD */}
-            <GoogleSheetsSync
-              activeLog={activeLog}
-              lang={lang}
-              isGoogleConnected={isGoogleConnected}
-              googleUserEmail={googleUserEmail}
-              accessToken={accessToken}
-              spreadsheetId={spreadsheetId}
-              onSpreadsheetIdChange={handleSpreadsheetIdChange}
-              lastSyncedTime={lastSyncedTime}
-              onImport={handleManualImport}
-            />
+            {/* GOOGLE SHEETS SYNC BOARD - primary in the browser build;
+                optional secondary sync on desktop (enable in config) */}
+            {(!isDesktopApp || appConfig?.googleSheets.enabled) && (
+              <GoogleSheetsSync
+                activeLog={activeLog}
+                lang={lang}
+                isGoogleConnected={isGoogleConnected}
+                googleUserEmail={googleUserEmail}
+                accessToken={accessToken}
+                spreadsheetId={spreadsheetId}
+                onSpreadsheetIdChange={handleSpreadsheetIdChange}
+                lastSyncedTime={lastSyncedTime}
+                onImport={handleManualImport}
+              />
+            )}
 
-            {/* DATA MANAGEMENT BAR */}
-            <DataManagement onDataChange={reloadData} />
+            {/* DATA MANAGEMENT BAR (browser build only - the desktop app
+                manages its database through the workbook + backups) */}
+            {!isDesktopApp && <DataManagement onDataChange={reloadData} />}
           </div>
         )}
 
         {/* --- VIEW 2: BEAUTIFUL DASHBOARD SUMMARY --- */}
         {currentView === "dashboard" && (
-          isSyncing ? (
+          isSyncing || (isWorkbookBusy && !syncedLogs) ? (
             renderReportingLoading()
           ) : syncedLogs ? (
             <ReportProvider syncedLogs={syncedLogs}>
@@ -880,6 +1090,14 @@ export default function App() {
                 googleUserEmail={googleUserEmail}
               />
             </ReportProvider>
+          ) : isDesktopApp ? (
+            <WelcomePanel
+              lang={lang}
+              recentFiles={appConfig?.recentFiles ?? []}
+              isBusy={isWorkbookBusy}
+              onOpenDialog={() => void openWorkbook(null, true)}
+              onOpenPath={p => void openWorkbook(p)}
+            />
           ) : (
             renderReportingUnavailableFallback()
           )
@@ -887,7 +1105,7 @@ export default function App() {
 
         {/* --- VIEW 3: MONTHLY HISTORICAL CATEGORIZED RECORDS --- */}
         {currentView === "history" && (
-          isSyncing ? (
+          isSyncing || (isWorkbookBusy && !syncedLogs) ? (
             renderReportingLoading()
           ) : syncedLogs ? (
             <div className="space-y-8 animate-fadeIn">
@@ -910,6 +1128,14 @@ export default function App() {
                 }}
               />
             </div>
+          ) : isDesktopApp ? (
+            <WelcomePanel
+              lang={lang}
+              recentFiles={appConfig?.recentFiles ?? []}
+              isBusy={isWorkbookBusy}
+              onOpenDialog={() => void openWorkbook(null, true)}
+              onOpenPath={p => void openWorkbook(p)}
+            />
           ) : (
             renderReportingUnavailableFallback()
           )
@@ -1062,6 +1288,83 @@ export default function App() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* --- WORKBOOK LOCKED CONFLICT MODAL (desktop) --- */}
+      <AnimatePresence>
+        {lockRetry && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl">
+                    <Lock className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-slate-100 text-base">
+                      {lang === "th" ? "ไม่สามารถบันทึกได้ - ไฟล์ถูกล็อค" : "Cannot Save - Workbook is Locked"}
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-semibold font-mono uppercase tracking-wider mt-0.5">
+                      {workbook?.sourceLabel}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-xs leading-relaxed text-slate-300 bg-slate-950/50 border border-slate-850 p-4 rounded-xl">
+                  <p>
+                    {lang === "th"
+                      ? "ไฟล์ Workbook นี้กำลังเปิดอยู่ในโปรแกรม Excel (หรือโปรแกรมอื่น) ระบบจึงไม่สามารถเขียนทับได้ ข้อมูลที่แก้ไขยังอยู่ครบในหน่วยความจำและยังไม่สูญหาย"
+                      : "The workbook is currently open in Excel (or another program), so it cannot be overwritten. Your edits are still held in memory - nothing is lost."}
+                  </p>
+                  <p className="font-medium text-amber-400">
+                    {lang === "th"
+                      ? "ปิดไฟล์ใน Excel แล้วกด \"ลองอีกครั้ง\" หรือบันทึกเป็นไฟล์ใหม่ด้วย \"บันทึกเป็น...\""
+                      : "Close the file in Excel and press \"Retry\", or write your data to a new file with \"Save As…\"."}
+                  </p>
+                </div>
+
+                <div className="flex gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setLockRetry(null)}
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-750 text-xs font-semibold rounded-xl text-slate-300 transition-all cursor-pointer border border-slate-700/50"
+                  >
+                    {lang === "th" ? "ยกเลิก" : "Cancel"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLockRetry(null);
+                      void handleWorkbookSaveAs();
+                    }}
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-750 text-xs font-bold rounded-xl text-slate-200 transition-all cursor-pointer border border-slate-700/50"
+                  >
+                    {lang === "th" ? "บันทึกเป็น..." : "Save As…"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const retry = lockRetry;
+                      setLockRetry(null);
+                      retry?.();
+                    }}
+                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-bold rounded-xl text-white shadow-lg shadow-indigo-600/15 transition-all cursor-pointer"
+                  >
+                    {lang === "th" ? "ลองอีกครั้ง" : "Retry"}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- APP-WIDE TOASTS --- */}
+      <ToastHost />
 
     </div>
   );

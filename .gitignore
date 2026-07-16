@@ -14,3 +14,9 @@ dist-electron/
 release/
 # Live workbook database - not source code
 RST_Dashboard.xlsm
+# Portable runtime folders (created beside the exe / project root in dev)
+config/
+backup/
+logs/
+exports/
+*.appmeta.json
