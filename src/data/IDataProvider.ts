@@ -36,10 +36,13 @@ export interface SaveOutcome {
 /** Structured, user-presentable provider failure. */
 export class ProviderError extends Error {
   code: string;
-  constructor(code: string, message: string) {
+  /** Which save-pipeline step actually failed, when the backend reported one. */
+  stage?: string;
+  constructor(code: string, message: string, stage?: string) {
     super(message);
     this.name = "ProviderError";
     this.code = code;
+    this.stage = stage;
   }
 }
 

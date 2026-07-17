@@ -1,7 +1,7 @@
 import React from "react";
 import { AlertTriangle, Check, Loader2 } from "lucide-react";
 
-export type SaveStageKey = "validate" | "backup" | "write" | "verify" | "refresh" | "done";
+export type SaveStageKey = "validate" | "lock" | "backup" | "write" | "verify" | "refresh" | "done";
 
 export interface SaveProgressState {
   /** Stages before `current` are complete; `current` is in progress. */
@@ -20,17 +20,18 @@ interface SaveProgressProps {
   onDismiss: () => void;
 }
 
-const STAGE_ORDER: SaveStageKey[] = ["validate", "backup", "write", "verify", "refresh", "done"];
+const STAGE_ORDER: SaveStageKey[] = ["validate", "lock", "backup", "write", "verify", "refresh", "done"];
 
 /**
  * RC3: staged save progress card (bottom-right, above the sticky toolbar).
- * Validating → Creating Backup → Writing Workbook → Verifying → Refreshing
+ * Validating → Checking Lock → Creating Backup → Writing Workbook → Verifying → Refreshing
  * Dashboard → Completed, with elapsed time and graceful failure display.
  */
 export default function SaveProgress({ lang, state, onDismiss }: SaveProgressProps) {
   const th = lang === "th";
   const labels: Record<SaveStageKey, string> = {
     validate: th ? "ตรวจสอบความครบถ้วน" : "Validating",
+    lock: th ? "ตรวจสอบการล็อคไฟล์" : "Checking Lock",
     backup: th ? "สำรองไฟล์ก่อนบันทึก" : "Creating Backup",
     write: th ? "เขียนไฟล์ Workbook" : "Writing Workbook",
     verify: th ? "ตรวจทานไฟล์ที่บันทึก" : "Verifying Workbook",

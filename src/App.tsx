@@ -24,6 +24,7 @@ import StickyEntryToolbar from "./components/StickyEntryToolbar";
 import ExportCenterModal, { ExportKind } from "./components/ExportCenterModal";
 import { buildCombinedCsv, buildIntegrityText, buildSectionCsvs } from "./utils/exportData";
 import { EntrySectionApi, MissingField, computeCompletion, listMissingFields } from "./utils/completion";
+import { beginSaveOnce, clearEntryUndoHistory, endSaveOnce } from "./utils/entrySession";
 import ToastHost, { notify } from "./components/Toast";
 import WorkbookBar from "./components/WorkbookBar";
 import WelcomePanel from "./components/WelcomePanel";
@@ -386,10 +387,20 @@ export default function App() {
   // Mirrors the Google Sheets pipeline's role: one place loads data, one
   // place persists it, and every view refreshes from the resulting snapshot.
 
+  const selectMonthContext = (next: React.SetStateAction<string>) => {
+    clearEntryUndoHistory(undoStackRef);
+    setSelectedMonth(next);
+  };
+
   /** Push a freshly read workbook snapshot into every store the UI reads. */
   const applyWorkbookSnapshot = (snap: DataSnapshot) => {
     const tRefresh = performance.now();
     recordPerfAfterPaint("dashboardRefreshMs", tRefresh);
+    // The entry form's <input> DOM nodes are not remounted on data changes
+    // (they're keyed by stable device IDs, not by month/facility/workbook),
+    // so any undo entry recorded before this snapshot targets a node that
+    // may now display a different record. Never let Ctrl+Z reach across a
+    // workbook swap (facility switch, reload, save, save-as, restore).
     loadAllLogs().forEach(l => deleteLogForMonth(l.month));
     snap.logs.forEach(l => saveLogForMonth(l.month, l));
     // Keep the entry sheet usable: the previous month always exists in memory
@@ -405,7 +416,7 @@ export default function App() {
     setIsDirty(false);
     setLastLoadedAt(formatTimestamp(new Date()));
     const latestMonth = all.reduce((max, log) => (log.month > max ? log.month : max), all[0]?.month ?? prevMonth);
-    setSelectedMonth(prev => (prev && all.some(l => l.month === prev) ? prev : latestMonth));
+    selectMonthContext(prev => (prev && all.some(l => l.month === prev) ? prev : latestMonth));
   };
 
   const openWorkbook = async (target: string | null, viaDialog = false) => {
@@ -452,9 +463,21 @@ export default function App() {
    */
   const persistWorkbook = async (silent = false): Promise<boolean> => {
     if (!excelProvider || !workbook) return false;
+    // Re-entrancy guard: a second save (double Ctrl+S, double-click on the
+    // historical-save confirm button, or auto-save firing mid-save) must
+    // never reach the main process while one is already in flight - two
+    // concurrent excel:save IPC calls race on the same file on disk (proven:
+    // logs/app.log showed WRITE_FAILED/EBUSY immediately followed by a
+    // successful save from the other concurrent call, milliseconds apart).
+    // isBusyRef is set synchronously here (not left to the isWorkbookBusy
+    // effect below, which only flushes on the next render) so that two
+    // calls fired within the same synchronous event-handler tick cannot
+    // both pass this check before either has committed state.
+    if (!beginSaveOnce(isBusyRef)) return false;
     // RC2 read-only mode: never attempt a write while the workbook is not
     // safely writable (locked, read-only permission, unavailable, ...).
     if (readOnlyRef.current) {
+      endSaveOnce(isBusyRef);
       notify(
         silent ? "info" : "error",
         (lang === "th" ? "บันทึกไม่ได้ - โหมดอ่านอย่างเดียว" : "Cannot save - read-only mode.") +
@@ -463,16 +486,16 @@ export default function App() {
       return false;
     }
     setIsWorkbookBusy(true);
-    // RC3: staged save progress. Backup + write + verify happen inside one
-    // atomic IPC call (the engine is untouched), so those stages complete
-    // together when that call resolves; validate/refresh are individually real.
+    // RC3: staged save progress. Lock + backup + write + verify happen inside
+    // one atomic IPC call, so those stages resolve together when that call
+    // succeeds; backend failures report the exact failed stage.
     const tSave = performance.now();
     const stage = (current: SaveProgressState["current"]) => {
       if (!silent) setSaveProgress(prev => ({ startedAt: prev?.startedAt ?? tSave, current }));
     };
     stage("validate");
     try {
-      stage("backup");
+      stage("lock");
       const outcome = await excelProvider.saveAll(loadAllLogs());
       stage("refresh");
       const snap = await excelProvider.reload();
@@ -493,11 +516,25 @@ export default function App() {
       );
       return true;
     } catch (err) {
+      const pe = err instanceof ProviderError ? err : null;
       if (!silent) {
+        // Report the ACTUAL failed step from the backend when available,
+        // rather than guessing from the last stage optimistically marked
+        // "in progress" client-side (proven wrong: a lock failure at the
+        // pre-backup check was previously shown with "Creating Backup"
+        // checked off, though zero backup was ever written - see
+        // WorkbookWriter.ts's SaveFailureStage).
+        const backendStageMap: Record<string, SaveProgressState["current"]> = {
+          read: "validate",
+          validate: "validate",
+          lock: "lock",
+          backup: "backup",
+          write: "write"
+        };
         setSaveProgress(prev => ({
           startedAt: prev?.startedAt ?? tSave,
           current: prev?.current ?? "write",
-          failedAt: prev?.current === "refresh" ? "refresh" : "write",
+          failedAt: (pe?.stage && backendStageMap[pe.stage]) ?? (prev?.current === "refresh" ? "refresh" : "write"),
           error: err instanceof Error ? err.message : String(err),
           elapsedMs: performance.now() - tSave
         }));
@@ -509,7 +546,6 @@ export default function App() {
       if (desktopBridge && workbook.path) {
         void desktopBridge.recovery.set({ workbookPath: workbook.path, logs: loadAllLogs() });
       }
-      const pe = err instanceof ProviderError ? err : null;
       if (pe?.code === "LOCKED" && !silent) {
         setLockRetry(() => () => {
           void persistWorkbook();
@@ -526,6 +562,7 @@ export default function App() {
       }
       return false;
     } finally {
+      endSaveOnce(isBusyRef);
       setIsWorkbookBusy(false);
     }
   };
@@ -624,11 +661,7 @@ export default function App() {
   const attemptRecovery = async (): Promise<boolean> => {
     if (!excelProvider) return false;
     const status = await refreshAccess();
-    if (!status?.exists || !status.readable) {
-      console.warn(`[RECOVERY] attempt failed: exists=${status?.exists} readable=${status?.readable} reason=${status?.reason}`);
-      return false;
-    }
-    console.warn("[RECOVERY] workbook reachable again - closing dialog, reloading");
+    if (!status?.exists || !status.readable) return false;
     accessFailStreakRef.current = 0;
     setUnavailableDialogOpen(false);
     if (isDirtyRef.current) {
@@ -675,10 +708,7 @@ export default function App() {
         await new Promise(resolve => setTimeout(resolve, 2000));
         if (await attemptRecovery()) return;
       }
-      if (!disposed) {
-        console.warn("[RECOVERY] automatic retries exhausted - showing recovery dialog");
-        setUnavailableDialogOpen(true);
-      }
+      if (!disposed) setUnavailableDialogOpen(true);
     };
 
     void tick();
@@ -1311,12 +1341,13 @@ export default function App() {
   const handleWorkflowSelectMonth = (month: string, exists: boolean) => {
     if (month === selectedMonth) return;
     guardNavigation(() => {
-      // Stale drafts must never leak into another month's record.
+      // Stale drafts (and undo entries, which target the same still-mounted
+      // <input> nodes) must never leak into another month's record.
       draftsRef.current = {};
       setDraftTick(t => t + 1);
       if (exists) {
         const tSwitch = performance.now();
-        setSelectedMonth(month);
+        selectMonthContext(month);
         recordPerfAfterPaint("switchMonthMs", tSwitch);
       } else {
         setPendingCreateMonth(month);
@@ -1426,7 +1457,9 @@ export default function App() {
       setSyncedLogs(all); // dashboards refresh immediately
       setIsDirty(true); // the new record reaches the workbook on next save
     }
-    setSelectedMonth(pendingCreateMonth);
+    // The new month's fields reuse the same DOM nodes as whatever month was
+    // showing - any pending undo entry must not carry across.
+    selectMonthContext(pendingCreateMonth);
     setPendingCreateMonth(null);
   };
 
@@ -1471,11 +1504,11 @@ export default function App() {
     
     // Default selectedMonth to previous month if not set yet, or if it doesn't exist anymore
     if (!selectedMonth) {
-      setSelectedMonth(prevMonth);
+      selectMonthContext(prevMonth);
     } else {
       const exists = allLogs.some(l => l.month === selectedMonth);
       if (!exists) {
-        setSelectedMonth(prevMonth);
+        selectMonthContext(prevMonth);
       }
     }
   };
@@ -1672,7 +1705,7 @@ export default function App() {
       setSyncedLogs(loadAllLogs()); // dashboards refresh immediately
       setIsDirty(true); // the new record reaches the workbook on next save
     }
-    setSelectedMonth(newMonthInput);
+    selectMonthContext(newMonthInput);
     setShowAddMonthModal(false);
     setNewMonthInput("");
     reloadData();
@@ -1706,6 +1739,7 @@ export default function App() {
 
   const applyRecovery = () => {
     if (!recoveryOffer) return;
+    clearEntryUndoHistory(undoStackRef);
     recoveryOffer.logs.forEach(l => saveLogForMonth(l.month, l));
     setLogs(loadAllLogs());
     setIsDirty(true);
@@ -2013,7 +2047,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setEditingMonth(null);
-                    setSelectedMonth(maxMonth);
+                    selectMonthContext(maxMonth);
                   }}
                   className="px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 text-[11px] font-bold rounded-lg transition-colors cursor-pointer shrink-0 self-end sm:self-center"
                 >
@@ -2197,7 +2231,7 @@ export default function App() {
                 googleUserEmail={googleUserEmail}
                 onEditMonth={(monthStr) => {
                   setEditingMonth(monthStr);
-                  setSelectedMonth(monthStr);
+                  selectMonthContext(monthStr);
                   setCurrentView("entry");
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}

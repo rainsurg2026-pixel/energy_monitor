@@ -15,8 +15,8 @@ import { DataSnapshot, IDataProvider, ProviderCapabilities, ProviderError, SaveO
  */
 function unwrap<T>(result: IpcResult<T>): { ok: true } & T {
   if (!result.ok) {
-    const failure = result as unknown as { code: string; message: string };
-    throw new ProviderError(failure.code, failure.message);
+    const failure = result as unknown as { code: string; message: string; stage?: string };
+    throw new ProviderError(failure.code, failure.message, failure.stage);
   }
   return result as { ok: true } & T;
 }

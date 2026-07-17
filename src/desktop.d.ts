@@ -11,6 +11,7 @@ import type {
   IpcResult,
   WorkbookAccessStatus
 } from "./electron/ipc/excel";
+import type { SaveFailureStage } from "./excel/WorkbookWriter";
 import type { AppConfig } from "./electron/config";
 import type { BackupEntry } from "./electron/sync/BackupManager";
 import type { WorkbookHealth } from "./excel/WorkbookValidator";
@@ -24,6 +25,7 @@ export type {
   RecoverySnapshot,
   IpcResult,
   WorkbookAccessStatus,
+  SaveFailureStage,
   AppConfig,
   BackupEntry,
   WorkbookHealth,

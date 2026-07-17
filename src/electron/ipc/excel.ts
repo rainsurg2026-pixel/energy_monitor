@@ -13,7 +13,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { MonthlyLog } from "../../types";
 import { WorkbookReadResult, readWorkbookFromFile } from "../../excel/WorkbookReader";
-import { WorkbookError, checkWorkbookLock, saveWorkbook } from "../../excel/WorkbookWriter";
+import { SaveFailureStage, WorkbookError, checkWorkbookLock, saveWorkbook } from "../../excel/WorkbookWriter";
 import { PayloadError, summarizeWorkbookHealth, validateLogsPayload } from "../../excel/WorkbookValidator";
 import { WorkbookHealth } from "../../excel/WorkbookValidator";
 import { DeviceLists } from "../../excel/SheetMapper";
@@ -25,10 +25,12 @@ import { ensureDir, getExportsDir, getRecoveryPath, log } from "../paths";
 // Envelope + validation helpers
 // ---------------------------------------------------------------------------
 
-export type IpcResult<T> = ({ ok: true } & T) | { ok: false; code: string; message: string };
+export type IpcResult<T> =
+  | ({ ok: true } & T)
+  | { ok: false; code: string; message: string; stage?: SaveFailureStage };
 
-function fail(code: string, message: string): { ok: false; code: string; message: string } {
-  return { ok: false, code, message };
+function fail(code: string, message: string, stage?: SaveFailureStage): { ok: false; code: string; message: string; stage?: SaveFailureStage } {
+  return { ok: false, code, message, stage };
 }
 
 async function wrap<T>(operation: string, fn: () => Promise<({ ok: true } & T) | { ok: false; code: string; message: string }>): Promise<IpcResult<T>> {
@@ -37,7 +39,7 @@ async function wrap<T>(operation: string, fn: () => Promise<({ ok: true } & T) |
   } catch (err) {
     if (err instanceof WorkbookError) {
       log.warn(`${operation}: ${err.code} - ${err.message}`);
-      return fail(err.code, err.message);
+      return fail(err.code, err.message, err.stage);
     }
     if (err instanceof PayloadError) {
       log.warn(`${operation}: BAD_PAYLOAD - ${err.message}`);

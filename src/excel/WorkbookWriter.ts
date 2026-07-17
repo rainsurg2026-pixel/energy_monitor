@@ -49,12 +49,25 @@ export type WorkbookErrorCode =
   | "VALIDATION_FAILED"
   | "WRITE_FAILED";
 
+/**
+ * Which step of saveWorkbook actually failed, in save-pipeline order. Set
+ * only by saveWorkbook's own throw sites - open/read errors elsewhere in
+ * this file leave it undefined. Lets the renderer's save-progress UI report
+ * the real point of failure instead of guessing from the last stage it
+ * optimistically marked as "in progress" (proven wrong: a LOCKED failure at
+ * the pre-backup lock check was displayed with "Creating Backup" checked
+ * off, even though zero backup was ever written).
+ */
+export type SaveFailureStage = "read" | "validate" | "lock" | "backup" | "write";
+
 export class WorkbookError extends Error {
   code: WorkbookErrorCode;
-  constructor(code: WorkbookErrorCode, message: string) {
+  stage?: SaveFailureStage;
+  constructor(code: WorkbookErrorCode, message: string, stage?: SaveFailureStage) {
     super(message);
     this.name = "WorkbookError";
     this.code = code;
+    this.stage = stage;
   }
 }
 
@@ -672,7 +685,7 @@ export async function saveWorkbook(
   try {
     original = await fs.readFile(sourcePath);
   } catch {
-    throw new WorkbookError("NOT_FOUND", `Workbook not found: ${sourcePath}`);
+    throw new WorkbookError("NOT_FOUND", `Workbook not found: ${sourcePath}`, "read");
   }
 
   const devices = options.devices ?? DEFAULT_DEVICE_LISTS;
@@ -686,11 +699,12 @@ export async function saveWorkbook(
   if (!reread.validation.ok) {
     throw new WorkbookError(
       "VALIDATION_FAILED",
-      `Save aborted - patched workbook failed validation: ${reread.validation.errors.join("; ")}`
+      `Save aborted - patched workbook failed validation: ${reread.validation.errors.join("; ")}`,
+      "validate"
     );
   }
   if (!logsMatch(logs, reread.logs, devices)) {
-    throw new WorkbookError("VALIDATION_FAILED", "Save aborted - data did not round-trip identically.");
+    throw new WorkbookError("VALIDATION_FAILED", "Save aborted - data did not round-trip identically.", "validate");
   }
 
   // 3. Lock check on the file we are about to replace.
@@ -703,7 +717,8 @@ export async function saveWorkbook(
     if (lock.locked) {
       throw new WorkbookError(
         "LOCKED",
-        `The workbook is currently open in Excel (or another program). Close it and retry, or use Save As.`
+        `The workbook is currently open in Excel (or another program). Close it and retry, or use Save As.`,
+        "lock"
       );
     }
   }
@@ -711,7 +726,15 @@ export async function saveWorkbook(
   // 4. Backup the current file before replacing it.
   let backupPath: string | null = null;
   if (overwritingExisting && options.backupDir) {
-    backupPath = await createBackup(targetPath, options.backupDir, options.backupKeep);
+    try {
+      backupPath = await createBackup(targetPath, options.backupDir, options.backupKeep);
+    } catch (err) {
+      throw new WorkbookError(
+        "WRITE_FAILED",
+        `Could not create a backup before saving: ${(err as Error).message}`,
+        "backup"
+      );
+    }
   }
 
   // 5. Atomic write: temp file in the same directory, then rename.
@@ -727,9 +750,9 @@ export async function saveWorkbook(
     }
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "EBUSY" || code === "EPERM" || code === "EACCES") {
-      throw new WorkbookError("LOCKED", "The workbook became locked while saving. Close it in Excel and retry.");
+      throw new WorkbookError("LOCKED", "The workbook became locked while saving. Close it in Excel and retry.", "write");
     }
-    throw new WorkbookError("WRITE_FAILED", `Could not write workbook: ${(err as Error).message}`);
+    throw new WorkbookError("WRITE_FAILED", `Could not write workbook: ${(err as Error).message}`, "write");
   }
 
   // 6. Sidecar metadata (last-saved timestamps per month/tab).

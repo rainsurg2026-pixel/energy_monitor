@@ -19,6 +19,7 @@
     "portable:build": "node scripts/run-electron-builder.mjs --win portable",
     "portable:zip": "node scripts/make-portable-zip.mjs",
     "test:excel": "node node_modules/tsx/dist/cli.mjs scripts/test-excel-roundtrip.ts",
+    "test:rc3": "node node_modules/tsx/dist/cli.mjs scripts/test-rc3.ts",
     "test:e2e": "node scripts/e2e-cdp.mjs"
   },
   "devDependencies": {
