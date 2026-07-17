@@ -15,7 +15,8 @@ import { MonthlyLog, SecurityConfig, UpsRecord, AirRecord, DcRecord, EnergyCostR
 import { DataSnapshot, ProviderError } from "./data/IDataProvider";
 import { ExcelProvider } from "./data/ExcelProvider";
 import { getDesktopBridge } from "./data/ProviderFactory";
-import type { AppConfig, DeviceLists, FacilityEntry } from "./desktop";
+import type { AppConfig, DeviceLists, FacilityEntry, WorkbookAccessStatus } from "./desktop";
+import StatusBar from "./components/StatusBar";
 import FacilitySelector from "./components/FacilitySelector";
 import EntryWorkflowHeader from "./components/EntryWorkflowHeader";
 import StickyEntryToolbar from "./components/StickyEntryToolbar";
@@ -146,6 +147,8 @@ function DashboardViewContainer({
 
 export default function App() {
   // --- STATE DECLARATIONS ---
+  // Language configuration (Thai by default, with English toggle)
+  const [lang, setLang] = useState<"th" | "en">("th");
   const [logs, setLogs] = useState<MonthlyLog[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [activeLog, setActiveLog] = useState<MonthlyLog | null>(null);
@@ -164,6 +167,17 @@ export default function App() {
   const [lockRetry, setLockRetry] = useState<(() => void) | null>(null);
   const [lastPersistAt, setLastPersistAt] = useState<string | null>(null);
   const [recoveryOffer, setRecoveryOffer] = useState<RecoverySnapshot | null>(null);
+
+  // --- RC2: DATA ENTRY WORKFLOW ---
+  // Continuous workbook access monitoring (read-only mode + health), status
+  // bar data and unsaved-changes navigation protection.
+  const [access, setAccess] = useState<WorkbookAccessStatus | null>(null);
+  const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [unavailableDialogOpen, setUnavailableDialogOpen] = useState(false);
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  /** A facility/year/month switch requested while edits are pending waits here for Save / Discard / Cancel. */
+  const [pendingNav, setPendingNav] = useState<{ run: () => void } | null>(null);
 
   // --- MULTI-FACILITY (RC1) ---
   // Each facility has its own independent workbook + profile; the active
@@ -361,6 +375,7 @@ export default function App() {
     setWorkbook(snap);
     setSyncedLogs(snap.logs);
     setIsDirty(false);
+    setLastLoadedAt(formatTimestamp(new Date()));
     const latestMonth = all.reduce((max, log) => (log.month > max ? log.month : max), all[0]?.month ?? prevMonth);
     setSelectedMonth(prev => (prev && all.some(l => l.month === prev) ? prev : latestMonth));
   };
@@ -407,6 +422,16 @@ export default function App() {
    */
   const persistWorkbook = async (silent = false): Promise<boolean> => {
     if (!excelProvider || !workbook) return false;
+    // RC2 read-only mode: never attempt a write while the workbook is not
+    // safely writable (locked, read-only permission, unavailable, ...).
+    if (readOnlyRef.current) {
+      notify(
+        silent ? "info" : "error",
+        (lang === "th" ? "บันทึกไม่ได้ - โหมดอ่านอย่างเดียว" : "Cannot save - read-only mode.") +
+          (readOnlyReason ? `\n${readOnlyReason}` : "")
+      );
+      return false;
+    }
     setIsWorkbookBusy(true);
     try {
       const outcome = await excelProvider.saveAll(loadAllLogs());
@@ -415,6 +440,7 @@ export default function App() {
       // A committed save supersedes any crash-recovery journal.
       void desktopBridge?.recovery.clear();
       setLastPersistAt(formatTimestamp(new Date()));
+      void refreshAccess(); // new mtime/backup -> keep status bar current
       const backupName = outcome.backupPath ? outcome.backupPath.split(/[\\/]/).pop() : null;
       notify(
         "success",
@@ -491,7 +517,8 @@ export default function App() {
     const minutes = appConfig?.autoSaveIntervalMinutes ?? 0;
     if (!isDesktopApp || !workbook?.path || minutes <= 0) return;
     const id = setInterval(() => {
-      if (isDirtyRef.current && !isBusyRef.current) {
+      // Read-only mode (RC2) suspends Auto Save entirely.
+      if (isDirtyRef.current && !isBusyRef.current && !readOnlyRef.current) {
         void persistWorkbook(true);
       }
     }, minutes * 60_000);
@@ -516,6 +543,172 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workbook?.path]);
+
+  // --- RC2: CONTINUOUS ACCESS / HEALTH MONITOR + READ-ONLY MODE ---
+  // Re-checks the open workbook (exists / readable / writable / locked /
+  // read-only / backup status) on open, after every save and on an interval,
+  // so the app flips in and out of read-only mode automatically.
+
+  const accessFailStreakRef = useRef(0);
+  const readOnlyRef = useRef(false);
+
+  const refreshAccess = async (): Promise<WorkbookAccessStatus | null> => {
+    if (!desktopBridge || !workbook?.path) return null;
+    try {
+      const result = await desktopBridge.excel.access(workbook.path);
+      if (!result.ok) return null;
+      const status = result as { ok: true } & WorkbookAccessStatus;
+      setAccess(status);
+      return status;
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * RC2 auto-recovery: re-check an unavailable workbook and bring it back
+   * without a restart. In-memory edits always win over the file on disk.
+   */
+  const attemptRecovery = async (): Promise<boolean> => {
+    if (!excelProvider) return false;
+    const status = await refreshAccess();
+    if (!status?.exists || !status.readable) return false;
+    accessFailStreakRef.current = 0;
+    setUnavailableDialogOpen(false);
+    if (isDirtyRef.current) {
+      notify(
+        "info",
+        lang === "th"
+          ? "ไฟล์ Workbook กลับมาใช้งานได้แล้ว - ข้อมูลที่แก้ไขไว้ยังอยู่ครบ กดบันทึกเพื่อเขียนลงไฟล์"
+          : "The workbook is available again - your unsaved edits are intact; save to write them to the file."
+      );
+      return true;
+    }
+    try {
+      applyWorkbookSnapshot(await excelProvider.reload());
+      notify(
+        "success",
+        lang === "th" ? "ไฟล์ Workbook กลับมาใช้งานได้แล้ว - โหลดข้อมูลใหม่เรียบร้อย" : "The workbook is available again - data reloaded."
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    if (!isDesktopApp || !workbook?.path) {
+      setAccess(null);
+      return;
+    }
+    let disposed = false;
+    accessFailStreakRef.current = 0;
+
+    const tick = async () => {
+      const status = await refreshAccess();
+      if (disposed || !status) return;
+      if (status.exists && status.readable) {
+        if (accessFailStreakRef.current > 0) await attemptRecovery();
+        return;
+      }
+      accessFailStreakRef.current += 1;
+      if (accessFailStreakRef.current > 1) return; // recovery dialog already offered
+      // Automatic recovery: a few quick retries before surfacing the dialog
+      // (covers transient share drops / files mid-move). Never crashes.
+      for (let attempt = 0; attempt < 3 && !disposed; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        if (await attemptRecovery()) return;
+      }
+      if (!disposed) setUnavailableDialogOpen(true);
+    };
+
+    void tick();
+    const id = setInterval(() => void tick(), 15_000);
+    return () => {
+      disposed = true;
+      clearInterval(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDesktopApp, workbook?.path]);
+
+  /** RC2 read-only mode: on when the open workbook cannot be safely written. */
+  const readOnly = isDesktopApp && !!workbook && !!access && !access.writable;
+  useEffect(() => {
+    readOnlyRef.current = readOnly;
+  }, [readOnly]);
+
+  const readOnlyReason = useMemo(() => {
+    if (!access || access.writable) return null;
+    const th = lang === "th";
+    switch (access.reason) {
+      case "NOT_FOUND":
+        return th
+          ? "ไม่พบไฟล์ Workbook (ถูกย้าย ถูกลบ หรือไดรฟ์/เครือข่ายไม่พร้อมใช้งาน)"
+          : "Workbook is unavailable (moved, deleted, or the drive/network share is unreachable).";
+      case "NO_READ":
+        return th ? "คุณไม่มีสิทธิ์อ่านไฟล์ Workbook นี้" : "You do not have permission to read this workbook.";
+      case "LOCKED_EXCEL":
+        return th ? "ไฟล์ถูกล็อคโดยผู้ใช้อื่น (เปิดอยู่ใน Excel)" : "Workbook is locked by another user (open in Excel).";
+      case "LOCKED":
+        return th ? "ไฟล์ถูกล็อคโดยโปรแกรมอื่น" : "Workbook is locked by another program.";
+      case "READONLY_FILE":
+        return th ? "คุณมีสิทธิ์อ่านอย่างเดียว (ไฟล์ถูกตั้งค่า Read-Only)" : "You only have read permission (the file is marked read-only).";
+      default:
+        return th ? "ไม่สามารถเขียนไฟล์ Workbook ได้" : "The workbook cannot be written.";
+    }
+  }, [access, lang]);
+
+  const notifyReadOnly = () =>
+    notify(
+      "error",
+      (lang === "th" ? "แก้ไขไม่ได้ - โหมดอ่านอย่างเดียว" : "Editing is disabled - read-only mode.") +
+        (readOnlyReason ? `\n${readOnlyReason}` : "")
+    );
+
+  // Status-bar signals: overall workbook health score + integrity issue count.
+  const healthPercent = useMemo(() => {
+    if (!isDesktopApp || !workbook) return null;
+    const h = workbook.health;
+    const checks = [
+      access ? access.exists : true,
+      access ? access.readable : true,
+      access ? access.writable : true,
+      h ? h.structureOk : true,
+      h ? h.duplicateCount === 0 : true,
+      h ? h.invalidIdCount === 0 : true,
+      h ? h.blankRowCount === 0 : true,
+      access ? access.lastBackupAt !== null : true
+    ];
+    return Math.round((checks.filter(Boolean).length / checks.length) * 100);
+  }, [isDesktopApp, workbook, access]);
+
+  const integrityIssues = useMemo(() => {
+    const i = workbook?.integrity;
+    if (!i) return null;
+    return (
+      i.duplicateKeys.length + i.missingMonths.length + i.missingDevices.length + i.unexpectedBlankRows.length + i.invalidIds.length
+    );
+  }, [workbook?.integrity]);
+
+  // Offline indicator (the app is fully offline-capable; this is informational).
+  useEffect(() => {
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
+    window.addEventListener("online", goOnline);
+    window.addEventListener("offline", goOffline);
+    return () => {
+      window.removeEventListener("online", goOnline);
+      window.removeEventListener("offline", goOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    desktopBridge.app
+      .getInfo()
+      .then(info => setAppVersion(info.version))
+      .catch(() => undefined);
+  }, [desktopBridge]);
 
   // Keyboard shortcuts (RC6/UI-6): Ctrl+S save-all (entry), Ctrl+E export
   // center, Enter / Shift+Enter move between entry fields.
@@ -580,17 +773,14 @@ export default function App() {
    * Facility data is never mixed: the in-memory store is fully replaced by
    * the new facility's workbook snapshot.
    */
-  const switchFacility = async (id: string) => {
+  const switchFacility = (id: string) => {
     if (!desktopBridge || !excelProvider || id === activeFacilityId) return;
-    if (isDirty) {
-      notify(
-        "error",
-        lang === "th"
-          ? "มีข้อมูลที่ยังไม่ได้บันทึก - กรุณาบันทึกให้สำเร็จก่อนสลับศูนย์ข้อมูล"
-          : "You have unsaved changes - save them before switching facilities."
-      );
-      return;
-    }
+    // RC2: pending edits are never silently lost - Save / Discard / Cancel.
+    guardNavigation(() => void doSwitchFacility(id));
+  };
+
+  const doSwitchFacility = async (id: string) => {
+    if (!desktopBridge || !excelProvider) return;
     const result = await desktopBridge.facilities.setActive(id);
     if (!result.ok) {
       notify("error", (result as { message: string }).message);
@@ -762,9 +952,6 @@ export default function App() {
   const [isAppLocked, setIsAppLocked] = useState(false);
   const [showSecurityConfigModal, setShowSecurityConfigModal] = useState(false);
   
-  // Language configuration (Thai by default, with English toggle)
-  const [lang, setLang] = useState<"th" | "en">("th");
-  
   // Historical editing configuration
   const [editingMonth, setEditingMonth] = useState<string | null>(null);
   
@@ -860,22 +1047,86 @@ export default function App() {
     }
   };
 
-  const handleWorkflowSelectMonth = (month: string, exists: boolean) => {
-    if (exists) {
-      setSelectedMonth(month);
-    } else {
-      setPendingCreateMonth(month);
-    }
-  };
+  // --- RC2: UNSAVED-CHANGES NAVIGATION PROTECTION ---
+  // Changing facility, year or month with pending edits opens a
+  // Save / Discard / Cancel dialog. Edits are never silently discarded.
 
-  /** Sticky toolbar Save: commit every section's draft, then persist once. */
-  const runBatchSave = () => {
+  /** Commit every entry section's draft into the in-memory store (one batch). */
+  const commitAllDrafts = () => {
     batchSaveRef.current = true;
     try {
       Object.values(sectionApisRef.current).forEach((api: EntrySectionApi | null) => api?.commit());
     } finally {
       batchSaveRef.current = false;
     }
+  };
+
+  /** Throw away every entry section's draft (back to the stored record). */
+  const resetAllDrafts = () => {
+    Object.values(sectionApisRef.current).forEach((api: EntrySectionApi | null) => api?.reset());
+    draftsRef.current = {};
+    setDraftTick(t => t + 1);
+  };
+
+  const guardNavigation = (run: () => void) => {
+    if (isDirty || hasDraftChanges) setPendingNav({ run });
+    else run();
+  };
+
+  /** Unsaved-changes dialog: Save first, then continue where the user was going. */
+  const pendingNavSave = async () => {
+    const nav = pendingNav;
+    setPendingNav(null);
+    if (!nav) return;
+    // RC4 still applies: incomplete records are never saved.
+    if (draftActiveLog) {
+      const missing = validateSections(draftActiveLog, ["ups", "air", "dc", "energy"]);
+      if (missing.length > 0) return raiseValidation(missing);
+    }
+    commitAllDrafts();
+    if (isDesktopApp && workbook) {
+      const ok = await persistWorkbook();
+      if (ok) nav.run();
+    } else {
+      reloadData();
+      nav.run();
+    }
+  };
+
+  /** Unsaved-changes dialog: Discard the pending edits, then continue. */
+  const pendingNavDiscard = async () => {
+    const nav = pendingNav;
+    setPendingNav(null);
+    if (!nav) return;
+    resetAllDrafts();
+    if (isDirty && excelProvider && workbook) {
+      // The in-memory store already diverged from the file - reload the file.
+      try {
+        applyWorkbookSnapshot(await excelProvider.reload());
+      } catch {
+        setIsDirty(false); // unreadable right now; the access monitor takes over
+      }
+    }
+    nav.run();
+  };
+
+  const handleWorkflowSelectMonth = (month: string, exists: boolean) => {
+    if (month === selectedMonth) return;
+    guardNavigation(() => {
+      // Stale drafts must never leak into another month's record.
+      draftsRef.current = {};
+      setDraftTick(t => t + 1);
+      if (exists) {
+        setSelectedMonth(month);
+      } else {
+        setPendingCreateMonth(month);
+      }
+    });
+  };
+
+  /** Sticky toolbar Save: commit every section's draft, then persist once. */
+  const runBatchSave = () => {
+    commitAllDrafts();
     if (isDesktopApp && workbook) {
       void persistWorkbook();
     } else {
@@ -884,6 +1135,7 @@ export default function App() {
   };
 
   const handleToolbarSave = () => {
+    if (readOnly) return notifyReadOnly();
     if (draftActiveLog) {
       const missing = validateSections(draftActiveLog, ["ups", "air", "dc", "energy"]);
       if (missing.length > 0) return raiseValidation(missing);
@@ -902,7 +1154,7 @@ export default function App() {
   });
 
   const handleToolbarReset = () => {
-    Object.values(sectionApisRef.current).forEach((api: EntrySectionApi | null) => api?.reset());
+    resetAllDrafts();
   };
 
   /** Toolbar Export opens the Export Center (RC6). */
@@ -957,8 +1209,20 @@ export default function App() {
 
   const confirmCreateMonth = () => {
     if (!pendingCreateMonth) return;
+    if (readOnly) {
+      setPendingCreateMonth(null);
+      notifyReadOnly();
+      return;
+    }
+    // A new month copies structure only (empty device rows from the facility
+    // profile) - never another month's data.
     saveLogForMonth(pendingCreateMonth, emptyLogForMonth(pendingCreateMonth));
-    setLogs(loadAllLogs());
+    const all = loadAllLogs();
+    setLogs(all);
+    if (isDesktopApp && workbook) {
+      setSyncedLogs(all); // dashboards refresh immediately
+      setIsDirty(true); // the new record reaches the workbook on next save
+    }
     setSelectedMonth(pendingCreateMonth);
     setPendingCreateMonth(null);
   };
@@ -1076,6 +1340,7 @@ export default function App() {
 
   const handleSaveUps = (records: UpsRecord[]) => {
     if (!activeLog) return;
+    if (readOnly) return notifyReadOnly();
     if (!batchSaveRef.current) {
       const missing = validateSections({ ...activeLog, ups: records }, ["ups"]);
       if (missing.length > 0) return raiseValidation(missing);
@@ -1101,6 +1366,7 @@ export default function App() {
 
   const handleSaveAir = (record: AirRecord) => {
     if (!activeLog) return;
+    if (readOnly) return notifyReadOnly();
     if (!batchSaveRef.current) {
       const missing = validateSections({ ...activeLog, air: record }, ["air"]);
       if (missing.length > 0) return raiseValidation(missing);
@@ -1126,6 +1392,7 @@ export default function App() {
 
   const handleSaveDc = (records: DcRecord[]) => {
     if (!activeLog) return;
+    if (readOnly) return notifyReadOnly();
     if (!batchSaveRef.current) {
       const missing = validateSections({ ...activeLog, dc: records }, ["dc"]);
       if (missing.length > 0) return raiseValidation(missing);
@@ -1151,6 +1418,7 @@ export default function App() {
 
   const handleSaveEnergyCost = (record: EnergyCostRecord) => {
     if (!activeLog) return;
+    if (readOnly) return notifyReadOnly();
     if (!batchSaveRef.current) {
       const missing = validateSections({ ...activeLog, energyCost: record }, ["energy"]);
       if (missing.length > 0) return raiseValidation(missing);
@@ -1178,6 +1446,10 @@ export default function App() {
     e.preventDefault();
     setAddMonthError("");
 
+    if (readOnly) {
+      setAddMonthError(lang === "th" ? "โหมดอ่านอย่างเดียว - สร้างบันทึกใหม่ไม่ได้" : "Read-only mode - cannot create a record.");
+      return;
+    }
     if (!newMonthInput) {
       setAddMonthError(lang === "th" ? "กรุณาเลือกเดือนและปี" : "Please select month and year");
       return;
@@ -1191,8 +1463,12 @@ export default function App() {
 
     const newLog = emptyLogForMonth(newMonthInput);
     saveLogForMonth(newMonthInput, newLog);
-    
+
     // Refresh states
+    if (isDesktopApp && workbook) {
+      setSyncedLogs(loadAllLogs()); // dashboards refresh immediately
+      setIsDirty(true); // the new record reaches the workbook on next save
+    }
     setSelectedMonth(newMonthInput);
     setShowAddMonthModal(false);
     setNewMonthInput("");
@@ -1316,7 +1592,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* 2. INNER APPLICATION UI */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 ${isDesktopApp ? "pb-16" : ""}`}>
         
         {/* HEADER RAIL */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-6 border-b border-slate-850">
@@ -1435,6 +1711,27 @@ export default function App() {
           )}
         </nav>
 
+        {/* RC2: PERSISTENT READ-ONLY MODE BANNER (desktop) */}
+        {readOnly && (
+          <div
+            data-testid="readonly-banner"
+            className="p-4 bg-rose-500/10 border border-rose-500/25 rounded-2xl flex items-start gap-3 text-xs text-rose-300 animate-fadeIn"
+          >
+            <Lock className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
+            <div>
+              <span className="font-bold uppercase tracking-wider block text-[10px] mb-0.5 text-rose-400">
+                {lang === "th" ? "โหมดอ่านอย่างเดียว" : "Read-Only Mode"}
+              </span>
+              <span>{readOnlyReason}</span>
+              <span className="block text-slate-400 mt-1">
+                {lang === "th"
+                  ? "ดูข้อมูล ค้นหา รายงาน และส่งออกได้ตามปกติ - การบันทึก บันทึกอัตโนมัติ และการสร้างบันทึกใหม่ถูกปิดไว้ชั่วคราว"
+                  : "Viewing, search, reports and export remain available - Save, Auto Save and Create Monthly Record are temporarily disabled."}
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* --- VIEW 1: DATA ENTRY SHEET --- */}
         {currentView === "entry" && isDesktopApp && !workbook && (
           <WelcomePanel
@@ -1454,6 +1751,10 @@ export default function App() {
                 isDirty={isDirty}
                 isBusy={isWorkbookBusy}
                 lang={lang}
+                writable={access ? access.writable : null}
+                lastLoadedAt={lastLoadedAt}
+                lastSaved={lastPersistAt}
+                workbookVersion={access?.mtime ? formatTimestamp(new Date(access.mtime)) : null}
                 onOpen={() => void openWorkbook(null, true)}
                 onReload={() => {
                   if (workbook.path) void openWorkbook(workbook.path);
@@ -1476,6 +1777,7 @@ export default function App() {
                 selectedMonth={selectedMonth}
                 completion={entryCompletion}
                 health={workbook?.health ?? null}
+                lastSaved={lastPersistAt}
                 onSelectMonth={handleWorkflowSelectMonth}
               />
               <div className="flex justify-end">
@@ -1624,13 +1926,17 @@ export default function App() {
                     ? "none"
                     : isWorkbookBusy
                       ? "busy"
-                      : workbook.lock?.locked || workbook.lock?.excelOwnerFilePresent
-                        ? "locked"
-                        : isDirty || hasDraftChanges
-                          ? "dirty"
-                          : "saved"
+                      : readOnly
+                        ? "readonly"
+                        : workbook.lock?.locked || workbook.lock?.excelOwnerFilePresent
+                          ? "locked"
+                          : isDirty || hasDraftChanges
+                            ? "dirty"
+                            : "saved"
               }
               hasDraftChanges={hasDraftChanges || isDirty}
+              readOnly={readOnly}
+              aboveStatusBar={isDesktopApp}
               onSaveAll={handleToolbarSave}
               onResetAll={handleToolbarReset}
               onExport={handleToolbarExport}
@@ -2143,6 +2449,161 @@ export default function App() {
           setExportCenterOpen(false);
         }}
       />
+
+      {/* --- UNSAVED CHANGES PROTECTION (RC2): Save / Discard / Cancel --- */}
+      <AnimatePresence>
+        {pendingNav && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 space-y-4" data-testid="unsaved-dialog">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-xl">
+                    <AlertTriangle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-slate-100 text-base">
+                      {lang === "th" ? "มีข้อมูลที่ยังไม่ได้บันทึก" : "Unsaved Changes"}
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-semibold font-mono uppercase tracking-wider mt-0.5">
+                      {formatMonthYear(selectedMonth)}
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-xs leading-relaxed text-slate-300 bg-slate-950/50 border border-slate-850 p-4 rounded-xl">
+                  {lang === "th"
+                    ? "คุณกำลังจะออกจากหน้านี้โดยยังมีข้อมูลที่แก้ไขค้างอยู่ ต้องการบันทึกก่อนไปต่อ ละทิ้งการแก้ไข หรือยกเลิกการเปลี่ยนหน้า?"
+                    : "You are about to navigate away with pending edits. Save them first, discard them, or cancel the switch?"}
+                </p>
+
+                <div className="flex gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setPendingNav(null)}
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-750 text-xs font-semibold rounded-xl text-slate-300 transition-all cursor-pointer border border-slate-700/50"
+                  >
+                    {lang === "th" ? "ยกเลิก" : "Cancel"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void pendingNavDiscard()}
+                    className="flex-1 py-2.5 bg-rose-700 hover:bg-rose-600 text-xs font-bold rounded-xl text-white transition-all cursor-pointer"
+                  >
+                    {lang === "th" ? "ละทิ้งการแก้ไข" : "Discard"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void pendingNavSave()}
+                    disabled={readOnly}
+                    title={readOnly ? (lang === "th" ? "โหมดอ่านอย่างเดียว" : "Read-only mode") : undefined}
+                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-bold rounded-xl text-white shadow-lg shadow-indigo-600/15 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {lang === "th" ? "บันทึกก่อน" : "Save"}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- WORKBOOK UNAVAILABLE / AUTO-RECOVERY (RC2) --- */}
+      <AnimatePresence>
+        {unavailableDialogOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 backdrop-blur-sm p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-6 space-y-4" data-testid="recovery-dialog">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl">
+                    <AlertCircle className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display font-bold text-slate-100 text-base">
+                      {lang === "th" ? "ไม่สามารถเข้าถึงไฟล์ Workbook" : "Workbook Unavailable"}
+                    </h3>
+                    <p className="text-[10px] text-slate-400 font-semibold font-mono uppercase tracking-wider mt-0.5">
+                      {workbook?.sourceLabel}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2 text-xs leading-relaxed text-slate-300 bg-slate-950/50 border border-slate-850 p-4 rounded-xl">
+                  <p>
+                    {lang === "th"
+                      ? "ระบบพยายามเชื่อมต่อไฟล์ใหม่อัตโนมัติแล้วแต่ไม่สำเร็จ (ไฟล์อาจถูกย้าย ถูกลบ หรือไดรฟ์/เครือข่ายไม่พร้อมใช้งาน)"
+                      : "Automatic recovery was attempted but the workbook is still unreachable (it may have been moved or deleted, or the drive/network share is unavailable)."}
+                  </p>
+                  <p className="font-medium text-amber-400">
+                    {lang === "th"
+                      ? "ข้อมูลที่แก้ไขไว้ยังอยู่ครบในหน่วยความจำและจะไม่สูญหาย"
+                      : "Your edits are still held safely in memory - nothing is lost."}
+                  </p>
+                </div>
+
+                <div className="flex gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setUnavailableDialogOpen(false)}
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-750 text-xs font-semibold rounded-xl text-slate-300 transition-all cursor-pointer border border-slate-700/50"
+                  >
+                    {lang === "th" ? "ปิด" : "Close"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUnavailableDialogOpen(false);
+                      void openWorkbook(null, true);
+                    }}
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-750 text-xs font-bold rounded-xl text-slate-200 transition-all cursor-pointer border border-slate-700/50"
+                  >
+                    {lang === "th" ? "เปิดไฟล์อื่น..." : "Open File…"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void attemptRecovery().then(recovered => {
+                        if (!recovered) {
+                          notify("error", lang === "th" ? "ยังไม่สามารถเข้าถึงไฟล์ได้" : "The workbook is still unavailable.");
+                        }
+                      })
+                    }
+                    className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-xs font-bold rounded-xl text-white shadow-lg shadow-indigo-600/15 transition-all cursor-pointer"
+                  >
+                    {lang === "th" ? "ลองอีกครั้ง" : "Retry"}
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* --- STATUS BAR (RC2, desktop) --- */}
+      {isDesktopApp && (
+        <StatusBar
+          lang={lang}
+          facilityName={activeFacility?.name ?? null}
+          workbookLabel={workbook?.sourceLabel ?? null}
+          selectedMonth={selectedMonth}
+          provider="Excel"
+          writable={workbook && access ? access.writable : null}
+          healthPercent={healthPercent}
+          integrityIssues={integrityIssues}
+          lastSaved={lastPersistAt}
+          online={isOnline}
+          version={appVersion}
+        />
+      )}
 
       {/* --- APP-WIDE TOASTS --- */}
       <ToastHost />

@@ -7,6 +7,12 @@ interface WorkbookBarProps {
   isDirty: boolean;
   isBusy: boolean;
   lang: "th" | "en";
+  /** null = access not checked yet; true/false = write access (RC2). */
+  writable?: boolean | null;
+  /** GMT+7-formatted timestamps / workbook file version (mtime). */
+  lastLoadedAt?: string | null;
+  lastSaved?: string | null;
+  workbookVersion?: string | null;
   onOpen: () => void;
   onReload: () => void;
   onSaveAs: () => void;
@@ -22,6 +28,10 @@ export default function WorkbookBar({
   isDirty,
   isBusy,
   lang,
+  writable = null,
+  lastLoadedAt = null,
+  lastSaved = null,
+  workbookVersion = null,
   onOpen,
   onReload,
   onSaveAs,
@@ -54,6 +64,18 @@ export default function WorkbookBar({
                 {lang === "th" ? "บันทึกแล้ว" : "Saved"}
               </span>
             )}
+            {writable !== null && (
+              <span
+                className={`px-2 py-0.5 text-[10px] font-bold rounded-md uppercase tracking-wider border ${
+                  writable
+                    ? "bg-slate-800/60 border-slate-700 text-slate-300"
+                    : "bg-rose-500/10 border-rose-500/25 text-rose-400"
+                }`}
+                title={lang === "th" ? "โหมดการเข้าถึงไฟล์" : "Access mode"}
+              >
+                {writable ? "Read / Write" : lang === "th" ? "อ่านอย่างเดียว" : "Read Only"}
+              </span>
+            )}
             {lockVisible && (
               <span
                 className="px-2 py-0.5 bg-rose-500/10 border border-rose-500/25 text-rose-400 text-[10px] font-bold rounded-md uppercase tracking-wider flex items-center gap-1"
@@ -71,6 +93,27 @@ export default function WorkbookBar({
           <p className="text-[11px] text-slate-400 mt-0.5 truncate" title={workbook.path}>
             {monthCount} {lang === "th" ? "เดือน" : "months"} · {workbook.path}
           </p>
+          {(lastLoadedAt || lastSaved || workbookVersion) && (
+            <p className="text-[10px] text-slate-500 mt-0.5 truncate font-mono">
+              {lastLoadedAt && (
+                <span>
+                  {lang === "th" ? "โหลดล่าสุด" : "Loaded"} {lastLoadedAt}
+                </span>
+              )}
+              {lastSaved && (
+                <span>
+                  {" · "}
+                  {lang === "th" ? "บันทึกล่าสุด" : "Saved"} {lastSaved}
+                </span>
+              )}
+              {workbookVersion && (
+                <span>
+                  {" · "}
+                  {lang === "th" ? "ไฟล์แก้ไขเมื่อ" : "File modified"} {workbookVersion}
+                </span>
+              )}
+            </p>
+          )}
         </div>
       </div>
 

@@ -103,6 +103,25 @@ export interface RecoverySnapshot {
   logs: MonthlyLog[];
 }
 
+/**
+ * Full access picture for the open workbook (RC2 read-only mode + health
+ * monitor). `reason` is null exactly when the workbook is safely writable.
+ */
+export interface WorkbookAccessStatus {
+  exists: boolean;
+  readable: boolean;
+  writable: boolean;
+  locked: boolean;
+  excelOwnerFilePresent: boolean;
+  readOnlyAttribute: boolean;
+  /** File modified time - doubles as the workbook "version" shown in the UI. */
+  mtime: string | null;
+  sizeBytes: number | null;
+  /** Newest backup of this workbook, if any (health: backup status). */
+  lastBackupAt: string | null;
+  reason: "NOT_FOUND" | "NO_READ" | "LOCKED_EXCEL" | "LOCKED" | "READONLY_FILE" | null;
+}
+
 async function buildOpenPayload(filePath: string, devices?: DeviceLists): Promise<{ ok: true } & OpenWorkbookPayload> {
   const read = await readWorkbookFromFile(filePath, devices);
   if (!read.validation.ok) {
@@ -213,6 +232,87 @@ export function registerExcelIpc(): void {
     wrap<{ locked: boolean; excelOwnerFilePresent: boolean }>("excel:checkLock", async () => {
       const lock = await checkWorkbookLock(ensureWorkbookPath(rawPath));
       return { ok: true, ...lock };
+    })
+  );
+
+  // --- Access status (RC2 read-only mode + continuous health monitor) ---
+  ipcMain.handle("excel:access", (_event, rawPath: unknown) =>
+    wrap<WorkbookAccessStatus>("excel:access", async () => {
+      const filePath = ensureWorkbookPath(rawPath);
+      const status: { ok: true } & WorkbookAccessStatus = {
+        ok: true,
+        exists: false,
+        readable: false,
+        writable: false,
+        locked: false,
+        excelOwnerFilePresent: false,
+        readOnlyAttribute: false,
+        mtime: null,
+        sizeBytes: null,
+        lastBackupAt: null,
+        reason: null
+      };
+
+      // Excel owner file (~$name): the workbook is (or was) open in Excel.
+      try {
+        await fs.access(path.join(path.dirname(filePath), `~$${path.basename(filePath)}`));
+        status.excelOwnerFilePresent = true;
+      } catch {
+        /* no owner file */
+      }
+
+      try {
+        const stat = await fs.stat(filePath);
+        status.exists = true;
+        status.mtime = stat.mtime.toISOString();
+        status.sizeBytes = stat.size;
+        // Windows maps the read-only file attribute onto the mode write bit.
+        status.readOnlyAttribute = (stat.mode & 0o200) === 0;
+      } catch {
+        status.reason = "NOT_FOUND";
+        return status;
+      }
+
+      try {
+        const handle = await fs.open(filePath, "r");
+        await handle.close();
+        status.readable = true;
+      } catch {
+        status.reason = "NO_READ";
+        return status;
+      }
+
+      try {
+        const handle = await fs.open(filePath, "r+");
+        await handle.close();
+        status.writable = true;
+      } catch {
+        if (status.readOnlyAttribute) {
+          status.reason = "READONLY_FILE";
+        } else {
+          status.locked = true;
+          status.reason = status.excelOwnerFilePresent ? "LOCKED_EXCEL" : "LOCKED";
+        }
+      }
+
+      // An owner file with no live write lock still means Excel has (or had)
+      // the workbook open - writing under it risks corruption, so treat it as
+      // not safely writable until the owner file disappears.
+      if (status.writable && status.excelOwnerFilePresent) {
+        status.writable = false;
+        status.locked = true;
+        status.reason = "LOCKED_EXCEL";
+      }
+
+      try {
+        const config = await loadConfig();
+        const backups = await listBackups(filePath, resolveBackupDir(config));
+        status.lastBackupAt = backups[0]?.createdAt ?? null;
+      } catch {
+        /* no backup folder yet */
+      }
+
+      return status;
     })
   );
 

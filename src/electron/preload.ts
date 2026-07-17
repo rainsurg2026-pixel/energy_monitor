@@ -20,6 +20,7 @@ const desktopBridge = {
     save: (payload: { path: string; logs: unknown[]; devices?: unknown }) => invoke("excel:save", payload),
     saveAs: (payload: { sourcePath: string; logs: unknown[]; devices?: unknown }) => invoke("excel:saveAs", payload),
     checkLock: (path: string) => invoke("excel:checkLock", path),
+    access: (path: string) => invoke("excel:access", path),
     validate: (path: string, devices?: unknown) => invoke("excel:validate", path, devices)
   },
   backups: {

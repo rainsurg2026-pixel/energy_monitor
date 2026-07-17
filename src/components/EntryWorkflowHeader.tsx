@@ -12,6 +12,8 @@ interface EntryWorkflowHeaderProps {
   selectedMonth: string;
   completion: CompletionSummary;
   health: WorkbookHealth | null;
+  /** Timestamp of the last successful workbook save (GMT+7 formatted). */
+  lastSaved: string | null;
   /** Selecting an existing month switches to it; a missing one asks to create it. */
   onSelectMonth: (month: string, exists: boolean) => void;
 }
@@ -32,23 +34,33 @@ export default function EntryWorkflowHeader({
   selectedMonth,
   completion,
   health,
+  lastSaved,
   onSelectMonth
 }: EntryWorkflowHeaderProps) {
   const th = lang === "th";
   const existing = useMemo(() => new Set(months), [months]);
+  // Years are listed newest-first; the latest is what a user wants 99% of the time.
   const years = useMemo(() => {
     const ys = new Set(months.map(m => m.split("-")[0]));
     const selYear = selectedMonth?.split("-")[0];
     if (selYear) ys.add(selYear);
     ys.add(String(new Date().getFullYear()));
-    return Array.from(ys).sort();
+    return Array.from(ys).sort().reverse();
   }, [months, selectedMonth]);
 
-  const selectedYear = selectedMonth?.split("-")[0] ?? years[years.length - 1];
+  const selectedYear = selectedMonth?.split("-")[0] ?? years[0];
 
-  const idx = months.indexOf(selectedMonth);
-  const prevMonth = idx > 0 ? months[idx - 1] : null;
-  const nextMonth = idx >= 0 && idx < months.length - 1 ? months[idx + 1] : null;
+  // ◀ ▶ step calendar months (not just existing records), wrapping across
+  // years: Jan 2026 ◀ = Dec 2025, Dec 2025 ▶ = Jan 2026. A missing target
+  // month goes through the Create Monthly Record prompt.
+  const stepMonth = (delta: 1 | -1) => {
+    if (!selectedMonth) return;
+    const [y, m] = selectedMonth.split("-").map(Number);
+    if (!y || !m) return;
+    const d = new Date(y, m - 1 + delta, 1);
+    const target = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    onSelectMonth(target, existing.has(target));
+  };
 
   const handleYearChange = (year: string) => {
     const inYear = months.filter(m => m.startsWith(`${year}-`));
@@ -106,8 +118,8 @@ export default function EntryWorkflowHeader({
       {/* Month (months of the selected year; missing ones offered for creation) */}
       <div className="flex items-center gap-1.5">
         <button
-          onClick={() => prevMonth && onSelectMonth(prevMonth, true)}
-          disabled={!prevMonth}
+          onClick={() => stepMonth(-1)}
+          disabled={!selectedMonth}
           className={stepBtn}
           title={th ? "เดือนก่อนหน้า" : "Previous month"}
         >
@@ -140,8 +152,8 @@ export default function EntryWorkflowHeader({
           <Calendar className="w-3.5 h-3.5 text-indigo-400 pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2" />
         </div>
         <button
-          onClick={() => nextMonth && onSelectMonth(nextMonth, true)}
-          disabled={!nextMonth}
+          onClick={() => stepMonth(1)}
+          disabled={!selectedMonth}
           className={stepBtn}
           title={th ? "เดือนถัดไป" : "Next month"}
         >
@@ -150,6 +162,14 @@ export default function EntryWorkflowHeader({
       </div>
 
       <div className="flex-1" />
+
+      {/* Last saved */}
+      {lastSaved && (
+        <span className={chip} title={th ? "บันทึกลงไฟล์ล่าสุด" : "Last saved to workbook"}>
+          <span className="text-slate-500">{th ? "บันทึกล่าสุด" : "Last saved"}</span>
+          <span className="font-mono">{lastSaved}</span>
+        </span>
+      )}
 
       {/* Completion */}
       <span className={chip} title={th ? "ความครบถ้วนของข้อมูลเดือนนี้" : "Data completion for this month"}>

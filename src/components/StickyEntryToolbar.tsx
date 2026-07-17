@@ -6,8 +6,12 @@ interface StickyEntryToolbarProps {
   lang: "th" | "en";
   completion: CompletionSummary;
   lastSaved: string | null;
-  workbookStatus: "saved" | "dirty" | "locked" | "busy" | "none";
+  workbookStatus: "saved" | "dirty" | "locked" | "busy" | "none" | "readonly";
   hasDraftChanges: boolean;
+  /** RC2 read-only mode: saving is disabled (viewing/export stay available). */
+  readOnly?: boolean;
+  /** Lift the toolbar above the desktop status bar. */
+  aboveStatusBar?: boolean;
   onSaveAll: () => void;
   onResetAll: () => void;
   onExport: () => void;
@@ -23,6 +27,8 @@ export default function StickyEntryToolbar({
   lastSaved,
   workbookStatus,
   hasDraftChanges,
+  readOnly = false,
+  aboveStatusBar = false,
   onSaveAll,
   onResetAll,
   onExport
@@ -42,7 +48,12 @@ export default function StickyEntryToolbar({
       cls: "bg-indigo-500/10 border-indigo-500/25 text-indigo-400",
       icon: <RefreshCw className="w-3 h-3 animate-spin" />
     },
-    none: { label: th ? "ยังไม่ได้เปิดไฟล์" : "No workbook", cls: "bg-slate-800 border-slate-700 text-slate-400" }
+    none: { label: th ? "ยังไม่ได้เปิดไฟล์" : "No workbook", cls: "bg-slate-800 border-slate-700 text-slate-400" },
+    readonly: {
+      label: th ? "อ่านอย่างเดียว" : "Read Only",
+      cls: "bg-rose-500/10 border-rose-500/25 text-rose-400",
+      icon: <Lock className="w-3 h-3" />
+    }
   };
   const status = statusMap[workbookStatus];
 
@@ -56,18 +67,20 @@ export default function StickyEntryToolbar({
   );
 
   return (
-    <div className="fixed bottom-0 inset-x-0 z-40 bg-slate-900/95 backdrop-blur border-t border-slate-800 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]">
+    <div
+      className={`fixed ${aboveStatusBar ? "bottom-[26px]" : "bottom-0"} inset-x-0 z-40 bg-slate-900/95 backdrop-blur border-t border-slate-800 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]`}
+    >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center gap-3">
         {/* Save all */}
         <button
           onClick={onSaveAll}
-          disabled={workbookStatus === "busy"}
-          className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 ${
-            hasDraftChanges
+          disabled={workbookStatus === "busy" || readOnly}
+          className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+            hasDraftChanges && !readOnly
               ? "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20"
               : "bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-750"
           }`}
-          title="Ctrl+S"
+          title={readOnly ? (th ? "โหมดอ่านอย่างเดียว - บันทึกไม่ได้" : "Read-only mode - saving is disabled") : "Ctrl+S"}
         >
           <Save className="w-4 h-4" />
           <span>{th ? "บันทึกทั้งหมด" : "Save All"}</span>

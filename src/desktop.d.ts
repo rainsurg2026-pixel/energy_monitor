@@ -4,7 +4,13 @@
  * nothing from the Electron side is ever bundled into the renderer.
  */
 
-import type { OpenWorkbookPayload, SaveWorkbookPayload, RecoverySnapshot, IpcResult } from "./electron/ipc/excel";
+import type {
+  OpenWorkbookPayload,
+  SaveWorkbookPayload,
+  RecoverySnapshot,
+  IpcResult,
+  WorkbookAccessStatus
+} from "./electron/ipc/excel";
 import type { AppConfig } from "./electron/config";
 import type { BackupEntry } from "./electron/sync/BackupManager";
 import type { WorkbookHealth } from "./excel/WorkbookValidator";
@@ -17,6 +23,7 @@ export type {
   SaveWorkbookPayload,
   RecoverySnapshot,
   IpcResult,
+  WorkbookAccessStatus,
   AppConfig,
   BackupEntry,
   WorkbookHealth,
@@ -58,6 +65,7 @@ export interface DesktopBridge {
       devices?: DeviceLists;
     }): Promise<IpcResult<SaveWorkbookPayload | { canceled: true }>>;
     checkLock(path: string): Promise<IpcResult<{ locked: boolean; excelOwnerFilePresent: boolean }>>;
+    access(path: string): Promise<IpcResult<WorkbookAccessStatus>>;
     validate(path: string, devices?: DeviceLists): Promise<
       IpcResult<{ health: WorkbookHealth; integrity: ExcelIntegrityReport; validation: WorkbookValidation }>
     >;
