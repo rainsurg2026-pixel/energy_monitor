@@ -60,7 +60,8 @@ export default function DcTable({
         if (hasChanges) handleSaveRef.current();
       },
       reset: () => handleResetRef.current(),
-      hasChanges: () => hasChangesRef.current
+      // Value-accurate (RC3): a draft equal to the stored record is not dirty.
+      hasChanges: () => records.length > 0 && JSON.stringify(records) !== JSON.stringify(initialRecords)
     });
   });
   useEffect(() => {
@@ -69,6 +70,11 @@ export default function DcTable({
   }, []);
   useEffect(() => {
     onDraftChange?.(records);
+    // RC3: dirty state is value-accurate - editing back (or undoing) to the
+    // initial values clears the flag again.
+    if (records.length > 0 && JSON.stringify(records) === JSON.stringify(initialRecords)) {
+      setHasChanges(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [records]);
   const hasChangesRef = { current: hasChanges };

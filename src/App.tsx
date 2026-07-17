@@ -17,6 +17,7 @@ import { ExcelProvider } from "./data/ExcelProvider";
 import { getDesktopBridge } from "./data/ProviderFactory";
 import type { AppConfig, DeviceLists, FacilityEntry, WorkbookAccessStatus } from "./desktop";
 import StatusBar from "./components/StatusBar";
+import SaveProgress, { SaveProgressState } from "./components/SaveProgress";
 import FacilitySelector from "./components/FacilitySelector";
 import EntryWorkflowHeader from "./components/EntryWorkflowHeader";
 import StickyEntryToolbar from "./components/StickyEntryToolbar";
@@ -178,6 +179,31 @@ export default function App() {
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   /** A facility/year/month switch requested while edits are pending waits here for Save / Discard / Cancel. */
   const [pendingNav, setPendingNav] = useState<{ run: () => void } | null>(null);
+
+  // --- RC3: DATA ENTRY EXPERIENCE ---
+  /** Staged save progress card (Validating → Backup → Write → Verify → Refresh → Done). */
+  const [saveProgress, setSaveProgress] = useState<SaveProgressState | null>(null);
+
+  // Internal performance monitor: measured, logged, never blocking.
+  const PERF_TARGETS = {
+    openWorkbookMs: 2000,
+    switchMonthMs: 500,
+    saveMs: 3000,
+    dashboardRefreshMs: 1000
+  } as const;
+  type PerfKey = keyof typeof PERF_TARGETS;
+  const recordPerf = (key: PerfKey, ms: number) => {
+    const host = window as unknown as { __emPerf?: Partial<Record<PerfKey, number>> };
+    (host.__emPerf ??= {})[key] = Math.round(ms);
+    if (ms > PERF_TARGETS[key]) {
+      console.warn(`[PERF] ${key}: ${Math.round(ms)}ms exceeded the ${PERF_TARGETS[key]}ms target`);
+    }
+  };
+  /** Duration until React has committed and the event loop turned twice.
+   *  (Not rAF: animation frames are throttled in unfocused windows.) */
+  const recordPerfAfterPaint = (key: PerfKey, t0: number) => {
+    setTimeout(() => setTimeout(() => recordPerf(key, performance.now() - t0), 0), 0);
+  };
 
   // --- MULTI-FACILITY (RC1) ---
   // Each facility has its own independent workbook + profile; the active
@@ -362,6 +388,8 @@ export default function App() {
 
   /** Push a freshly read workbook snapshot into every store the UI reads. */
   const applyWorkbookSnapshot = (snap: DataSnapshot) => {
+    const tRefresh = performance.now();
+    recordPerfAfterPaint("dashboardRefreshMs", tRefresh);
     loadAllLogs().forEach(l => deleteLogForMonth(l.month));
     snap.logs.forEach(l => saveLogForMonth(l.month, l));
     // Keep the entry sheet usable: the previous month always exists in memory
@@ -383,11 +411,13 @@ export default function App() {
   const openWorkbook = async (target: string | null, viaDialog = false) => {
     if (!excelProvider || !desktopBridge) return;
     setIsWorkbookBusy(true);
+    const tOpen = performance.now();
     try {
       const snap = viaDialog
         ? await excelProvider.load({ openDialog: true })
         : await excelProvider.load({ target });
       if (snap) {
+        recordPerf("openWorkbookMs", performance.now() - tOpen);
         applyWorkbookSnapshot(snap);
         setAppConfig(await desktopBridge.config.get());
         notify(
@@ -433,14 +463,27 @@ export default function App() {
       return false;
     }
     setIsWorkbookBusy(true);
+    // RC3: staged save progress. Backup + write + verify happen inside one
+    // atomic IPC call (the engine is untouched), so those stages complete
+    // together when that call resolves; validate/refresh are individually real.
+    const tSave = performance.now();
+    const stage = (current: SaveProgressState["current"]) => {
+      if (!silent) setSaveProgress(prev => ({ startedAt: prev?.startedAt ?? tSave, current }));
+    };
+    stage("validate");
     try {
+      stage("backup");
       const outcome = await excelProvider.saveAll(loadAllLogs());
+      stage("refresh");
       const snap = await excelProvider.reload();
       applyWorkbookSnapshot(snap);
       // A committed save supersedes any crash-recovery journal.
       void desktopBridge?.recovery.clear();
       setLastPersistAt(formatTimestamp(new Date()));
       void refreshAccess(); // new mtime/backup -> keep status bar current
+      const saveMs = performance.now() - tSave;
+      recordPerf("saveMs", saveMs);
+      if (!silent) setSaveProgress({ startedAt: tSave, current: "done", elapsedMs: saveMs });
       const backupName = outcome.backupPath ? outcome.backupPath.split(/[\\/]/).pop() : null;
       notify(
         "success",
@@ -450,6 +493,15 @@ export default function App() {
       );
       return true;
     } catch (err) {
+      if (!silent) {
+        setSaveProgress(prev => ({
+          startedAt: prev?.startedAt ?? tSave,
+          current: prev?.current ?? "write",
+          failedAt: prev?.current === "refresh" ? "refresh" : "write",
+          error: err instanceof Error ? err.message : String(err),
+          elapsedMs: performance.now() - tSave
+        }));
+      }
       // The edit stays in memory; surface it, keep the dirty flag on, and
       // journal the unsaved state so a crash cannot lose it.
       setLogs(loadAllLogs());
@@ -572,7 +624,11 @@ export default function App() {
   const attemptRecovery = async (): Promise<boolean> => {
     if (!excelProvider) return false;
     const status = await refreshAccess();
-    if (!status?.exists || !status.readable) return false;
+    if (!status?.exists || !status.readable) {
+      console.warn(`[RECOVERY] attempt failed: exists=${status?.exists} readable=${status?.readable} reason=${status?.reason}`);
+      return false;
+    }
+    console.warn("[RECOVERY] workbook reachable again - closing dialog, reloading");
     accessFailStreakRef.current = 0;
     setUnavailableDialogOpen(false);
     if (isDirtyRef.current) {
@@ -619,7 +675,10 @@ export default function App() {
         await new Promise(resolve => setTimeout(resolve, 2000));
         if (await attemptRecovery()) return;
       }
-      if (!disposed) setUnavailableDialogOpen(true);
+      if (!disposed) {
+        console.warn("[RECOVERY] automatic retries exhausted - showing recovery dialog");
+        setUnavailableDialogOpen(true);
+      }
     };
 
     void tick();
@@ -710,22 +769,132 @@ export default function App() {
       .catch(() => undefined);
   }, [desktopBridge]);
 
-  // Keyboard shortcuts (RC6/UI-6): Ctrl+S save-all (entry), Ctrl+E export
-  // center, Enter / Shift+Enter move between entry fields.
+  // RC3: the save-progress card dismisses itself shortly after a clean save;
+  // failures stay on screen until dismissed.
+  useEffect(() => {
+    if (saveProgress?.current === "done" && !saveProgress.failedAt) {
+      const id = setTimeout(() => setSaveProgress(null), 3000);
+      return () => clearTimeout(id);
+    }
+  }, [saveProgress]);
+
+  // --- RC3: SESSION UNDO (Ctrl+Z) ---
+  // One undo entry per field edit (keystrokes within a focus session
+  // coalesce), covering text/number inputs, dropdowns and checkboxes inside
+  // the entry sections. Session-only - no workbook rollback. Restoring a
+  // value re-dispatches input/change, so drafts and the dirty state stay
+  // exactly consistent.
+  interface UndoEntry {
+    el: HTMLInputElement | HTMLSelectElement;
+    kind: "input" | "select" | "checkbox";
+    value: string;
+    checked?: boolean;
+  }
+  const undoStackRef = useRef<UndoEntry[]>([]);
+  const undoBaselineRef = useRef<WeakMap<Element, string>>(new WeakMap());
+  const undoSessionElRef = useRef<Element | null>(null);
+  const suppressUndoRecordRef = useRef(false);
+
+  useEffect(() => {
+    const inEntry = (el: Element | null): boolean => !!el && !!(el as HTMLElement).closest?.("[id^='entry-section-']");
+    const currentValueOf = (t: HTMLInputElement | HTMLSelectElement): string =>
+      (t as HTMLInputElement).type === "checkbox" ? String((t as HTMLInputElement).checked) : t.value;
+
+    const onFocusIn = (e: FocusEvent) => {
+      const t = e.target as HTMLInputElement | HTMLSelectElement;
+      if (!inEntry(t as Element) || !("value" in t)) return;
+      undoBaselineRef.current.set(t, currentValueOf(t));
+      undoSessionElRef.current = null;
+    };
+
+    const onInput = (e: Event) => {
+      if (suppressUndoRecordRef.current) return;
+      const t = e.target as HTMLInputElement | HTMLSelectElement;
+      if (!inEntry(t as Element) || !("value" in t)) return;
+      const kind: UndoEntry["kind"] =
+        (t as HTMLInputElement).type === "checkbox" ? "checkbox" : t.tagName === "SELECT" ? "select" : "input";
+      if (kind === "input" && undoSessionElRef.current === t) return; // coalesce keystrokes
+      const baseline = undoBaselineRef.current.get(t) ?? "";
+      undoStackRef.current.push({
+        el: t,
+        kind,
+        value: kind === "checkbox" ? "" : baseline,
+        checked: kind === "checkbox" ? baseline === "true" : undefined
+      });
+      if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+      if (kind === "input") {
+        undoSessionElRef.current = t;
+      } else {
+        undoBaselineRef.current.set(t, currentValueOf(t)); // next change of the same control undoes to this
+      }
+    };
+
+    window.addEventListener("focusin", onFocusIn, true);
+    window.addEventListener("input", onInput, true);
+    return () => {
+      window.removeEventListener("focusin", onFocusIn, true);
+      window.removeEventListener("input", onInput, true);
+    };
+  }, []);
+
+  /** Undo the most recent field edit still present on screen. */
+  const undoLastEdit = (): boolean => {
+    const stack = undoStackRef.current;
+    while (stack.length > 0) {
+      const entry = stack.pop()!;
+      const el = entry.el;
+      if (!el.isConnected) continue; // month/facility switched - stale target
+      suppressUndoRecordRef.current = true;
+      try {
+        if (entry.kind === "checkbox") {
+          if ((el as HTMLInputElement).checked !== entry.checked) (el as HTMLInputElement).click();
+        } else {
+          const proto = entry.kind === "select" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(proto, "value")!.set!;
+          setter.call(el, entry.value);
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      } finally {
+        suppressUndoRecordRef.current = false;
+      }
+      undoBaselineRef.current.set(el, entry.kind === "checkbox" ? String(entry.checked) : entry.value);
+      undoSessionElRef.current = null;
+      (el as HTMLElement).scrollIntoView?.({ block: "center", behavior: "smooth" });
+      (el as HTMLElement).focus?.({ preventScroll: true });
+      return true;
+    }
+    return false;
+  };
+
+  // Keyboard shortcuts (RC3/RC6): Ctrl+S save-all (entry), Ctrl+E and
+  // Ctrl+Shift+S export center, Ctrl+Z undo last edit, F5 refresh workbook,
+  // Enter / Shift+Enter move between entry fields. Tab stays native.
   const currentViewRef = useRef(currentView);
   useEffect(() => {
     currentViewRef.current = currentView;
   }, [currentView]);
   const handleToolbarSaveRef = useRef<() => void>(() => {});
+  const reloadWorkbookRef = useRef<() => void>(() => {});
   useEffect(() => {
     if (!isDesktopApp) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && (e.key === "s" || e.key === "S")) {
+      if (e.ctrlKey && e.shiftKey && (e.key === "s" || e.key === "S")) {
+        e.preventDefault();
+        setExportCenterOpen(true);
+      } else if (e.ctrlKey && !e.shiftKey && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
         if (currentViewRef.current === "entry") handleToolbarSaveRef.current();
       } else if (e.ctrlKey && (e.key === "e" || e.key === "E")) {
         e.preventDefault();
         setExportCenterOpen(true);
+      } else if (e.ctrlKey && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+        // App-level undo of the last field edit; falls back to native undo
+        // (normal text editing) when there is nothing to undo.
+        if (undoLastEdit()) e.preventDefault();
+      } else if (e.key === "F5" && !e.ctrlKey && !e.shiftKey) {
+        e.preventDefault(); // never reload the renderer - re-read the workbook
+        reloadWorkbookRef.current();
       } else if (e.key === "Enter" && !e.ctrlKey && !e.altKey) {
         const target = e.target as HTMLElement;
         if (target?.tagName === "INPUT" && target.closest("[id^='entry-section-']")) {
@@ -1033,6 +1202,35 @@ export default function App() {
   const raiseValidation = (fields: MissingField[]) => {
     setValidationIssues(fields);
     setHighlightSections(new Set(fields.map(f => f.section)));
+    // RC3: scroll/focus/highlight the first invalid field immediately - the
+    // validation dialog is displayed simultaneously.
+    const first = fields[0];
+    if (first) {
+      document.getElementById(`entry-section-${first.section}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setTimeout(() => {
+        document
+          .querySelector<HTMLInputElement>(`#entry-section-${first.section} input:placeholder-shown`)
+          ?.focus({ preventScroll: true });
+      }, 450);
+    }
+  };
+
+  /** RC3 jump-to-error: scroll to a section, focus + highlight its first empty field. */
+  const jumpToSection = (section: "ups" | "air" | "dc" | "energy") => {
+    const container = document.getElementById(`entry-section-${section}`);
+    if (!container) return;
+    container.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlightSections(prev => {
+      const next = new Set(prev);
+      next.add(section);
+      return next;
+    });
+    setTimeout(() => {
+      const input =
+        container.querySelector<HTMLInputElement>("input:placeholder-shown") ?? container.querySelector<HTMLInputElement>("input");
+      input?.focus({ preventScroll: true });
+      input?.select?.();
+    }, 400);
   };
 
   const closeValidation = () => {
@@ -1117,7 +1315,9 @@ export default function App() {
       draftsRef.current = {};
       setDraftTick(t => t + 1);
       if (exists) {
+        const tSwitch = performance.now();
         setSelectedMonth(month);
+        recordPerfAfterPaint("switchMonthMs", tSwitch);
       } else {
         setPendingCreateMonth(month);
       }
@@ -1151,6 +1351,9 @@ export default function App() {
 
   useEffect(() => {
     handleToolbarSaveRef.current = handleToolbarSave;
+    reloadWorkbookRef.current = () => {
+      if (workbook?.path && !isBusyRef.current) void openWorkbook(workbook.path);
+    };
   });
 
   const handleToolbarReset = () => {
@@ -1937,9 +2140,13 @@ export default function App() {
               hasDraftChanges={hasDraftChanges || isDirty}
               readOnly={readOnly}
               aboveStatusBar={isDesktopApp}
+              facilityName={activeFacility?.name ?? null}
+              monthLabel={selectedMonth || null}
+              provider={isDesktopApp ? "Excel" : "Browser"}
               onSaveAll={handleToolbarSave}
               onResetAll={handleToolbarReset}
               onExport={handleToolbarExport}
+              onJumpToSection={jumpToSection}
             />
           </div>
         )}
@@ -2599,11 +2806,15 @@ export default function App() {
           writable={workbook && access ? access.writable : null}
           healthPercent={healthPercent}
           integrityIssues={integrityIssues}
+          completionPercent={activeLog ? entryCompletion.overall.percent : null}
           lastSaved={lastPersistAt}
           online={isOnline}
           version={appVersion}
         />
       )}
+
+      {/* --- SAVE PROGRESS (RC3) --- */}
+      {saveProgress && <SaveProgress lang={lang} state={saveProgress} onDismiss={() => setSaveProgress(null)} />}
 
       {/* --- APP-WIDE TOASTS --- */}
       <ToastHost />

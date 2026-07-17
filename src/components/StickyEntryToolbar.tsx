@@ -12,9 +12,15 @@ interface StickyEntryToolbarProps {
   readOnly?: boolean;
   /** Lift the toolbar above the desktop status bar. */
   aboveStatusBar?: boolean;
+  /** RC3 context chips: facility · month · provider. */
+  facilityName?: string | null;
+  monthLabel?: string | null;
+  provider?: string | null;
   onSaveAll: () => void;
   onResetAll: () => void;
   onExport: () => void;
+  /** RC3 jump-to-error: scroll/focus/highlight the section's first empty field. */
+  onJumpToSection?: (section: "ups" | "air" | "dc" | "energy") => void;
 }
 
 /**
@@ -29,9 +35,13 @@ export default function StickyEntryToolbar({
   hasDraftChanges,
   readOnly = false,
   aboveStatusBar = false,
+  facilityName = null,
+  monthLabel = null,
+  provider = null,
   onSaveAll,
   onResetAll,
-  onExport
+  onExport,
+  onJumpToSection
 }: StickyEntryToolbarProps) {
   const th = lang === "th";
 
@@ -57,14 +67,33 @@ export default function StickyEntryToolbar({
   };
   const status = statusMap[workbookStatus];
 
-  const sectionPct = (label: string, pct: number) => (
-    <span key={label} className="flex items-center gap-1">
-      <span className="text-slate-500">{label}</span>
-      <span className={`font-mono font-bold ${pct >= 100 ? "text-emerald-400" : pct >= 50 ? "text-amber-400" : "text-rose-400"}`}>
-        {pct}%
-      </span>
-    </span>
-  );
+  // RC3 interactive validation summary: "UPS 18/18 ✔" — clicking an
+  // incomplete section jumps to its first empty field.
+  const sectionSummary = (key: "ups" | "air" | "dc" | "energy", label: string) => {
+    const s = completion[key];
+    const complete = s.total > 0 && s.filled >= s.total;
+    return (
+      <button
+        key={key}
+        type="button"
+        onClick={() => onJumpToSection?.(key)}
+        title={
+          complete
+            ? `${label}: ${th ? "ครบถ้วน" : "complete"}`
+            : `${label}: ${th ? "คลิกเพื่อไปยังช่องแรกที่ยังว่าง" : "click to jump to the first empty field"}`
+        }
+        className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 ${
+          complete ? "hover:bg-slate-800/60" : "hover:bg-amber-500/10"
+        }`}
+      >
+        <span className="text-slate-500">{label}</span>
+        <span className={`font-mono font-bold ${complete ? "text-emerald-400" : "text-amber-400"}`}>
+          {s.filled}/{s.total}
+        </span>
+        <span className={complete ? "text-emerald-400" : "text-amber-400"}>{complete ? "✔" : "⚠"}</span>
+      </button>
+    );
+  };
 
   return (
     <div
@@ -75,7 +104,7 @@ export default function StickyEntryToolbar({
         <button
           onClick={onSaveAll}
           disabled={workbookStatus === "busy" || readOnly}
-          className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+          className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${
             hasDraftChanges && !readOnly
               ? "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20"
               : "bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-750"
@@ -90,7 +119,7 @@ export default function StickyEntryToolbar({
         <button
           onClick={onResetAll}
           disabled={!hasDraftChanges || workbookStatus === "busy"}
-          className="px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 text-slate-400 hover:text-slate-200 border border-slate-800 hover:bg-slate-800/50 transition-colors cursor-pointer disabled:opacity-40"
+          className="px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 text-slate-400 hover:text-slate-200 border border-slate-800 hover:bg-slate-800/50 transition-colors cursor-pointer disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>{th ? "คืนค่า" : "Reset"}</span>
@@ -99,28 +128,64 @@ export default function StickyEntryToolbar({
         {/* Export */}
         <button
           onClick={onExport}
-          className="px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 text-slate-300 hover:text-slate-100 border border-slate-800 hover:bg-slate-800/50 transition-colors cursor-pointer"
-          title="Ctrl+E"
+          className="px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 text-slate-300 hover:text-slate-100 border border-slate-800 hover:bg-slate-800/50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+          title="Ctrl+E / Ctrl+Shift+S"
         >
           <Download className="w-3.5 h-3.5 text-teal-400" />
           <span>{th ? "ส่งออก" : "Export"}</span>
         </button>
 
+        {/* RC3 context: facility · month · provider */}
+        {(facilityName || monthLabel || provider) && (
+          <span className="hidden lg:flex items-center gap-1.5 text-[11px] text-slate-400 font-semibold">
+            {facilityName && <span>{facilityName}</span>}
+            {facilityName && monthLabel && <span className="text-slate-700">·</span>}
+            {monthLabel && <span className="font-mono">{monthLabel}</span>}
+            {provider && (
+              <>
+                <span className="text-slate-700">·</span>
+                <span className="text-slate-500">{provider}</span>
+              </>
+            )}
+          </span>
+        )}
+
         <div className="flex-1" />
 
-        {/* Per-section + overall completion */}
-        <div className="hidden md:flex items-center gap-3 text-[11px]">
-          {sectionPct("UPS", completion.ups.percent)}
-          {sectionPct("Air", completion.air.percent)}
-          {sectionPct("DC", completion.dc.percent)}
-          {sectionPct(th ? "พลังงาน" : "Energy", completion.energy.percent)}
+        {/* RC3 interactive validation summary (filled/total per section) */}
+        <div className="hidden md:flex items-center gap-2 text-[11px]">
+          {sectionSummary("ups", "UPS")}
+          {sectionSummary("air", "Air")}
+          {sectionSummary("dc", "DC")}
+          {sectionSummary("energy", th ? "พลังงาน" : "Energy")}
           <span className="text-slate-700">│</span>
-          {sectionPct(th ? "รวม" : "Overall", completion.overall.percent)}
+          <span className="flex items-center gap-1">
+            <span className="text-slate-500">{th ? "รวม" : "Overall"}</span>
+            <span
+              className={`font-mono font-bold ${
+                completion.overall.percent >= 100 ? "text-emerald-400" : completion.overall.percent >= 50 ? "text-amber-400" : "text-rose-400"
+              }`}
+            >
+              {completion.overall.percent}%
+            </span>
+          </span>
         </div>
 
         {/* Last saved */}
         <span className="text-[11px] text-slate-500 font-mono hidden sm:inline" title={th ? "บันทึกล่าสุด" : "Last saved"}>
           {lastSaved ?? (th ? "ยังไม่เคยบันทึก" : "never saved")}
+        </span>
+
+        {/* RC3 dirty indicator */}
+        <span
+          data-testid="dirty-indicator"
+          className={`flex items-center gap-1 text-[11px] font-bold ${hasDraftChanges ? "text-amber-400" : "text-emerald-400"}`}
+          title={th ? "สถานะการแก้ไข" : "Edit state"}
+        >
+          {hasDraftChanges ? "●" : "✓"}
+          <span className="hidden sm:inline">
+            {hasDraftChanges ? (th ? "มีการแก้ไขที่ยังไม่บันทึก" : "Unsaved Changes") : th ? "บันทึกครบแล้ว" : "All Changes Saved"}
+          </span>
         </span>
 
         {/* Workbook status */}

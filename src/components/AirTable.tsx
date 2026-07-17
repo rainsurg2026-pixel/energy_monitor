@@ -58,7 +58,8 @@ export default function AirTable({
         if (hasChanges) handleSaveRef.current();
       },
       reset: () => handleResetRef.current(),
-      hasChanges: () => hasChangesRef.current
+      // Value-accurate (RC3): a draft equal to the stored record is not dirty.
+      hasChanges: () => hasChangesRef.current && JSON.stringify(record) !== JSON.stringify(initialRecord)
     });
   });
   useEffect(() => {
@@ -67,6 +68,11 @@ export default function AirTable({
   }, []);
   useEffect(() => {
     onDraftChange?.(record);
+    // RC3: dirty state is value-accurate - editing back (or undoing) to the
+    // initial values clears the flag again.
+    if (record && JSON.stringify(record) === JSON.stringify(initialRecord)) {
+      setHasChanges(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [record]);
   const hasChangesRef = { current: hasChanges };

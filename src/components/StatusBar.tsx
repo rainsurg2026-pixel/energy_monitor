@@ -11,6 +11,8 @@ interface StatusBarProps {
   writable: boolean | null;
   healthPercent: number | null;
   integrityIssues: number | null;
+  /** RC3: live completion of the selected month's record (0-100). */
+  completionPercent?: number | null;
   lastSaved: string | null;
   online: boolean;
   version: string | null;
@@ -29,6 +31,7 @@ export default function StatusBar({
   writable,
   healthPercent,
   integrityIssues,
+  completionPercent = null,
   lastSaved,
   online,
   version
@@ -87,6 +90,15 @@ export default function StatusBar({
           >
             <span className={dim}>Integrity</span>
             {integrityIssues === 0 ? (th ? "ปกติ" : "OK") : `${integrityIssues} ${th ? "ปัญหา" : "issues"}`}
+          </span>
+        )}
+        {completionPercent !== null && (
+          <span
+            className={`${item} ${completionPercent >= 100 ? "text-emerald-400" : "text-amber-400"}`}
+            title={th ? "ความครบถ้วนของข้อมูลเดือนที่เลือก" : "Selected month's data completion"}
+          >
+            <span className={dim}>{th ? "ครบถ้วน" : "Completion"}</span>
+            {completionPercent}%
           </span>
         )}
 
