@@ -31,7 +31,7 @@ export default function FacilitySelector({ facilities, activeId, isBusy, lang, o
         }}
         title={
           active
-            ? `${lang === "th" ? "ศูนย์ข้อมูล" : "Facility"}: ${active.name} · ${active.workbook}`
+            ? `${lang === "th" ? "ศูนย์ข้อมูล" : "Facility"}: ${active.displayName ?? active.name} · ${active.workbook}`
             : lang === "th"
               ? "เลือกศูนย์ข้อมูล"
               : "Select facility"

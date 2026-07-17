@@ -18,6 +18,10 @@ import { ensureDir, getAppRoot, getConfigDir, log } from "./paths";
 export interface FacilityProfile {
   id: string;
   name: string;
+  /** Long-form name shown in reports and tooltips ("Rangsit Data Center"). */
+  displayName: string;
+  /** Title line used on exported reports. */
+  reportTitle: string;
   logo: string;
   theme: { accent: string };
   devices: {
@@ -43,6 +47,7 @@ export interface FacilityProfile {
 export interface FacilityEntry {
   id: string;
   name: string;
+  displayName: string;
   workbook: string; // resolved absolute path
   profilePath: string;
   profile: FacilityProfile;
@@ -58,9 +63,12 @@ const DEFAULT_DC = ["DC PDB41A", "DC PDB41B", "DC PDB42A", "DC PDB42B"];
 const AIR_FIELDS = ["eb41a", "eb41b", "eb42a", "eb42b"];
 
 function defaultProfile(id: string, name: string, accent: string, logo: string): FacilityProfile {
+  const displayName = `${name} Data Center`;
   return {
     id,
     name,
+    displayName,
+    reportTitle: `${displayName} — Monthly Power & Energy Report`,
     logo,
     theme: { accent },
     devices: { ups: [...DEFAULT_UPS], dc: [...DEFAULT_DC] },
@@ -80,7 +88,7 @@ function defaultProfile(id: string, name: string, accent: string, logo: string):
 
 interface RawFacilitiesFile {
   defaultFacility?: string;
-  facilities?: Array<{ id?: string; name?: string; workbook?: string; profile?: string }>;
+  facilities?: Array<{ id?: string; name?: string; displayName?: string; workbook?: string; profile?: string }>;
 }
 
 function facilitiesFilePath(): string {
@@ -105,14 +113,23 @@ async function writeJson(file: string, value: unknown): Promise<void> {
 }
 
 /** Fill any missing profile fields with defaults (backward/forward compat). */
-function normalizeProfile(raw: Partial<FacilityProfile> | null, id: string, name: string): FacilityProfile {
+function normalizeProfile(
+  raw: Partial<FacilityProfile> | null,
+  id: string,
+  name: string,
+  displayName: string
+): FacilityProfile {
   const base = defaultProfile(id, name, "indigo", "⚡");
+  base.displayName = displayName;
+  base.reportTitle = `${displayName} — Monthly Power & Energy Report`;
   if (!raw || typeof raw !== "object") return base;
   return {
     ...base,
     ...raw,
     id,
     name: typeof raw.name === "string" && raw.name ? raw.name : name,
+    displayName: typeof raw.displayName === "string" && raw.displayName ? raw.displayName : base.displayName,
+    reportTitle: typeof raw.reportTitle === "string" && raw.reportTitle ? raw.reportTitle : base.reportTitle,
     logo: typeof raw.logo === "string" && raw.logo ? raw.logo : base.logo,
     theme: { ...base.theme, ...(raw.theme ?? {}) },
     devices: {
@@ -140,8 +157,20 @@ export async function loadFacilities(): Promise<FacilitiesConfig> {
     raw = {
       defaultFacility: "rangsit",
       facilities: [
-        { id: "rangsit", name: "Rangsit", workbook: "DC_Rangsit.xlsm", profile: "config/rangsit/profile.json" },
-        { id: "srinakarin", name: "Srinakarin", workbook: "DC_Srinakarin.xlsm", profile: "config/srinakarin/profile.json" }
+        {
+          id: "rangsit",
+          name: "Rangsit",
+          displayName: "Rangsit Data Center",
+          workbook: "DC_Rangsit.xlsm",
+          profile: "config/rangsit/profile.json"
+        },
+        {
+          id: "srinakarin",
+          name: "Srinakarin",
+          displayName: "Srinakarin Data Center",
+          workbook: "DC_Srinakarin.xlsm",
+          profile: "config/srinakarin/profile.json"
+        }
       ]
     };
     await writeJson(file, raw);
@@ -153,12 +182,15 @@ export async function loadFacilities(): Promise<FacilitiesConfig> {
     if (!entry?.id || !entry?.workbook) continue;
     const id = String(entry.id);
     const name = String(entry.name ?? id);
+    const displayName = String(entry.displayName ?? `${name} Data Center`);
     const profileRel = String(entry.profile ?? `config/${id}/profile.json`);
     const profilePath = resolveAgainstRoot(profileRel);
 
     let profileRaw = await readJson<Partial<FacilityProfile>>(profilePath);
     if (!profileRaw) {
       profileRaw = defaultProfile(id, name, id === "srinakarin" ? "teal" : "indigo", id === "srinakarin" ? "🏢" : "⚡");
+      profileRaw.displayName = displayName;
+      profileRaw.reportTitle = `${displayName} — Monthly Power & Energy Report`;
       await writeJson(profilePath, profileRaw);
       log.info(`facility profile created: ${profilePath}`);
     }
@@ -166,9 +198,10 @@ export async function loadFacilities(): Promise<FacilitiesConfig> {
     facilities.push({
       id,
       name,
+      displayName,
       workbook: resolveAgainstRoot(String(entry.workbook)),
       profilePath,
-      profile: normalizeProfile(profileRaw, id, name)
+      profile: normalizeProfile(profileRaw, id, name, displayName)
     });
   }
 
