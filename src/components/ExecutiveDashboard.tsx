@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useRef, useState, useEffect } from "react";
 import { useReport } from "../ReportContext";
 import { MonthlyLog } from "../types";
 import {
@@ -72,6 +72,41 @@ export default function ExecutiveDashboard({ logs, lang }: ExecutiveDashboardPro
 
     return allMonthlyMetrics.slice(Math.max(0, anchorIndex - windowSize + 1), anchorIndex + 1);
   }, [allMonthlyMetrics, selectedTrend, selectedYear, selectedPeriod]);
+
+  // The trend line uses a Recharts category axis (dataKey="month"). Recharts
+  // only derives its "gap" padding from the smallest numeric distance between
+  // points for type="number" axes (see recharts axisSelectors:
+  // selectSmallestDistanceBetweenValues returns undefined when
+  // axis.type !== "number"), so the string padding="gap" resolves to 0 on a
+  // category axis and the first/last points sit on the chart edges. Recharts
+  // does honour an OBJECT padding for category axes, so we inset both ends by
+  // one category slot — matching the hand-rolled TrendLineChart's
+  // (index + 1) / (count + 1) spacing — by measuring the plot width and
+  // deriving the pixel padding from the category count.
+  const trendChartRef = useRef<HTMLDivElement>(null);
+  const [trendChartWidth, setTrendChartWidth] = useState(0);
+  useEffect(() => {
+    const el = trendChartRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width ?? el.clientWidth;
+      setTrendChartWidth(prev => (Math.abs(prev - width) > 0.5 ? width : prev));
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const trendCategoryPadding = useMemo(() => {
+    const count = trendMetrics.length;
+    if (count <= 1 || trendChartWidth <= 0) return 0;
+    // Approximate horizontal plot width available to the point scale: measured
+    // wrapper width minus the Y-axis allowance. One category slot is
+    // plotWidth / (count + 1), which places points at (index + 1) / (count + 1)
+    // — one blank slot before the first month and after the last.
+    const Y_AXIS_ALLOWANCE = 44;
+    const plotWidth = Math.max(0, trendChartWidth - Y_AXIS_ALLOWANCE);
+    return Math.round(plotWidth / (count + 1));
+  }, [trendMetrics.length, trendChartWidth]);
 
   // Aggregate active period stats
   const aggregateStats = useMemo(() => {
@@ -241,12 +276,12 @@ export default function ExecutiveDashboard({ logs, lang }: ExecutiveDashboardPro
             <p className="text-[11px] text-slate-400 mt-1">Monthly energy utilization pattern · {trendMetrics.length} reporting months</p>
           </div>
 
-          <div className="h-64 mt-4 w-full">
+          <div className="h-64 mt-4 w-full" ref={trendChartRef}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={trendMetrics} margin={{ top: 28, right: 10, left: -10, bottom: 0 }}>
                 <XAxis
                   dataKey="month"
-                  padding="gap"
+                  padding={{ left: trendCategoryPadding, right: trendCategoryPadding }}
                   tickFormatter={formatMonthYear}
                   stroke="#475569"
                   style={{ fontSize: 10, fontFamily: "monospace" }}
