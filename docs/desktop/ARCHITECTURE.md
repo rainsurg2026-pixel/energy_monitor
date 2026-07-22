@@ -142,3 +142,16 @@ all reading and for post-patch validation.
 all of these beside the double-clicked exe; unpacked builds use the exe's
 directory; development uses the project root. Browser Local Storage holds
 only per-machine view preferences (report filters) in the desktop build.
+
+## 6. Known technical debt
+
+Dashboard UPS topology (groups, UMDB/STS/OUDB mapping) is config-driven
+via `facility.profile.dashboard` (`config/<id>/profile.json`) — no
+facility-identity branching remains in `DashboardSummary.tsx` /
+`UniversalFilterBar.tsx`. Srinakarin's device-ID list is currently
+duplicated across that JSON config and `SRINAKARIN_AGGREGATE_IDS`
+(`src/utils/srinakarinPower.ts`) because JSON cannot reference a
+TypeScript constant — a maintainability concern only, not a correctness
+or production issue. Full detail, plus a second, unrelated item
+(`test:excel` targeting the retired `RST_Dashboard.xlsm`), in
+`KNOWN_TECHNICAL_DEBT.md`. Planned resolutions in `ROADMAP.md`.

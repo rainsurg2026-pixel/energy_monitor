@@ -1,4 +1,6 @@
 import { MonthlyLog, UpsRecord, AirRecord, DcRecord } from "../types";
+import { calculateEnergyCostForMonth, getAirFields, getAirValue } from "./energyCost";
+import { formatNumber, formatNumber2 } from "./numberFormatBridge";
 
 // Helper to calculate days in month
 export function getDaysInMonth(monthStr: string): number {
@@ -24,18 +26,18 @@ export function getPreviousMonthStr(monthStr: string): string {
 
 export interface ComputedMonthMetrics {
   month: string; // YYYY-MM
-  upsEnergyKwh: number;
-  airEnergyKwh: number;
-  dcEnergyKwh: number;
-  totalEnergyKwh: number;
-  itEquipmentEnergyKwh: number;
-  pue: number;
-  carbonEmissionKg: number;
-  actualCostThb: number;
-  estimatedCostThb: number;
-  avgElectricityRate: number;
-  buildingEnergyKwh: number;
-  buildingCostThb: number;
+  upsEnergyKwh: number | null;
+  airEnergyKwh: number | null;
+  dcEnergyKwh: number | null;
+  totalEnergyKwh: number | null;
+  itEquipmentEnergyKwh: number | null;
+  pue: number | null;
+  carbonEmissionKg: number | null;
+  actualCostThb: number | null;
+  estimatedCostThb: number | null;
+  avgElectricityRate: number | null;
+  buildingEnergyKwh: number | null;
+  buildingCostThb: number | null;
   
   // Scoring
   dataQualityScore: number; // 0-100
@@ -49,9 +51,11 @@ export interface ComputedMonthMetrics {
 /**
  * Computes comprehensive reporting metrics for a specific month
  */
-export function computeMetricsForMonth(log: MonthlyLog, previousLog: MonthlyLog | null): ComputedMonthMetrics {
-  const days = getDaysInMonth(log.month);
-  
+export function computeMetricsForMonth(
+  log: MonthlyLog,
+  previousLog: MonthlyLog | null,
+  allLogs: readonly MonthlyLog[] = previousLog ? [previousLog, log] : [log]
+): ComputedMonthMetrics {
   // 1. UPS Calculations
   let totalUpsKw = 0;
   let totalUpsKva = 0;
@@ -69,23 +73,17 @@ export function computeMetricsForMonth(log: MonthlyLog, previousLog: MonthlyLog 
     }
   });
   
-  const upsEnergyKwh = totalUpsKw * 24 * days;
+  const energyCost = calculateEnergyCostForMonth(allLogs, log.month);
+  const upsEnergyKwh = energyCost.upsEnergyKwh;
 
   // 2. Air Conditioning Calculations
-  const curAir = log.air;
-  const prevAir = previousLog ? previousLog.air : { eb41a: null, eb41b: null, eb42a: null, eb42b: null };
-
-  const airDiff = {
-    eb41a: curAir.eb41a !== null && prevAir.eb41a !== null ? Math.max(0, curAir.eb41a - prevAir.eb41a) : 0,
-    eb41b: curAir.eb41b !== null && prevAir.eb41b !== null ? Math.max(0, curAir.eb41b - prevAir.eb41b) : 0,
-    eb42a: curAir.eb42a !== null && prevAir.eb42a !== null ? Math.max(0, curAir.eb42a - prevAir.eb42a) : 0,
-    eb42b: curAir.eb42b !== null && prevAir.eb42b !== null ? Math.max(0, curAir.eb42b - prevAir.eb42b) : 0,
-  };
-
-  const airDiffSumGwh = airDiff.eb41a + airDiff.eb41b + airDiff.eb42a + airDiff.eb42b;
-  const airEnergyKwh = airDiffSumGwh * 1000000;
+  const airEnergyKwh = energyCost.airEnergyKwh;
   
-  const airMissing = curAir.eb41a === null || curAir.eb41b === null || curAir.eb42a === null || curAir.eb42b === null;
+  const airFields = getAirFields(log);
+  const airMissing = airFields.some(field => {
+    const value = getAirValue(log, field);
+    return value === null || value === undefined;
+  });
 
   // 3. DC Power Calculations
   let totalDcPowerW = 0;
@@ -106,34 +104,36 @@ export function computeMetricsForMonth(log: MonthlyLog, previousLog: MonthlyLog 
     }
   });
 
-  const totalDcAcPowerW = totalDcPowerW * 1.10; // 10% overhead conversion loss
-  const dcEnergyKwh = (totalDcAcPowerW * 24 * days) / 1000;
+  const dcEnergyKwh = energyCost.dcEnergyKwh;
 
   // 4. Overall Energy totals
-  const totalEnergyKwh = upsEnergyKwh + airEnergyKwh + dcEnergyKwh;
-  const itEquipmentEnergyKwh = upsEnergyKwh + dcEnergyKwh;
+  const totalEnergyKwh = energyCost.floorEnergyKwh;
+  const itEquipmentEnergyKwh = upsEnergyKwh === null || dcEnergyKwh === null
+    ? null
+    : upsEnergyKwh + dcEnergyKwh;
 
   // PUE Calculation (ideal minimum is 1.0, typical target: 1.5)
-  const pue = itEquipmentEnergyKwh > 0 ? totalEnergyKwh / itEquipmentEnergyKwh : 1.5;
+  const pue = totalEnergyKwh !== null && itEquipmentEnergyKwh !== null && itEquipmentEnergyKwh > 0
+    ? totalEnergyKwh / itEquipmentEnergyKwh
+    : null;
 
   // Carbon Emission calculation (Thailand Grid Emission Factor: 0.4991 kgCO2e/kWh)
-  const carbonEmissionKg = totalEnergyKwh * 0.4991;
+  const carbonEmissionKg = totalEnergyKwh === null ? null : totalEnergyKwh * 0.4991;
 
   // 5. Costing
-  const buildingEnergyKwh = log.energyCost.buildingEnergyKwh || 0;
-  const buildingCostThb = log.energyCost.buildingElectricityCostThb || 0;
-  const avgElectricityRate = buildingEnergyKwh > 0 ? buildingCostThb / buildingEnergyKwh : 0;
-  
-  const estimatedCostThb = totalEnergyKwh * avgElectricityRate;
-  const actualCostThb = estimatedCostThb; // Use estimated for floor level as master cost
+  const buildingEnergyKwh = energyCost.buildingEnergyKwh;
+  const buildingCostThb = energyCost.buildingElectricityCostThb;
+  const avgElectricityRate = energyCost.averageElectricityRateThbPerKwh;
+  const estimatedCostThb = energyCost.floorElectricityCostThb;
+  const actualCostThb = energyCost.floorElectricityCostThb;
 
   // 6. Data Quality Score calculation (starts at 100)
   let dqScore = 100;
   if (upsMissingCount > 0) dqScore -= (upsMissingCount * 3);
   if (airMissing) dqScore -= 10;
   if (dcMissingCount > 0) dqScore -= (dcMissingCount * 3);
-  if (!log.energyCost.buildingEnergyKwh) dqScore -= 5;
-  if (!log.energyCost.buildingElectricityCostThb) dqScore -= 5;
+  if (log.energyCost.buildingEnergyKwh === null) dqScore -= 5;
+  if (log.energyCost.buildingElectricityCostThb === null) dqScore -= 5;
   if (upsAlerts.length > 0) dqScore -= (upsAlerts.length * 2);
   if (dcAlerts.length > 0) dqScore -= (dcAlerts.length * 2);
   const dataQualityScore = Math.max(10, Math.min(100, dqScore));
@@ -142,9 +142,9 @@ export function computeMetricsForMonth(log: MonthlyLog, previousLog: MonthlyLog 
   let healthScore = 100;
   
   // PUE penalty (Ideal is 1.0 - 1.5, standard is 1.5-2.0, bad is > 2.0)
-  if (pue > 1.5) {
+  if (pue !== null && pue > 1.5) {
     healthScore -= Math.min(25, (pue - 1.5) * 40);
-  } else if (pue > 1.0 && pue <= 1.2) {
+  } else if (pue !== null && pue > 1.0 && pue <= 1.2) {
     // exceptionally good
     healthScore += 2;
   }
@@ -185,11 +185,11 @@ export function computeMetricsForMonth(log: MonthlyLog, previousLog: MonthlyLog 
 
   // Merge alerts
   const allAlerts = [...upsAlerts, ...dcAlerts];
-  if (pue > 2.0) {
-    allAlerts.push(`High PUE Detected: ${pue.toFixed(2)} (Standard limit is 2.0)`);
+  if (pue !== null && pue > 2.0) {
+    allAlerts.push(`High PUE Detected: ${formatNumber(pue)} (Standard limit is 2.0)`);
   }
-  if (totalEnergyKwh > 300000) {
-    allAlerts.push(`High Energy Usage Spike: ${totalEnergyKwh.toLocaleString()} kWh`);
+  if (totalEnergyKwh !== null && totalEnergyKwh > 300000) {
+    allAlerts.push(`High Energy Usage Spike: ${formatNumber2(totalEnergyKwh)} kWh`);
   }
 
   return {
@@ -220,7 +220,7 @@ export function computeAllMetrics(logs: MonthlyLog[]): ComputedMonthMetrics[] {
   const sorted = [...logs].sort((a, b) => a.month.localeCompare(b.month));
   return sorted.map((log, index) => {
     const prevLog = index > 0 ? sorted[index - 1] : null;
-    return computeMetricsForMonth(log, prevLog);
+    return computeMetricsForMonth(log, prevLog, sorted);
   });
 }
 

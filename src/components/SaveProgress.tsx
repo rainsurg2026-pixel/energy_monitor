@@ -1,4 +1,5 @@
 import React from "react";
+import { formatNumber2 } from "../utils/numberFormatBridge";
 import { AlertTriangle, Check, Loader2 } from "lucide-react";
 
 export type SaveStageKey = "validate" | "lock" | "backup" | "write" | "verify" | "refresh" | "done";
@@ -65,7 +66,7 @@ export default function SaveProgress({ lang, state, onDismiss }: SaveProgressPro
         </span>
         <span className="text-[10px] font-mono text-slate-500">
           {state.elapsedMs !== undefined
-            ? `${(state.elapsedMs / 1000).toFixed(1)}s`
+            ? `${formatNumber2(state.elapsedMs / 1000)}s`
             : ""}
         </span>
       </div>

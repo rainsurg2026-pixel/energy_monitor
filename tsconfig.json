@@ -29,6 +29,8 @@
     "dist-electron",
     "release",
     "src/electron",
-    "src/excel"
+    "src/excel",
+    "skills",
+    ".claude"
   ]
 }

@@ -2,19 +2,20 @@ import React, { useState, useMemo } from "react";
 import { MonthlyLog } from "../types";
 import { computeAllMetrics, generateForecast } from "../utils/analytics";
 import { formatMonthYear } from "../utils";
+import { formatNumber2, formatCompactNumber } from "../utils/numberFormatBridge";
 import { 
   TrendingUp, 
   Sparkles, 
   Calendar, 
   HelpCircle, 
-  LineChart, 
+  LineChart as LineChartIcon,
   ArrowUpRight, 
   Zap, 
   Coins, 
   Flame, 
   Percent 
 } from "lucide-react";
-import { ResponsiveContainer, ComposedChart, Line, Area, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
+import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, LabelList } from "recharts";
 
 interface ForecastDashboardProps {
   logs: MonthlyLog[];
@@ -37,10 +38,9 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
   const forecastResult = useMemo(() => {
     if (historyMetrics.length < 2) return null;
     
-    const formattedHistory = historyMetrics.map(m => ({
-      monthStr: m.month,
-      value: m[metric]
-    }));
+    const formattedHistory = historyMetrics
+      .map(m => ({ monthStr: m.month, value: m[metric] }))
+      .filter((point): point is { monthStr: string; value: number } => point.value !== null);
 
     return generateForecast(formattedHistory, horizon);
   }, [historyMetrics, metric, horizon]);
@@ -85,7 +85,7 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
   if (!forecastResult || historyMetrics.length < 2) {
     return (
       <div className="bg-slate-900 border border-slate-800 p-12 rounded-3xl text-center space-y-4">
-        <LineChart className="w-12 h-12 text-slate-500 mx-auto animate-pulse" />
+        <LineChartIcon className="w-12 h-12 text-slate-500 mx-auto animate-pulse" />
         <h3 className="font-display font-semibold text-slate-200 text-lg">{t.insufficientData}</h3>
         <p className="text-xs text-slate-400 max-w-sm mx-auto">{t.insufficientDesc}</p>
       </div>
@@ -95,9 +95,10 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
   // Rounding variables for cleaner charts
   const chartData = forecastResult.forecast.map(p => ({
     ...p,
-    "Historical Actual": p.actual !== null ? parseFloat(p.actual.toFixed(2)) : null,
-    "Trend Forecast": parseFloat(p.forecast.toFixed(2)),
-    "Confidence Range": [parseFloat(p.confidenceLower.toFixed(2)), parseFloat(p.confidenceUpper.toFixed(2))]
+    "Historical Actual": p.actual,
+    "Trend Forecast": p.forecast,
+    "Confidence Lower": p.confidenceLower,
+    "Confidence Upper": p.confidenceUpper
   }));
 
   const metricsOptions = [
@@ -124,6 +125,10 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
   };
 
   const colors = getThemeColors();
+  const formatForecastValue = (value: number): string =>
+    metric === "totalEnergyKwh" || metric === "actualCostThb"
+      ? formatNumber2(value)
+      : formatNumber2(value);
 
   // Custom tool tip rendering
   const CustomTooltip = ({ active, payload, label }: any) => {
@@ -140,15 +145,15 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
           </p>
           {actual !== undefined && actual !== null && (
             <p className="text-slate-100 font-semibold">
-              Actual: <span className="text-sky-400">{actual.toLocaleString()}</span>
+              Actual: <span className="text-sky-400">{formatForecastValue(actual)}</span>
             </p>
           )}
           <p className="text-slate-300 font-semibold">
-            Forecasted: <span className="text-indigo-400">{forecast.toLocaleString()}</span>
+            Forecasted: <span className="text-indigo-400">{formatForecastValue(forecast)}</span>
           </p>
           {range && (
             <p className="text-[10px] text-slate-500 font-medium">
-              Confidence Range: <span>{range[0].toLocaleString()} - {range[1].toLocaleString()}</span>
+              Confidence Range: <span>{formatForecastValue(range[0])} - {formatForecastValue(range[1])}</span>
             </p>
           )}
         </div>
@@ -239,7 +244,7 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
 
           <div className="h-72 mt-4 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={chartData} margin={{ left: -15, right: 10, top: 10, bottom: 5 }}>
+              <LineChart data={chartData} margin={{ left: -15, right: 10, top: 10, bottom: 5 }}>
                 <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
                 <XAxis 
                   dataKey="monthStr" 
@@ -247,17 +252,11 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
                   stroke="#475569" 
                   style={{ fontSize: 9, fontFamily: "monospace" }} 
                 />
-                <YAxis stroke="#475569" style={{ fontSize: 9, fontFamily: "monospace" }} />
+                <YAxis stroke="#475569" tickFormatter={formatCompactNumber} style={{ fontSize: 9, fontFamily: "monospace" }} />
                 <Tooltip content={<CustomTooltip />} />
                 
-                {/* Confidence Interval band */}
-                <Area 
-                  dataKey="Confidence Range" 
-                  fill={colors.fill} 
-                  stroke="none" 
-                  opacity={0.08} 
-                  name="Confidence Range (95%)"
-                />
+                <Line type="monotone" dataKey="Confidence Lower" stroke={colors.fill} strokeDasharray="2 3" dot={false} name="Confidence Lower" />
+                <Line type="monotone" dataKey="Confidence Upper" stroke={colors.fill} strokeDasharray="2 3" dot={false} name="Confidence Upper" />
 
                 {/* Historical Actual line */}
                 <Line 
@@ -267,7 +266,7 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
                   strokeWidth={2.5} 
                   dot={{ r: 3, fill: "#ffffff" }} 
                   name="Historical Actual"
-                />
+                ><LabelList dataKey="Historical Actual" position="top" formatter={(value: unknown) => typeof value === "number" ? formatForecastValue(value) : "—"} /></Line>
 
                 {/* Forecast trend line */}
                 <Line 
@@ -278,8 +277,8 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
                   strokeDasharray="5 5" 
                   dot={{ r: 2, fill: colors.stroke }} 
                   name="Statistical Forecast"
-                />
-              </ComposedChart>
+                ><LabelList dataKey="Trend Forecast" position="top" formatter={(value: unknown) => typeof value === "number" ? formatForecastValue(value) : "—"} /></Line>
+              </LineChart>
             </ResponsiveContainer>
           </div>
 

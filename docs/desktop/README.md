@@ -65,3 +65,6 @@ be lost, even across a crash.
 - [Deployment Guide](DEPLOYMENT_GUIDE.md) — building and rolling out the ZIP
 - [Architecture](ARCHITECTURE.md) — diagrams: system, IPC, data flow
 - [Migration Summary](MIGRATION_SUMMARY.md) · [Regression Report](REGRESSION_REPORT.md) · [Production Readiness](PRODUCTION_READINESS.md)
+- [RC-3 Release Notes](RC3_RELEASE_NOTES.md) · [Packaged Runtime Investigation](PACKAGED_RUNTIME_INVESTIGATION.md)
+- [Known Technical Debt](KNOWN_TECHNICAL_DEBT.md) · [Roadmap](ROADMAP.md)
+- [Architecture Decision Records](adr/) — this application's own ADR sequence (currently [ADR-001: Number Formatting Standard](adr/ADR-001-Number-Formatting-Standard.md)). Separate from, and not numbered against, `docs/adr/`, which belongs to this repository's unrelated Supabase/Next.js platform documentation.

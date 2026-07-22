@@ -20,7 +20,7 @@ const shared = {
 
 await build({
   ...shared,
-  entryPoints: [path.join(root, "src/electron/main.ts")],
+  entryPoints: [path.join(root, "src/electron/bootstrap.ts")],
   outfile: path.join(root, "dist-electron/main.cjs")
 });
 

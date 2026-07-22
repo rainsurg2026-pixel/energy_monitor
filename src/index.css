@@ -5,9 +5,100 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Segoe UI Variable Text", "Segoe UI", "Leelawadee UI", "Noto Sans Thai", system-ui, sans-serif;
-  --font-display: "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI", "Leelawadee UI", system-ui, sans-serif;
-  --font-mono: "Cascadia Mono", "Consolas", "Leelawadee UI", ui-monospace, SFMono-Regular, monospace;
+  --font-sans: "Noto Sans Thai", "Leelawadee UI", "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
+  --font-display: "Noto Sans Thai", "Leelawadee UI", "Segoe UI Variable Display", "Segoe UI Semibold", "Segoe UI", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", "Noto Sans Thai", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* True-inspired, offline-safe visual tokens: deep navy surfaces with a
+ * restrained red primary accent. Semantic success/warning colours remain
+ * separate so status meaning is not lost. */
+:root {
+  --ui-text: #ffffff;
+  --color-indigo-50: #fff1f2;
+  --color-indigo-100: #ffe4e6;
+  --color-indigo-200: #fecdd3;
+  --color-indigo-300: #fda4af;
+  --color-indigo-400: #ff6975;
+  --color-indigo-500: #f33445;
+  --color-indigo-600: #e60012;
+  --color-indigo-700: #c8102e;
+  --color-indigo-800: #a20f29;
+  --color-indigo-900: #7f1328;
+  --color-slate-950: #071426;
+  --color-slate-900: #0b1f3a;
+  --color-slate-800: #193253;
+  --color-slate-700: #2a4568;
+  --color-slate-600: #55708f;
+  --color-slate-500: #87a0bc;
+  --color-slate-400: #b9c9da;
+  --color-slate-300: #d7e1ec;
+  --color-slate-200: #e7eef7;
+  --color-slate-100: #f4f7fb;
+  --color-slate-50: #ffffff;
+}
+
+html,
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--font-sans);
+}
+
+body {
+  letter-spacing: 0.005em;
+}
+
+/* Data-heavy surfaces use one predictable text colour per theme. This keeps
+ * table cells and chart labels readable regardless of their legacy utility
+ * colour classes. */
+html:not(.theme-light) table,
+html:not(.theme-light) table *,
+html:not(.theme-light) .recharts-wrapper text {
+  color: #ffffff !important;
+  fill: #ffffff !important;
+  font-weight: 400 !important;
+}
+
+html.theme-light table,
+html.theme-light table *,
+html.theme-light .recharts-wrapper text {
+  color: #000000 !important;
+  fill: #000000 !important;
+  font-weight: 400 !important;
+}
+
+html:not(.theme-light) .recharts-default-tooltip {
+  background: #0b1f3a !important;
+  border-color: #55708f !important;
+}
+
+html.theme-light .recharts-default-tooltip {
+  background: #ffffff !important;
+  border-color: #c7d0dc !important;
+}
+
+.recharts-default-tooltip,
+.recharts-default-tooltip *,
+.recharts-tooltip-item,
+.recharts-tooltip-label {
+  color: var(--ui-text) !important;
+  font-weight: 400 !important;
+}
+
+.trend-chart-card,
+.trend-chart-card h4,
+.trend-chart-card span,
+.trend-chart-card p {
+  color: var(--ui-text) !important;
+  font-weight: 400 !important;
+}
+
+.trend-line-chart svg text {
+  fill: var(--ui-text) !important;
+  font-weight: 400 !important;
 }
 
 /*
@@ -22,16 +113,21 @@
 }
 
 html.theme-light {
-  --color-slate-950: #eef2f7;
+  --ui-text: #000000;
+  --color-indigo-400: #c8102e;
+  --color-indigo-500: #e60012;
+  --color-indigo-600: #d50018;
+  --color-indigo-700: #a20f29;
+  --color-slate-950: #f3f5f8;
   --color-slate-900: #ffffff;
-  --color-slate-800: #e2e8f0;
-  --color-slate-700: #cbd5e1;
-  --color-slate-600: #94a3b8;
-  --color-slate-500: #64748b;
-  --color-slate-400: #475569;
-  --color-slate-300: #334155;
-  --color-slate-200: #1e293b;
-  --color-slate-100: #0f172a;
-  --color-slate-50: #020617;
+  --color-slate-800: #e4e8ef;
+  --color-slate-700: #c7d0dc;
+  --color-slate-600: #9aa9ba;
+  --color-slate-500: #66778c;
+  --color-slate-400: #43546a;
+  --color-slate-300: #2c3e55;
+  --color-slate-200: #172a44;
+  --color-slate-100: #0b1f3a;
+  --color-slate-50: #071426;
   color-scheme: light;
 }

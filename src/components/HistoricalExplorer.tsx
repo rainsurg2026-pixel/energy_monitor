@@ -1,6 +1,9 @@
 import React, { useState, useMemo } from "react";
 import { MonthlyLog } from "../types";
 import { formatMonthYear } from "../utils";
+import { calculateEnergyCostForMonth, getAirFields, getAirValue, normalizedMonth } from "../utils/energyCost";
+import { formatNumber2 } from "../utils/numberFormatBridge";
+import type { UpsGroupHistoryReport } from "../reports/reportTypes";
 import { 
   Zap, 
   Thermometer, 
@@ -24,10 +27,15 @@ interface HistoricalExplorerProps {
   isGoogleConnected?: boolean;
   googleUserEmail?: string | null;
   onEditMonth?: (monthStr: string) => void;
+  /** Persisted "2. UPS Group History" worksheet - the UPS tab reads directly
+   *  from this instead of rebuilding summaries at runtime. */
+  upsGroupHistory?: UpsGroupHistoryReport | null;
+  activeFacilityId?: string | null;
 }
 
 type ExplorerTab = "ups" | "air" | "dc" | "energy";
 type SortOrder = "newest" | "oldest";
+type HistoryRange = "all" | "3" | "6" | "12";
 
 // Helper to calculate days in month
 function getDaysInMonth(monthStr: string): number {
@@ -38,12 +46,13 @@ function getDaysInMonth(monthStr: string): number {
   return new Date(year, month, 0).getDate();
 }
 
-export default function HistoricalExplorer({ logs, lang, isGoogleConnected = false, googleUserEmail = null, onEditMonth }: HistoricalExplorerProps) {
+export default function HistoricalExplorer({ logs, lang, isGoogleConnected = false, googleUserEmail = null, onEditMonth, upsGroupHistory = null, activeFacilityId = null }: HistoricalExplorerProps) {
   const [activeTab, setActiveTab] = useState<ExplorerTab>("ups");
   const [searchQuery, setSearchQuery] = useState("");
   const [yearFilter, setYearFilter] = useState("All");
   const [monthFilter, setMonthFilter] = useState("All");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
+  const [historyRange, setHistoryRange] = useState<HistoryRange>("all");
 
   const dict = {
     th: {
@@ -58,10 +67,15 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       noResultsDesc: "กรุณาลองเปลี่ยนคำค้นหา หรือกรอกข้อมูลของเดือนใหม่",
       month: "เดือน",
       upsId: "เครื่อง UPS",
+      upsGroup: "กลุ่ม UPS",
       voltage: "แรงดัน (V)",
       current: "กระแส (A)",
       loadKw: "โหลด (kW)",
       loadKva: "โหลด (kVA)",
+      capacity: "พิกัด UPS (kVA)",
+      loadPercent: "โหลด (%)",
+      availablePercent: "ว่าง (%)",
+      generatedTimestamp: "เวลาที่ประมวลผล",
       timestamp: "เวลาที่บันทึกล่าสุด",
       panelId: "ชื่อแผงจ่ายไฟ DC",
       dcPower: "กำลังไฟ DC (W)",
@@ -84,7 +98,12 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       allMonths: "ทุกเดือน",
       sortNewest: "ใหม่ล่าสุดก่อน",
       sortOldest: "เก่าที่สุดก่อน",
-      quickJump: "กระโดดด่วนไปยังเดือน"
+      quickJump: "กระโดดด่วนไปยังเดือน",
+      historyRange: "ช่วงเวลา",
+      allHistory: "ทั้งหมด",
+      last3Months: "ย้อนหลัง 3 เดือน",
+      last6Months: "ย้อนหลัง 6 เดือน",
+      last12Months: "ย้อนหลัง 12 เดือน"
     },
     en: {
       title: "Historical Operations Explorer",
@@ -98,10 +117,15 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       noResultsDesc: "Try adjusting your filters or record logs for a new month first.",
       month: "Month",
       upsId: "UPS ID",
+      upsGroup: "UPS Group",
       voltage: "Voltage (V)",
       current: "Current (A)",
       loadKw: "Load (kW)",
       loadKva: "Load (kVA)",
+      capacity: "UPS Capacity (kVA)",
+      loadPercent: "Load (%)",
+      availablePercent: "Available (%)",
+      generatedTimestamp: "Generated Timestamp",
       timestamp: "Last Timestamp",
       panelId: "DC Panel ID",
       dcPower: "DC Power (W)",
@@ -124,7 +148,12 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       allMonths: "All Months",
       sortNewest: "Newest First",
       sortOldest: "Oldest First",
-      quickJump: "Quick Jump to Month"
+      quickJump: "Quick Jump to Month",
+      historyRange: "History Range",
+      allHistory: "All Months",
+      last3Months: "Last 3 Months",
+      last6Months: "Last 6 Months",
+      last12Months: "Last 12 Months"
     }
   };
 
@@ -156,9 +185,28 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
     { value: "12", label: lang === "th" ? "ธ.ค." : "Dec" }
   ];
 
+  // The range selector is based on the latest reporting months present in the
+  // workbook, rather than the current calendar date or array position.
+  const latestReportingMonths = useMemo(() => {
+    return Array.from(new Set(
+      logs
+        .map(log => normalizedMonth(log.month))
+        .filter((month): month is string => month !== null)
+    )).sort((a, b) => b.localeCompare(a));
+  }, [logs]);
+
   // Core processing & filtering
   const filteredAndSortedLogs = useMemo(() => {
     let result = [...logs];
+
+    if (historyRange !== "all") {
+      const limit = Number(historyRange);
+      const selectedMonths = new Set(latestReportingMonths.slice(0, limit));
+      result = result.filter(log => {
+        const month = normalizedMonth(log.month);
+        return month !== null && selectedMonths.has(month);
+      });
+    }
 
     // Filter by year
     if (yearFilter !== "All") {
@@ -189,7 +237,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
     });
 
     return result;
-  }, [logs, yearFilter, monthFilter, searchQuery, sortOrder]);
+  }, [logs, historyRange, latestReportingMonths, yearFilter, monthFilter, searchQuery, sortOrder]);
 
   // Row status resolvers
   const resolveStatuses = (log: MonthlyLog): {
@@ -199,7 +247,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
   } => {
     // 1. Edit Status: Draft if any core values are missing
     const hasMissingUps = log.ups.some(u => u.voltage === null || u.current === null || u.loadKw === null);
-    const hasMissingAir = log.air.eb41a === null || log.air.eb41b === null;
+    const hasMissingAir = getAirFields(log).some(field => getAirValue(log, field) === null);
     const hasMissingDc = log.dc.some(p => p.voltage === null || p.current === null);
     const isDraft = hasMissingUps || hasMissingAir || hasMissingDc;
 
@@ -255,25 +303,27 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
   };
 
   // Render functions for table tabs
+  // UPS Group History: read directly from the workbook's persisted
+  // "2. UPS Group History" sheet (src/reports/upsGroupHistoryReader.ts) -
+  // the exact same aggregation (src/utils/upsGroupAggregation.ts) that
+  // wrote it, so this table and Dashboard Summary can never disagree.
   const renderUpsHistory = () => {
-    const rows: any[] = [];
-    filteredAndSortedLogs.forEach(log => {
-      const monthLabel = formatMonthYear(log.month);
-      const statuses = resolveStatuses(log);
-      log.ups.forEach(u => {
-        rows.push({
-          monthStr: log.month,
-          monthLabel,
-          upsId: u.upsId,
-          voltage: u.voltage,
-          current: u.current,
-          loadKw: u.loadKw,
-          loadKva: u.loadKva,
-          timestamp: log.lastSavedUps,
-          statuses
-        });
-      });
-    });
+    const visibleMonths = new Set(filteredAndSortedLogs.map(log => log.month));
+    const statusesByMonth = new Map(logs.map(log => [log.month, resolveStatuses(log)]));
+    const historyRows = (upsGroupHistory?.rows ?? [])
+      .filter(row => visibleMonths.has(row.month))
+      .filter(row => !activeFacilityId || row.facility.toLowerCase() === activeFacilityId.toLowerCase())
+      .sort((a, b) => (sortOrder === "newest" ? b.month.localeCompare(a.month) : a.month.localeCompare(b.month)) || a.group.localeCompare(b.group));
+
+    if (!upsGroupHistory || upsGroupHistory.rows.length === 0) {
+      return (
+        <div className="py-10 text-center text-slate-500 italic text-xs">
+          {lang === "th"
+            ? "ยังไม่มีประวัติกลุ่ม UPS ในเวิร์กบุ๊ก - จะถูกสร้างขึ้นโดยอัตโนมัติเมื่อบันทึกข้อมูลครั้งถัดไป"
+            : "No UPS Group History in the workbook yet - it will be created automatically on the next save."}
+        </div>
+      );
+    }
 
     return (
       <div className="overflow-x-auto">
@@ -281,36 +331,43 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
           <thead>
             <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
               <th className="py-3.5 px-4">{t.month}</th>
-              <th className="py-3.5 px-4">{t.upsId}</th>
-              <th className="py-3.5 px-4 text-right">{t.voltage}</th>
-              <th className="py-3.5 px-4 text-right">{t.current}</th>
+              <th className="py-3.5 px-4">{t.upsGroup}</th>
               <th className="py-3.5 px-4 text-right">{t.loadKw}</th>
               <th className="py-3.5 px-4 text-right">{t.loadKva}</th>
+              <th className="py-3.5 px-4 text-right">{t.capacity}</th>
+              <th className="py-3.5 px-4 text-right">{t.loadPercent}</th>
+              <th className="py-3.5 px-4 text-right">{t.availablePercent}</th>
+              <th className="py-3.5 px-4 text-right">{t.monthlyEnergy}</th>
               <th className="py-3.5 px-4 text-center">Status</th>
-              <th className="py-3.5 px-4 text-right">{t.timestamp}</th>
+              <th className="py-3.5 px-4 text-right">{t.generatedTimestamp}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-850">
-            {rows.length === 0 ? (
+            {historyRows.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-slate-500 italic">{t.noResults}</td>
+                <td colSpan={10} className="py-8 text-center text-slate-500 italic">{t.noResults}</td>
               </tr>
             ) : (
-              rows.map((r, idx) => (
-                <tr key={idx} className="hover:bg-slate-900/35 transition-colors">
-                  <td className="py-2.5 px-4 font-mono font-semibold text-slate-200">{r.monthLabel}</td>
-                  <td className="py-2.5 px-4 text-indigo-400 font-semibold">{r.upsId}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-orange-200">{r.voltage !== null ? r.voltage : "—"}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-orange-200">{r.current !== null ? r.current : "—"}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-slate-300">{r.loadKw !== null ? r.loadKw : "—"}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-slate-300">{r.loadKva !== null ? r.loadKva : "—"}</td>
-                  <td className="py-2.5 px-4 text-center space-x-1.5 whitespace-nowrap">
-                    {renderEditBadge(r.statuses.editStatus)}
-                    {renderSyncBadge(r.statuses.syncStatus)}
-                  </td>
-                  <td className="py-2.5 px-4 text-right font-mono text-slate-500 text-[10px]">{r.timestamp || "—"}</td>
-                </tr>
-              ))
+              historyRows.map((r, idx) => {
+                const statuses = statusesByMonth.get(r.month);
+                return (
+                  <tr key={idx} className="hover:bg-slate-900/35 transition-colors">
+                    <td className="py-3.5 px-4 font-mono font-semibold text-slate-200">{formatMonthYear(r.month)}</td>
+                    <td className="py-3.5 px-4 text-indigo-400 font-semibold">{r.group}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-slate-300">{formatNumber2(r.totalLoadKw)}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-slate-300">{formatNumber2(r.totalLoadKva)}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-slate-400">{formatNumber2(r.capacity)}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-indigo-400 font-semibold">{r.loadPercent === null ? "—" : `${formatNumber2(r.loadPercent)}%`}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-emerald-400">{r.availablePercent === null ? "—" : `${formatNumber2(r.availablePercent)}%`}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-indigo-300">{formatNumber2(r.monthlyEnergyKwh)}</td>
+                    <td className="py-3.5 px-4 text-center space-x-1.5 whitespace-nowrap">
+                      {statuses && renderEditBadge(statuses.editStatus)}
+                      {statuses && renderSyncBadge(statuses.syncStatus)}
+                    </td>
+                    <td className="py-3.5 px-4 text-right font-mono text-slate-500 text-[10px]">{r.generatedAt ? r.generatedAt.replace("T", " ").slice(0, 19) : "—"}</td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>
@@ -319,16 +376,14 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
   };
 
   const renderAirHistory = () => {
+    const airFields = Array.from(new Set(logs.flatMap(log => getAirFields(log))));
     return (
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs font-sans">
           <thead>
             <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
               <th className="py-3.5 px-4">{t.month}</th>
-              <th className="py-3.5 px-4 text-right">EB41A (GWh)</th>
-              <th className="py-3.5 px-4 text-right">EB41B (GWh)</th>
-              <th className="py-3.5 px-4 text-right">EB42A (GWh)</th>
-              <th className="py-3.5 px-4 text-right">EB42B (GWh)</th>
+              {airFields.map(field => <th key={field} className="py-3.5 px-4 text-right">{field.toUpperCase()} (GWh)</th>)}
               <th className="py-3.5 px-4 text-right">{t.monthlyEnergy}</th>
               <th className="py-3.5 px-4 text-center">Status</th>
               <th className="py-3.5 px-4 text-right">{t.timestamp}</th>
@@ -337,37 +392,28 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
           <tbody className="divide-y divide-slate-850">
             {filteredAndSortedLogs.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-slate-500 italic">{t.noResults}</td>
+                <td colSpan={airFields.length + 4} className="py-8 text-center text-slate-500 italic">{t.noResults}</td>
               </tr>
             ) : (
               filteredAndSortedLogs.map((log, idx) => {
-                const prevLog = logs.find(l => l.month === logs.find(sl => sl.month < log.month)?.month);
-                
-                let diffA = 0, diffB = 0, diffC = 0, diffD = 0;
-                if (prevLog && log.air.eb41a !== null && prevLog.air.eb41a !== null) {
-                  diffA = Math.max(0, log.air.eb41a - prevLog.air.eb41a);
-                  diffB = Math.max(0, (log.air.eb41b || 0) - (prevLog.air.eb41b || 0));
-                  diffC = Math.max(0, (log.air.eb42a || 0) - (prevLog.air.eb42a || 0));
-                  diffD = Math.max(0, (log.air.eb42b || 0) - (prevLog.air.eb42b || 0));
-                }
-                const airEnergyKwh = (diffA + diffB + diffC + diffD) * 1000000;
+                const airEnergyKwh = calculateEnergyCostForMonth(logs, log.month).airEnergyKwh;
                 const statuses = resolveStatuses(log);
 
                 return (
                   <tr key={idx} className="hover:bg-slate-900/35 transition-colors">
-                    <td className="py-3 px-4 font-mono font-semibold text-slate-200">{formatMonthYear(log.month)}</td>
-                    <td className="py-3 px-4 text-right font-mono">{log.air.eb41a !== null ? log.air.eb41a.toFixed(6) : "—"}</td>
-                    <td className="py-3 px-4 text-right font-mono">{log.air.eb41b !== null ? log.air.eb41b.toFixed(6) : "—"}</td>
-                    <td className="py-3 px-4 text-right font-mono">{log.air.eb42a !== null ? log.air.eb42a.toFixed(6) : "—"}</td>
-                    <td className="py-3 px-4 text-right font-mono">{log.air.eb42b !== null ? log.air.eb42b.toFixed(6) : "—"}</td>
-                    <td className="py-3 px-4 text-right font-mono text-teal-400 font-bold">
-                      {airEnergyKwh > 0 ? `${airEnergyKwh.toLocaleString(undefined, { maximumFractionDigits: 1 })} kWh` : "—"}
+                    <td className="py-3.5 px-4 font-mono font-semibold text-slate-200">{formatMonthYear(log.month)}</td>
+                    {airFields.map(field => {
+                      const value = getAirValue(log, field);
+                      return <td key={field} className="py-3.5 px-4 text-right font-mono">{formatNumber2(value)}</td>;
+                    })}
+                    <td className="py-3.5 px-4 text-right font-mono text-teal-400 font-bold">
+                      {airEnergyKwh === null ? "—" : `${formatNumber2(airEnergyKwh)} kWh`}
                     </td>
-                    <td className="py-3 px-4 text-center space-x-1.5 whitespace-nowrap">
+                    <td className="py-3.5 px-4 text-center space-x-1.5 whitespace-nowrap">
                       {renderEditBadge(statuses.editStatus)}
                       {renderSyncBadge(statuses.syncStatus)}
                     </td>
-                    <td className="py-3 px-4 text-right font-mono text-slate-500 text-[10px]">{log.lastSavedAir || "—"}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-slate-500 text-[10px]">{log.lastSavedAir || "—"}</td>
                   </tr>
                 );
               })
@@ -386,10 +432,10 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       const statuses = resolveStatuses(log);
 
       log.dc.forEach(p => {
-        const v = p.voltage || 0;
-        const a = p.current || 0;
+        const v = p.voltage === null ? 0 : p.voltage;
+        const a = p.current === null ? 0 : p.current;
         const dcPowerW = v * a;
-        const acPowerW = dcPowerW * 1.10;
+        const acPowerW = (dcPowerW / 200) * 220;
         const energyKwh = (acPowerW * 24 * days) / 1000;
 
         rows.push({
@@ -430,18 +476,18 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
             ) : (
               rows.map((r, idx) => (
                 <tr key={idx} className="hover:bg-slate-900/35 transition-colors">
-                  <td className="py-2.5 px-4 font-mono font-semibold text-slate-200">{r.monthLabel}</td>
-                  <td className="py-2.5 px-4 text-amber-400 font-semibold">{r.panelId}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-orange-200">{r.voltage !== null ? r.voltage : "—"}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-orange-200">{r.current !== null ? r.current : "—"}</td>
-                  <td className="py-2.5 px-4 text-right font-mono">{r.dcPowerW > 0 ? `${r.dcPowerW.toLocaleString(undefined, { maximumFractionDigits: 1 })} W` : "—"}</td>
-                  <td className="py-2.5 px-4 text-right font-mono">{r.acPowerW > 0 ? `${r.acPowerW.toLocaleString(undefined, { maximumFractionDigits: 1 })} W` : "—"}</td>
-                  <td className="py-2.5 px-4 text-right font-mono text-slate-300 font-bold">{r.energyKwh > 0 ? `${r.energyKwh.toLocaleString(undefined, { maximumFractionDigits: 1 })} kWh` : "—"}</td>
-                  <td className="py-2.5 px-4 text-center space-x-1.5 whitespace-nowrap">
+                  <td className="py-3.5 px-4 font-mono font-semibold text-slate-200">{r.monthLabel}</td>
+                  <td className="py-3.5 px-4 text-amber-400 font-semibold">{r.panelId}</td>
+                  <td className="py-3.5 px-4 text-right font-mono text-orange-200">{r.voltage !== null ? formatNumber2(r.voltage) : "—"}</td>
+                  <td className="py-3.5 px-4 text-right font-mono text-orange-200">{r.current !== null ? formatNumber2(r.current) : "—"}</td>
+                  <td className="py-3.5 px-4 text-right font-mono">{r.dcPowerW > 0 ? `${formatNumber2(r.dcPowerW)} W` : "—"}</td>
+                  <td className="py-3.5 px-4 text-right font-mono">{r.acPowerW > 0 ? `${formatNumber2(r.acPowerW)} W` : "—"}</td>
+                  <td className="py-3.5 px-4 text-right font-mono text-slate-300 font-bold">{r.energyKwh > 0 ? `${formatNumber2(r.energyKwh)} kWh` : "—"}</td>
+                  <td className="py-3.5 px-4 text-center space-x-1.5 whitespace-nowrap">
                     {renderEditBadge(r.statuses.editStatus)}
                     {renderSyncBadge(r.statuses.syncStatus)}
                   </td>
-                  <td className="py-2.5 px-4 text-right font-mono text-slate-500 text-[10px]">{r.timestamp || "—"}</td>
+                  <td className="py-3.5 px-4 text-right font-mono text-slate-500 text-[10px]">{r.timestamp || "—"}</td>
                 </tr>
               ))
             )}
@@ -474,42 +520,18 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
               </tr>
             ) : (
               filteredAndSortedLogs.map((log, idx) => {
-                const days = getDaysInMonth(log.month);
-                const upsKwh = log.ups.reduce((acc, u) => acc + (u.loadKw || 0), 0) * 24 * days;
-
-                const prevLog = logs.find(l => l.month === logs.find(sl => sl.month < log.month)?.month);
-                let airKwh = 0;
-                if (prevLog && log.air.eb41a !== null && prevLog.air.eb41a !== null) {
-                  const diffA = Math.max(0, log.air.eb41a - prevLog.air.eb41a);
-                  const diffB = Math.max(0, (log.air.eb41b || 0) - (prevLog.air.eb41b || 0));
-                  const diffC = Math.max(0, (log.air.eb42a || 0) - (prevLog.air.eb42a || 0));
-                  const diffD = Math.max(0, (log.air.eb42b || 0) - (prevLog.air.eb42b || 0));
-                  airKwh = (diffA + diffB + diffC + diffD) * 1000000;
-                }
-
-                const dcKwh = log.dc.reduce((acc, p) => {
-                  const v = p.voltage || 0;
-                  const a = p.current || 0;
-                  return acc + (v * a * 1.10 * 24 * days) / 1000;
-                }, 0);
-
-                const floorEnergyKwh = upsKwh + airKwh + dcKwh;
-                const bEnergy = log.energyCost.buildingEnergyKwh || 0;
-                const bCost = log.energyCost.buildingElectricityCostThb || 0;
-                const rate = bEnergy > 0 ? bCost / bEnergy : 0;
-                const floorCostThb = floorEnergyKwh * rate;
-                const sharePercent = bEnergy > 0 ? (floorEnergyKwh / bEnergy) * 100 : 0;
+                const energyCost = calculateEnergyCostForMonth(logs, log.month);
                 const statuses = resolveStatuses(log);
 
                 return (
                   <tr key={idx} className="hover:bg-slate-900/35 transition-colors">
                     <td className="py-3.5 px-4 font-mono font-semibold text-slate-200">{formatMonthYear(log.month)}</td>
-                    <td className="py-3.5 px-4 text-right font-mono">{bEnergy > 0 ? bEnergy.toLocaleString() : "—"}</td>
-                    <td className="py-3.5 px-4 text-right font-mono">{bCost > 0 ? `฿${bCost.toLocaleString(undefined, { maximumFractionDigits: 1 })}` : "—"}</td>
-                    <td className="py-3.5 px-4 text-right font-mono text-indigo-400 font-semibold">{floorEnergyKwh > 0 ? floorEnergyKwh.toLocaleString(undefined, { maximumFractionDigits: 1 }) : "—"}</td>
-                    <td className="py-3.5 px-4 text-right font-mono text-emerald-400 font-semibold">{floorCostThb > 0 ? `฿${floorCostThb.toLocaleString(undefined, { maximumFractionDigits: 1 })}` : "—"}</td>
-                    <td className="py-3.5 px-4 text-right font-mono text-amber-300 font-medium">{rate > 0 ? rate.toFixed(4) : "—"}</td>
-                    <td className="py-3.5 px-4 text-right font-mono text-teal-400 font-bold">{sharePercent > 0 ? `${sharePercent.toFixed(2)}%` : "—"}</td>
+                    <td className="py-3.5 px-4 text-right font-mono">{formatNumber2(energyCost.buildingEnergyKwh)}</td>
+                    <td className="py-3.5 px-4 text-right font-mono">{energyCost.buildingElectricityCostThb === null ? "—" : `฿${formatNumber2(energyCost.buildingElectricityCostThb)}`}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-indigo-400 font-semibold">{formatNumber2(energyCost.floorEnergyKwh)}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-emerald-400 font-semibold">{energyCost.floorElectricityCostThb === null ? "—" : `฿${formatNumber2(energyCost.floorElectricityCostThb)}`}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-amber-300 font-medium">{formatNumber2(energyCost.averageElectricityRateThbPerKwh)}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-teal-400 font-bold">{energyCost.energySharePercent === null ? "—" : `${formatNumber2(energyCost.energySharePercent)}%`}</td>
                     <td className="py-3.5 px-4 text-center space-x-1.5 whitespace-nowrap">
                       {renderEditBadge(statuses.editStatus)}
                       {renderSyncBadge(statuses.syncStatus)}
@@ -602,6 +624,33 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
             <strong className="text-base font-mono text-indigo-400">{filteredAndSortedLogs.length} months</strong>
           </div>
 
+        </div>
+
+        {/* Reporting-month range selector */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 bg-slate-950 p-3 rounded-xl border border-slate-850">
+          <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider shrink-0">{t.historyRange}</label>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 w-full">
+            {([
+              { value: "all", label: t.allHistory },
+              { value: "3", label: t.last3Months },
+              { value: "6", label: t.last6Months },
+              { value: "12", label: t.last12Months }
+            ] as const).map(option => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={historyRange === option.value}
+                onClick={() => setHistoryRange(option.value)}
+                className={`rounded-lg border px-2 py-1.5 text-xs transition-colors ${
+                  historyRange === option.value
+                    ? "bg-indigo-600 border-indigo-500 text-white"
+                    : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-100 hover:border-indigo-500"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

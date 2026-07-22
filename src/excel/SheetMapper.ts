@@ -29,9 +29,11 @@ export const DEFAULT_DC_IDS = ["DC PDB41A", "DC PDB41B", "DC PDB42A", "DC PDB42B
 export interface DeviceLists {
   upsIds: string[];
   dcIds: string[];
+  /** Air meter field ids declared by the active facility profile. */
+  airFields?: string[];
 }
 
-export const DEFAULT_DEVICE_LISTS: DeviceLists = { upsIds: DEFAULT_UPS_IDS, dcIds: DEFAULT_DC_IDS };
+export const DEFAULT_DEVICE_LISTS: DeviceLists = { upsIds: DEFAULT_UPS_IDS, dcIds: DEFAULT_DC_IDS, airFields: ["eb41a", "eb41b", "eb42a", "eb42b"] };
 
 export function matchUpsId(a: string, b: string): boolean {
   if (!a || !b) return false;
@@ -68,6 +70,11 @@ export interface SheetRow {
 }
 
 export function createEmptyLog(month: string, devices: DeviceLists = DEFAULT_DEVICE_LISTS): MonthlyLog {
+  const airFields = devices.airFields?.length ? devices.airFields : DEFAULT_DEVICE_LISTS.airFields!;
+  const air: MonthlyLog["air"] = { eb41a: null, eb41b: null, eb42a: null, eb42b: null };
+  for (const field of airFields) {
+    if (!(field in air)) air.meters = { ...(air.meters ?? {}), [field]: null };
+  }
   return {
     month,
     ups: devices.upsIds.map(id => ({
@@ -77,7 +84,7 @@ export function createEmptyLog(month: string, devices: DeviceLists = DEFAULT_DEV
       loadKw: null,
       loadKva: null
     })),
-    air: { eb41a: null, eb41b: null, eb42a: null, eb42b: null },
+    air,
     dc: devices.dcIds.map(id => ({ panelId: id, voltage: null, current: null })),
     energyCost: { buildingEnergyKwh: null, buildingElectricityCostThb: null },
     lastSavedUps: null,
@@ -117,12 +124,17 @@ export function rowsToLogs(rowsByTab: Record<TabKey, SheetRow[]>, devices: Devic
 
   for (const row of rowsByTab.AIR) {
     const log = getLog(row.month);
-    log.air = {
+    const nextAir: MonthlyLog["air"] = {
       eb41a: parseSafeNumber(row.values.eb41a),
       eb41b: parseSafeNumber(row.values.eb41b),
       eb42a: parseSafeNumber(row.values.eb42a),
       eb42b: parseSafeNumber(row.values.eb42b)
     };
+    const fields = devices.airFields ?? DEFAULT_DEVICE_LISTS.airFields!;
+    for (const field of fields) {
+      if (!(field in nextAir)) (nextAir.meters ??= {})[field] = parseSafeNumber((row.values as Record<string, string | number | null>)[field]);
+    }
+    log.air = nextAir;
     if (row.values.timestamp) log.lastSavedAir = String(row.values.timestamp);
   }
 
@@ -181,16 +193,15 @@ export function logsToRows(logs: MonthlyLog[], devices: DeviceLists = DEFAULT_DE
       });
     }
 
-    result.AIR.push({
+    const airValues: SheetRow["values"] = {
       month: log.month,
-      values: {
-        eb41a: log.air.eb41a,
-        eb41b: log.air.eb41b,
-        eb42a: log.air.eb42a,
-        eb42b: log.air.eb42b,
-        timestamp: log.lastSavedAir
-      }
-    });
+      eb41a: log.air.eb41a, eb41b: log.air.eb41b, eb42a: log.air.eb42a, eb42b: log.air.eb42b,
+      timestamp: log.lastSavedAir
+    };
+    for (const field of devices.airFields ?? DEFAULT_DEVICE_LISTS.airFields!) {
+      (airValues as Record<string, string | number | null>)[field] = field in log.air ? (log.air as unknown as Record<string, number | null>)[field] : log.air.meters?.[field] ?? null;
+    }
+    result.AIR.push({ month: log.month, values: airValues });
 
     const orderedDc: DcRecord[] = devices.dcIds.map(
       id => log.dc.find(d => matchDcId(d.panelId, id)) ?? { panelId: id, voltage: null, current: null }

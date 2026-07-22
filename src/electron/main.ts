@@ -1,5 +1,7 @@
 import { app, BrowserWindow, shell } from "electron";
 import path from "path";
+import { appendFileSync, existsSync, mkdirSync } from "fs";
+import os from "os";
 import { registerExcelIpc } from "./ipc/excel";
 import { registerExportIpc } from "./ipc/exportCenter";
 import { registerWindowIpc } from "./ipc/window";
@@ -9,6 +11,50 @@ import { ensureDir, getConfigDir, getDefaultBackupDir, getExportsDir, getLogsDir
 // The renderer is a fully bundled SPA; everything it needs from the OS goes
 // through the typed IPC surface registered below (no nodeIntegration, no remote).
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
+
+// Must run before Electron is ready so GPU initialization is never a
+// prerequisite for the renderer. This does not change sandboxing or IPC.
+app.commandLine.appendSwitch("disable-gpu");
+app.disableHardwareAcceleration();
+
+function startupDiagnosticFile(): string {
+  const name = `startup-diagnostics-${process.pid}.log`;
+  if (app.isReady()) return path.join(app.getPath("userData"), name);
+  return path.join(process.env.APPDATA ?? os.tmpdir(), "Data Center Energy & Facility Monitor", name);
+}
+
+function startupDiagnostic(stage: string, message: string, error?: unknown): void {
+  const detail = error instanceof Error ? `${error.message}\n${error.stack ?? ""}` : error === undefined ? "" : String(error);
+  const line = `${new Date().toISOString()} stage=${stage} module=src/electron/main.ts file=${__filename} ${message}${detail ? `\n${detail}` : ""}\n`;
+  const diagnosticFile = startupDiagnosticFile();
+  try {
+    mkdirSync(path.dirname(diagnosticFile), { recursive: true });
+    appendFileSync(diagnosticFile, line, "utf8");
+  } catch (loggingError) {
+    console.error(`[STARTUP][diagnostic-write-failed] file=${diagnosticFile}`, loggingError);
+  }
+  console.error(line);
+}
+
+startupDiagnostic("module-import", `pid=${process.pid} argv=${JSON.stringify(process.argv)} packaged=${app.isPackaged}`);
+// Software compositing keeps renderer startup independent of an optional
+// hardware GPU runtime on portable Windows installations. BrowserWindow
+// sandboxing and context isolation remain unchanged.
+startupDiagnostic("hardware-acceleration", "software compositing enabled");
+process.on("uncaughtExceptionMonitor", error => startupDiagnostic("uncaughtException", "uncaught exception observed", error));
+process.on("unhandledRejection", reason => {
+  startupDiagnostic("unhandledRejection", "unhandled rejection observed", reason);
+  setImmediate(() => { throw reason; });
+});
+app.on("browser-window-created", (_event, window) => startupDiagnostic("browser-window-created", `id=${window.id}`));
+app.on("web-contents-created", (_event, contents) => {
+  startupDiagnostic("web-contents-created", `id=${contents.id}`);
+  contents.on("console-message", (_event, level, message, line, sourceId) => startupDiagnostic("renderer-console", `level=${level} source=${sourceId}:${line} ${message}`));
+  contents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => startupDiagnostic("did-fail-load", `code=${errorCode} description=${errorDescription} url=${validatedURL} mainFrame=${isMainFrame}`));
+  contents.on("render-process-gone", (_event, details) => startupDiagnostic("render-process-gone", JSON.stringify(details)));
+  contents.on("preload-error", (_event, preloadPath, error) => startupDiagnostic("preload-error", `preload=${preloadPath}`, error));
+});
+app.on("child-process-gone", (_event, details) => startupDiagnostic("child-process-gone", JSON.stringify(details)));
 
 let mainWindow: BrowserWindow | null = null;
 /** Workbook path passed on the command line (Open With / file association). */
@@ -36,7 +82,11 @@ function sendOpenFilePath(filePath: string): void {
 }
 
 async function createMainWindow(): Promise<BrowserWindow> {
+  startupDiagnostic("create-main-window:start", "loading application config");
   const config = await loadConfig();
+  const preloadPath = path.join(__dirname, "preload.cjs");
+  const rendererPath = path.join(__dirname, "..", "dist", "index.html");
+  startupDiagnostic("create-main-window:resources", `preload=${preloadPath} exists=${existsSync(preloadPath)} renderer=${rendererPath} exists=${existsSync(rendererPath)} resourcesPath=${process.resourcesPath}`);
 
   const win = new BrowserWindow({
     width: config.window.width,
@@ -47,7 +97,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
     backgroundColor: "#020617", // slate-950: avoids white flash on load
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, "preload.cjs"),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -55,6 +105,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
       spellcheck: false
     }
   });
+  startupDiagnostic("create-main-window:created", `id=${win.id}`);
 
   if (config.window.maximized) win.maximize();
   win.once("ready-to-show", () => win.show());
@@ -76,6 +127,7 @@ async function createMainWindow(): Promise<BrowserWindow> {
 
   // Deliver any file path Windows handed us once the renderer is ready.
   win.webContents.on("did-finish-load", () => {
+    startupDiagnostic("renderer-initialized", `window=${win.id}`);
     if (pendingOpenPath) {
       win.webContents.send("open-file-path", pendingOpenPath);
       pendingOpenPath = null;
@@ -106,10 +158,12 @@ async function createMainWindow(): Promise<BrowserWindow> {
   });
 
   if (DEV_SERVER_URL) {
+    startupDiagnostic("renderer-load:url", DEV_SERVER_URL);
     void win.loadURL(DEV_SERVER_URL);
     win.webContents.openDevTools({ mode: "detach" });
   } else {
-    void win.loadFile(path.join(__dirname, "..", "dist", "index.html"));
+    startupDiagnostic("renderer-load:file", rendererPath);
+    void win.loadFile(rendererPath);
   }
 
   win.on("closed", () => {
@@ -121,7 +175,9 @@ async function createMainWindow(): Promise<BrowserWindow> {
 
 // Single-instance: a second launch (e.g. double-clicking a workbook associated
 // with the app) is forwarded to the running instance instead of a new window.
+startupDiagnostic("single-instance-lock:start", "requesting single instance lock");
 const gotLock = app.requestSingleInstanceLock();
+startupDiagnostic("single-instance-lock:result", `acquired=${gotLock}`);
 if (!gotLock) {
   app.quit();
 } else {
@@ -137,10 +193,14 @@ if (!gotLock) {
   });
 
   registerWindowIpc();
+  startupDiagnostic("ipc-registration", "registerWindowIpc complete");
   registerExcelIpc();
+  startupDiagnostic("ipc-registration", "registerExcelIpc complete");
   registerExportIpc();
+  startupDiagnostic("ipc-registration", "registerExportIpc complete");
 
   app.whenReady().then(async () => {
+    startupDiagnostic("electron-ready", `userData=${app.getPath("userData")} appPath=${app.getAppPath()}`);
     // Materialize the portable folder layout beside the executable.
     await Promise.all([
       ensureDir(getConfigDir()),
@@ -152,6 +212,7 @@ if (!gotLock) {
     log.info(`app started v${app.getVersion()} (portable=${Boolean(process.env.PORTABLE_EXECUTABLE_DIR)})`);
 
     mainWindow = await createMainWindow();
+    startupDiagnostic("application-idle", `mainWindow=${mainWindow.id}`);
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) {

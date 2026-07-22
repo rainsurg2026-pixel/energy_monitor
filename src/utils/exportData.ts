@@ -1,5 +1,7 @@
 import { MonthlyLog } from "../types";
 import type { ExcelIntegrityReport, WorkbookHealth } from "../desktop";
+import { calculateEnergyCostForMonth } from "./energyCost";
+import { formatNumber2 } from "./numberFormatBridge";
 
 /**
  * Renderer-side export builders (RC6): CSV text and the integrity-report
@@ -13,18 +15,39 @@ const csvEscape = (v: unknown): string => {
 };
 
 const row = (cells: unknown[]): string => cells.map(csvEscape).join(",");
+const csvNumber2 = (value: number | null): string => value === null ? "" : formatNumber2(value);
 
 export function buildSectionCsvs(logs: MonthlyLog[]): Array<{ name: string; content: string }> {
   const ups = [row(["Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)"])];
-  const air = [row(["Month", "EB41A (GWh)", "EB41B (GWh)", "EB42A (GWh)", "EB42B (GWh)"])];
+  const airFields = logs.some(log => log.air.meters && Object.keys(log.air.meters).length > 0)
+    ? Array.from(new Set(logs.flatMap(log => Object.keys(log.air.meters ?? {})))).sort()
+    : ["eb41a", "eb41b", "eb42a", "eb42b"];
+  const air = [row(["Month", ...airFields.map(field => `${field.toUpperCase()} (GWh)`)] )];
   const dc = [row(["Month", "DC Panel", "Voltage (V)", "Current (A)"])];
-  const energy = [row(["Month", "Building Energy (kWh)", "Electricity Cost (THB)"])];
+  const energy = [row([
+    "Month",
+    "Building Energy Consumption (kWh)",
+    "Building Electricity Cost (THB)",
+    "4th Floor Energy Consumption (kWh)",
+    "4th Floor Electricity Cost (THB)",
+    "Average Electricity Rate (THB/kWh)",
+    "4th Floor Energy Share (%)"
+  ])];
 
   for (const l of [...logs].sort((a, b) => a.month.localeCompare(b.month))) {
     for (const u of l.ups) ups.push(row([l.month, u.upsId, u.voltage, u.current, u.loadKw, u.loadKva]));
-    air.push(row([l.month, l.air.eb41a, l.air.eb41b, l.air.eb42a, l.air.eb42b]));
+    air.push(row([l.month, ...airFields.map(field => l.air.meters?.[field] ?? (l.air as unknown as Record<string, number | null | undefined>)[field] ?? null)]));
     for (const d of l.dc) dc.push(row([l.month, d.panelId, d.voltage, d.current]));
-    energy.push(row([l.month, l.energyCost.buildingEnergyKwh, l.energyCost.buildingElectricityCostThb]));
+    const energyCost = calculateEnergyCostForMonth(logs, l.month);
+    energy.push(row([
+      l.month,
+      csvNumber2(energyCost.buildingEnergyKwh),
+      csvNumber2(energyCost.buildingElectricityCostThb),
+      csvNumber2(energyCost.floorEnergyKwh),
+      csvNumber2(energyCost.floorElectricityCostThb),
+      csvNumber2(energyCost.averageElectricityRateThbPerKwh),
+      energyCost.energySharePercent === null ? "" : `${formatNumber2(energyCost.energySharePercent)}%`
+    ]));
   }
 
   return [

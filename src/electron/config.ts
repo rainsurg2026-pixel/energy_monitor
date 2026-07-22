@@ -42,7 +42,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   defaultWorkbookPath: null,
   lastWorkbookPath: null,
   startupBehavior: "last",
-  theme: "dark",
+  theme: "light",
   language: "th",
   backupFolder: null,
   backupKeep: 20,

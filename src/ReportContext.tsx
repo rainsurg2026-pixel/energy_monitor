@@ -98,7 +98,7 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     return (localStorage.getItem("report_pref_report_view") as any) || "executive";
   });
   const [darkMode, setDarkModeState] = useState<boolean>(() => {
-    return localStorage.getItem("report_pref_dark_mode") === "true" || true;
+    return localStorage.getItem("report_pref_dark_mode") === "true";
   });
   const [dashboardLayout, setDashboardLayoutState] = useState<string>(() => {
     return localStorage.getItem("report_pref_layout") || "grid";

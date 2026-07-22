@@ -1,10 +1,17 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 
+console.error(`[STARTUP][preload] loaded pid=${process.pid}`);
+
 // The one and only bridge between the sandboxed renderer and the main process.
 // Every capability is an explicit, named function - the renderer never gets a
 // raw ipcRenderer, filesystem, or Node API.
 
 const invoke = (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args);
+type ExportProgress = {
+  requestId: string;
+  stage: "preparing" | "validating" | "rendering" | "building" | "saving" | "completed";
+  detail?: string;
+};
 
 const desktopBridge = {
   app: {
@@ -15,8 +22,8 @@ const desktopBridge = {
     setActive: (id: string) => invoke("facilities:setActive", id)
   },
   excel: {
-    open: (path: string | null, devices?: unknown) => invoke("excel:open", path, devices),
-    reload: (path: string, devices?: unknown) => invoke("excel:reload", path, devices),
+    open: (path: string | null, devices?: unknown, upsGroupContext?: unknown) => invoke("excel:open", path, devices, upsGroupContext),
+    reload: (path: string, devices?: unknown, upsGroupContext?: unknown) => invoke("excel:reload", path, devices, upsGroupContext),
     save: (payload: { path: string; logs: unknown[]; devices?: unknown }) => invoke("excel:save", payload),
     saveAs: (payload: { sourcePath: string; logs: unknown[]; devices?: unknown }) => invoke("excel:saveAs", payload),
     checkLock: (path: string) => invoke("excel:checkLock", path),
@@ -43,6 +50,15 @@ const desktopBridge = {
     pdf: (payload: { defaultName: string }) => invoke("export:pdf", payload),
     png: (payload: { defaultName: string }) => invoke("export:png", payload),
     excel: (payload: { defaultName: string; facility: string; logs: unknown[] }) => invoke("export:excel", payload),
+    allReport: (payload: {
+      requestId: string;
+      defaultName: string;
+      workbookPath: string;
+      facility: string;
+      selectedMonth: string | null;
+      appVersion: string;
+    }) => invoke("export:all-report", payload),
+    cancel: (requestId: string) => invoke("export:all-report:cancel", requestId),
     zip: (payload: {
       defaultName: string;
       facility: string;
@@ -64,6 +80,16 @@ const desktopBridge = {
       const listener = (_event: unknown, filePath: string) => callback(filePath);
       ipcRenderer.on("open-file-path", listener);
       return () => ipcRenderer.removeListener("open-file-path", listener);
+    },
+    onExportProgress: (callback: (progress: ExportProgress) => void) => {
+      const listener = (_event: unknown, progress: ExportProgress) => callback(progress);
+      ipcRenderer.on("export-progress", listener);
+      return () => ipcRenderer.removeListener("export-progress", listener);
+    },
+    onMigrationProgress: (callback: (progress: { stage: string }) => void) => {
+      const listener = (_event: unknown, progress: { stage: string }) => callback(progress);
+      ipcRenderer.on("migration-progress", listener);
+      return () => ipcRenderer.removeListener("migration-progress", listener);
     }
   }
 };
@@ -71,3 +97,4 @@ const desktopBridge = {
 export type DesktopBridge = typeof desktopBridge;
 
 contextBridge.exposeInMainWorld("desktop", desktopBridge);
+console.error("[STARTUP][preload] contextBridge exposed desktop API");

@@ -3,6 +3,7 @@ import { useReport } from "../ReportContext";
 import { MonthlyLog } from "../types";
 import { computeAllMetrics, ComputedMonthMetrics } from "../utils/analytics";
 import { formatMonthYear } from "../utils";
+import { formatNumber2, formatCompactNumber } from "../utils/numberFormatBridge";
 import { 
   Building, 
   ChevronRight, 
@@ -15,7 +16,7 @@ import {
   TrendingDown, 
   TrendingUp 
 } from "lucide-react";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, Cell } from "recharts";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from "recharts";
 
 interface BenchmarkDashboardProps {
   logs: MonthlyLog[];
@@ -44,32 +45,35 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
   const benchmarks = useMemo(() => {
     if (!currentMonthMetric || allMetrics.length === 0) return null;
 
+    const usableMetrics = allMetrics.filter(m => m.pue !== null && m.totalEnergyKwh !== null);
+    if (usableMetrics.length === 0 || currentMonthMetric.pue === null || currentMonthMetric.totalEnergyKwh === null) return null;
+
     const curVal = currentMonthMetric;
 
     // 1. Find Best Month (lowest PUE or lowest total energy in all history)
-    const bestMonth = [...allMetrics].reduce((best, m) => {
+    const bestMonth = [...usableMetrics].reduce((best, m) => {
       if (m.pue > 1.0 && m.pue < best.pue) return m;
       return best;
-    }, allMetrics[0]);
+    }, usableMetrics[0]);
 
     // 2. Find Worst Month (highest PUE in all history)
-    const worstMonth = [...allMetrics].reduce((worst, m) => {
+    const worstMonth = [...usableMetrics].reduce((worst, m) => {
       if (m.pue > worst.pue) return m;
       return worst;
-    }, allMetrics[0]);
+    }, usableMetrics[0]);
 
     // 3. Find Rolling Average of previous 3 months
-    const curIdx = allMetrics.findIndex(m => m.month === curVal.month);
+    const curIdx = usableMetrics.findIndex(m => m.month === curVal.month);
     let rollingAvgPue = 1.5;
     let rollingAvgEnergy = 120000;
     if (curIdx >= 3) {
-      const last3 = allMetrics.slice(curIdx - 3, curIdx);
+      const last3 = usableMetrics.slice(Math.max(0, curIdx - 3), curIdx);
       rollingAvgPue = last3.reduce((acc, m) => acc + m.pue, 0) / 3;
       rollingAvgEnergy = last3.reduce((acc, m) => acc + m.totalEnergyKwh, 0) / 3;
     } else {
       // fallback to global average
-      rollingAvgPue = allMetrics.reduce((acc, m) => acc + m.pue, 0) / allMetrics.length;
-      rollingAvgEnergy = allMetrics.reduce((acc, m) => acc + m.totalEnergyKwh, 0) / allMetrics.length;
+      rollingAvgPue = usableMetrics.reduce((acc, m) => acc + (m.pue as number), 0) / usableMetrics.length;
+      rollingAvgEnergy = usableMetrics.reduce((acc, m) => acc + (m.totalEnergyKwh as number), 0) / usableMetrics.length;
     }
 
     // 4. Industry Standard PUE Target
@@ -214,12 +218,12 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
 
   // Chart data
   const chartData = [
-    { name: "Current Month", PUE: parseFloat(cur.pue.toFixed(3)) },
-    { name: "Best Month", PUE: parseFloat(b.best.pue.toFixed(3)) },
-    { name: "3-Mo Rolling Avg", PUE: parseFloat(b.rolling.pue.toFixed(3)) },
-    { name: "Industry Standard", PUE: parseFloat(b.industry.pue.toFixed(3)) },
-    { name: "Company ESG Target", PUE: parseFloat(b.company.pue.toFixed(3)) },
-    { name: "Worst Month", PUE: parseFloat(b.worst.pue.toFixed(3)) },
+    { name: "Current Month", PUE: cur.pue },
+    { name: "Best Month", PUE: b.best.pue },
+    { name: "3-Mo Rolling Avg", PUE: b.rolling.pue },
+    { name: "Industry Standard", PUE: b.industry.pue },
+    { name: "Company ESG Target", PUE: b.company.pue },
+    { name: "Worst Month", PUE: b.worst.pue },
   ];
 
   // Compute smart actionable insights based on PUE score
@@ -273,7 +277,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
         </div>
         <div className="hidden sm:block text-right">
           <span className="text-[10px] text-slate-500 uppercase tracking-wider font-mono">Current Month PUE</span>
-          <div className="text-2xl font-mono font-black text-indigo-400 leading-none">{cur.pue.toFixed(3)}</div>
+          <div className="text-2xl font-mono font-black text-indigo-400 leading-none">{formatNumber2(cur.pue)}</div>
         </div>
       </div>
 
@@ -305,14 +309,14 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
                         <span className="text-[10px] text-slate-500 font-semibold font-mono">{row.refLabel}</span>
                       </div>
                       <div className="mt-1 text-slate-400 text-[10px] font-medium leading-none">
-                        Ref Target PUE: <strong className="font-mono text-slate-300">{row.targetPue.toFixed(2)}</strong>
+                        Ref Target PUE: <strong className="font-mono text-slate-300">{formatNumber2(row.targetPue)}</strong>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-4 self-end sm:self-auto">
                       <div className="text-right">
                         <div className="text-xs font-mono font-bold text-slate-300">
-                          {row.currentPue.toFixed(2)} vs {row.targetPue.toFixed(2)}
+                          {formatNumber2(row.currentPue)} vs {formatNumber2(row.targetPue)}
                         </div>
                         <div className="text-[10px] text-slate-500 font-medium">PUE Ratio</div>
                       </div>
@@ -325,7 +329,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
                       } flex items-center gap-1 min-w-[110px] justify-center`}>
                         {isPueBetter ? <TrendingDown className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
                         <span>
-                          {isPueBetter ? t.better : t.worse} ({Math.abs(diffPct).toFixed(1)}%)
+                          {isPueBetter ? t.better : t.worse} ({formatNumber2(Math.abs(diffPct))} %)
                         </span>
                       </div>
                     </div>
@@ -347,11 +351,12 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                 <XAxis dataKey="name" stroke="#475569" style={{ fontSize: 9, fontFamily: "sans-serif" }} />
-                <YAxis stroke="#475569" domain={[1.0, 2.2]} style={{ fontSize: 10, fontFamily: "monospace" }} />
+                <YAxis stroke="#475569" domain={[1.0, 2.2]} tickFormatter={formatCompactNumber} style={{ fontSize: 10, fontFamily: "monospace" }} />
                 <Tooltip
                   contentStyle={{ backgroundColor: "#020617", borderColor: "#1e293b", borderRadius: 12 }}
                   labelStyle={{ color: "#94a3b8", fontWeight: "bold" }}
                   itemStyle={{ color: "#818cf8" }}
+                  formatter={(value: number) => [formatNumber2(value), "PUE"]}
                 />
                 <Bar dataKey="PUE" fill="#6366f1" radius={[4, 4, 0, 0]}>
                   {chartData.map((entry, index) => {

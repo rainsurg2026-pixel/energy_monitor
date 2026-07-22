@@ -20,6 +20,12 @@ import { DeviceLists } from "../../excel/SheetMapper";
 import { listBackups, restoreBackup } from "../sync/BackupManager";
 import { addRecentFile, loadConfig, resolveBackupDir } from "../config";
 import { ensureDir, getExportsDir, getRecoveryPath, log } from "../paths";
+import { readRackCapacityFromBuffer } from "../../reports/rackCapacityReader";
+import { readUpsMappingFromBuffer } from "../../reports/upsMappingReader";
+import { readUpsGroupHistoryFromBuffer } from "../../reports/upsGroupHistoryReader";
+import type { DashboardUpsMappingReport, RackCapacitySummary, UpsGroupHistoryReport } from "../../reports/reportTypes";
+import type { UpsGroupConfig } from "../../utils/upsGroupAggregation";
+import { migrateUpsGroupHistoryIfNeeded, MigrationStage } from "../upsGroupHistoryMigration";
 
 // ---------------------------------------------------------------------------
 // Envelope + validation helpers
@@ -68,7 +74,43 @@ function windowFor(event: IpcMainInvokeEvent): BrowserWindow | undefined {
   return BrowserWindow.fromWebContents(event.sender) ?? undefined;
 }
 
-/** Optional per-facility device lists sent with workbook operations. */
+/**
+ * Optional per-facility device lists sent with workbook operations. This is
+ * the IPC trust boundary for facility isolation: airFields must round-trip
+ * here or every workbook read/write silently falls back to
+ * DEFAULT_DEVICE_LISTS' 4-field Rangsit default regardless of which facility
+ * is active, corrupting/dropping the extra meters a facility like Srinakarin
+ * (6 fields: eb41a/b, eb43a/b, eb44a/b) declares in its profile.
+ */
+/** Trust boundary for the renderer-supplied UPS Group topology used by the
+ *  UPS Group History writer - malformed/oversized input is dropped rather
+ *  than trusted, same posture as sanitizeDevices(). */
+function sanitizeUpsGroups(raw: unknown): UpsGroupConfig[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const groups = raw
+    .filter((g): g is Record<string, unknown> => typeof g === "object" && g !== null)
+    .map(g => ({
+      name: typeof g.name === "string" ? g.name.slice(0, 100) : "",
+      ids: Array.isArray(g.ids) ? g.ids.filter((id): id is string => typeof id === "string" && id.length > 0 && id.length <= 100).slice(0, 50) : [],
+      capacity: typeof g.capacity === "number" && Number.isFinite(g.capacity) ? g.capacity : null
+    }))
+    .filter(g => g.name.length > 0 && g.ids.length > 0)
+    .slice(0, 50);
+  return groups.length > 0 ? groups : undefined;
+}
+
+function sanitizeUpsGroupHistoryOptions(raw: unknown): { facilityId: string; upsGroups: UpsGroupConfig[]; onlyMonths?: string[] } | undefined {
+  if (typeof raw !== "object" || raw === null) return undefined;
+  const o = raw as Record<string, unknown>;
+  const facilityId = typeof o.facilityId === "string" && o.facilityId.length > 0 ? o.facilityId.slice(0, 100) : null;
+  const upsGroups = sanitizeUpsGroups(o.upsGroups);
+  if (!facilityId || !upsGroups) return undefined;
+  const onlyMonths = Array.isArray(o.onlyMonths)
+    ? o.onlyMonths.filter((m): m is string => typeof m === "string" && /^\d{4}-\d{2}$/.test(m)).slice(0, 12)
+    : undefined;
+  return { facilityId, upsGroups, onlyMonths: onlyMonths && onlyMonths.length > 0 ? onlyMonths : undefined };
+}
+
 function sanitizeDevices(raw: unknown): DeviceLists | undefined {
   if (typeof raw !== "object" || raw === null) return undefined;
   const o = raw as Record<string, unknown>;
@@ -77,7 +119,8 @@ function sanitizeDevices(raw: unknown): DeviceLists | undefined {
   const upsIds = list(o.upsIds);
   const dcIds = list(o.dcIds);
   if (!upsIds || upsIds.length === 0 || !dcIds || dcIds.length === 0) return undefined;
-  return { upsIds, dcIds };
+  const airFields = list(o.airFields);
+  return { upsIds, dcIds, ...(airFields && airFields.length > 0 ? { airFields } : {}) };
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +134,15 @@ export interface OpenWorkbookPayload {
   integrity: WorkbookReadResult["integrity"];
   health: WorkbookHealth;
   lock: { locked: boolean; excelOwnerFilePresent: boolean };
+  rackCapacity: RackCapacitySummary | null;
+  upsMapping: DashboardUpsMappingReport | null;
+  /** Set only when the workbook file itself could not be read for the UPS
+   *  mapping pass (missing/locked/permission) - distinct from `upsMapping`
+   *  legitimately being null because the workbook has no Dashboard-FAC UPS
+   *  table. The renderer surfaces this instead of it being silently lost. */
+  upsMappingError: string | null;
+  /** Persisted "2. UPS Group History" worksheet, if present. */
+  upsGroupHistory: UpsGroupHistoryReport | null;
 }
 
 export interface SaveWorkbookPayload {
@@ -124,15 +176,95 @@ export interface WorkbookAccessStatus {
   reason: "NOT_FOUND" | "NO_READ" | "LOCKED_EXCEL" | "LOCKED" | "READONLY_FILE" | null;
 }
 
-async function buildOpenPayload(filePath: string, devices?: DeviceLists): Promise<{ ok: true } & OpenWorkbookPayload> {
-  const read = await readWorkbookFromFile(filePath, devices);
+async function buildOpenPayload(
+  filePath: string,
+  devices?: DeviceLists,
+  upsGroupContext?: { facilityId: string; upsGroups: UpsGroupConfig[] },
+  onMigrationProgress?: (stage: MigrationStage) => void
+): Promise<{ ok: true } & OpenWorkbookPayload> {
+  let read = await readWorkbookFromFile(filePath, devices);
   if (!read.validation.ok) {
     throw new WorkbookError(
       "INVALID_WORKBOOK",
       `This file is not a compatible workbook:\n${read.validation.errors.join("\n")}`
     );
   }
+
+  // One-time, idempotent UPS Group History migration (dedicated service).
+  // Runs only on open/reload, never triggered by Historical Explorer. If it
+  // writes to the workbook, everything below is re-derived from the fresh
+  // file so the returned payload always reflects what is actually on disk.
+  if (upsGroupContext) {
+    try {
+      const config = await loadConfig();
+      const migration = await migrateUpsGroupHistoryIfNeeded(
+        filePath,
+        read.logs,
+        upsGroupContext.facilityId,
+        upsGroupContext.upsGroups,
+        resolveBackupDir(config),
+        config.backupKeep,
+        onMigrationProgress
+      );
+      if (migration.migrated) {
+        read = await readWorkbookFromFile(filePath, devices);
+      }
+    } catch (error) {
+      // Migration failure never blocks opening the workbook - the user can
+      // still read/work with it; History simply stays unmigrated until the
+      // next successful open.
+      log.warn(`UPS Group History migration failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   const lock = await checkWorkbookLock(filePath);
+  let rackCapacity: RackCapacitySummary | null = null;
+  try {
+    const rack = await readRackCapacityFromBuffer(await fs.readFile(filePath));
+    if (rack) {
+      rackCapacity = {
+        totalRacks: rack.records.length,
+        records: rack.records,
+        byStatus: rack.byStatus,
+        byZone: rack.byZone
+      };
+    }
+  } catch (error) {
+    log.warn(`rack capacity summary unavailable: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  let upsMapping: DashboardUpsMappingReport | null = null;
+  let upsMappingError: string | null = null;
+  let upsMappingBuffer: Buffer | null = null;
+  try {
+    upsMappingBuffer = await fs.readFile(filePath);
+  } catch (error) {
+    // The workbook file itself could not be read - this is not "no UPS
+    // table in this workbook", it is a failure to even open the bytes the
+    // rest of this function already opened successfully above. Surface it
+    // structurally instead of only logging it away.
+    upsMappingError = error instanceof Error ? error.message : String(error);
+    log.error(`UPS mapping read failed (file unreadable): ${upsMappingError}`);
+  }
+  if (upsMappingBuffer) {
+    try {
+      upsMapping = await readUpsMappingFromBuffer(upsMappingBuffer);
+    } catch (error) {
+      // A real parse failure (corrupt sheet, unexpected structure) - also
+      // surfaced, not swallowed. Sheet/table legitimately absent is not an
+      // error path: readUpsMappingFromBuffer returns null for that, not a throw.
+      upsMappingError = error instanceof Error ? error.message : String(error);
+      log.error(`UPS mapping read failed (parse error): ${upsMappingError}`);
+    }
+  }
+  let upsGroupHistory: UpsGroupHistoryReport | null = null;
+  if (upsMappingBuffer) {
+    try {
+      upsGroupHistory = await readUpsGroupHistoryFromBuffer(upsMappingBuffer);
+    } catch (error) {
+      log.warn(`UPS Group History unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   await addRecentFile(filePath);
   app.addRecentDocument(filePath);
   log.info(`workbook opened: ${filePath} (${read.logs.length} months)`);
@@ -143,7 +275,11 @@ async function buildOpenPayload(filePath: string, devices?: DeviceLists): Promis
     validation: read.validation,
     integrity: read.integrity,
     health: summarizeWorkbookHealth(read),
-    lock: { locked: lock.locked, excelOwnerFilePresent: lock.excelOwnerFilePresent }
+    lock: { locked: lock.locked, excelOwnerFilePresent: lock.excelOwnerFilePresent },
+    rackCapacity,
+    upsMapping,
+    upsMappingError,
+    upsGroupHistory
   };
 }
 
@@ -153,9 +289,10 @@ async function buildOpenPayload(filePath: string, devices?: DeviceLists): Promis
 
 export function registerExcelIpc(): void {
   // --- Open (native picker when no path is given) ---
-  ipcMain.handle("excel:open", (event, rawPath: unknown, rawDevices?: unknown) =>
+  ipcMain.handle("excel:open", (event, rawPath: unknown, rawDevices?: unknown, rawUpsGroupContext?: unknown) =>
     wrap<OpenWorkbookPayload | { canceled: true }>("excel:open", async () => {
       const devices = sanitizeDevices(rawDevices);
+      const upsGroupContext = sanitizeUpsGroupHistoryOptions(rawUpsGroupContext);
       let filePath: string;
       if (rawPath === null || rawPath === undefined) {
         const result = await dialog.showOpenDialog(windowFor(event)!, {
@@ -171,15 +308,19 @@ export function registerExcelIpc(): void {
       } else {
         filePath = ensureWorkbookPath(rawPath);
       }
-      return buildOpenPayload(filePath, devices);
+      return buildOpenPayload(filePath, devices, upsGroupContext, stage => {
+        if (!event.sender.isDestroyed()) event.sender.send("migration-progress", { stage });
+      });
     })
   );
 
   // --- Reload current workbook from disk ---
-  ipcMain.handle("excel:reload", (_event, rawPath: unknown, rawDevices?: unknown) =>
+  ipcMain.handle("excel:reload", (event, rawPath: unknown, rawDevices?: unknown, rawUpsGroupContext?: unknown) =>
     wrap<OpenWorkbookPayload>("excel:reload", async () => {
       const filePath = ensureWorkbookPath(rawPath);
-      return buildOpenPayload(filePath, sanitizeDevices(rawDevices));
+      return buildOpenPayload(filePath, sanitizeDevices(rawDevices), sanitizeUpsGroupHistoryOptions(rawUpsGroupContext), stage => {
+        if (!event.sender.isDestroyed()) event.sender.send("migration-progress", { stage });
+      });
     })
   );
 
@@ -193,7 +334,8 @@ export function registerExcelIpc(): void {
       const result = await saveWorkbook(filePath, logs, {
         backupDir: resolveBackupDir(config),
         backupKeep: config.backupKeep,
-        devices: sanitizeDevices(body.devices)
+        devices: sanitizeDevices(body.devices),
+        upsGroupHistory: sanitizeUpsGroupHistoryOptions(body.upsGroupHistory)
       });
       log.info(`workbook saved: ${filePath} (${result.months} months, backup: ${result.backupPath ?? "none"})`);
       return { ok: true, path: result.path, backupPath: result.backupPath, savedAt: new Date().toISOString() };
@@ -220,7 +362,8 @@ export function registerExcelIpc(): void {
         backupDir: resolveBackupDir(config),
         backupKeep: config.backupKeep,
         targetPath,
-        devices: sanitizeDevices(body.devices)
+        devices: sanitizeDevices(body.devices),
+        upsGroupHistory: sanitizeUpsGroupHistoryOptions(body.upsGroupHistory)
       });
       await addRecentFile(targetPath);
       app.addRecentDocument(targetPath);

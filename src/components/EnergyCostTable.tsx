@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { EnergyCostRecord } from "../types";
 import { Save, Check, RotateCcw } from "lucide-react";
 import { formatMonthYear } from "../utils";
+import { calculateAverageElectricityRate } from "../utils/energyCost";
+import { formatNumber2 } from "../utils/numberFormatBridge";
 import { EntrySectionApi } from "../utils/completion";
 
 interface EnergyCostTableProps {
@@ -90,10 +92,10 @@ export default function EnergyCostTable({
     setIsSaved(false);
   };
 
-  const averageRate = 
-    record.buildingEnergyKwh && record.buildingElectricityCostThb
-      ? record.buildingElectricityCostThb / record.buildingEnergyKwh
-      : null;
+  const averageRate = calculateAverageElectricityRate(
+    record.buildingEnergyKwh,
+    record.buildingElectricityCostThb
+  );
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
@@ -186,8 +188,8 @@ export default function EnergyCostTable({
                     ? "bg-slate-800 text-emerald-400 font-semibold border border-slate-750" 
                     : "text-slate-600 italic"
                 }`}>
-                  {averageRate !== null 
-                    ? `${averageRate.toFixed(2)} ฿/kWh` 
+                  {averageRate !== null
+                    ? `${formatNumber2(averageRate)} ฿/kWh`
                     : "Enter both fields..."}
                 </span>
               </td>

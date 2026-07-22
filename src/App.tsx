@@ -11,11 +11,12 @@ import {
   getPreviousMonthStr
 } from "./utils";
 import { importLogsFromGoogleSheets, DEFAULT_SPREADSHEET_ID } from "./sheetsService";
-import { MonthlyLog, SecurityConfig, UpsRecord, AirRecord, DcRecord, EnergyCostRecord } from "./types";
+import { MonthlyLog, SecurityConfig, UpsRecord, AirRecord, DcRecord, EnergyCostRecord, SrinakarinInputSnapshot } from "./types";
 import { DataSnapshot, ProviderError } from "./data/IDataProvider";
 import { ExcelProvider } from "./data/ExcelProvider";
 import { getDesktopBridge } from "./data/ProviderFactory";
-import type { AppConfig, DeviceLists, FacilityEntry, WorkbookAccessStatus } from "./desktop";
+import type { AppConfig, DeviceLists, ExportProgress, FacilityEntry, WorkbookAccessStatus } from "./desktop";
+import type { DashboardUpsMappingReport, RackCapacitySummary } from "./reports/reportTypes";
 import StatusBar from "./components/StatusBar";
 import SaveProgress, { SaveProgressState } from "./components/SaveProgress";
 import FacilitySelector from "./components/FacilitySelector";
@@ -33,6 +34,7 @@ import IntegrityCenter from "./components/IntegrityCenter";
 import type { RecoverySnapshot } from "./desktop";
 import DashboardStats from "./components/DashboardStats";
 import UpsTable from "./components/UpsTable";
+import SrinakarinPowerPhaseTable from "./components/SrinakarinPowerPhaseTable";
 import AirTable from "./components/AirTable";
 import DcTable from "./components/DcTable";
 import EnergyCostTable from "./components/EnergyCostTable";
@@ -73,12 +75,18 @@ function DashboardViewContainer({
   lang,
   isGoogleConnected,
   googleUserEmail,
+  rackCapacity,
+  upsMapping,
+  facility,
   onExport
 }: {
   logs: MonthlyLog[];
   lang: "th" | "en";
   isGoogleConnected: boolean;
   googleUserEmail: string | null;
+  rackCapacity?: RackCapacitySummary | null;
+  upsMapping?: DashboardUpsMappingReport | null;
+  facility: FacilityEntry | null;
   onExport?: (format: "pdf" | "excel" | "csv" | "png") => void;
 }) {
   const { selectedReportView, selectedYear, selectedPeriod } = useReport();
@@ -111,7 +119,7 @@ function DashboardViewContainer({
 
   return (
     <div className="space-y-6">
-      <UniversalFilterBar lang={lang} onExport={handleExport} />
+      <UniversalFilterBar lang={lang} onExport={handleExport} facility={facility} />
 
       {selectedReportView === "executive" && (
         <div className="space-y-6 animate-fadeIn">
@@ -128,6 +136,9 @@ function DashboardViewContainer({
             lang={lang}
             isGoogleConnected={isGoogleConnected}
             googleUserEmail={googleUserEmail}
+            rackCapacity={rackCapacity}
+            upsMapping={upsMapping}
+            facility={facility}
           />
         </div>
       )}
@@ -219,9 +230,16 @@ export default function App() {
   const deviceListsRef = useRef<DeviceLists | null>(null);
   useEffect(() => {
     deviceListsRef.current = activeFacility
-      ? { upsIds: activeFacility.profile.devices.ups, dcIds: activeFacility.profile.devices.dc }
+      ? { upsIds: activeFacility.profile.devices.ups, dcIds: activeFacility.profile.devices.dc, airFields: activeFacility.profile.air.fields }
       : null;
     excelProvider?.setDeviceLists(deviceListsRef.current ?? undefined);
+    // UPS Group History persistence reads its topology dynamically from
+    // facility.profile.dashboard.upsGroups - never hardcoded here.
+    excelProvider?.setUpsGroupContext(
+      activeFacility && activeFacility.profile.dashboard.upsGroups.length > 0
+        ? { facilityId: activeFacility.id, upsGroups: activeFacility.profile.dashboard.upsGroups }
+        : undefined
+    );
   }, [activeFacility, excelProvider]);
 
   /** createEmptyLog honoring the active facility's device profile. */
@@ -254,24 +272,6 @@ export default function App() {
   const [lastSyncedTime, setLastSyncedTime] = useState<string | null>(() => {
     return localStorage.getItem("google_sheets_last_synced") || null;
   });
-
-  const validateImportedMonths = (imported: MonthlyLog[]) => {
-    const importedMonths = imported.map(l => l.month).sort();
-    const displayedMonths = imported.map(l => l.month).sort();
-
-    console.log("--- Google Sheets Sync Validation ---");
-    console.log("Imported Months:");
-    importedMonths.forEach(m => console.log(m));
-    console.log("Displayed Months:");
-    displayedMonths.forEach(m => console.log(m));
-
-    // Warn if mismatch
-    if (importedMonths.length !== displayedMonths.length || !importedMonths.every((v, i) => v === displayedMonths[i])) {
-      console.warn("WARNING: Displayed months and Imported months do not match!");
-    } else {
-      console.log("Validation Success: Displayed months match Google Sheets perfectly.");
-    }
-  };
 
   // Concurrency guards for the Google Sheets import pipeline: only the most recently
   // requested import may run its network calls and commit state. Every earlier
@@ -329,10 +329,7 @@ export default function App() {
       // ReportContext/UI refresh exactly once per winning import (React re-render).
       setSyncedLogs(imported);
 
-      // Validation
-      validateImportedMonths(imported);
-
-      const timeStr = new Date().toLocaleTimeString();
+      const timeStr = formatTimestamp(new Date());
       setLastSyncedTime(timeStr);
       if (!isDesktopApp) localStorage.setItem("google_sheets_last_synced", timeStr);
 
@@ -440,6 +437,14 @@ export default function App() {
         if (snap.validation?.warnings?.length) {
           notify("info", snap.validation.warnings.join("\n"));
         }
+        if (snap.upsMappingError) {
+          notify(
+            "error",
+            lang === "th"
+              ? `อ่านข้อมูล UPS Mapping ไม่สำเร็จ: ${snap.upsMappingError}`
+              : `Could not read UPS mapping data: ${snap.upsMappingError}`
+          );
+        }
         if (snap.lock?.locked || snap.lock?.excelOwnerFilePresent) {
           notify(
             "info",
@@ -496,7 +501,7 @@ export default function App() {
     stage("validate");
     try {
       stage("lock");
-      const outcome = await excelProvider.saveAll(loadAllLogs());
+      const outcome = await excelProvider.saveAll(loadAllLogs(), editingMonth ?? selectedMonth ?? undefined);
       stage("refresh");
       const snap = await excelProvider.reload();
       applyWorkbookSnapshot(snap);
@@ -987,8 +992,16 @@ export default function App() {
     }
     const facility = (result as { ok: true; facility: FacilityEntry }).facility;
     setActiveFacilityId(facility.id);
-    deviceListsRef.current = { upsIds: facility.profile.devices.ups, dcIds: facility.profile.devices.dc };
+    deviceListsRef.current = { upsIds: facility.profile.devices.ups, dcIds: facility.profile.devices.dc, airFields: facility.profile.air.fields };
     excelProvider.setDeviceLists(deviceListsRef.current);
+    // Set synchronously (not left to the reactive effect) so the upcoming
+    // openWorkbook() call below already carries the right UPS Group
+    // topology - migration must run on THIS open, not a later one.
+    excelProvider.setUpsGroupContext(
+      facility.profile.dashboard.upsGroups.length > 0
+        ? { facilityId: facility.id, upsGroups: facility.profile.dashboard.upsGroups }
+        : undefined
+    );
     setEditingMonth(null);
     await openWorkbook(facility.workbook);
   };
@@ -1040,9 +1053,15 @@ export default function App() {
         if (facility) {
           deviceListsRef.current = {
             upsIds: facility.profile.devices.ups,
-            dcIds: facility.profile.devices.dc
+            dcIds: facility.profile.devices.dc,
+            airFields: facility.profile.air.fields
           };
           excelProvider?.setDeviceLists(deviceListsRef.current);
+          excelProvider?.setUpsGroupContext(
+            facility.profile.dashboard.upsGroups.length > 0
+              ? { facilityId: facility.id, upsGroups: facility.profile.dashboard.upsGroups }
+              : undefined
+          );
         }
 
         let target: string | null = facility?.workbook ?? null;
@@ -1398,6 +1417,37 @@ export default function App() {
 
   // --- EXPORT CENTER (RC6) ---
   const [exportCenterOpen, setExportCenterOpen] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
+  const [exportRequestId, setExportRequestId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return desktopBridge.events.onExportProgress(progress => {
+      if (!exportRequestId || progress.requestId === exportRequestId) setExportProgress(progress);
+    });
+  }, [desktopBridge, exportRequestId]);
+
+  // UPS Group History migration (excel:open/reload): non-blocking progress
+  // toasts. Runs at most once per workbook - most opens never fire this at
+  // all because the sheet already exists, so this stays silent in the
+  // common case.
+  useEffect(() => {
+    if (!desktopBridge) return;
+    return desktopBridge.events.onMigrationProgress(({ stage }) => {
+      const messages: Record<string, { th: string; en: string } | undefined> = {
+        "not-found": {
+          th: "ไม่พบประวัติกลุ่ม UPS - กำลังย้ายข้อมูลย้อนหลังอัตโนมัติ...",
+          en: "UPS Group History not found - migrating historical data automatically..."
+        },
+        complete: {
+          th: "ย้ายข้อมูลประวัติกลุ่ม UPS สำเร็จ",
+          en: "UPS Group History migration complete"
+        }
+      };
+      const message = messages[stage];
+      if (message) notify("info", lang === "th" ? message.th : message.en);
+    });
+  }, [desktopBridge, lang]);
 
   const exportBaseName = useMemo(() => {
     const facility = (activeFacility?.name ?? "Facility").replace(/\s+/g, "");
@@ -1414,7 +1464,20 @@ export default function App() {
     const facility = activeFacility?.name ?? "Facility";
     try {
       let result: { ok: boolean } & Record<string, unknown>;
-      if (kind === "pdf") {
+      if (kind === "all-report") {
+        if (!workbook?.path) throw new Error("Open a workbook before exporting the combined report.");
+        const requestId = crypto.randomUUID();
+        setExportRequestId(requestId);
+        setExportProgress({ requestId, stage: "preparing", detail: "Starting export" });
+        result = await desktopBridge.exportCenter.allReport({
+          requestId,
+          defaultName: `${facility.replace(/\s+/g, "")}_All_Report`,
+          workbookPath: workbook.path,
+          facility,
+          selectedMonth: selectedMonth || null,
+          appVersion: appVersion ?? "Unknown"
+        });
+      } else if (kind === "pdf") {
         result = await desktopBridge.exportCenter.pdf({ defaultName: exportBaseName });
       } else if (kind === "png") {
         result = await desktopBridge.exportCenter.png({ defaultName: exportBaseName });
@@ -1438,6 +1501,11 @@ export default function App() {
       }
     } catch (err) {
       notify("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      if (kind === "all-report") {
+        setExportRequestId(null);
+        setExportProgress(null);
+      }
     }
   };
 
@@ -1548,7 +1616,7 @@ export default function App() {
   // Update activeLog state when selectedMonth changes
   useEffect(() => {
     if (selectedMonth) {
-      const log = loadLogForMonth(selectedMonth);
+      const log = loadLogForMonth(selectedMonth, deviceListsRef.current?.upsIds, deviceListsRef.current?.dcIds);
       setActiveLog(log);
     }
   }, [selectedMonth, logs]);
@@ -1557,6 +1625,7 @@ export default function App() {
   // remapped by the html.theme-light rules in index.css.
   useEffect(() => {
     document.documentElement.classList.toggle("theme-light", appConfig?.theme === "light");
+    document.documentElement.classList.toggle("theme-dark", appConfig?.theme !== "light");
   }, [appConfig?.theme]);
 
   // --- ACTION HANDLERS ---
@@ -1584,9 +1653,42 @@ export default function App() {
     const isHistorical = selectedMonth !== maxMonth;
     const saveAction = () => {
       const timestamp = formatTimestamp(new Date());
+      // Read the freshest in-memory record, not the (possibly batch-stale)
+      // `activeLog` React state - during a toolbar batch save, earlier
+      // sections in the same batch have already written into the in-memory
+      // store, and activeLog is deliberately not refreshed mid-batch
+      // (commitEntrySave short-circuits). Spreading activeLog here would
+      // silently revert those earlier sections' edits.
       const updatedLog: MonthlyLog = {
-        ...activeLog,
+        ...loadLogForMonth(selectedMonth, deviceListsRef.current?.upsIds, deviceListsRef.current?.dcIds),
         ups: records,
+        lastSavedUps: timestamp
+      };
+      saveLogForMonth(selectedMonth, updatedLog);
+      commitEntrySave();
+    };
+
+    if ((isHistorical || editingMonth) && !batchSaveRef.current) {
+      setPendingSave({ type: "ups", execute: saveAction });
+    } else {
+      saveAction();
+    }
+  };
+
+  const handleSaveSrinakarinPower = (records: UpsRecord[], inputs: SrinakarinInputSnapshot) => {
+    if (!activeLog) return;
+    if (readOnly) return notifyReadOnly();
+    if (!batchSaveRef.current) {
+      const missing = validateSections({ ...activeLog, ups: records, srinakarinInputs: inputs }, ["ups"]);
+      if (missing.length > 0) return raiseValidation(missing);
+    }
+    const isHistorical = selectedMonth !== maxMonth;
+    const saveAction = () => {
+      const timestamp = formatTimestamp(new Date());
+      const updatedLog: MonthlyLog = {
+        ...loadLogForMonth(selectedMonth, deviceListsRef.current?.upsIds, deviceListsRef.current?.dcIds),
+        ups: records,
+        srinakarinInputs: inputs,
         lastSavedUps: timestamp
       };
       saveLogForMonth(selectedMonth, updatedLog);
@@ -1611,7 +1713,7 @@ export default function App() {
     const saveAction = () => {
       const timestamp = formatTimestamp(new Date());
       const updatedLog: MonthlyLog = {
-        ...activeLog,
+        ...loadLogForMonth(selectedMonth, deviceListsRef.current?.upsIds, deviceListsRef.current?.dcIds),
         air: record,
         lastSavedAir: timestamp
       };
@@ -1637,7 +1739,7 @@ export default function App() {
     const saveAction = () => {
       const timestamp = formatTimestamp(new Date());
       const updatedLog: MonthlyLog = {
-        ...activeLog,
+        ...loadLogForMonth(selectedMonth, deviceListsRef.current?.upsIds, deviceListsRef.current?.dcIds),
         dc: records,
         lastSavedDc: timestamp
       };
@@ -1663,7 +1765,7 @@ export default function App() {
     const saveAction = () => {
       const timestamp = formatTimestamp(new Date());
       const updatedLog: MonthlyLog = {
-        ...activeLog,
+        ...loadLogForMonth(selectedMonth, deviceListsRef.current?.upsIds, deviceListsRef.current?.dcIds),
         energyCost: record,
         lastSavedEnergyCost: timestamp
       };
@@ -1829,7 +1931,7 @@ export default function App() {
       </AnimatePresence>
 
       {/* 2. INNER APPLICATION UI */}
-      <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 ${isDesktopApp ? "pb-16" : ""}`}>
+      <div className={`max-w-[1600px] 2xl:max-w-[1760px] mx-auto px-4 sm:px-8 lg:px-10 py-8 space-y-8 ${isDesktopApp ? "pb-16" : ""}`}>
         
         {/* HEADER RAIL */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-6 border-b border-slate-850">
@@ -2065,14 +2167,25 @@ export default function App() {
                 
                 {/* UPS Logging Section */}
                 <div id="entry-section-ups" className={highlightSections.has("ups") ? "highlight-missing" : ""}>
-                  <UpsTable
-                    monthStr={selectedMonth}
-                    initialRecords={activeLog.ups}
-                    lastSaved={activeLog.lastSavedUps}
-                    onSave={handleSaveUps}
-                    registerApi={registerSection("ups")}
-                    onDraftChange={reportDraft("ups")}
-                  />
+                  {activeFacility?.id === "srinakarin" ? (
+                    <SrinakarinPowerPhaseTable
+                      monthStr={selectedMonth}
+                      initialLog={activeLog}
+                      lastSaved={activeLog.lastSavedUps}
+                      onSave={handleSaveSrinakarinPower}
+                      registerApi={registerSection("ups")}
+                      onDraftChange={reportDraft("ups")}
+                    />
+                  ) : (
+                    <UpsTable
+                      monthStr={selectedMonth}
+                      initialRecords={activeLog.ups}
+                      lastSaved={activeLog.lastSavedUps}
+                      onSave={handleSaveUps}
+                      registerApi={registerSection("ups")}
+                      onDraftChange={reportDraft("ups")}
+                    />
+                  )}
                 </div>
 
                 {/* Air Conditioning section */}
@@ -2084,6 +2197,8 @@ export default function App() {
                     onSave={handleSaveAir}
                     registerApi={registerSection("air")}
                     onDraftChange={reportDraft("air")}
+                    meterFields={activeFacility?.profile.air.fields}
+                    meterLabels={activeFacility?.profile.air.labels}
                   />
                 </div>
 
@@ -2196,6 +2311,9 @@ export default function App() {
                 lang={lang}
                 isGoogleConnected={isGoogleConnected}
                 googleUserEmail={googleUserEmail}
+                rackCapacity={workbook?.rackCapacity}
+                upsMapping={workbook?.upsMapping}
+                facility={activeFacility}
                 onExport={isDesktopApp ? format => void runExport(format) : undefined}
               />
             </ReportProvider>
@@ -2229,6 +2347,8 @@ export default function App() {
                 lang={lang}
                 isGoogleConnected={isGoogleConnected}
                 googleUserEmail={googleUserEmail}
+                upsGroupHistory={workbook?.upsGroupHistory}
+                activeFacilityId={activeFacility?.id ?? null}
                 onEditMonth={(monthStr) => {
                   setEditingMonth(monthStr);
                   selectMonthContext(monthStr);
@@ -2639,7 +2759,7 @@ export default function App() {
                       {lang === "th" ? "พบข้อมูลที่ยังไม่ได้บันทึก" : "Unsaved Changes Found"}
                     </h3>
                     <p className="text-[10px] text-slate-400 font-semibold font-mono uppercase tracking-wider mt-0.5">
-                      {new Date(recoveryOffer.savedAt).toLocaleString()}
+                      {formatTimestamp(new Date(recoveryOffer.savedAt))}
                     </p>
                   </div>
                 </div>
@@ -2685,6 +2805,10 @@ export default function App() {
         lang={lang}
         baseName={exportBaseName}
         onClose={() => setExportCenterOpen(false)}
+        exportProgress={exportProgress}
+        onCancelExport={() => {
+          if (exportRequestId && desktopBridge) void desktopBridge.exportCenter.cancel(exportRequestId);
+        }}
         onExport={async kind => {
           await runExport(kind);
           setExportCenterOpen(false);

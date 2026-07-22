@@ -6,6 +6,7 @@
 
 import { MonthlyLog } from "../types";
 import type { DesktopBridge, DeviceLists, IpcResult, OpenWorkbookPayload } from "../desktop";
+import type { UpsGroupConfig } from "../utils/upsGroupAggregation";
 import { DataSnapshot, IDataProvider, ProviderCapabilities, ProviderError, SaveOutcome } from "./IDataProvider";
 
 /**
@@ -30,7 +31,11 @@ function toSnapshot(payload: OpenWorkbookPayload): DataSnapshot {
     health: payload.health,
     integrity: payload.integrity,
     validation: payload.validation,
-    lock: payload.lock
+    lock: payload.lock,
+    rackCapacity: payload.rackCapacity,
+    upsMapping: payload.upsMapping,
+    upsMappingError: payload.upsMappingError,
+    upsGroupHistory: payload.upsGroupHistory
   };
 }
 
@@ -47,6 +52,8 @@ export class ExcelProvider implements IDataProvider {
   private currentPath: string | null = null;
   /** Active facility's canonical device lists; undefined = built-in defaults. */
   private devices: DeviceLists | undefined;
+  /** Active facility's id + UPS Group topology, for UPS Group History persistence. */
+  private upsGroupContext: { facilityId: string; upsGroups: UpsGroupConfig[] } | undefined;
 
   constructor(bridge: DesktopBridge) {
     this.bridge = bridge;
@@ -54,6 +61,10 @@ export class ExcelProvider implements IDataProvider {
 
   setDeviceLists(devices: DeviceLists | undefined): void {
     this.devices = devices;
+  }
+
+  setUpsGroupContext(context: { facilityId: string; upsGroups: UpsGroupConfig[] } | undefined): void {
+    this.upsGroupContext = context;
   }
 
   getSourceLabel(): string | null {
@@ -71,7 +82,9 @@ export class ExcelProvider implements IDataProvider {
       throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
     }
     const result = unwrap(
-      target ? await this.bridge.excel.open(target, this.devices) : await this.bridge.excel.open(null, this.devices)
+      target
+        ? await this.bridge.excel.open(target, this.devices, this.upsGroupContext)
+        : await this.bridge.excel.open(null, this.devices, this.upsGroupContext)
     );
     if ("canceled" in result && result.canceled) return null;
     const payload = result as { ok: true } & OpenWorkbookPayload;
@@ -82,24 +95,29 @@ export class ExcelProvider implements IDataProvider {
   /** Re-read the currently open workbook from disk. */
   async reload(): Promise<DataSnapshot> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
-    const result = unwrap(await this.bridge.excel.reload(this.currentPath, this.devices));
+    const result = unwrap(await this.bridge.excel.reload(this.currentPath, this.devices, this.upsGroupContext));
     return toSnapshot(result);
   }
 
-  async saveAll(logs: MonthlyLog[]): Promise<SaveOutcome> {
+  async saveAll(logs: MonthlyLog[], currentMonth?: string): Promise<SaveOutcome> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
-    const result = unwrap(await this.bridge.excel.save({ path: this.currentPath, logs, devices: this.devices }));
+    const upsGroupHistory = this.upsGroupContext
+      ? { ...this.upsGroupContext, onlyMonths: currentMonth ? [currentMonth] : undefined }
+      : undefined;
+    const result = unwrap(await this.bridge.excel.save({ path: this.currentPath, logs, devices: this.devices, upsGroupHistory }));
     return { savedAt: result.savedAt, backupPath: result.backupPath, path: result.path };
   }
 
-  async saveMonth(_log: MonthlyLog, allLogs: MonthlyLog[]): Promise<SaveOutcome> {
-    // The workbook is always written as a whole (single atomic file).
-    return this.saveAll(allLogs);
+  async saveMonth(log: MonthlyLog, allLogs: MonthlyLog[]): Promise<SaveOutcome> {
+    // The workbook is always written as a whole (single atomic file); only
+    // UPS Group History's incremental scope narrows to the edited month.
+    return this.saveAll(allLogs, log.month);
   }
 
   async saveAs(logs: MonthlyLog[]): Promise<SaveOutcome | null> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
-    const result = unwrap(await this.bridge.excel.saveAs({ sourcePath: this.currentPath, logs, devices: this.devices }));
+    const upsGroupHistory = this.upsGroupContext ? { ...this.upsGroupContext } : undefined;
+    const result = unwrap(await this.bridge.excel.saveAs({ sourcePath: this.currentPath, logs, devices: this.devices, upsGroupHistory }));
     if ("canceled" in result && result.canceled) return null;
     const saved = result as { ok: true; path: string; backupPath: string | null; savedAt: string };
     this.currentPath = saved.path;

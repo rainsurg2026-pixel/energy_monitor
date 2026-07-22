@@ -23,6 +23,8 @@ export type FieldId =
   | "eb42b"
   | "buildingEnergyKwh"
   | "buildingElectricityCostThb"
+  | "floorElectricityCostThb"
+  | "averageElectricityRateThbPerKwh"
   | "timestamp";
 
 export interface ColumnSchema {
@@ -35,6 +37,8 @@ export interface ColumnSchema {
   keywordGroups: string[][];
   required: boolean;
   kind: "month" | "text" | "number" | "timestamp";
+  /** Formula/table-managed columns are read for validation but preserved on write. */
+  readOnly?: boolean;
 }
 
 export interface SheetSchema {
@@ -74,7 +78,7 @@ export const SHEET_SCHEMAS: SheetSchema[] = [
       { field: "eb41a", keywordGroups: [["eb41a"]], required: true, kind: "number" },
       { field: "eb41b", keywordGroups: [["eb41b"]], required: true, kind: "number" },
       { field: "eb42a", keywordGroups: [["eb42a"]], required: true, kind: "number" },
-      { field: "eb42b", keywordGroups: [["eb42b"]], required: true, kind: "number" },
+      { field: "eb42b", keywordGroups: [["eb42b"]], required: false, kind: "number" },
       { field: "timestamp", keywordGroups: [["timestamp"]], required: false, kind: "timestamp" }
     ]
   },
@@ -109,6 +113,20 @@ export const SHEET_SCHEMAS: SheetSchema[] = [
         keywordGroups: [["building", "electricity", "cost"]],
         required: true,
         kind: "number"
+      },
+      {
+        field: "floorElectricityCostThb",
+        keywordGroups: [["4th", "floor", "electricity", "cost"]],
+        required: false,
+        kind: "number",
+        readOnly: true
+      },
+      {
+        field: "averageElectricityRateThbPerKwh",
+        keywordGroups: [["average", "electricity", "rate"]],
+        required: false,
+        kind: "number",
+        readOnly: true
       },
       { field: "timestamp", keywordGroups: [["timestamp"]], required: false, kind: "timestamp" }
     ]
@@ -163,6 +181,17 @@ export function resolveColumns<K>(
     if (found) {
       byField.set(column.field, found.col);
       claimed.add(found.col);
+    }
+  }
+  // Facility profiles may add meters without requiring a code change. Air
+  // headers use the stable EBxx[A-C] identifier convention.
+  if (schema.key === "AIR") {
+    for (const h of headers) {
+      const field = h.text.toLowerCase().replace(/\s|\(|\)|_/g, "").match(/^(eb\d+[a-z])/)?.[1];
+      if (field && !byField.has(field as FieldId) && !claimed.has(h.col)) {
+        byField.set(field as FieldId, h.col);
+        claimed.add(h.col);
+      }
     }
   }
   const missingRequired = schema.columns

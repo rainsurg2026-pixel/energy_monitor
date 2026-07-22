@@ -1,0 +1,38 @@
+/** Presentation-only numeric formatting shared by all UI and report views. */
+const groupedTwoDecimal = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+export function formatNumber(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? groupedTwoDecimal.format(value) : "—";
+}
+
+export function formatDecimal(value: number | null | undefined, suffix = ""): string {
+  const result = formatNumber(value);
+  return result === "—" ? result : `${result}${suffix}`;
+}
+
+export function formatPercentage(value: number | null | undefined): string {
+  const result = formatNumber(value);
+  return result === "—" ? result : `${result}%`;
+}
+
+export function formatEnergy(value: number | null | undefined, unit = "kWh"): string {
+  const result = formatNumber(value);
+  return result === "—" ? result : `${result} ${unit}`;
+}
+
+/**
+ * Space-constrained variant for chart axis ticks only (never tooltips —
+ * tooltips must show the full formatNumber value). Abbreviates at the
+ * thousand/million scale; below 1,000 it falls back to formatNumber so small
+ * ratios (e.g. PUE) still render with the standard 2 decimals.
+ */
+export function formatCompactNumber(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(0)}K`;
+  return formatNumber(value);
+}

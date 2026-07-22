@@ -2,7 +2,8 @@
 //
 //   release/Energy Monitor/
 //     Energy Monitor.exe      (from electron-builder portable target)
-//     RST_Dashboard.xlsm      (the live workbook database)
+//     DC_Rangsit.xlsm         (the default facility workbook)
+//     DC_Srinakarin.xlsm      (the second facility workbook)
 //     config/  backup/  logs/  exports/   (empty, created for clarity)
 //     docs/                   (user/deployment guides, if built)
 //     README.md
@@ -17,10 +18,11 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
 const release = path.join(root, "release");
 const exe = path.join(release, "Energy Monitor.exe");
 const stage = path.join(release, "Energy Monitor");
-const zipPath = path.join(release, "EnergyMonitor_Portable.zip");
+const zipPath = path.join(release, `Energy Monitor v${pkg.version} Portable.zip`);
 
 async function exists(p) {
   return fs.access(p).then(() => true).catch(() => false);
@@ -35,13 +37,18 @@ async function main() {
   await fs.rm(stage, { recursive: true, force: true });
   await fs.mkdir(stage, { recursive: true });
 
-  // Executable + workbook database
+  // Executable + facility workbook databases. Keep both configured facilities
+  // beside the executable so the first launch works without a file picker.
   await fs.copyFile(exe, path.join(stage, "Energy Monitor.exe"));
-  const workbook = path.join(root, "RST_Dashboard.xlsm");
-  if (await exists(workbook)) {
-    await fs.copyFile(workbook, path.join(stage, "RST_Dashboard.xlsm"));
-  } else {
-    console.warn("WARNING: RST_Dashboard.xlsm not found in project root - ZIP will ship without a workbook.");
+  for (const workbookName of ["DC_Rangsit.xlsm", "DC_Srinakarin.xlsm", "SNK_Dashboard_Renew_Voltage-1_EnergyMonitorReady.xlsm"]) {
+    const workbook = await exists(path.join(root, workbookName))
+      ? path.join(root, workbookName)
+      : path.join(root, "release", workbookName);
+    if (await exists(workbook)) {
+      await fs.copyFile(workbook, path.join(stage, workbookName));
+    } else {
+      console.warn(`WARNING: ${workbookName} not found in project root - ZIP will ship without this workbook.`);
+    }
   }
 
   // Portable folder layout
@@ -49,20 +56,31 @@ async function main() {
     await fs.mkdir(path.join(stage, dir), { recursive: true });
   }
 
-  // Documentation (if generated)
+  // Documentation (if generated). Recursive copy: docs/desktop/ contains
+  // both files and subdirectories (e.g. adr/), and fs.copyFile only handles
+  // files.
   const docsSrc = path.join(root, "docs", "desktop");
   if (await exists(docsSrc)) {
     for (const entry of await fs.readdir(docsSrc)) {
-      await fs.copyFile(path.join(docsSrc, entry), path.join(stage, "docs", entry));
+      await fs.cp(path.join(docsSrc, entry), path.join(stage, "docs", entry), { recursive: true });
     }
   }
-  for (const readme of ["README.pdf", "README.md"]) {
-    const src = path.join(root, "docs", "desktop", readme);
-    if (await exists(src)) {
-      await fs.copyFile(src, path.join(stage, readme));
-      break;
-    }
-  }
+  await fs.writeFile(path.join(stage, "README.md"), `# Energy Monitor — Portable Package
+
+1. Extract this folder anywhere on a writable Windows drive.
+2. Double-click **Energy Monitor.exe**.
+3. The default facility is **DC_Rangsit.xlsm**. **DC_Srinakarin.xlsm** is also included for facility selection.
+
+The application is fully portable and works without Microsoft Office or an internet connection.
+The Excel workbooks remain the authoritative data source. Keep the workbook closed in Excel while saving from the application so its backup and validation protections can run.
+
+Folders created beside the executable:
+- config/ application and facility settings
+- backup/ workbook backups
+- logs/ startup and application diagnostics
+- exports/ generated reports and exports
+- docs/ user and deployment documentation
+`, "utf8");
 
   // Zip via PowerShell (built into Windows)
   await fs.rm(zipPath, { force: true });

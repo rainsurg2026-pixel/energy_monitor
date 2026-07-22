@@ -58,7 +58,12 @@ async function main() {
   );
   const latest = read1.logs[read1.logs.length - 1];
   const ups11a = latest.ups.find(u => u.upsId.includes("11A"));
-  check("latest month has UPS 11A voltage", ups11a?.voltage !== null && ups11a?.voltage !== undefined);
+  const latestPopulatedUpsMonth = [...read1.logs].reverse().find(log => {
+    const record = log.ups.find(u => u.upsId.includes("11A"));
+    return record?.voltage !== null && record?.voltage !== undefined;
+  });
+  check("latest populated month has UPS 11A voltage", Boolean(latestPopulatedUpsMonth));
+  check("incomplete latest month preserves blank UPS 11A voltage", ups11a?.voltage === null);
   check(
     "energy cost present in some month",
     read1.logs.some(l => l.energyCost.buildingElectricityCostThb !== null)

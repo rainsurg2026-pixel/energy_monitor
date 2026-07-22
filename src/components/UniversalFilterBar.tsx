@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
 import { useReport } from "../ReportContext";
+import type { FacilityEntry } from "../desktop";
 import { 
   Calendar, 
   Layers, 
@@ -16,9 +17,10 @@ import { motion, AnimatePresence } from "motion/react";
 interface UniversalFilterBarProps {
   onExport?: (format: "pdf" | "excel" | "csv" | "png") => void;
   lang: "th" | "en";
+  facility?: FacilityEntry | null;
 }
 
-export default function UniversalFilterBar({ onExport, lang }: UniversalFilterBarProps) {
+export default function UniversalFilterBar({ onExport, lang, facility = null }: UniversalFilterBarProps) {
   const {
     selectedYear,
     selectedPeriod,
@@ -118,18 +120,14 @@ export default function UniversalFilterBar({ onExport, lang }: UniversalFilterBa
   // Static options for months
   const months = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
 
+  // Config-driven only: group and individual-ID options come from the active
+  // facility's own dashboard config (facility.profile.dashboard). No facility
+  // id/name branching - a new facility needs a profile.json entry, not a
+  // component change.
   const upsGroupOptions = [
     { value: "All", label: t.allUpsGroups },
-    { value: "Group 11", label: "UPS Group 11" },
-    { value: "Group 13", label: "UPS Group 13" },
-    { value: "Group 15", label: "UPS Group 15" },
-    { value: "UPS 11A", label: "UPS 11A" },
-    { value: "UPS 11B", label: "UPS 11B" },
-    { value: "UPS 13A", label: "UPS 13A" },
-    { value: "UPS 13B", label: "UPS 13B" },
-    { value: "UPS 14C", label: "UPS 14C" },
-    { value: "UPS 15A (PPC44A)", label: "UPS 15A (PPC44A)" },
-    { value: "UPS 15B (PPC44B)", label: "UPS 15B (PPC44B)" },
+    ...(facility?.profile.dashboard.upsGroups ?? []).map(g => ({ value: g.name, label: g.name })),
+    ...(facility?.profile.dashboard.upsMapping ?? []).map(m => ({ value: m.upsId, label: m.upsId }))
   ];
 
   const categories = [

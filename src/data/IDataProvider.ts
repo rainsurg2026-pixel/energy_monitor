@@ -10,6 +10,7 @@
 
 import { MonthlyLog } from "../types";
 import type { ExcelIntegrityReport, WorkbookHealth, WorkbookValidation } from "../desktop";
+import type { DashboardUpsMappingReport, RackCapacitySummary, UpsGroupHistoryReport } from "../reports/reportTypes";
 
 export type DataSourceKind = "excel" | "googleSheets";
 
@@ -24,6 +25,12 @@ export interface DataSnapshot {
   integrity?: ExcelIntegrityReport;
   validation?: WorkbookValidation;
   lock?: { locked: boolean; excelOwnerFilePresent: boolean };
+  rackCapacity?: RackCapacitySummary | null;
+  upsMapping?: DashboardUpsMappingReport | null;
+  /** Set when the UPS mapping read itself failed (not "no table found"). */
+  upsMappingError?: string | null;
+  /** Persisted "2. UPS Group History" worksheet, if present. */
+  upsGroupHistory?: UpsGroupHistoryReport | null;
 }
 
 export interface SaveOutcome {
@@ -67,8 +74,10 @@ export interface IDataProvider {
    */
   load(options?: { target?: string | null; openDialog?: boolean; signal?: AbortSignal }): Promise<DataSnapshot | null>;
 
-  /** Persist the complete data set (Excel = whole workbook rewrite). */
-  saveAll(logs: MonthlyLog[]): Promise<SaveOutcome>;
+  /** Persist the complete data set (Excel = whole workbook rewrite).
+   *  `currentMonth`, when known, scopes UPS Group History's incremental
+   *  update to that one month instead of backfill-only-if-missing. */
+  saveAll(logs: MonthlyLog[], currentMonth?: string): Promise<SaveOutcome>;
 
   /**
    * Persist a single month. Providers that only support full writes may

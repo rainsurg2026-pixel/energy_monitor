@@ -1,16 +1,21 @@
 import React, { useState, useMemo } from "react";
 import { MonthlyLog, UpsRecord, AirRecord, DcRecord } from "../types";
+import type { DashboardUpsMappingReport, RackCapacitySummary } from "../reports/reportTypes";
+import type { FacilityEntry } from "../desktop";
 import { formatMonthYear } from "../utils";
+import { calculateEnergyCostForMonth, getAirFields, getAirValue } from "../utils/energyCost";
+import { formatNumber2 } from "../utils/numberFormatBridge";
+import TrendLineChart from "./TrendLineChart";
+import RackCapacitySummaryCard from "./RackCapacitySummaryCard";
 import { 
   TrendingUp, 
   Zap, 
   Thermometer, 
   Database, 
-  Coins, 
-  Percent, 
+  Coins,
+  Percent,
   Calendar,
   Layers,
-  ArrowRight,
   ChevronDown,
   ChevronUp,
   BarChart4,
@@ -23,10 +28,14 @@ interface DashboardSummaryProps {
   lang: "th" | "en";
   isGoogleConnected?: boolean;
   googleUserEmail?: string | null;
+  rackCapacity?: RackCapacitySummary | null;
+  /** UPS Summary / UPS Mapping, read directly from the workbook's Dashboard-FAC sheet. */
+  upsMapping?: DashboardUpsMappingReport | null;
+  /** Active facility (kept for future facility-level dashboard concerns). */
+  facility?: FacilityEntry | null;
 }
 
 type TrendPeriod = "last3" | "last6" | "last12";
-type TrendMetric = "total_energy" | "ups_energy" | "air_energy" | "dc_energy" | "floor_cost" | "electricity_rate";
 
 // Helper to calculate days in month
 function getDaysInMonth(monthStr: string): number {
@@ -50,9 +59,14 @@ function getPreviousMonthStr(monthStr: string): string {
   return `${year}-${month.toString().padStart(2, "0")}`;
 }
 
-export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleConnected = false, googleUserEmail = null }: DashboardSummaryProps) {
+function getUpsLoadTone(loadPct: number | null): { bar: string; text: string } {
+  if (!Number.isFinite(loadPct) || loadPct < 50) return { bar: "bg-emerald-500", text: "text-emerald-500" };
+  if (loadPct < 80) return { bar: "bg-amber-400", text: "text-amber-500" };
+  return { bar: "bg-rose-500", text: "text-rose-500" };
+}
+
+export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleConnected = false, googleUserEmail = null, rackCapacity = null, upsMapping = null, facility = null }: DashboardSummaryProps) {
   const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>("last12");
-  const [trendMetric, setTrendMetric] = useState<TrendMetric>("total_energy");
   // RC3: sections are always expanded (no hidden accordion).
 
   const dict = {
@@ -81,6 +95,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
       // Mapping detailed headers
       umdb: "UMDB",
       upsId: "เครื่อง UPS",
+      acPowerPanel: "แผงจ่ายไฟ AC (Power Panel)",
       sts: "STS",
       oudb: "OUDB",
       voltage: "แรงดัน (V)",
@@ -148,6 +163,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
       // Mapping detailed headers
       umdb: "UMDB",
       upsId: "UPS ID",
+      acPowerPanel: "AC Power Panel",
       sts: "STS",
       oudb: "OUDB",
       voltage: "Voltage (V)",
@@ -216,63 +232,25 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
     if (!activeLog) return null;
 
     // --- 1. UPS CALCULATIONS ---
-    const getUpsRecord = (id: string) => {
-      const idClean = id.replace(/\s+/g, "").toLowerCase();
-      return activeLog.ups.find(u => {
-        const uClean = u.upsId.replace(/\s+/g, "").toLowerCase();
-        if (uClean === idClean) return true;
-        if (uClean.includes("ups15a") && idClean.includes("ups15a")) return true;
-        if (uClean.includes("ups15b") && idClean.includes("ups15b")) return true;
-        return uClean.includes(idClean) || idClean.includes(uClean);
-      }) || null;
-    };
-
-    const upsGroups = [
-      {
-        name: "UPS 11",
-        ids: ["UPS 11A", "UPS 11B"],
-        capacity: 400
-      },
-      {
-        name: "UPS 13",
-        ids: ["UPS 13A", "UPS 13B"],
-        capacity: 400
-      },
-      {
-        name: "UPS 14",
-        ids: ["UPS 14C"],
-        capacity: 120
-      },
-      {
-        name: "UPS 15 (PPC44A, PPC44B)",
-        ids: ["UPS 15A (PPC44A)", "UPS 15B (PPC44B)"],
-        capacity: 400
-      }
-    ];
-
-    const computedUpsGroups = upsGroups.map(grp => {
-      let totalKw = 0;
-      let totalKva = 0;
-      grp.ids.forEach(id => {
-        const r = getUpsRecord(id);
-        if (r) {
-          totalKw += r.loadKw || 0;
-          totalKva += r.loadKva || 0;
-        }
-      });
-
-      const loadPct = grp.capacity > 0 ? (totalKva / grp.capacity) * 100 : 0;
-      const availPct = Math.max(0, 100 - loadPct);
-      const monthlyEnergyKwh = totalKw * 24 * daysInMonth;
-
+    // UPS Summary and UPS Mapping are read directly from the workbook's
+    // Dashboard-FAC sheet (src/reports/upsMappingReader.ts) - the same
+    // UMDB/STS/OUDB/AC Power Panel/Capacity/Load(%) a user sees opening the
+    // workbook in Excel. This component performs zero aggregation of its
+    // own for these two tables; Load(%) is the one derived value
+    // (loadKva / capacity * 100), matching the workbook's own formula.
+    const computedUpsGroups = (upsMapping?.summary ?? []).map(row => {
+      const totalKw = row.totalLoadKw ?? 0;
+      const totalKva = row.totalLoadKva ?? 0;
+      const loadPct = row.loadPercent;
+      const availPct = loadPct === null ? null : Math.max(0, 100 - loadPct);
       return {
-        name: grp.name,
+        name: row.name,
         totalKw,
         totalKva,
-        capacity: grp.capacity,
+        capacity: row.capacity,
         loadPct,
         availPct,
-        monthlyEnergyKwh
+        monthlyEnergyKwh: totalKw * 24 * daysInMonth
       };
     });
 
@@ -280,56 +258,46 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
     const totalUpsKva = computedUpsGroups.reduce((acc, g) => acc + g.totalKva, 0);
     const totalUpsEnergyKwh = computedUpsGroups.reduce((acc, g) => acc + g.monthlyEnergyKwh, 0);
 
-    // Individual UPS Detail Mapping
-    const upsDetailsMap = [
-      { no: 1, umdb: "UMDB11A (EMDB_12A2)", upsId: "UPS 11A", sts: "STS11A", oudb: "OUDB41A", capacity: 400 },
-      { no: 2, umdb: "UMDB11B (EMDB_12B2)", upsId: "UPS 11B", sts: "STS11B", oudb: "OUDB41B", capacity: 400 },
-      { no: 3, umdb: "UMDB13A (EMDB_12A1)", upsId: "UPS 13A", sts: "STS13A", oudb: "OUDB42A", capacity: 400 },
-      { no: 4, umdb: "UMDB13B (EMDB_12B1)", upsId: "UPS 13B", sts: "STS13B", oudb: "OUDB42B", capacity: 400 },
-      { no: 5, umdb: "MTS.UPS14C (EMDB_12A-B1)", upsId: "UPS 14C", sts: "—", oudb: "OUDB43", capacity: 120 },
-      { no: 6, umdb: "UMDB15A (EMDB_12A2)", upsId: "UPS 15A (PPC44A)", keyId: "UPS 15A", sts: "STS15A", oudb: "OUDB31A", capacity: 400 },
-      { no: 7, umdb: "UMDB15B (EMDB_12B2)", upsId: "UPS 15B (PPC44B)", keyId: "UPS 15B", sts: "STS15B", oudb: "OUDB31B", capacity: 400 }
-    ].map(item => {
-      const record = getUpsRecord(item.keyId || item.upsId);
-      const voltage = record?.voltage || 0;
-      const current = record?.current || 0;
-      const loadKw = record?.loadKw || 0;
-      const loadKva = record?.loadKva || 0;
-      const loadPct = item.capacity > 0 ? (loadKva / item.capacity) * 100 : 0;
+    const upsDetailsMap = (upsMapping?.mapping ?? []).map(row => ({
+      no: row.no,
+      umdb: row.umdb,
+      upsId: row.upsId,
+      acPowerPanel: row.acPowerPanel,
+      sts: row.sts,
+      oudb: row.oudb,
+      voltage: row.voltage ?? 0,
+      current: row.current ?? 0,
+      loadKw: row.loadKw ?? 0,
+      loadKva: row.loadKva ?? 0,
+      capacity: row.capacity,
+      loadPct: row.loadPercent
+    }));
 
-      return {
-        ...item,
-        voltage,
-        current,
-        loadKw,
-        loadKva,
-        loadPct
-      };
-    });
-
-    const detailedVoltageAvg = upsDetailsMap.reduce((acc, u) => acc + u.voltage, 0) / upsDetailsMap.length;
+    const detailedVoltageAvg = upsDetailsMap.length > 0
+      ? upsDetailsMap.reduce((acc, u) => acc + u.voltage, 0) / upsDetailsMap.length
+      : null;
     const detailedCurrentSum = upsDetailsMap.reduce((acc, u) => acc + u.current, 0);
 
     // --- 2. AIR CONDITIONING CALCULATIONS ---
-    const curAir = activeLog.air;
-    const prevAir = prevMonthLog ? prevMonthLog.air : { eb41a: null, eb41b: null, eb42a: null, eb42b: null };
+    const airFields = getAirFields(activeLog);
+    const airDiff = Object.fromEntries(airFields.map(field => {
+      const currentValue = getAirValue(activeLog, field);
+      const previousValue = prevMonthLog ? getAirValue(prevMonthLog, field) : null;
+      return [field, currentValue !== null && previousValue !== null ? currentValue - previousValue : null];
+    })) as Record<string, number | null>;
 
-    const airDiff = {
-      eb41a: curAir.eb41a !== null && prevAir.eb41a !== null ? Math.max(0, curAir.eb41a - prevAir.eb41a) : 0,
-      eb41b: curAir.eb41b !== null && prevAir.eb41b !== null ? Math.max(0, curAir.eb41b - prevAir.eb41b) : 0,
-      eb42a: curAir.eb42a !== null && prevAir.eb42a !== null ? Math.max(0, curAir.eb42a - prevAir.eb42a) : 0,
-      eb42b: curAir.eb42b !== null && prevAir.eb42b !== null ? Math.max(0, curAir.eb42b - prevAir.eb42b) : 0,
-    };
-
-    const airDiffSumGwh = airDiff.eb41a + airDiff.eb41b + airDiff.eb42a + airDiff.eb42b;
-    const airEnergyKwh = airDiffSumGwh * 1000000;
+    const airDiffValues = airFields.map(field => airDiff[field]);
+    const airDiffSumGwh = airDiffValues.every(value => value !== null)
+      ? airDiffValues.reduce((sum, value) => sum + (value as number), 0)
+      : null;
+    const airEnergyKwh = airDiffSumGwh === null ? null : airDiffSumGwh * 1000000;
 
     // --- 3. DC POWER PANEL CALCULATIONS ---
     const computedDc = activeLog.dc.map(p => {
-      const v = p.voltage || 0;
-      const a = p.current || 0;
+      const v = p.voltage === null ? 0 : p.voltage;
+      const a = p.current === null ? 0 : p.current;
       const dcPowerW = v * a;
-      const acPowerW = dcPowerW * 1.10; // 10% overhead conversion loss
+      const acPowerW = (dcPowerW / 200) * 220;
       const acCurrentA = acPowerW / 220;
       const monthlyEnergyKwh = (acPowerW * 24 * daysInMonth) / 1000;
 
@@ -350,14 +318,13 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
     const totalDcEnergyKwh = computedDc.reduce((acc, d) => acc + d.monthlyEnergyKwh, 0);
 
     // --- 4. OVERALL SUMMARY ---
-    const totalFloorEnergyKwh = totalUpsEnergyKwh + airEnergyKwh + totalDcEnergyKwh;
-    
-    const buildingEnergyKwh = activeLog.energyCost.buildingEnergyKwh || 0;
-    const buildingCostThb = activeLog.energyCost.buildingElectricityCostThb || 0;
-
-    const avgElectricityRate = buildingEnergyKwh > 0 ? buildingCostThb / buildingEnergyKwh : 0;
-    const estimatedFloorCostThb = totalFloorEnergyKwh * avgElectricityRate;
-    const floorSharePercent = buildingEnergyKwh > 0 ? (totalFloorEnergyKwh / buildingEnergyKwh) * 100 : 0;
+    const energyCost = calculateEnergyCostForMonth(logs, activeLog.month);
+    const totalFloorEnergyKwh = energyCost.floorEnergyKwh;
+    const buildingEnergyKwh = energyCost.buildingEnergyKwh;
+    const buildingCostThb = energyCost.buildingElectricityCostThb;
+    const avgElectricityRate = energyCost.averageElectricityRateThbPerKwh;
+    const estimatedFloorCostThb = energyCost.floorElectricityCostThb;
+    const floorSharePercent = energyCost.energySharePercent;
 
     return {
       computedUpsGroups,
@@ -367,6 +334,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
       upsDetailsMap,
       detailedVoltageAvg,
       detailedCurrentSum,
+      airFields,
       airDiff,
       airDiffSumGwh,
       airEnergyKwh,
@@ -383,47 +351,26 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
       buildingCostThb,
       prevMonthDisplay: prevMonthLog ? formatMonthYear(prevMonthLog.month) : null
     };
-  }, [activeLog, prevMonthLog, daysInMonth]);
+  }, [activeLog, prevMonthLog, daysInMonth, upsMapping]);
 
-  // Historical trend parsing by period (Monthly, Quarterly, Annual)
-  const aggregatedTrendData = useMemo(() => {
+  // Historical trend data is calculated once per month and reused by each
+  // parameter chart. Null values remain null so incomplete records are not
+  // silently rendered as zero.
+  const trendDataByMetric = useMemo(() => {
     // Sort chronological
     const sortedLogs = [...logs].sort((a, b) => a.month.localeCompare(b.month));
 
     // Calculate full metrics for each month
-    const processedMonths = sortedLogs.map((log, index) => {
-      // Find days
-      const days = getDaysInMonth(log.month);
-      
-      // UPS
-      const upsKwh = log.ups.reduce((acc, u) => acc + (u.loadKw || 0), 0) * 24 * days;
-
-      // Air
-      // Search previous log for this month in sorted array
-      const prevLog = index > 0 ? sortedLogs[index - 1] : null;
-      let airKwh = 0;
-      if (prevLog) {
-        const diffEb41a = Math.max(0, (log.air.eb41a || 0) - (prevLog.air.eb41a || 0));
-        const diffEb41b = Math.max(0, (log.air.eb41b || 0) - (prevLog.air.eb41b || 0));
-        const diffEb42a = Math.max(0, (log.air.eb42a || 0) - (prevLog.air.eb42a || 0));
-        const diffEb42b = Math.max(0, (log.air.eb42b || 0) - (prevLog.air.eb42b || 0));
-        airKwh = (diffEb41a + diffEb41b + diffEb42a + diffEb42b) * 1000000;
-      }
-
-      // DC
-      const dcKwh = log.dc.reduce((acc, p) => {
-        const v = p.voltage || 0;
-        const a = p.current || 0;
-        const acPowerW = v * a * 1.10;
-        return acc + (acPowerW * 24 * days) / 1000;
-      }, 0);
-
-      const totalEnergy = upsKwh + airKwh + dcKwh;
-      
-      const bEnergy = log.energyCost.buildingEnergyKwh || 0;
-      const bCost = log.energyCost.buildingElectricityCostThb || 0;
-      const rate = bEnergy > 0 ? bCost / bEnergy : 0;
-      const floorCost = totalEnergy * rate;
+    const processedMonths = sortedLogs.map((log) => {
+      const energyCost = calculateEnergyCostForMonth(logs, log.month);
+      const upsKwh = energyCost.upsEnergyKwh;
+      const airKwh = energyCost.airEnergyKwh;
+      const dcKwh = energyCost.dcEnergyKwh;
+      const totalEnergy = energyCost.floorEnergyKwh;
+      const bEnergy = energyCost.buildingEnergyKwh;
+      const bCost = energyCost.buildingElectricityCostThb;
+      const rate = energyCost.averageElectricityRateThbPerKwh;
+      const floorCost = energyCost.floorElectricityCostThb;
 
       // Parse quarter & year
       const [yearStr, monthStr] = log.month.split("-");
@@ -449,23 +396,17 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
 
     // Rolling windows only (RC5): the last 3/6/12 months, monthly points.
     const windowSize = trendPeriod === "last3" ? 3 : trendPeriod === "last6" ? 6 : 12;
-    return processedMonths.slice(-windowSize).map(d => ({
+    const window = processedMonths.slice(-windowSize).map(d => ({
       label: d.monthLabel,
-      value:
-        trendMetric === "total_energy" ? d.totalEnergy :
-        trendMetric === "ups_energy" ? d.upsKwh :
-        trendMetric === "air_energy" ? d.airKwh :
-        trendMetric === "dc_energy" ? d.dcKwh :
-        trendMetric === "floor_cost" ? d.floorCost :
-        d.rate
+      total_energy: d.totalEnergy,
+      ups_energy: d.upsKwh,
+      air_energy: d.airKwh,
+      dc_energy: d.dcKwh,
+      floor_cost: d.floorCost,
+      electricity_rate: d.rate
     }));
-  }, [logs, trendPeriod, trendMetric]);
-
-  const maxTrendVal = useMemo(() => {
-    const vals = aggregatedTrendData.map(d => d.value);
-    const max = Math.max(...vals, 0);
-    return max === 0 ? 100 : max * 1.15;
-  }, [aggregatedTrendData]);
+    return window;
+  }, [logs, trendPeriod]);
 
   if (!activeLog || !summaryCalculations) {
     return (
@@ -527,7 +468,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
             <span>{lang === "th" ? "พลังงานชั้น 4 ทั้งหมด" : "Total 4th Floor Energy"}</span>
           </p>
           <h3 className="text-2xl font-mono font-bold text-indigo-400">
-            {calcs.totalFloorEnergyKwh.toLocaleString(undefined, { maximumFractionDigits: 1 })} <span className="text-xs font-sans">kWh</span>
+            {formatNumber2(calcs.totalFloorEnergyKwh)} <span className="text-xs font-sans">kWh</span>
           </h3>
           <p className="text-[10px] text-slate-400 leading-none">
             UPS + AC + DC Power Panels
@@ -540,7 +481,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
             <span>{lang === "th" ? "ประมาณการค่าไฟชั้น 4" : "Estimated 4th Floor Cost"}</span>
           </p>
           <h3 className="text-2xl font-mono font-bold text-emerald-400">
-            ฿{calcs.estimatedFloorCostThb.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+            {calcs.estimatedFloorCostThb === null ? "—" : `฿${formatNumber2(calcs.estimatedFloorCostThb)}`}
           </h3>
           <p className="text-[10px] text-slate-400 leading-none">
             {lang === "th" ? "อิงอัตราค่าไฟเฉลี่ยอาคาร" : "Calculated from avg building rate"}
@@ -553,10 +494,10 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
             <span>{lang === "th" ? "สัดส่วนพลังงานชั้น 4" : "4th Floor Energy Share"}</span>
           </p>
           <h3 className="text-2xl font-mono font-bold text-teal-400">
-            {calcs.floorSharePercent.toFixed(2)}%
+            {calcs.floorSharePercent === null ? "—" : `${formatNumber2(calcs.floorSharePercent)}%`}
           </h3>
           <p className="text-[10px] text-slate-400 leading-none">
-            {lang === "th" ? `จากพลังงานอาคาร ${calcs.buildingEnergyKwh.toLocaleString()} kWh` : `Of total building ${calcs.buildingEnergyKwh.toLocaleString()} kWh`}
+            {lang === "th" ? `จากพลังงานอาคาร ${formatNumber2(calcs.buildingEnergyKwh)} kWh` : `Of total building ${formatNumber2(calcs.buildingEnergyKwh)} kWh`}
           </p>
         </div>
 
@@ -566,10 +507,10 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
             <span>{lang === "th" ? "อัตราค่าไฟเฉลี่ยอาคาร" : "Avg Electricity Rate"}</span>
           </p>
           <h3 className="text-2xl font-mono font-bold text-amber-400">
-            {calcs.avgElectricityRate.toFixed(4)} <span className="text-xs font-sans">฿/kWh</span>
+            {formatNumber2(calcs.avgElectricityRate)} <span className="text-xs font-sans">฿/kWh</span>
           </h3>
           <p className="text-[10px] text-slate-400 leading-normal">
-            {lang === "th" ? `ค่าไฟอาคาร: ฿${calcs.buildingCostThb.toLocaleString()}` : `Building cost: ฿${calcs.buildingCostThb.toLocaleString()}`}
+            {lang === "th" ? `ค่าไฟอาคาร: ${calcs.buildingCostThb === null ? "—" : `฿${formatNumber2(calcs.buildingCostThb)}`}` : `Building cost: ${calcs.buildingCostThb === null ? "—" : `฿${formatNumber2(calcs.buildingCostThb)}`}`}
           </p>
           <p className="text-[9px] text-slate-500 font-mono leading-tight border-t border-slate-800/60 pt-1.5">
             {lang === "th" 
@@ -578,6 +519,8 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
           </p>
         </div>
       </div>
+
+      <RackCapacitySummaryCard rackCapacity={rackCapacity} />
 
       {/* DETAILED ACCORDION BLOCKS */}
       <div className="space-y-4">
@@ -619,23 +562,23 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                         <tr key={idx} className="hover:bg-slate-900/40">
                           <td className="py-3 px-3 text-slate-500 font-mono font-bold">{idx + 1}</td>
                           <td className="py-3 px-3 text-slate-200 font-semibold">{g.name}</td>
-                          <td className="py-3 px-3 text-right font-mono text-slate-300">{g.totalKw.toFixed(1)}</td>
-                          <td className="py-3 px-3 text-right font-mono text-slate-300">{g.totalKva.toFixed(1)}</td>
-                          <td className="py-3 px-3 text-right font-mono text-slate-400">{g.capacity}</td>
-                          <td className="py-3 px-3 text-right font-mono text-indigo-400 font-semibold">{g.loadPct.toFixed(2)}%</td>
-                          <td className="py-3 px-3 text-right font-mono text-emerald-400">{g.availPct.toFixed(2)}%</td>
-                          <td className="py-3 px-3 text-right font-mono text-indigo-300">{g.monthlyEnergyKwh.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                          <td className="py-3 px-3 text-right font-mono text-slate-300">{formatNumber2(g.totalKw)}</td>
+                          <td className="py-3 px-3 text-right font-mono text-slate-300">{formatNumber2(g.totalKva)}</td>
+                          <td className="py-3 px-3 text-right font-mono text-slate-400">{formatNumber2(g.capacity)}</td>
+                          <td className="py-3 px-3 text-right font-mono text-indigo-400 font-semibold">{formatNumber2(g.loadPct)}%</td>
+                          <td className="py-3 px-3 text-right font-mono text-emerald-400">{formatNumber2(g.availPct)}%</td>
+                          <td className="py-3 px-3 text-right font-mono text-indigo-300">{formatNumber2(g.monthlyEnergyKwh)}</td>
                         </tr>
                       ))}
                       {/* Total row */}
                       <tr className="border-t-2 border-slate-800 bg-slate-900/30 font-bold">
                         <td className="py-3.5 px-3" colSpan={2}>Total</td>
-                        <td className="py-3.5 px-3 text-right font-mono text-slate-200">{calcs.totalUpsKw.toFixed(1)}</td>
-                        <td className="py-3.5 px-3 text-right font-mono text-slate-200">{calcs.totalUpsKva.toFixed(1)}</td>
+                        <td className="py-3.5 px-3 text-right font-mono text-slate-200">{formatNumber2(calcs.totalUpsKw)}</td>
+                        <td className="py-3.5 px-3 text-right font-mono text-slate-200">{formatNumber2(calcs.totalUpsKva)}</td>
                         <td className="py-3.5 px-3 text-right text-slate-500">—</td>
                         <td className="py-3.5 px-3 text-right text-slate-500">—</td>
                         <td className="py-3.5 px-3 text-right text-slate-500">—</td>
-                        <td className="py-3.5 px-3 text-right font-mono text-indigo-400">{calcs.totalUpsEnergyKwh.toLocaleString(undefined, { maximumFractionDigits: 0 })}</td>
+                        <td className="py-3.5 px-3 text-right font-mono text-indigo-400">{formatNumber2(calcs.totalUpsEnergyKwh)}</td>
                       </tr>
                     </tbody>
                   </table>
@@ -649,27 +592,28 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                   </div>
 
                   <div className="space-y-3.5 flex-1 flex flex-col justify-center">
-                    {calcs.computedUpsGroups.map((g, idx) => (
-                      <div key={idx} className="space-y-1.5">
+                    {calcs.computedUpsGroups.map((g, idx) => {
+                      const tone = getUpsLoadTone(g.loadPct);
+                      return <div key={idx} className="space-y-1.5">
                         <div className="flex justify-between text-[11px] font-semibold text-slate-300">
                           <span>{g.name}</span>
-                          <span className="font-mono text-indigo-400">{g.loadPct.toFixed(1)}%</span>
+                          <span className={`font-mono ${tone.text}`}>{formatNumber2(g.loadPct)}%</span>
                         </div>
                         <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-850/50">
                           <div 
-                            className={`h-full rounded-full ${g.loadPct > 80 ? "bg-rose-500" : g.loadPct > 60 ? "bg-amber-500" : "bg-indigo-500"}`}
+                            className={`h-full rounded-full ${tone.bar}`}
                             style={{ width: `${Math.min(100, g.loadPct)}%` }}
                           />
                         </div>
                       </div>
-                    ))}
+                    })}
                   </div>
                 </div>
               </div>
 
               {/* Table 2: Mapping Detailed UPS */}
               <div className="pt-2 border-t border-slate-850/60">
-                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">UMDB / UPS / STS / OUDB Detailed Configuration Mapping</h4>
+                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">UMDB / UPS / AC Power Panel / STS / OUDB Detailed Configuration Mapping</h4>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-[11px] font-sans">
                     <thead>
@@ -677,6 +621,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                         <th className="py-2 px-2.5">{t.no}</th>
                         <th className="py-2 px-2.5">{t.umdb}</th>
                         <th className="py-2 px-2.5">{t.upsId}</th>
+                        <th className="py-2 px-2.5">{t.acPowerPanel}</th>
                         <th className="py-2 px-2.5">{t.sts}</th>
                         <th className="py-2 px-2.5">{t.oudb}</th>
                         <th className="py-2 px-2.5 text-right">{t.voltage}</th>
@@ -693,23 +638,24 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                           <td className="py-2 px-2.5 font-mono text-slate-500">{u.no}</td>
                           <td className="py-2 px-2.5 text-slate-400 font-mono">{u.umdb}</td>
                           <td className="py-2 px-2.5 font-medium text-slate-200">{u.upsId}</td>
+                          <td className="py-2 px-2.5 font-mono text-slate-400">{u.acPowerPanel}</td>
                           <td className="py-2 px-2.5 font-mono text-slate-400">{u.sts}</td>
                           <td className="py-2 px-2.5 font-mono text-slate-400">{u.oudb}</td>
-                          <td className="py-2 px-2.5 text-right font-mono text-orange-200">{u.voltage}</td>
-                          <td className="py-2 px-2.5 text-right font-mono text-orange-200">{u.current}</td>
-                          <td className="py-2 px-2.5 text-right font-mono">{u.loadKw}</td>
-                          <td className="py-2 px-2.5 text-right font-mono">{u.loadKva}</td>
-                          <td className="py-2 px-2.5 text-right font-mono text-slate-500">{u.capacity}</td>
-                          <td className="py-2 px-2.5 text-right font-mono text-indigo-400">{u.loadPct.toFixed(2)}%</td>
+                          <td className="py-2 px-2.5 text-right font-mono text-orange-200">{formatNumber2(u.voltage)}</td>
+                          <td className="py-2 px-2.5 text-right font-mono text-orange-200">{formatNumber2(u.current)}</td>
+                          <td className="py-2 px-2.5 text-right font-mono">{formatNumber2(u.loadKw)}</td>
+                          <td className="py-2 px-2.5 text-right font-mono">{formatNumber2(u.loadKva)}</td>
+                          <td className="py-2 px-2.5 text-right font-mono text-slate-500">{formatNumber2(u.capacity)}</td>
+                        <td className="py-2 px-2.5 text-right font-mono text-indigo-400">{formatNumber2(u.loadPct)}%</td>
                         </tr>
                       ))}
                       {/* Detailed total row */}
                       <tr className="border-t border-slate-800 bg-slate-900/20 font-semibold text-slate-200">
-                        <td className="py-2 px-2.5" colSpan={5}>Total</td>
-                        <td className="py-2 px-2.5 text-right font-mono text-orange-200">{calcs.detailedVoltageAvg.toFixed(1)} (Avg)</td>
-                        <td className="py-2 px-2.5 text-right font-mono text-orange-200">{calcs.detailedCurrentSum.toFixed(1)}</td>
-                        <td className="py-2 px-2.5 text-right font-mono">{calcs.totalUpsKw.toFixed(1)}</td>
-                        <td className="py-2 px-2.5 text-right font-mono">{calcs.totalUpsKva.toFixed(1)}</td>
+                        <td className="py-2 px-2.5" colSpan={6}>Total</td>
+                        <td className="py-2 px-2.5 text-right font-mono text-orange-200">{formatNumber2(calcs.detailedVoltageAvg)} (Avg)</td>
+                        <td className="py-2 px-2.5 text-right font-mono text-orange-200">{formatNumber2(calcs.detailedCurrentSum)}</td>
+                        <td className="py-2 px-2.5 text-right font-mono">{formatNumber2(calcs.totalUpsKw)}</td>
+                        <td className="py-2 px-2.5 text-right font-mono">{formatNumber2(calcs.totalUpsKva)}</td>
                         <td className="py-2 px-2.5 text-right" colSpan={2}>—</td>
                       </tr>
                     </tbody>
@@ -741,10 +687,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
                       <th className="py-2.5 px-3">{t.repMonth}</th>
-                      <th className="py-2.5 px-3 text-right">EB41A (GWh)</th>
-                      <th className="py-2.5 px-3 text-right">EB41B (GWh)</th>
-                      <th className="py-2.5 px-3 text-right">EB42A (GWh)</th>
-                      <th className="py-2.5 px-3 text-right">EB42B (GWh)</th>
+                      {calcs.airFields.map(field => <th key={field} className="py-2.5 px-3 text-right">{field.toUpperCase()} (GWh)</th>)}
                       <th className="py-2.5 px-3 text-right">{t.monthlyEnergy}</th>
                     </tr>
                   </thead>
@@ -752,29 +695,29 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                     {/* Previous Month */}
                     <tr className="text-slate-400">
                       <td className="py-3 px-3 font-semibold text-slate-500">{calcs.prevMonthDisplay || "Previous Month"}</td>
-                      <td className="py-3 px-3 text-right font-mono">{prevMonthLog?.air.eb41a !== null && prevMonthLog?.air.eb41a !== undefined ? prevMonthLog.air.eb41a.toFixed(6) : "—"}</td>
-                      <td className="py-3 px-3 text-right font-mono">{prevMonthLog?.air.eb41b !== null && prevMonthLog?.air.eb41b !== undefined ? prevMonthLog.air.eb41b.toFixed(6) : "—"}</td>
-                      <td className="py-3 px-3 text-right font-mono">{prevMonthLog?.air.eb42a !== null && prevMonthLog?.air.eb42a !== undefined ? prevMonthLog.air.eb42a.toFixed(6) : "—"}</td>
-                      <td className="py-3 px-3 text-right font-mono">{prevMonthLog?.air.eb42b !== null && prevMonthLog?.air.eb42b !== undefined ? prevMonthLog.air.eb42b.toFixed(6) : "—"}</td>
+                      {calcs.airFields.map(field => {
+                        const value = prevMonthLog ? getAirValue(prevMonthLog, field) : null;
+                        return <td key={field} className="py-3 px-3 text-right font-mono">{formatNumber2(value)}</td>;
+                      })}
                       <td className="py-3 px-3 text-right font-mono text-slate-600">—</td>
                     </tr>
                     {/* Current Month */}
                     <tr className="text-slate-200">
                       <td className="py-3 px-3 font-semibold text-teal-400">{formatMonthYear(selectedMonth)}</td>
-                      <td className="py-3 px-3 text-right font-mono">{activeLog.air.eb41a !== null && activeLog.air.eb41a !== undefined ? activeLog.air.eb41a.toFixed(6) : "—"}</td>
-                      <td className="py-3 px-3 text-right font-mono">{activeLog.air.eb41b !== null && activeLog.air.eb41b !== undefined ? activeLog.air.eb41b.toFixed(6) : "—"}</td>
-                      <td className="py-3 px-3 text-right font-mono">{activeLog.air.eb42a !== null && activeLog.air.eb42a !== undefined ? activeLog.air.eb42a.toFixed(6) : "—"}</td>
-                      <td className="py-3 px-3 text-right font-mono">{activeLog.air.eb42b !== null && activeLog.air.eb42b !== undefined ? activeLog.air.eb42b.toFixed(6) : "—"}</td>
+                      {calcs.airFields.map(field => {
+                        const value = getAirValue(activeLog, field);
+                        return <td key={field} className="py-3 px-3 text-right font-mono">{formatNumber2(value)}</td>;
+                      })}
                       <td className="py-3 px-3 text-right font-mono text-slate-650">—</td>
                     </tr>
                     {/* Monthly Difference */}
                     <tr className="border-t-2 border-slate-800 bg-teal-950/10 font-bold text-teal-300">
                       <td className="py-3 px-3">{t.monthlyDiff}</td>
-                      <td className="py-3 px-3 text-right font-mono">{calcs.airDiff.eb41a.toFixed(6)}</td>
-                      <td className="py-3 px-3 text-right font-mono">{calcs.airDiff.eb41b.toFixed(6)}</td>
-                      <td className="py-3 px-3 text-right font-mono">{calcs.airDiff.eb42a.toFixed(6)}</td>
-                      <td className="py-3 px-3 text-right font-mono">{calcs.airDiff.eb42b.toFixed(6)}</td>
-                      <td className="py-3 px-3 text-right font-mono text-emerald-400">{calcs.airEnergyKwh.toLocaleString(undefined, { maximumFractionDigits: 1 })} kWh</td>
+                      {calcs.airFields.map(field => {
+                        const value = calcs.airDiff[field];
+                        return <td key={field} className="py-3 px-3 text-right font-mono">{formatNumber2(value)}</td>;
+                      })}
+                      <td className="py-3 px-3 text-right font-mono text-emerald-400">{calcs.airEnergyKwh === null ? "—" : `${formatNumber2(calcs.airEnergyKwh)} kWh`}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -820,12 +763,12 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                       <tr key={idx} className="hover:bg-slate-900/30">
                         <td className="py-3 px-3 text-slate-500 font-mono font-bold">{idx + 1}</td>
                         <td className="py-3 px-3 text-slate-200 font-semibold">{p.panelId}</td>
-                        <td className="py-3 px-3 text-right font-mono text-orange-200">{p.voltage.toFixed(2)}</td>
-                        <td className="py-3 px-3 text-right font-mono text-orange-200">{p.current.toFixed(2)}</td>
-                        <td className="py-3 px-3 text-right font-mono text-slate-300">{p.dcPowerW.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-3 text-right font-mono text-amber-300">{p.acCurrentA.toFixed(2)}</td>
-                        <td className="py-3 px-3 text-right font-mono text-amber-200">{p.acPowerW.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td className="py-3 px-3 text-right font-mono text-amber-400 font-medium">{p.monthlyEnergyKwh.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className="py-3 px-3 text-right font-mono text-orange-200">{formatNumber2(p.voltage)}</td>
+                        <td className="py-3 px-3 text-right font-mono text-orange-200">{formatNumber2(p.current)}</td>
+                        <td className="py-3 px-3 text-right font-mono text-slate-300">{formatNumber2(p.dcPowerW)}</td>
+                        <td className="py-3 px-3 text-right font-mono text-amber-300">{formatNumber2(p.acCurrentA)}</td>
+                        <td className="py-3 px-3 text-right font-mono text-amber-200">{formatNumber2(p.acPowerW)}</td>
+                        <td className="py-3 px-3 text-right font-mono text-amber-400 font-medium">{formatNumber2(p.monthlyEnergyKwh)}</td>
                       </tr>
                     ))}
                     {/* Total row */}
@@ -833,10 +776,10 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                       <td className="py-3.5 px-3" colSpan={2}>Total</td>
                       <td className="py-3.5 px-3 text-right text-slate-500">—</td>
                       <td className="py-3.5 px-3 text-right text-slate-500">—</td>
-                      <td className="py-3.5 px-3 text-right font-mono text-slate-200">{calcs.totalDcPowerW.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td className="py-3.5 px-3 text-right font-mono text-amber-300">{calcs.totalDcAcCurrentA.toFixed(2)}</td>
-                      <td className="py-3.5 px-3 text-right font-mono text-amber-200">{calcs.totalDcAcPowerW.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td className="py-3.5 px-3 text-right font-mono text-amber-400">{calcs.totalDcEnergyKwh.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                      <td className="py-3.5 px-3 text-right font-mono text-slate-200">{formatNumber2(calcs.totalDcPowerW)}</td>
+                      <td className="py-3.5 px-3 text-right font-mono text-amber-300">{formatNumber2(calcs.totalDcAcCurrentA)}</td>
+                      <td className="py-3.5 px-3 text-right font-mono text-amber-200">{formatNumber2(calcs.totalDcAcPowerW)}</td>
+                      <td className="py-3.5 px-3 text-right font-mono text-amber-400">{formatNumber2(calcs.totalDcEnergyKwh)}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -876,12 +819,12 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                   <tbody className="divide-y divide-slate-850 text-slate-200">
                     <tr>
                       <td className="py-4 px-3 font-semibold text-emerald-400">{formatMonthYear(selectedMonth)}</td>
-                      <td className="py-4 px-3 text-right font-mono text-slate-300">{calcs.buildingEnergyKwh.toLocaleString()}</td>
-                      <td className="py-4 px-3 text-right font-mono text-slate-300">฿{calcs.buildingCostThb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td className="py-4 px-3 text-right font-mono text-indigo-400 font-semibold">{calcs.totalFloorEnergyKwh.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td className="py-4 px-3 text-right font-mono text-emerald-400 font-semibold">฿{calcs.estimatedFloorCostThb.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td className="py-4 px-3 text-right font-mono text-amber-400 font-medium">{calcs.avgElectricityRate.toFixed(2)}</td>
-                      <td className="py-4 px-3 text-right font-mono text-teal-400 font-bold">{calcs.floorSharePercent.toFixed(2)}%</td>
+                      <td className="py-4 px-3 text-right font-mono text-slate-300">{formatNumber2(calcs.buildingEnergyKwh)}</td>
+                      <td className="py-4 px-3 text-right font-mono text-slate-300">{calcs.buildingCostThb === null ? "—" : `฿${formatNumber2(calcs.buildingCostThb)}`}</td>
+                      <td className="py-4 px-3 text-right font-mono text-indigo-400 font-semibold">{formatNumber2(calcs.totalFloorEnergyKwh)}</td>
+                      <td className="py-4 px-3 text-right font-mono text-emerald-400 font-semibold">{calcs.estimatedFloorCostThb === null ? "—" : `฿${formatNumber2(calcs.estimatedFloorCostThb)}`}</td>
+                      <td className="py-4 px-3 text-right font-mono text-amber-400 font-medium">{formatNumber2(calcs.avgElectricityRate)}</td>
+                      <td className="py-4 px-3 text-right font-mono text-teal-400 font-bold">{calcs.floorSharePercent === null ? "—" : `${formatNumber2(calcs.floorSharePercent)}%`}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -929,168 +872,44 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
           </div>
         </div>
 
-        {/* METRIC SELECTION ROW & INTERACTIVE BAR GRAPH */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          
-          <div className="lg:col-span-3 space-y-4">
-            <span className="text-[10px] font-mono font-bold uppercase text-slate-400 tracking-wider">
-              {t.metricLabel}
-            </span>
-
-            <div className="flex flex-col gap-2">
-              {(
-                [
-                  { id: "total_energy", label: t.total_energy, color: "text-indigo-400 border-indigo-500/20" },
-                  { id: "ups_energy", label: t.ups_energy, color: "text-blue-400 border-blue-500/20" },
-                  { id: "air_energy", label: t.air_energy, color: "text-teal-400 border-teal-500/20" },
-                  { id: "dc_energy", label: t.dc_energy, color: "text-amber-400 border-amber-500/20" },
-                  { id: "floor_cost", label: t.floor_cost, color: "text-emerald-400 border-emerald-500/20" },
-                  { id: "electricity_rate", label: t.electricity_rate, color: "text-orange-400 border-orange-500/20" }
-                ] as const
-              ).map((m) => (
-                <button
-                  key={m.id}
-                  onClick={() => setTrendMetric(m.id)}
-                  className={`w-full text-left px-4 py-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer flex items-center justify-between ${
-                    trendMetric === m.id
-                      ? "bg-slate-950 text-slate-200 border-indigo-500/60 shadow"
-                      : "bg-slate-900/50 text-slate-400 border-slate-850 hover:bg-slate-850"
-                  }`}
-                >
-                  <span>{m.label}</span>
-                  <ArrowRight className="w-3.5 h-3.5 opacity-60" />
-                </button>
-              ))}
-            </div>
+        {/* One trend-line chart per parameter. Values are labelled on every
+            valid month and null values remain gaps in the line. */}
+        {trendDataByMetric.length === 0 ? (
+          <div className="h-[220px] flex items-center justify-center text-xs text-slate-500 italic">
+            {lang === "th" ? "กรุณาบันทึกข้อมูลอย่างน้อยหนึ่งเดือนเพื่อแสดงกราฟแนวโน้ม" : "No logs available to generate trend charts."}
           </div>
-
-          {/* Dynamic SVG bar chart */}
-          <div className="lg:col-span-9 bg-slate-950 border border-slate-850 p-5 rounded-2xl flex flex-col justify-between">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-[10px] uppercase font-mono text-indigo-400 font-bold">
-                Trend: {t[trendMetric]} ({trendPeriod})
-              </span>
-              <span className="text-[10px] font-mono text-slate-500">
-                Total Logs: {logs.length} months
-              </span>
-            </div>
-
-            {aggregatedTrendData.length === 0 ? (
-              <div className="h-[220px] flex items-center justify-center text-xs text-slate-500 italic">
-                {lang === "th" ? "กรุณากรอกข้อมูลในเมนูกรอกข้อมูลเพื่อเริ่มพล็อตกราฟแนวโน้ม" : "No logs available to generate trend charts."}
-              </div>
-            ) : (
-              <div className="w-full">
-                <div className="w-full overflow-x-auto">
-                  <svg
-                    viewBox="0 0 600 240"
-                    className="w-full min-w-[500px] h-auto overflow-visible font-mono text-[9px] text-slate-400 fill-slate-400"
-                  >
-                    {/* Grid Lines */}
-                    {[0, 1, 2, 3, 4].map((grid, idx) => {
-                      const y = 30 + idx * 40;
-                      const ratio = (4 - idx) / 4;
-                      const val = ratio * maxTrendVal;
-                      return (
-                        <g key={idx}>
-                          <line
-                            x1="50"
-                            y1={y}
-                            x2="580"
-                            y2={y}
-                            className="stroke-slate-800/80 stroke-1"
-                            strokeDasharray="2 2"
-                          />
-                          <text x="42" y={y + 3} textAnchor="end" className="fill-slate-500">
-                            {trendMetric === "electricity_rate" 
-                              ? `${val.toFixed(2)}` 
-                              : trendMetric === "floor_cost" 
-                              ? `฿${Math.round(val).toLocaleString()}`
-                              : `${Math.round(val).toLocaleString()}`
-                            }
-                          </text>
-                        </g>
-                      );
-                    })}
-
-                    {/* Bars or Line curves depending on selection */}
-                    {aggregatedTrendData.map((d, idx) => {
-                      const colCount = aggregatedTrendData.length;
-                      const colWidth = Math.min(45, 500 / colCount);
-                      const colSpacing = (530 - colWidth * colCount) / (colCount + 1);
-                      const x = 50 + colSpacing + idx * (colWidth + colSpacing);
-                      
-                      const barHeight = maxTrendVal > 0 ? (d.value / maxTrendVal) * 160 : 0;
-                      const y = 190 - barHeight;
-
-                      const isHighlighted = d.value > 0;
-
-                      return (
-                        <g key={idx} className="group cursor-pointer">
-                          {/* Main bar background hover glow */}
-                          <rect
-                            x={x - 2}
-                            y="25"
-                            width={colWidth + 4}
-                            height="170"
-                            className="fill-transparent hover:fill-slate-900/10 transition-colors"
-                          />
-
-                          {/* Beautiful Gradient-like Bar */}
-                          <rect
-                            x={x}
-                            y={y}
-                            width={colWidth}
-                            height={Math.max(2, barHeight)}
-                            rx="4"
-                            className="transition-all duration-300"
-                            style={{
-                              fill: 
-                                trendMetric === "total_energy" ? "#6366f1" :
-                                trendMetric === "ups_energy" ? "#3b82f6" :
-                                trendMetric === "air_energy" ? "#14b8a6" :
-                                trendMetric === "dc_energy" ? "#f59e0b" :
-                                trendMetric === "floor_cost" ? "#10b981" :
-                                "#f97316"
-                            }}
-                          />
-
-                          {/* Data label overlay on hover */}
-                          <text
-                            x={x + colWidth / 2}
-                            y={y - 8}
-                            textAnchor="middle"
-                            className="opacity-0 group-hover:opacity-100 transition-opacity fill-slate-200 font-bold text-[8px]"
-                          >
-                            {trendMetric === "electricity_rate" 
-                              ? `${d.value.toFixed(2)}` 
-                              : trendMetric === "floor_cost" 
-                              ? `฿${Math.round(d.value).toLocaleString()}`
-                              : `${Math.round(d.value).toLocaleString()}`
-                            }
-                          </text>
-
-                          {/* X Axis labels */}
-                          <text
-                            x={x + colWidth / 2}
-                            y="210"
-                            textAnchor="middle"
-                            className="fill-slate-400 font-bold group-hover:fill-indigo-400 transition-colors"
-                          >
-                            {d.label}
-                          </text>
-                        </g>
-                      );
-                    })}
-                    {/* Bottom axis line */}
-                    <line x1="50" y1="190" x2="580" y2="190" className="stroke-slate-800 stroke-1" />
-                  </svg>
+        ) : (
+          <div className="grid grid-cols-1 gap-6">
+            {([
+              { id: "total_energy", label: t.total_energy, unit: "kWh", color: "#6366f1" },
+              { id: "ups_energy", label: t.ups_energy, unit: "kWh", color: "#3b82f6" },
+              { id: "air_energy", label: t.air_energy, unit: "kWh", color: "#14b8a6" },
+              { id: "dc_energy", label: t.dc_energy, unit: "kWh", color: "#f59e0b" },
+              { id: "floor_cost", label: t.floor_cost, unit: "THB", color: "#10b981" },
+              { id: "electricity_rate", label: t.electricity_rate, unit: "THB/kWh", color: "#f97316" }
+            ] as const).map(parameter => (
+              <section key={parameter.id} className="trend-chart-card w-full bg-slate-950 border border-slate-850 p-6 rounded-2xl space-y-4 min-w-0 shadow-sm">
+                <div className="flex justify-between items-center gap-3">
+                  <div>
+                    <h4 className="text-sm uppercase tracking-wide">
+                      {parameter.label} Trend ({parameter.unit})
+                    </h4>
+                    <p className="text-xs mt-1 text-slate-400">
+                      Monthly {parameter.unit === "kWh" ? "energy utilization" : "cost and rate"} pattern.
+                    </p>
+                  </div>
+                  <span className="text-sm text-slate-400">{trendDataByMetric.length} months</span>
                 </div>
-              </div>
-            )}
+                <TrendLineChart
+                  labels={trendDataByMetric.map(point => point.label)}
+                  unit={parameter.unit}
+                  height={320}
+                  series={[{ name: parameter.label, color: parameter.color, values: trendDataByMetric.map(point => point[parameter.id]) }]}
+                />
+              </section>
+            ))}
           </div>
-
-        </div>
+        )}
 
       </div>
 

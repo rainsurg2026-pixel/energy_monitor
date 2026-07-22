@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { Archive, Download, FileImage, FileSpreadsheet, FileText, Table2, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 
-export type ExportKind = "pdf" | "excel" | "csv" | "png" | "zip";
+export type ExportKind = "all-report" | "pdf" | "excel" | "csv" | "png" | "zip";
 
 interface ExportCenterModalProps {
   open: boolean;
@@ -10,13 +10,15 @@ interface ExportCenterModalProps {
   baseName: string; // e.g. "Rangsit_2026-07_Report"
   onClose: () => void;
   onExport: (kind: ExportKind) => Promise<void>;
+  exportProgress?: { stage: string; detail?: string } | null;
+  onCancelExport?: () => void;
 }
 
 /**
  * Export Center (RC6): PDF / Excel / CSV / PNG / ZIP package - every export
  * goes through the native save dialog, no browser downloads.
  */
-export default function ExportCenterModal({ open, lang, baseName, onClose, onExport }: ExportCenterModalProps) {
+export default function ExportCenterModal({ open, lang, baseName, onClose, onExport, exportProgress, onCancelExport }: ExportCenterModalProps) {
   const th = lang === "th";
   const [busy, setBusy] = useState<ExportKind | null>(null);
 
@@ -30,6 +32,13 @@ export default function ExportCenterModal({ open, lang, baseName, onClose, onExp
   };
 
   const options: Array<{ kind: ExportKind; icon: React.ReactNode; title: string; desc: string; ext: string }> = [
+    {
+      kind: "all-report",
+      icon: <FileText className="w-5 h-5 text-teal-400" />,
+      title: "Export All Report",
+      desc: "Combined A4 landscape PDF with all validated history and Rack Capacity summaries",
+      ext: ".pdf"
+    },
     {
       kind: "pdf",
       icon: <FileText className="w-5 h-5 text-rose-400" />,
@@ -115,6 +124,14 @@ export default function ExportCenterModal({ open, lang, baseName, onClose, onExp
                   </button>
                 ))}
               </div>
+              {busy === "all-report" && (
+                <div className="rounded-xl border border-teal-500/20 bg-teal-500/5 px-4 py-3 text-xs text-slate-300">
+                  <div className="flex items-center justify-between gap-3">
+                    <span>{exportProgress?.detail ?? exportProgress?.stage ?? "Preparing report…"}</span>
+                    {onCancelExport && <button type="button" onClick={onCancelExport} className="text-rose-300 hover:text-rose-200 font-semibold">Cancel</button>}
+                  </div>
+                </div>
+              )}
             </div>
           </motion.div>
         </div>

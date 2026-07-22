@@ -13,6 +13,8 @@ interface AirTableProps {
   registerApi?: (api: EntrySectionApi | null) => void;
   /** RC3/RC4: live draft updates for completion + validation. */
   onDraftChange?: (draft: AirRecord) => void;
+  meterFields?: string[];
+  meterLabels?: Record<string, string>;
 }
 
 export default function AirTable({
@@ -22,7 +24,10 @@ export default function AirTable({
   onSave,
   registerApi,
   onDraftChange
+  , meterFields, meterLabels
 }: AirTableProps) {
+  const fields = meterFields?.length ? meterFields : ["eb41a", "eb41b", "eb42a", "eb42b"];
+  const label = (field: string) => meterLabels?.[field] ?? `${field.toUpperCase()} (GWh)`;
   const [record, setRecord] = useState<AirRecord>({
     eb41a: null,
     eb41b: null,
@@ -39,15 +44,20 @@ export default function AirTable({
     setHasChanges(false);
   }, [initialRecord, monthStr]);
 
-  const handleInputChange = (field: keyof AirRecord, value: string) => {
+  const handleInputChange = (field: string, value: string) => {
     setHasChanges(true);
     setIsSaved(false);
+    const parsed = value === "" ? null : parseFloat(value);
+    const next = Number.isNaN(parsed) ? null : parsed;
+    if (!["eb41a", "eb41b", "eb42a", "eb42b"].includes(field)) {
+      setRecord(prev => ({ ...prev, meters: { ...(prev.meters ?? {}), [field]: next } }));
+      return;
+    }
     
     if (value === "") {
       setRecord(prev => ({ ...prev, [field]: null }));
     } else {
-      const parsed = parseFloat(value);
-      setRecord(prev => ({ ...prev, [field]: isNaN(parsed) ? null : parsed }));
+      setRecord(prev => ({ ...prev, [field]: next }));
     }
   };
 
@@ -140,10 +150,7 @@ export default function AirTable({
           <thead>
             <tr className="bg-teal-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-teal-300 border-b border-slate-800/80">
               <th className="py-3.5 px-4 font-normal">Month</th>
-              <th className="py-3.5 px-4 font-normal text-right">EB41A (GWh)</th>
-              <th className="py-3.5 px-4 font-normal text-right">EB41B (GWh)</th>
-              <th className="py-3.5 px-4 font-normal text-right">EB42A (GWh)</th>
-              <th className="py-3.5 px-4 font-normal text-right">EB42B (GWh)</th>
+              {fields.map(field => <th key={field} className="py-3.5 px-4 font-normal text-right">{label(field)}</th>)}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/50 font-mono text-sm text-slate-300">
@@ -152,53 +159,20 @@ export default function AirTable({
                 {formatMonthYear(monthStr)}
               </td>
               
-              {/* EB41A GWh Input */}
-              <td className="py-5 px-2">
-                <input
-                  type="number"
-                  step="0.0001"
-                  placeholder="1.2500"
-                  value={record.eb41a ?? ""}
-                  onChange={(e) => handleInputChange("eb41a", e.target.value)}
-                  className="w-full max-w-[150px] ml-auto bg-teal-950/5 hover:bg-teal-950/10 focus:bg-teal-950/15 border border-slate-800 focus:border-teal-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
-                />
-              </td>
-
-              {/* EB41B GWh Input */}
-              <td className="py-5 px-2">
-                <input
-                  type="number"
-                  step="0.0001"
-                  placeholder="0.9500"
-                  value={record.eb41b ?? ""}
-                  onChange={(e) => handleInputChange("eb41b", e.target.value)}
-                  className="w-full max-w-[150px] ml-auto bg-teal-950/5 hover:bg-teal-950/10 focus:bg-teal-950/15 border border-slate-800 focus:border-teal-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
-                />
-              </td>
-
-              {/* EB42A GWh Input */}
-              <td className="py-5 px-2">
-                <input
-                  type="number"
-                  step="0.0001"
-                  placeholder="1.4500"
-                  value={record.eb42a ?? ""}
-                  onChange={(e) => handleInputChange("eb42a", e.target.value)}
-                  className="w-full max-w-[150px] ml-auto bg-teal-950/5 hover:bg-teal-950/10 focus:bg-teal-950/15 border border-slate-800 focus:border-teal-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
-                />
-              </td>
-
-              {/* EB42B GWh Input */}
-              <td className="py-5 px-4">
-                <input
-                  type="number"
-                  step="0.0001"
-                  placeholder="1.1500"
-                  value={record.eb42b ?? ""}
-                  onChange={(e) => handleInputChange("eb42b", e.target.value)}
-                  className="w-full max-w-[150px] ml-auto bg-teal-950/5 hover:bg-teal-950/10 focus:bg-teal-950/15 border border-slate-800 focus:border-teal-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
-                />
-              </td>
+              {fields.map(field => (
+                <td key={field} className="py-5 px-2">
+                  <input
+                    type="number"
+                    step="0.0001"
+                    placeholder="0.0000"
+                    value={record.meters?.[field] ?? ""}
+                    onChange={e => {
+                      handleInputChange(field, e.target.value);
+                    }}
+                    className="w-full max-w-[150px] ml-auto bg-teal-950/5 hover:bg-teal-950/10 focus:bg-teal-950/15 border border-slate-800 focus:border-teal-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
+                  />
+                </td>
+              ))}
             </tr>
           </tbody>
         </table>
@@ -206,7 +180,7 @@ export default function AirTable({
 
       {/* Footer info & timestamp */}
       <div className="px-5 py-3 border-t border-slate-850 bg-slate-900/20 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs text-slate-500 font-mono">
-        <span>Combined Air-Con Consumption Units: 4 meters</span>
+        <span>Combined Air-Con Consumption Units: {fields.length} meters</span>
         {lastSaved ? (
           <span className="flex items-center gap-1.5 text-slate-400">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />

@@ -3,6 +3,7 @@ import { DcRecord } from "../types";
 import { Save, Check, RotateCcw } from "lucide-react";
 import { formatMonthYear } from "../utils";
 import { EntrySectionApi } from "../utils/completion";
+import { formatNumber2 } from "../utils/numberFormatBridge";
 
 interface DcTableProps {
   monthStr: string;
@@ -210,7 +211,7 @@ export default function DcTable({
                         : "text-slate-600 italic"
                     }`}>
                       {calculatedPowerKw !== null 
-                        ? `${calculatedPowerKw.toFixed(3)} kW` 
+                        ? `${formatNumber2(calculatedPowerKw)} kW`
                         : "Waiting for V & A..."}
                     </span>
                   </td>

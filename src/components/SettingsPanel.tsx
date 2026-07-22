@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { formatNumber2 } from "../utils/numberFormatBridge";
 import {
   Archive,
   Clock,
@@ -82,7 +83,7 @@ export default function SettingsPanel({
         : "bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200 hover:border-slate-700"
     }`;
 
-  const sizeLabel = (bytes: number) => (bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`);
+  const sizeLabel = (bytes: number) => bytes > 1024 * 1024 ? `${formatNumber2(bytes / 1024 / 1024)} MB` : `${formatNumber2(bytes / 1024)} KB`;
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -227,7 +228,7 @@ export default function SettingsPanel({
                     {backup.fileName}
                   </p>
                   <p className="text-[10px] text-slate-500">
-                    {new Date(backup.createdAt).toLocaleString()} · {sizeLabel(backup.sizeBytes)}
+                    {new Date(backup.createdAt).toISOString()} · {sizeLabel(backup.sizeBytes)}
                   </p>
                 </div>
                 {confirmRestore === backup.path ? (
@@ -280,7 +281,7 @@ export default function SettingsPanel({
             <p className={label}>{th ? "ธีม" : "Theme"}</p>
             <div className="flex gap-2">
               <button onClick={() => update({ theme: "dark" })} className={chipBtn(appConfig.theme === "dark") + " flex items-center gap-1.5"}>
-                <Moon className="w-3.5 h-3.5" /> {th ? "มืด (แนะนำ)" : "Dark (recommended)"}
+                <Moon className="w-3.5 h-3.5" /> {th ? "มืด" : "Dark"}
               </button>
               <button onClick={() => update({ theme: "light" })} className={chipBtn(appConfig.theme === "light") + " flex items-center gap-1.5"}>
                 <Sun className="w-3.5 h-3.5" /> {th ? "สว่าง" : "Light"}

@@ -164,18 +164,28 @@ export function loadAllLogs(): MonthlyLog[] {
   return logs.sort((a, b) => a.month.localeCompare(b.month));
 }
 
-export function loadLogForMonth(month: string): MonthlyLog {
+export function loadLogForMonth(
+  month: string,
+  upsIds: string[] = DEFAULT_UPS_IDS,
+  dcIds: string[] = DEFAULT_DC_IDS
+): MonthlyLog {
   if (inMemoryLogs[month]) {
     const parsed = inMemoryLogs[month];
-    const defaults = createEmptyLog(month);
-    
-    // Deep merge ups
+    const defaults = createEmptyLog(month, upsIds, dcIds);
+
+    // Deep merge ups: every expected device gets a row, defaulted to empty
+    // when parsed data has no matching id. `upsIds` must reflect the active
+    // facility's real device list here - defaulting to Rangsit's 7 ids would
+    // silently drop every device that doesn't happen to fuzzy-match one of
+    // them (this previously corrupted Srinakarin's 10-device `ups` array on
+    // every call, e.g. via any batched save of a sibling section run after
+    // the UPS section).
     const mergedUps = defaults.ups.map(def => {
       const found = parsed.ups?.find(u => isSameUpsId(u.upsId, def.upsId));
       return found ? { ...def, ...found } : def;
     });
 
-    // Deep merge dc
+    // Deep merge dc (same facility-awareness requirement as ups above).
     const mergedDc = defaults.dc.map(def => {
       const found = parsed.dc?.find(d => d.panelId === def.panelId);
       return found ? { ...def, ...found } : def;
@@ -190,7 +200,7 @@ export function loadLogForMonth(month: string): MonthlyLog {
       energyCost: { ...defaults.energyCost, ...parsed.energyCost }
     };
   }
-  return createEmptyLog(month);
+  return createEmptyLog(month, upsIds, dcIds);
 }
 
 export function saveLogForMonth(month: string, log: MonthlyLog) {

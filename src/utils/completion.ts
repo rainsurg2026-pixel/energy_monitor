@@ -1,4 +1,5 @@
 import { MonthlyLog } from "../types";
+import { getAirFields, getAirValue } from "./energyCost";
 
 /**
  * Completion metrics for one monthly record - drives the workflow header,
@@ -56,7 +57,8 @@ export function computeCompletion(log: MonthlyLog | null): CompletionSummary {
   }
   const ups = section(upsFilled, log.ups.length * 4);
 
-  const airValues = [log.air.eb41a, log.air.eb41b, log.air.eb42a, log.air.eb42b];
+  const airFields = getAirFields(log);
+  const airValues = airFields.map(field => getAirValue(log, field));
   const air = section(airValues.filter(isFilled).length, airValues.length);
 
   let dcFilled = 0;
@@ -85,14 +87,8 @@ export function listMissingFields(log: MonthlyLog): MissingField[] {
     if (!isFilled(u.loadKw)) missing.push({ section: "ups", label: `${u.upsId} · Load (kW)` });
     if (!isFilled(u.loadKva)) missing.push({ section: "ups", label: `${u.upsId} · Load (kVA)` });
   }
-  const airLabels: Array<[keyof MonthlyLog["air"], string]> = [
-    ["eb41a", "EB41A (GWh)"],
-    ["eb41b", "EB41B (GWh)"],
-    ["eb42a", "EB42A (GWh)"],
-    ["eb42b", "EB42B (GWh)"]
-  ];
-  for (const [key, label] of airLabels) {
-    if (!isFilled(log.air[key])) missing.push({ section: "air", label });
+  for (const field of getAirFields(log)) {
+    if (!isFilled(getAirValue(log, field))) missing.push({ section: "air", label: `${field.toUpperCase()} (GWh)` });
   }
   for (const d of log.dc) {
     if (!isFilled(d.voltage)) missing.push({ section: "dc", label: `${d.panelId} · Voltage (V)` });

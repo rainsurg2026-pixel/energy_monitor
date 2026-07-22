@@ -1,0 +1,268 @@
+import { useEffect, useMemo, useState } from "react";
+import { Check, RotateCcw, Save } from "lucide-react";
+import type { MonthlyLog, PhaseReading, SrinakarinInputSnapshot, UpsRecord } from "../types";
+import { formatMonthYear } from "../utils";
+import { EntrySectionApi } from "../utils/completion";
+import { formatNumber2 } from "../utils/numberFormatBridge";
+import {
+  calculateSrinakarinAggregate,
+  cloneSrinakarinInputs,
+  SRINAKARIN_DEFAULT_AC_PHASE_IDS,
+  SRINAKARIN_DEFAULT_PPC43_CURRENT_IDS,
+  SRINAKARIN_DEFAULT_PPC43_PANEL_IDS,
+  SRINAKARIN_DEFAULT_UPS_PHASE_IDS
+} from "../utils/srinakarinPower";
+
+interface SrinakarinPowerPhaseTableProps {
+  monthStr: string;
+  initialLog: MonthlyLog;
+  lastSaved: string | null;
+  onSave: (records: UpsRecord[], inputs: SrinakarinInputSnapshot) => void;
+  registerApi?: (api: EntrySectionApi | null) => void;
+  onDraftChange?: (draft: UpsRecord[]) => void;
+}
+
+const PHASES = ["R", "S", "T"] as const;
+const PPC_MANUAL_LOAD_IDS = ["PPC 41A", "PPC 41B", "PPC 42A", "PPC 42B", "PPC 44A", "PPC 44B"];
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function emptyPhase(): PhaseReading {
+  return { voltage: null, current: null, loadKw: null, loadKva: null };
+}
+
+function withPhaseDefaults(input: SrinakarinInputSnapshot, initialLog: MonthlyLog): SrinakarinInputSnapshot {
+  const next = clone(input);
+  const existingUps = Object.keys(next.upsPhase);
+  const upsIds = existingUps.length > 0
+    ? existingUps
+    : SRINAKARIN_DEFAULT_UPS_PHASE_IDS.flatMap(id => PHASES.map(phase => `${id} - ${phase}`));
+  for (const id of upsIds) {
+    if (!next.upsPhase[id]) {
+      const base = initialLog.ups.find(record => record.upsId === id.replace(/\s+-\s+[RST]$/i, ""));
+      next.upsPhase[id] = {
+        voltage: base?.voltage ?? null,
+        current: base?.current ?? null,
+        loadKw: base?.loadKw ?? null,
+        loadKva: base?.loadKva ?? null
+      };
+    }
+  }
+
+  const existingAc = Object.keys(next.acPhase);
+  const acIds = existingAc.length > 0
+    ? existingAc
+    : SRINAKARIN_DEFAULT_AC_PHASE_IDS.flatMap(id => PHASES.map(phase => `${id} - ${phase}`));
+  for (const id of acIds) next.acPhase[id] ??= { voltage: null, current: null };
+
+  for (const id of SRINAKARIN_DEFAULT_PPC43_CURRENT_IDS) next.ppc43Current[id] ??= null;
+  for (const id of SRINAKARIN_DEFAULT_PPC43_PANEL_IDS) next.ppc43Panel[id] ??= { loadKw: null, loadKva: null };
+  return next;
+}
+
+function inputNumber(value: string): number | null {
+  if (value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function inputClass(readOnly = false): string {
+  return `w-full min-w-[92px] rounded-lg border px-2.5 py-1.5 text-right font-mono text-sm outline-none transition-colors ${
+    readOnly
+      ? "border-slate-800 bg-slate-950/60 text-slate-500"
+      : "border-slate-700 bg-slate-950/30 text-slate-200 focus:border-teal-400"
+  }`;
+}
+
+export default function SrinakarinPowerPhaseTable({
+  monthStr,
+  initialLog,
+  lastSaved,
+  onSave,
+  registerApi,
+  onDraftChange
+}: SrinakarinPowerPhaseTableProps) {
+  const [inputs, setInputs] = useState<SrinakarinInputSnapshot>(() => withPhaseDefaults(cloneSrinakarinInputs(initialLog.srinakarinInputs), initialLog));
+  const [manualLoads, setManualLoads] = useState<Record<string, { loadKw: number | null; loadKva: number | null }>>(() => {
+    const rows: Record<string, { loadKw: number | null; loadKva: number | null }> = {};
+    for (const id of PPC_MANUAL_LOAD_IDS) {
+      const record = initialLog.ups.find(item => item.upsId === id);
+      rows[id] = { loadKw: record?.loadKw ?? null, loadKva: record?.loadKva ?? null };
+    }
+    return rows;
+  });
+  const [isSaved, setIsSaved] = useState(false);
+  const [hasChanges, setHasChanges] = useState(false);
+
+  useEffect(() => {
+    setInputs(withPhaseDefaults(cloneSrinakarinInputs(initialLog.srinakarinInputs), initialLog));
+    const rows: Record<string, { loadKw: number | null; loadKva: number | null }> = {};
+    for (const id of PPC_MANUAL_LOAD_IDS) {
+      const record = initialLog.ups.find(item => item.upsId === id);
+      rows[id] = { loadKw: record?.loadKw ?? null, loadKva: record?.loadKva ?? null };
+    }
+    setManualLoads(rows);
+    setHasChanges(false);
+    setIsSaved(false);
+  }, [initialLog, monthStr]);
+
+  const draftRecords = useMemo(() => {
+    const aggregate = calculateSrinakarinAggregate({
+      ...initialLog,
+      ups: initialLog.ups.map(record => ({ ...record, ...(manualLoads[record.upsId] ?? {}) })),
+      srinakarinInputs: inputs
+    });
+    return aggregate.map(record => ({
+      ...record,
+      ...(manualLoads[record.upsId] ? manualLoads[record.upsId] : {})
+    }));
+  }, [initialLog, inputs, manualLoads]);
+
+  useEffect(() => {
+    onDraftChange?.(draftRecords);
+  }, [draftRecords, onDraftChange]);
+
+  const updateUpsPhase = (id: string, field: keyof PhaseReading, value: string) => {
+    setHasChanges(true);
+    setIsSaved(false);
+    setInputs(previous => ({
+      ...previous,
+      upsPhase: {
+        ...previous.upsPhase,
+        [id]: { ...(previous.upsPhase[id] ?? emptyPhase()), [field]: inputNumber(value) }
+      }
+    }));
+  };
+
+  const updateAcPhase = (id: string, field: "voltage" | "current", value: string) => {
+    setHasChanges(true);
+    setIsSaved(false);
+    setInputs(previous => ({
+      ...previous,
+      acPhase: {
+        ...previous.acPhase,
+        [id]: { ...(previous.acPhase[id] ?? { voltage: null, current: null }), [field]: inputNumber(value) }
+      }
+    }));
+  };
+
+  const updatePpc43Current = (id: string, value: string) => {
+    setHasChanges(true);
+    setIsSaved(false);
+    setInputs(previous => ({ ...previous, ppc43Current: { ...previous.ppc43Current, [id]: inputNumber(value) } }));
+  };
+
+  const updatePpc43Panel = (id: string, field: "loadKw" | "loadKva", value: string) => {
+    setHasChanges(true);
+    setIsSaved(false);
+    setInputs(previous => ({
+      ...previous,
+      ppc43Panel: {
+        ...previous.ppc43Panel,
+        [id]: { ...(previous.ppc43Panel[id] ?? { loadKw: null, loadKva: null }), [field]: inputNumber(value) }
+      }
+    }));
+  };
+
+  const updateManualLoad = (id: string, field: "loadKw" | "loadKva", value: string) => {
+    setHasChanges(true);
+    setIsSaved(false);
+    setManualLoads(previous => ({ ...previous, [id]: { ...(previous[id] ?? { loadKw: null, loadKva: null }), [field]: inputNumber(value) } }));
+  };
+
+  const handleSave = () => {
+    onSave(draftRecords, clone(inputs));
+    setIsSaved(true);
+    setHasChanges(false);
+    setTimeout(() => setIsSaved(false), 3000);
+  };
+
+  const handleReset = () => {
+    setInputs(withPhaseDefaults(cloneSrinakarinInputs(initialLog.srinakarinInputs), initialLog));
+    const rows: Record<string, { loadKw: number | null; loadKva: number | null }> = {};
+    for (const id of PPC_MANUAL_LOAD_IDS) {
+      const record = initialLog.ups.find(item => item.upsId === id);
+      rows[id] = { loadKw: record?.loadKw ?? null, loadKva: record?.loadKva ?? null };
+    }
+    setManualLoads(rows);
+    setHasChanges(false);
+    setIsSaved(false);
+  };
+
+  const handleSaveRef = { current: handleSave };
+  const handleResetRef = { current: handleReset };
+  const hasChangesRef = { current: hasChanges };
+  useEffect(() => {
+    registerApi?.({
+      commit: () => { if (hasChangesRef.current) handleSaveRef.current(); },
+      reset: () => handleResetRef.current(),
+      hasChanges: () => hasChangesRef.current
+    });
+  });
+  useEffect(() => () => registerApi?.(null), [registerApi]);
+
+  const upsRows = Object.entries(inputs.upsPhase).sort(([a], [b]) => a.localeCompare(b));
+  const acRows = Object.entries(inputs.acPhase) as Array<[string, { voltage: number | null; current: number | null }]>;
+  acRows.sort(([a], [b]) => a.localeCompare(b));
+  const ppc43CurrentRows = Object.entries(inputs.ppc43Current).sort(([a], [b]) => a.localeCompare(b));
+  const ppc43PanelRows = Object.entries(inputs.ppc43Panel).sort(([a], [b]) => a.localeCompare(b));
+  const isPpc43 = (id: string) => id.toLowerCase().includes("ppc 43");
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm space-y-0">
+      <div className="p-5 border-b border-slate-800 flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-900/60">
+        <div>
+          <h3 className="font-display font-semibold text-slate-100 text-base">Srinakarin UPS &amp; PPC Phase Input</h3>
+          <p className="text-xs text-slate-400 mt-1">กรอกข้อมูล R/S/T ตามลำดับการทำงานของ Excel · PPC44 กรอก Voltage/Current/Load เองทั้งหมด</p>
+          <p className="text-xs text-slate-500 mt-1">Reporting Month: <span className="text-slate-300">{formatMonthYear(monthStr)}</span></p>
+        </div>
+        <div className="flex items-center gap-3 self-end lg:self-center">
+          {hasChanges && <button type="button" onClick={handleReset} className="px-3 py-1.5 text-xs text-slate-400 border border-slate-700 rounded-lg flex items-center gap-1.5"><RotateCcw className="w-3.5 h-3.5" />Reset</button>}
+          <button type="button" onClick={handleSave} className={`px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 ${isSaved ? "bg-emerald-600 text-white" : hasChanges ? "bg-teal-600 text-white" : "bg-slate-800 text-slate-400 border border-slate-700"}`}>
+            {isSaved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}{isSaved ? "Saved!" : "Save UPS/PPC"}
+          </button>
+        </div>
+      </div>
+
+      <section className="p-5 border-b border-slate-800">
+        <h4 className="text-sm text-slate-100">1. UPS Phase Load</h4>
+        <p className="text-xs text-slate-500 mt-1 mb-4">Input source: 1.1 UPS Data Log By Phase. Monthly output is averaged into 1. UPS Data Log.</p>
+        <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left border-collapse"><thead><tr className="bg-indigo-950/30 text-[11px] font-normal uppercase tracking-wider text-indigo-300 border-b border-slate-800/80"><th className="py-2 px-3">Month</th><th className="py-2 px-3">UPS</th><th className="py-2 px-3 text-right">Voltage (V)</th><th className="py-2 px-3 text-right">Current (A)</th><th className="py-2 px-3 text-right">Load (kW)</th><th className="py-2 px-3 text-right">Load (kVA)</th></tr></thead><tbody className="divide-y divide-slate-800/70">{upsRows.map(([id, row]) => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td>{(["voltage", "current", "loadKw", "loadKva"] as const).map(field => <td key={field} className="py-2 px-2"><input type="number" step={field === "voltage" || field === "current" ? "0.1" : "0.01"} value={row[field] ?? ""} onChange={event => updateUpsPhase(id, field, event.target.value)} className={inputClass()} /></td>)}</tr>)}</tbody></table></div>
+      </section>
+
+      <section className="p-5 border-b border-slate-800">
+        <h4 className="text-sm text-slate-100">2. PPC Phase Voltage &amp; Current</h4>
+        <p className="text-xs text-slate-500 mt-1 mb-4">PPC41, PPC42 และ PPC44 กรอกเองทั้งหมด · PPC43 Current แสดงผลจาก 1.6 แบบ Read-only</p>
+        <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left border-collapse"><thead><tr className="bg-teal-950/30 text-[11px] font-normal uppercase tracking-wider text-teal-300 border-b border-slate-800/80"><th className="py-2 px-3">Month</th><th className="py-2 px-3">AC Power Panel</th><th className="py-2 px-3 text-right">Voltage (V)</th><th className="py-2 px-3 text-right">Current (A)</th></tr></thead><tbody className="divide-y divide-slate-800/70">{acRows.map(([id, row]) => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td><td className="py-2 px-2"><input type="number" step="0.1" value={row.voltage ?? ""} onChange={event => updateAcPhase(id, "voltage", event.target.value)} className={inputClass()} /></td><td className="py-2 px-2"><input type="number" step="0.1" value={row.current ?? ""} onChange={event => updateAcPhase(id, "current", event.target.value)} disabled={isPpc43(id)} className={inputClass(isPpc43(id))} /></td></tr>)}</tbody></table></div>
+      </section>
+
+      <section className="p-5 border-b border-slate-800">
+        <h4 className="text-sm text-slate-100">3. Manual PPC Aggregate Load</h4>
+        <p className="text-xs text-slate-500 mt-1 mb-4">PPC44 Load kW/kVA เป็นค่ากรอกมือ ไม่คำนวณแทนจาก PPC43</p>
+        <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left border-collapse"><thead><tr className="bg-amber-950/20 text-[11px] font-normal uppercase tracking-wider text-amber-300 border-b border-slate-800/80"><th className="py-2 px-3">Month</th><th className="py-2 px-3">AC Power Panel</th><th className="py-2 px-3 text-right">Load (kW)</th><th className="py-2 px-3 text-right">Load (kVA)</th></tr></thead><tbody className="divide-y divide-slate-800/70">{PPC_MANUAL_LOAD_IDS.map(id => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td><td className="py-2 px-2"><input type="number" step="0.01" value={manualLoads[id]?.loadKw ?? ""} onChange={event => updateManualLoad(id, "loadKw", event.target.value)} className={inputClass()} /></td><td className="py-2 px-2"><input type="number" step="0.01" value={manualLoads[id]?.loadKva ?? ""} onChange={event => updateManualLoad(id, "loadKva", event.target.value)} className={inputClass()} /></td></tr>)}</tbody></table></div>
+      </section>
+
+      <section className="p-5 border-b border-slate-800">
+        <h4 className="text-sm text-slate-100">4. PPC43 Panel Current</h4>
+        <p className="text-xs text-slate-500 mt-1 mb-4">Input source: 1.6 AC PPC43 (A) · 1.4.1 จะรวมค่าเหล่านี้ด้วย SUMIFS</p>
+        <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left border-collapse"><thead><tr className="bg-sky-950/20 text-[11px] font-normal uppercase tracking-wider text-sky-300 border-b border-slate-800/80"><th className="py-2 px-3">Month</th><th className="py-2 px-3">AC Power Panel</th><th className="py-2 px-3 text-right">Panel Current (A)</th></tr></thead><tbody className="divide-y divide-slate-800/70">{ppc43CurrentRows.map(([id, value]) => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td><td className="py-2 px-2"><input type="number" step="0.1" value={value ?? ""} onChange={event => updatePpc43Current(id, event.target.value)} className={inputClass()} /></td></tr>)}</tbody></table></div>
+      </section>
+
+      <section className="p-5 border-b border-slate-800">
+        <h4 className="text-sm text-slate-100">5. PPC43 Panel Load</h4>
+        <p className="text-xs text-slate-500 mt-1 mb-4">Input source: 1.7 AC PPC43 Panel (A)</p>
+        <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left border-collapse"><thead><tr className="bg-violet-950/20 text-[11px] font-normal uppercase tracking-wider text-violet-300 border-b border-slate-800/80"><th className="py-2 px-3">Month</th><th className="py-2 px-3">AC Power Panel</th><th className="py-2 px-3 text-right">Load (kW)</th><th className="py-2 px-3 text-right">Load (kVA)</th></tr></thead><tbody className="divide-y divide-slate-800/70">{ppc43PanelRows.map(([id, row]) => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td>{(["loadKw", "loadKva"] as const).map(field => <td key={field} className="py-2 px-2"><input type="number" step="0.01" value={row[field] ?? ""} onChange={event => updatePpc43Panel(id, field, event.target.value)} className={inputClass()} /></td>)}</tr>)}</tbody></table></div>
+      </section>
+
+      <section className="p-5">
+        <h4 className="text-sm text-slate-100">6. Monthly Aggregate Preview</h4>
+        <p className="text-xs text-slate-500 mt-1 mb-4">ผลลัพธ์ที่จะถูกเก็บลง `1. UPS Data Log` โดยใช้ Month + Device ID เป็นตัวจับคู่</p>
+        <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left border-collapse"><thead><tr className="bg-slate-950/60 text-[11px] font-normal uppercase tracking-wider text-slate-400 border-b border-slate-800/80"><th className="py-2 px-3">Month</th><th className="py-2 px-3">UPS &amp; PPC</th><th className="py-2 px-3 text-right">Voltage (V)</th><th className="py-2 px-3 text-right">Current (A)</th><th className="py-2 px-3 text-right">Load (kW)</th><th className="py-2 px-3 text-right">Load (kVA)</th></tr></thead><tbody className="divide-y divide-slate-800/70">{draftRecords.map(row => <tr key={row.upsId} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{row.upsId}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.voltage !== null ? formatNumber2(row.voltage) : "—"}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.current !== null ? formatNumber2(row.current) : "—"}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.loadKw !== null ? formatNumber2(row.loadKw) : "—"}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.loadKva !== null ? formatNumber2(row.loadKva) : "—"}</td></tr>)}</tbody></table></div>
+      </section>
+
+      <div className="px-5 py-3 border-t border-slate-800 bg-slate-900/30 flex justify-between items-center gap-2 text-xs text-slate-500 font-mono"><span>{draftRecords.length} monthly aggregate rows</span>{lastSaved ? <span className="text-slate-400">Last Saved: {lastSaved}</span> : <span className="italic">No entry saved for this month yet</span>}</div>
+    </div>
+  );
+}

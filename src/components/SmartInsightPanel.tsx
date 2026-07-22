@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import { useReport } from "../ReportContext";
 import { MonthlyLog } from "../types";
 import { computeAllMetrics } from "../utils/analytics";
+import { formatNumber2 } from "../utils/numberFormatBridge";
 import { 
   Compass, 
   Lightbulb, 
@@ -41,38 +42,42 @@ export default function SmartInsightPanel({ logs, lang }: SmartInsightPanelProps
     const latest = allMetrics[allMetrics.length - 1];
     const previous = allMetrics[allMetrics.length - 2];
 
-    // 1. PUE Efficiency Insight
-    if (latest.pue > 1.6) {
+    // 1. PUE Efficiency Insight. A null PUE is an expected result when the
+    // month is incomplete (for example, a missing UPS 11A input), so it must
+    // not be formatted as a number.
+    if (latest.pue !== null && latest.pue > 1.6) {
       list.push({
         type: "alert",
         titleTh: "ประสิทธิภาพพลังงาน PUE อยู่ในเกณฑ์ต้องปรับปรุง",
         titleEn: "PUE efficiency needs optimization",
-        descTh: `ค่าเฉลี่ย PUE เดือนล่าสุด อยู่ที่ ${latest.pue.toFixed(2)} ซึ่งสูงกว่าค่าเป้าหมายมาตรฐานอุตสาหกรรม (1.5) แนะนำให้ปรับแต่งปริมาณลมเย็นและอุณหภูมิห้องเครื่องให้อยู่ที่ 22-24°C`,
-        descEn: `Current PUE is ${latest.pue.toFixed(2)}, exceeding the green standard threshold of 1.5. Inspect cooling flow rates and raise server room ambient setpoints to 22-24°C to save HVAC loads.`,
+        descTh: `ค่าเฉลี่ย PUE เดือนล่าสุด อยู่ที่ ${formatNumber2(latest.pue)} ซึ่งสูงกว่าค่าเป้าหมายมาตรฐานอุตสาหกรรม (1.5) แนะนำให้ปรับแต่งปริมาณลมเย็นและอุณหภูมิห้องเครื่องให้อยู่ที่ 22-24°C`,
+        descEn: `Current PUE is ${formatNumber2(latest.pue)}, exceeding the green standard threshold of 1.5. Inspect cooling flow rates and raise server room ambient setpoints to 22-24°C to save HVAC loads.`,
         icon: Percent,
         color: "text-rose-400 border-rose-500/15 bg-rose-500/5"
       });
-    } else {
+    } else if (latest.pue !== null) {
       list.push({
         type: "success",
         titleTh: "ประสิทธิภาพพลังงาน PUE อยู่ในเกณฑ์ดีเยี่ยม",
         titleEn: "Optimal PUE Rating achieved",
-        descTh: `ค่าเฉลี่ย PUE ล่าสุด อยู่ที่ ${latest.pue.toFixed(2)} สอดคล้องกับมาตรฐานศูนย์ข้อมูลคาร์บอนต่ำสีเขียวในระดับสากล`,
-        descEn: `Current PUE is ${latest.pue.toFixed(2)}, meeting green low-carbon data center standards. Outstanding cooling balance and operations setup.`,
+        descTh: `ค่าเฉลี่ย PUE ล่าสุด อยู่ที่ ${formatNumber2(latest.pue)} สอดคล้องกับมาตรฐานศูนย์ข้อมูลคาร์บอนต่ำสีเขียวในระดับสากล`,
+        descEn: `Current PUE is ${formatNumber2(latest.pue)}, meeting green low-carbon data center standards. Outstanding cooling balance and operations setup.`,
         icon: CheckCircle,
         color: "text-emerald-400 border-emerald-500/15 bg-emerald-500/5"
       });
     }
 
     // 2. Cost Spike detection
-    const costGrowth = ((latest.actualCostThb - previous.actualCostThb) / previous.actualCostThb) * 100;
-    if (costGrowth > 10) {
+    const costGrowth = latest.actualCostThb !== null && previous.actualCostThb !== null && previous.actualCostThb !== 0
+      ? ((latest.actualCostThb - previous.actualCostThb) / previous.actualCostThb) * 100
+      : null;
+    if (costGrowth !== null && costGrowth > 10) {
       list.push({
         type: "warning",
         titleTh: "ตรวจพบค่าไฟอาคารเพิ่มสูงขึ้นแบบกะทันหัน",
         titleEn: "Significant energy cost spike detected",
-        descTh: `ค่าใช้จ่ายพลังงานเดือนนี้เพิ่มขึ้นถึง ${costGrowth.toFixed(1)}% เทียบกับเดือนก่อนหน้า ควรระวังชั่วโมงพลังงานสูญเสีย (Peak demand hour) ของศูนย์ข้อมูลชั้น 4`,
-        descEn: `Energy cost increased by ${costGrowth.toFixed(1)}% compared to last month. Analyze peak demand hours and schedule optional testing or heavy batch operations off-peak.`,
+        descTh: `ค่าใช้จ่ายพลังงานเดือนนี้เพิ่มขึ้นถึง ${formatNumber2(costGrowth)}% เทียบกับเดือนก่อนหน้า ควรระวังชั่วโมงพลังงานสูญเสีย (Peak demand hour) ของศูนย์ข้อมูลชั้น 4`,
+        descEn: `Energy cost increased by ${formatNumber2(costGrowth)}% compared to last month. Analyze peak demand hours and schedule optional testing or heavy batch operations off-peak.`,
         icon: Coins,
         color: "text-amber-400 border-amber-500/15 bg-amber-500/5"
       });

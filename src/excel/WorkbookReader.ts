@@ -22,6 +22,7 @@ import {
 } from "./ExcelSchema";
 import { checkWorkbookVersion } from "./WorkbookVersion";
 import { DEFAULT_DEVICE_LISTS, DeviceLists, SheetRow, matchDcId, matchUpsId, rowsToLogs } from "./SheetMapper";
+import { isSrinakarinWorkbook, readSrinakarinWorkbook } from "./SrinakarinWorkbookAdapter";
 
 export interface WorkbookValidation {
   ok: boolean;
@@ -228,6 +229,13 @@ function buildIntegrityReport(tabs: Record<TabKey, ParsedTab>, devices: DeviceLi
 export async function readWorkbookFromBuffer(buffer: Buffer, devices: DeviceLists = DEFAULT_DEVICE_LISTS): Promise<WorkbookReadResult> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+
+  // Srinakarin has a multi-stage workbook (phase input -> red helper sheets
+  // -> green aggregate sheet). Keep the historical four-tab reader intact for
+  // Rangsit and dispatch only when the workbook's signature is unambiguous.
+  if (isSrinakarinWorkbook(workbook.worksheets.map(ws => ws.name))) {
+    return readSrinakarinWorkbook(workbook, devices);
+  }
 
   const validation: WorkbookValidation = { ok: true, errors: [], warnings: [], sheetNames: {} };
   const sheetNames = workbook.worksheets.map(ws => ws.name);

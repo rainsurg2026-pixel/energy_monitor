@@ -18,6 +18,7 @@ import type { WorkbookHealth } from "./excel/WorkbookValidator";
 import type { ExcelIntegrityReport, WorkbookValidation } from "./excel/WorkbookReader";
 import type { DeviceLists } from "./excel/SheetMapper";
 import type { FacilityEntry, FacilityProfile } from "./electron/facilities";
+import type { UpsGroupConfig } from "./utils/upsGroupAggregation";
 
 export type {
   OpenWorkbookPayload,
@@ -35,6 +36,21 @@ export type {
   FacilityEntry,
   FacilityProfile
 };
+
+export interface ExportProgress {
+  requestId: string;
+  stage: "preparing" | "validating" | "rendering" | "building" | "saving" | "completed";
+  detail?: string;
+}
+
+export interface AllReportExportPayload {
+  requestId: string;
+  defaultName: string;
+  workbookPath: string;
+  facility: string;
+  selectedMonth: string | null;
+  appVersion: string;
+}
 
 export interface FacilitiesPayload {
   defaultFacility: string;
@@ -58,13 +74,27 @@ export interface DesktopBridge {
     setActive(id: string): Promise<IpcResult<{ facility: FacilityEntry }>>;
   };
   excel: {
-    open(path: string | null, devices?: DeviceLists): Promise<IpcResult<OpenWorkbookPayload | { canceled: true }>>;
-    reload(path: string, devices?: DeviceLists): Promise<IpcResult<OpenWorkbookPayload>>;
-    save(payload: { path: string; logs: unknown[]; devices?: DeviceLists }): Promise<IpcResult<SaveWorkbookPayload>>;
+    open(
+      path: string | null,
+      devices?: DeviceLists,
+      upsGroupContext?: { facilityId: string; upsGroups: UpsGroupConfig[] }
+    ): Promise<IpcResult<OpenWorkbookPayload | { canceled: true }>>;
+    reload(
+      path: string,
+      devices?: DeviceLists,
+      upsGroupContext?: { facilityId: string; upsGroups: UpsGroupConfig[] }
+    ): Promise<IpcResult<OpenWorkbookPayload>>;
+    save(payload: {
+      path: string;
+      logs: unknown[];
+      devices?: DeviceLists;
+      upsGroupHistory?: { facilityId: string; upsGroups: UpsGroupConfig[]; onlyMonths?: string[] };
+    }): Promise<IpcResult<SaveWorkbookPayload>>;
     saveAs(payload: {
       sourcePath: string;
       logs: unknown[];
       devices?: DeviceLists;
+      upsGroupHistory?: { facilityId: string; upsGroups: UpsGroupConfig[]; onlyMonths?: string[] };
     }): Promise<IpcResult<SaveWorkbookPayload | { canceled: true }>>;
     checkLock(path: string): Promise<IpcResult<{ locked: boolean; excelOwnerFilePresent: boolean }>>;
     access(path: string): Promise<IpcResult<WorkbookAccessStatus>>;
@@ -99,6 +129,8 @@ export interface DesktopBridge {
       facility: string;
       logs: unknown[];
     }): Promise<IpcResult<{ path: string } | { canceled: true }>>;
+    allReport(payload: AllReportExportPayload): Promise<IpcResult<{ path: string } | { canceled: true }>>;
+    cancel(requestId: string): Promise<{ ok: boolean }>;
     zip(payload: {
       defaultName: string;
       facility: string;
@@ -115,6 +147,9 @@ export interface DesktopBridge {
   };
   events: {
     onOpenFilePath(callback: (path: string) => void): () => void;
+    onExportProgress(callback: (progress: ExportProgress) => void): () => void;
+    /** Non-blocking UPS Group History migration progress (excel:open/reload). */
+    onMigrationProgress(callback: (progress: { stage: string }) => void): () => void;
   };
 }
 

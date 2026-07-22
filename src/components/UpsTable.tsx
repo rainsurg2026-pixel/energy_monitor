@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { Fragment, useState, useEffect } from "react";
 import { UpsRecord } from "../types";
 import { Save, Check, RotateCcw, AlertCircle } from "lucide-react";
 import { motion } from "motion/react";
@@ -67,6 +67,19 @@ export default function UpsTable({
     }
 
     setRecords(updated);
+  };
+
+  const handlePhaseInputChange = (index: number, phase: string, field: "voltage" | "current" | "loadKw" | "loadKva", value: string) => {
+    setHasChanges(true);
+    setIsSaved(false);
+    setRecords(previous => previous.map((record, recordIndex) => {
+      if (recordIndex !== index) return record;
+      const phases = { ...(record.phases ?? {}) };
+      const current = { ...(phases[phase] ?? { voltage: null, current: null, loadKw: null, loadKva: null }) };
+      current[field] = value === "" ? null : (Number.isFinite(Number(value)) ? Number(value) : null);
+      phases[phase] = current;
+      return { ...record, phases };
+    }));
   };
 
   // RC3: expose commit/reset to the sticky toolbar; report live drafts.
@@ -170,18 +183,20 @@ export default function UpsTable({
               // Warning states
               const isVoltageAbnormal = row.voltage !== null && (row.voltage < 212 || row.voltage > 228);
               const isCurrentHigh = row.current !== null && row.current > 40;
+              const phases = Object.entries(row.phases ?? {});
 
               return (
+                <Fragment key={row.upsId}>
                 <tr key={row.upsId} className="hover:bg-slate-850/40 transition-colors">
-                  <td className="py-3 px-4 text-slate-500 text-xs">
+                  <td className="py-3.5 px-4 text-slate-500 text-xs">
                     {formatMonthYear(monthStr)}
                   </td>
-                  <td className="py-3 px-4 font-semibold text-slate-200">
+                  <td className="py-3.5 px-4 font-semibold text-slate-200">
                     {row.upsId}
                   </td>
                   
-                  {/* Voltage Input */}
-                  <td className="py-3 px-2">
+                  {/* Aggregate values are formula-managed in Srinakarin. */}
+                  <td className="py-3.5 px-2">
                     <div className="relative max-w-[120px] ml-auto">
                       <input
                         type="number"
@@ -189,6 +204,7 @@ export default function UpsTable({
                         placeholder="220"
                         value={row.voltage ?? ""}
                         onChange={(e) => handleInputChange(idx, "voltage", e.target.value)}
+                        disabled={phases.length > 0}
                         className={`w-full bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all ${
                           isVoltageAbnormal 
                             ? "border-amber-600/50 text-amber-300 bg-amber-950/5 focus:border-amber-500" 
@@ -205,7 +221,7 @@ export default function UpsTable({
                   </td>
 
                   {/* Current Input */}
-                  <td className="py-3 px-2">
+                  <td className="py-3.5 px-2">
                     <div className="relative max-w-[120px] ml-auto">
                       <input
                         type="number"
@@ -213,6 +229,7 @@ export default function UpsTable({
                         placeholder="15.0"
                         value={row.current ?? ""}
                         onChange={(e) => handleInputChange(idx, "current", e.target.value)}
+                        disabled={phases.length > 0}
                         className={`w-full bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all ${
                           isCurrentHigh
                             ? "border-rose-600/50 text-rose-300 bg-rose-950/5 focus:border-rose-500"
@@ -223,29 +240,49 @@ export default function UpsTable({
                   </td>
 
                   {/* Load kW Input */}
-                  <td className="py-3 px-2">
+                  <td className="py-3.5 px-2">
                     <input
                       type="number"
                       step="0.01"
                       placeholder="3.20"
                       value={row.loadKw ?? ""}
                       onChange={(e) => handleInputChange(idx, "loadKw", e.target.value)}
+                      disabled={phases.length > 0}
                       className="w-full max-w-[120px] ml-auto bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                     />
                   </td>
 
                   {/* Load kVA Input */}
-                  <td className="py-3 px-4">
+                  <td className="py-3.5 px-4">
                     <input
                       type="number"
                       step="0.01"
                       placeholder="3.50"
                       value={row.loadKva ?? ""}
                       onChange={(e) => handleInputChange(idx, "loadKva", e.target.value)}
+                      disabled={phases.length > 0}
                       className="w-full max-w-[120px] ml-auto bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                     />
                   </td>
                 </tr>
+                {phases.map(([phase, reading]) => (
+                  <tr key={`${row.upsId}-${phase}`} className="bg-indigo-950/10 border-l-2 border-indigo-500/40">
+                    <td className="py-2 px-4 text-slate-500 text-xs">{formatMonthYear(monthStr)}</td>
+                    <td className="py-2 px-4 text-indigo-300 text-xs">{row.upsId} - {phase}</td>
+                    {(["voltage", "current", "loadKw", "loadKva"] as const).map(field => (
+                      <td key={field} className="py-2 px-2">
+                        <input
+                          type="number"
+                          step={field === "voltage" || field === "current" ? "0.1" : "0.01"}
+                          value={reading[field] ?? ""}
+                          onChange={e => handlePhaseInputChange(idx, phase, field, e.target.value)}
+                          className="w-full max-w-[120px] ml-auto bg-indigo-950/20 border border-indigo-700/50 focus:border-indigo-400 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none"
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+                </Fragment>
               );
             })}
           </tbody>
