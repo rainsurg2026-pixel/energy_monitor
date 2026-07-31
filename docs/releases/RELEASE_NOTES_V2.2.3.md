@@ -107,9 +107,22 @@ creating a circular import between their two writer modules).
 
 ## Release files
 
-- Portable EXE: `release/Energy Monitor-v2.2.3.exe`
-- Portable ZIP: `release/Energy Monitor-v2.2.3.zip`
+- Portable EXE: `release/Energy Monitor-v2.2.3.exe` (SHA-256 `ABDFD87696135E145FE2B6C9967BCB441BA5140AC542DCD90C34A4CDAE41713A`)
+- Portable ZIP: `release/Energy Monitor-v2.2.3.zip` (SHA-256 `91ED705E68449155347431D6A9022226C41E5FB454271B634CE4FE7DF41CABEC`)
+- Release commit: `8a3aff5` ("auth: switch to redirect+popup fallback for iframe compatibility")
 - Verification record: `docs/releases/RELEASE_MANIFEST_V2.2.3.md`
+
+## Auth fix for iframe compatibility
+
+The original v2.2.3 release was augmented with an essential fix for Firebase
+Auth's iframe incompatibility (error: "This third-party cookie will be blocked.
+Learn more in the Issues tab."). In environments where third‑party cookies are
+blocked—Electron's embedded browser, any same‑site‑contextualized app,
+Chrome's default cookie policy for cross‑origin iframes—the auth screen now
+falls back to a redirect‑then‑popup flow that never relies on a silent iframe.
+The `src/firebaseAuth.ts` change ensures the app can sign in across all
+deployment scenarios; the fix does not affect any other business‑logic or
+UI‑layout feature.
 
 ## Known limitations
 

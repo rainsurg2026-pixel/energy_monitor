@@ -11,7 +11,7 @@
 | SemVer decision | MINOR — new Rack Unit Capacity worksheet/section, multi-field rack editing, explicit Month/Year History-snapshot selection, K9 image relocation; backward-compatible, no existing cell/range contract broken (Rack Capacity History gains an automatic, idempotent format migration). |
 | Git branch | `main` |
 | Parent commit | `40a0dec` ("release: Energy Monitor v2.2.2") |
-| Release commit | `07ca336` ("release: Energy Monitor v2.2.3") |
+| Release commit | `a06691f` ("release: Energy Monitor v2.2.3") |
 | Release tag | `v2.2.3` |
 | Source state | Reviewed working tree; no unrelated changes present. |
 
@@ -57,9 +57,9 @@ Extends v2.2.2's Rack Capacity Management with:
 | ZIP command | `npm run portable:zip` |
 | Portable EXE | `release/Energy Monitor-v2.2.3.exe` |
 | Absolute EXE path | `D:\Project\Energy_Monitor\release\Energy Monitor-v2.2.3.exe` |
-| EXE size | 82,564,927 bytes |
-| EXE timestamp | 2026-07-31T22:05:31+07:00 |
-| EXE SHA-256 | `DE23C255C4CB9F6B628F13C12AA108B87C07622C5E6D09601AB3AA67FDF167AA` |
+| EXE size | 82,564,269 bytes |
+| EXE timestamp | 2026-07-31T22:52:57+07:00 |
+| EXE SHA-256 | `ABDFD87696135E145FE2B6C9967BCB441BA5140AC542DCD90C34A4CDAE41713A` |
 | Embedded product/version | `Energy Monitor` / `2.2.3` |
 | Portable ZIP | `release/Energy Monitor-v2.2.3.zip` |
 | ZIP size | 82,764,073 bytes |
