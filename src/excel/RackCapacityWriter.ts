@@ -23,32 +23,55 @@ import { checkWorkbookLock, createBackup, WorkbookError } from "./WorkbookWriter
 import { readRackCapacityFromBuffer } from "../reports/rackCapacityReader";
 import { calculateRackCapacityMetrics } from "../utils/rackCapacity";
 import { patchRackCapacityHistoryBuffer, readRackCapacityHistoryFromBuffer, RackCapacityHistoryRow } from "./RackCapacityHistoryWriter";
+import { ensureRackUnitCapacitySheet } from "./RackUnitCapacityWriter";
+import { resolveRelationshipTarget } from "./ExcelZipUtils";
+import { EMU_PER_PX, embedRackCapacityImage, RackCapacityImageInput } from "./SheetImageWriter";
+
+export type { RackCapacityImageInput };
 
 export const RACK_CAPACITY_SHEET_NAME = "Rack Capacity";
 export const RACK_CAPACITY_TABLE_NAME = "Table7";
 
-export interface RackStatusChange {
+export type RackEditableField = "status" | "cabinetSize" | "detail" | "deviceType";
+
+/** One field's staged edit: what the UI believes is on disk right now
+ *  (`expected`, for the optimistic-concurrency check) and what to write
+ *  (`next`). Status's `next` is always one of the four canonical values
+ *  (enforced at the IPC boundary); the other three are free text (validated
+ *  real Table7 data - Cabinet Size is a "WxD cm" dimension string, Detail/
+ *  Device Type are free-form, including bare numeric codes in real data -
+ *  no controlled value list exists for any of them). */
+export interface RackFieldEdit {
+  expected: string | null;
+  next: string | null;
+}
+
+/** One rack's staged modification - any subset of its four editable fields.
+ *  Multiple field edits on the same rack are ONE change, applied atomically
+ *  per-row (matching the Editor's "one staged rack modification" UI model). */
+export interface RackFieldChange {
   /** Sheet row number, as returned by readRackCapacityFromBuffer's RackRecord.rowNumber. */
   rowNumber: number;
   rackId: string;
-  /** What the UI believes the status currently is (null = blank). Must match
-   *  the on-disk value or the change is rejected as a conflict. */
-  expectedStatus: string | null;
-  newStatus: string;
+  status?: RackFieldEdit;
+  cabinetSize?: RackFieldEdit;
+  detail?: RackFieldEdit;
+  deviceType?: RackFieldEdit;
 }
 
-export interface RackStatusChangeOutcome {
+export interface RackFieldChangeOutcome {
   rowNumber: number;
   rackId: string;
   applied: boolean;
   /** Present only when applied is false. */
-  conflictActualStatus?: string | null;
-  conflictReason?: "row_not_found" | "rack_id_mismatch" | "status_mismatch";
+  conflictField?: RackEditableField;
+  conflictActualValue?: string | null;
+  conflictReason?: "row_not_found" | "rack_id_mismatch" | "field_mismatch";
 }
 
 export interface RackCapacityWriteResult {
   buffer: Buffer;
-  outcomes: RackStatusChangeOutcome[];
+  outcomes: RackFieldChangeOutcome[];
   changedCount: number;
   imageEmbedded: boolean;
 }
@@ -229,9 +252,25 @@ async function locateTable7(zip: JSZip, sheetXmlPath: string): Promise<{
   };
 }
 
+/**
+ * Matches exactly one cell by ref, never bleeding into the next cell.
+ *
+ * ROOT CAUSE (found while testing Detail/Cabinet Size/Device Type, which can
+ * legitimately be blank, unlike Status): the attrs-consuming `[^>]*` was
+ * GREEDY. For a self-closing target cell (e.g. `<c r="E12" s="53"/>`)
+ * immediately followed by another cell (`<c r="F12" ...><v>92</v></c>`),
+ * greedy `[^>]*` overconsumes through the `/`, lands on the closing `>`,
+ * fails the `\/>` branch (no `/` left to match), then falls through to the
+ * `>...</c>` branch and matches all the way to the NEXT cell's `</c>` -
+ * silently returning the wrong cell's value/style. Verified via real
+ * Srinakarin data (row 12: blank Detail immediately followed by Device
+ * Type "Server" - a Detail read/conflict-check was returning "Server").
+ * Fix: make the real (non-lookahead) `[^>]*` LAZY, so self-closing cells
+ * stop at their own `/>` instead of overconsuming into the next tag.
+ */
 function cellRegex(ref: string): RegExp {
   const escaped = ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`<c\\b(?=[^>]*\\br="${escaped}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`);
+  return new RegExp(`<c\\b(?=[^>]*\\br="${escaped}")[^>]*?(?:\\/>|>[\\s\\S]*?<\\/c>)`);
 }
 
 function cellSharedStringIndex(cellXml: string): number | null {
@@ -259,185 +298,139 @@ function findOrAddSharedString(sharedStringsXml: string, text: string): { index:
   return { index: newIndex, xml };
 }
 
-export interface RackCapacityImageInput {
-  bytes: Buffer;
-  type: "png" | "jpeg";
-  width: number;
-  height: number;
-}
-
-const K9_ANCHOR_COL = 10; // K, 0-based (A=0)
-const K9_ANCHOR_ROW = 8; // row 9, 0-based
-const EMU_PER_PX = 9525;
-const MAX_DISPLAY_PX = 480;
-
-function nextPartIndex(zip: JSZip, pattern: RegExp): number {
-  let max = 0;
-  for (const name of Object.keys(zip.files)) {
-    const m = name.match(pattern);
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  return max + 1;
-}
-
-function displaySizePx(width: number, height: number): { width: number; height: number } {
-  if (width <= MAX_DISPLAY_PX && height <= MAX_DISPLAY_PX) return { width, height };
-  const scale = MAX_DISPLAY_PX / Math.max(width, height);
-  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
-}
-
-function ensureContentTypesForImage(contentTypesXml: string, extension: string, mimeType: string, drawingPath: string | null): string {
-  let xml = contentTypesXml;
-  if (!new RegExp(`<Default\\b[^>]*Extension="${extension}"`).test(xml)) {
-    xml = xml.replace(/<\/Types>/, `<Default Extension="${extension}" ContentType="${mimeType}"/></Types>`);
-  }
-  if (drawingPath && !xml.includes(`PartName="/${drawingPath}"`)) {
-    xml = xml.replace(
-      /<\/Types>/,
-      `<Override PartName="/${drawingPath}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>`
-    );
-  }
-  return xml;
-}
-
-function buildDrawingXml(cx: number, cy: number): string {
-  return (
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n` +
-    `<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
-    `<xdr:oneCellAnchor>` +
-    `<xdr:from><xdr:col>${K9_ANCHOR_COL}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${K9_ANCHOR_ROW}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>` +
-    `<xdr:ext cx="${cx}" cy="${cy}"/>` +
-    `<xdr:pic>` +
-    `<xdr:nvPicPr><xdr:cNvPr id="1" name="Rack Capacity Image"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>` +
-    `<xdr:blipFill><a:blip r:embed="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill>` +
-    `<xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr>` +
-    `</xdr:pic>` +
-    `<xdr:clientData/>` +
-    `</xdr:oneCellAnchor>` +
-    `</xdr:wsDr>`
-  );
-}
-
 /**
- * Embeds (or replaces) the single, designated Rack Capacity image - a real
- * Excel drawing anchored at K9, never a file path/filename/base64 string
- * written into a cell. K9 was confirmed empty and unmerged on both real
- * production workbooks, and neither workbook has any pre-existing drawing on
- * the Rack Capacity sheet, so the first embed always creates a fresh,
- * dedicated drawing part; a later replace reuses that same part and only
- * swaps its image relationship, so no unrelated drawing/chart anywhere else
- * in the workbook is ever touched.
+ * One-time, idempotent migration: relocates the single designated image
+ * from the old "Rack Capacity" K9 anchor to the new "Rack Unit Capacity"
+ * sheet (same K9 anchor - confirmed clear of the new sheet's 5-column A:E
+ * table on both real production workbooks). Preserves the exact binary
+ * bytes and display size (EMU/px round-trip is exact here since cx/cy were
+ * originally produced as Math.round(px) * EMU_PER_PX). The old drawing's
+ * part/rels/media/Content_Types entries are removed only after the new
+ * embed has fully succeeded (or is confirmed already done), so a mid-way
+ * failure can never leave the image orphaned on neither sheet. A true no-op
+ * once the old sheet's drawing relationship has been removed (i.e. every
+ * call after the first).
  */
-async function embedRackCapacityImage(zip: JSZip, sheetXmlPath: string, image: RackCapacityImageInput): Promise<void> {
-  const sheetFile = sheetXmlPath.replace(/^xl\/worksheets\//, "");
-  const relsPath = `xl/worksheets/_rels/${sheetFile}.rels`;
-  const sheetXml = await entryText(zip, sheetXmlPath);
-  if (!sheetXml) throw new Error(`Missing worksheet part ${sheetXmlPath}.`);
-  let relsXml = (await entryText(zip, relsPath)) ?? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`;
+export async function migrateRackCapacityImageToUnitCapacity(zip: JSZip): Promise<boolean> {
+  const oldSheetXmlPath = await locateRackCapacitySheetXmlPath(zip);
+  if (!oldSheetXmlPath) return false;
+  const oldSheetFile = oldSheetXmlPath.replace(/^xl\/worksheets\//, "");
+  const oldRelsPath = `xl/worksheets/_rels/${oldSheetFile}.rels`;
+  const oldRelsXml = await entryText(zip, oldRelsPath);
+  if (!oldRelsXml) return false;
 
-  let existingDrawingTarget: string | null = null;
-  for (const m of relsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
+  let oldDrawingRid: string | null = null;
+  let oldDrawingTarget: string | null = null;
+  for (const m of oldRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
     if (getAttr(m[1], "Type")?.endsWith("/drawing")) {
-      existingDrawingTarget = getAttr(m[1], "Target");
+      oldDrawingRid = getAttr(m[1], "Id");
+      oldDrawingTarget = getAttr(m[1], "Target");
       break;
     }
   }
+  if (!oldDrawingRid || !oldDrawingTarget) return false; // nothing to migrate - already done, or never had one
 
-  const ext = image.type;
-  const mimeType = image.type === "png" ? "image/png" : "image/jpeg";
-  const { width: dispW, height: dispH } = displaySizePx(image.width, image.height);
-  const cx = dispW * EMU_PER_PX;
-  const cy = dispH * EMU_PER_PX;
+  const oldDrawingPath = resolveRelationshipTarget("xl/worksheets", oldDrawingTarget);
+  const oldDrawingFile = oldDrawingPath.replace(/^xl\/drawings\//, "");
+  const oldDrawingRelsPath = `xl/drawings/_rels/${oldDrawingFile}.rels`;
+  const oldDrawingXml = await entryText(zip, oldDrawingPath);
+  const oldDrawingRelsXml = await entryText(zip, oldDrawingRelsPath);
+  if (!oldDrawingXml || !oldDrawingRelsXml) return false;
 
-  const mediaIndex = nextPartIndex(zip, /^xl\/media\/image(\d+)\.(?:png|jpeg|jpg)$/);
-  const mediaPath = `xl/media/image${mediaIndex}.${ext}`;
-
-  if (existingDrawingTarget) {
-    // Replace: reuse the same, already-dedicated drawing part; only its
-    // image relationship (and displayed size, if the new image's aspect
-    // ratio differs) changes.
-    const drawingPath = `xl/drawings/${existingDrawingTarget.replace(/^(\.\.\/)?drawings\//, "")}`;
-    const drawingFile = drawingPath.replace(/^xl\/drawings\//, "");
-    const drawingRelsPath = `xl/drawings/_rels/${drawingFile}.rels`;
-    const drawingXml = await entryText(zip, drawingPath);
-    const drawingRelsXml = await entryText(zip, drawingRelsPath);
-    if (!drawingXml || !drawingRelsXml) throw new Error("Rack Capacity image drawing part is missing its expected rels.");
-
-    let oldMediaTarget: string | null = null;
-    for (const m of drawingRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
-      if (getAttr(m[1], "Type")?.endsWith("/image")) {
-        oldMediaTarget = getAttr(m[1], "Target");
-        break;
-      }
+  let oldMediaTarget: string | null = null;
+  for (const m of oldDrawingRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
+    if (getAttr(m[1], "Type")?.endsWith("/image")) {
+      oldMediaTarget = getAttr(m[1], "Target");
+      break;
     }
-    zip.file(mediaPath, image.bytes);
-    if (oldMediaTarget) {
-      const oldMediaPath = `xl/media/${oldMediaTarget.replace(/^(\.\.\/)?media\//, "")}`;
-      if (oldMediaPath !== mediaPath) zip.remove(oldMediaPath);
-    }
-    const patchedDrawingRels = drawingRelsXml.replace(/Target="[^"]*media\/[^"]*"/, `Target="../media/image${mediaIndex}.${ext}"`);
-    zip.file(drawingRelsPath, patchedDrawingRels);
-    const patchedDrawing = drawingXml
-      .replace(/<xdr:ext\b[^>]*\/>/, `<xdr:ext cx="${cx}" cy="${cy}"/>`)
-      .replace(/<a:ext\b[^>]*\/>/, `<a:ext cx="${cx}" cy="${cy}"/>`);
-    zip.file(drawingPath, patchedDrawing);
+  }
+  const extMatch = oldMediaTarget?.match(/\.(png|jpe?g)$/i);
+  const extentMatch = oldDrawingXml.match(/<xdr:ext cx="(\d+)" cy="(\d+)"\/>/);
+  if (!oldMediaTarget || !extMatch || !extentMatch) return false;
 
-    const contentTypesXml = await entryText(zip, "[Content_Types].xml");
-    if (contentTypesXml) zip.file("[Content_Types].xml", ensureContentTypesForImage(contentTypesXml, ext, mimeType, null));
-    return;
+  const oldMediaPath = resolveRelationshipTarget("xl/drawings", oldMediaTarget);
+  const mediaFile = zip.file(oldMediaPath);
+  if (!mediaFile) return false;
+
+  const type: "png" | "jpeg" = extMatch[1].toLowerCase() === "png" ? "png" : "jpeg";
+  const cx = Number(extentMatch[1]);
+  const cy = Number(extentMatch[2]);
+
+  const { xmlPath: newSheetXmlPath } = await ensureRackUnitCapacitySheet(zip);
+  const newSheetFile = newSheetXmlPath.replace(/^xl\/worksheets\//, "");
+  const newRelsPath = `xl/worksheets/_rels/${newSheetFile}.rels`;
+  const newRelsXml = await entryText(zip, newRelsPath);
+  const newAlreadyHasImage = newRelsXml
+    ? [...newRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)].some(m => getAttr(m[1], "Type")?.endsWith("/drawing"))
+    : false;
+
+  if (!newAlreadyHasImage) {
+    const bytes = await mediaFile.async("nodebuffer");
+    const dispWidth = Math.round(cx / EMU_PER_PX);
+    const dispHeight = Math.round(cy / EMU_PER_PX);
+    await embedRackCapacityImage(zip, newSheetXmlPath, { bytes, type, width: dispWidth, height: dispHeight });
   }
 
-  // Create: brand-new, dedicated drawing part for this sheet only.
-  const drawingIndex = nextPartIndex(zip, /^xl\/drawings\/drawing(\d+)\.xml$/);
-  const drawingPath = `xl/drawings/drawing${drawingIndex}.xml`;
-  const drawingRelsPath = `xl/drawings/_rels/drawing${drawingIndex}.xml.rels`;
-
-  zip.file(mediaPath, image.bytes);
-  zip.file(drawingPath, buildDrawingXml(cx, cy));
-  zip.file(
-    drawingRelsPath,
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
-      `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${mediaIndex}.${ext}"/>` +
-      `</Relationships>`
-  );
-
-  const existingRelIds = [...relsXml.matchAll(/<Relationship\b([^>]*)\/>/g)]
-    .map(m => parseInt((getAttr(m[1], "Id") ?? "rId0").replace("rId", ""), 10))
-    .filter(Number.isFinite);
-  const newRid = `rId${(existingRelIds.length > 0 ? Math.max(...existingRelIds) : 0) + 1}`;
-  relsXml = relsXml.replace(
-    /<\/Relationships>/,
-    `<Relationship Id="${newRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${drawingIndex}.xml"/></Relationships>`
-  );
-  zip.file(relsPath, relsXml);
-
-  // <drawing> must precede <tableParts> in CT_Worksheet's element sequence
-  // (both real production sheets end "...</headerFooter><tableParts ...").
-  // Fall back to inserting right before </worksheet> if that anchor is ever
-  // absent, rather than guessing a different position.
-  const drawingEl = `<drawing r:id="${newRid}"/>`;
-  const patchedSheetXml = /<tableParts\b/.test(sheetXml)
-    ? sheetXml.replace(/<tableParts\b/, `${drawingEl}<tableParts`)
-    : sheetXml.replace("</worksheet>", `${drawingEl}</worksheet>`);
-  zip.file(sheetXmlPath, patchedSheetXml);
-
+  // Only now remove the old drawing/media/rels/Content_Types entries - the
+  // new embed above has either just succeeded or was already in place.
+  zip.remove(oldDrawingPath);
+  zip.remove(oldDrawingRelsPath);
+  zip.remove(oldMediaPath);
+  zip.file(oldRelsPath, oldRelsXml.replace(new RegExp(`<Relationship\\b[^>]*\\bId="${oldDrawingRid}"[^>]*\\/>`), ""));
+  const oldSheetXml = await entryText(zip, oldSheetXmlPath);
+  if (oldSheetXml) {
+    const strippedSheet = oldSheetXml.replace(new RegExp(`<drawing r:id="${oldDrawingRid}"\\/>`), "");
+    if (strippedSheet !== oldSheetXml) zip.file(oldSheetXmlPath, strippedSheet);
+  }
   const contentTypesXml = await entryText(zip, "[Content_Types].xml");
-  if (contentTypesXml) zip.file("[Content_Types].xml", ensureContentTypesForImage(contentTypesXml, ext, mimeType, drawingPath));
+  if (contentTypesXml) {
+    const escapedPath = oldDrawingPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const strippedContentTypes = contentTypesXml.replace(new RegExp(`<Override PartName="/${escapedPath}"[^>]*\\/>`), "");
+    if (strippedContentTypes !== contentTypesXml) zip.file("[Content_Types].xml", strippedContentTypes);
+  }
+
+  return true;
+}
+
+function normalizeFieldValue(value: string | null | undefined): string | null {
+  return value && value.trim() !== "" ? value.trim() : null;
+}
+
+/** Reads a Table7 cell's text value regardless of storage type - shared
+ *  string (t="s", the predominant real-world form for these columns),
+ *  inline string (t="inlineStr"), or a bare number (no t attribute - a small
+ *  number of real Detail/Device Type rows hold numeric-looking codes stored
+ *  as plain numbers, per the verified production data). */
+function readFieldCellValue(cellMatch: RegExpMatchArray | null, sharedStrings: string[]): string | null {
+  if (!cellMatch) return null;
+  const cellXml = cellMatch[0];
+  if (/\bt="s"/.test(cellXml)) {
+    const index = cellSharedStringIndex(cellXml);
+    return index !== null ? sharedStrings[index] ?? null : null;
+  }
+  if (/\bt="inlineStr"/.test(cellXml)) {
+    const t = cellXml.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+    return t ? xmlUnescape(t[1]) : null;
+  }
+  const v = cellXml.match(/<v>([\s\S]*?)<\/v>/);
+  return v ? v[1] : null;
 }
 
 /**
- * Applies status changes to Table7, verifying each row's current Rack ID and
- * Status against the caller's expectation before writing (rows that drifted
- * since the UI last read them are reported as conflicts, not silently
- * overwritten). Only the Status cell's `<v>` (shared-string index) is
- * touched; the cell's existing style/format is preserved untouched. Every
- * other worksheet, table, pivot, chart, and VBA part is left byte-for-byte
- * alone - this never goes through the generic patchWorkbookBuffer/
+ * Applies field changes (Status/Cabinet Size/Detail/Device Type) to Table7,
+ * verifying each row's current Rack ID and every CHANGED field's expected
+ * value against the caller's expectation before writing any of them (rows
+ * that drifted since the UI last read them are reported as a conflict on
+ * that specific field, not silently overwritten - and no field on that row
+ * is written if any one of its changed fields conflicts). Only the touched
+ * cells' `<v>`/shared-string reference are rewritten; every other
+ * worksheet, table, pivot, chart, and VBA part is left byte-for-byte alone -
+ * this never goes through the generic patchWorkbookBuffer/
  * patchSrinakarinWorkbookBuffer save path.
  */
-export async function applyRackCapacityStatusChanges(
+export async function applyRackCapacityFieldChanges(
   original: Buffer,
-  changes: RackStatusChange[],
+  changes: RackFieldChange[],
   image?: RackCapacityImageInput | null
 ): Promise<RackCapacityWriteResult> {
   const zip = await JSZip.loadAsync(original);
@@ -457,8 +450,9 @@ export async function applyRackCapacityStatusChanges(
     return t ? xmlUnescape(t[1]) : "";
   });
 
-  const outcomes: RackStatusChangeOutcome[] = [];
+  const outcomes: RackFieldChangeOutcome[] = [];
   let changedCount = 0;
+  const FIELDS: RackEditableField[] = ["status", "cabinetSize", "detail", "deviceType"];
 
   for (const change of changes) {
     if (change.rowNumber < table.firstDataRow || change.rowNumber > table.lastDataRow) {
@@ -466,51 +460,75 @@ export async function applyRackCapacityStatusChanges(
       continue;
     }
     const rackIdRef = `${table.columns.rackId}${change.rowNumber}`;
-    const statusRef = `${table.columns.status}${change.rowNumber}`;
     const rackIdCellMatch: RegExpMatchArray | null = sheetXml.match(cellRegex(rackIdRef));
-    const statusCellMatch: RegExpMatchArray | null = sheetXml.match(cellRegex(statusRef));
     if (!rackIdCellMatch) {
       outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "row_not_found" });
       continue;
     }
-    const rackIdIndex = cellSharedStringIndex(rackIdCellMatch[0]);
-    const actualRackId = rackIdIndex !== null ? sharedStrings[rackIdIndex] ?? null : null;
-    if ((actualRackId ?? "").trim() !== change.rackId.trim()) {
-      outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "rack_id_mismatch", conflictActualStatus: null });
-      continue;
-    }
-    const statusIndex = statusCellMatch ? cellSharedStringIndex(statusCellMatch[0]) : null;
-    const actualStatus = statusIndex !== null ? sharedStrings[statusIndex] ?? null : null;
-    const normalizedActual = actualStatus && actualStatus.trim() !== "" ? actualStatus.trim() : null;
-    const normalizedExpected = change.expectedStatus && change.expectedStatus.trim() !== "" ? change.expectedStatus.trim() : null;
-    if (normalizedActual !== normalizedExpected) {
-      outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "status_mismatch", conflictActualStatus: normalizedActual });
-      continue;
-    }
-    if (normalizedActual === change.newStatus.trim()) {
-      // Already the target value - a true no-op, not a conflict.
-      outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: true });
+    const actualRackId = readFieldCellValue(rackIdCellMatch, sharedStrings);
+    if (normalizeFieldValue(actualRackId) !== normalizeFieldValue(change.rackId)) {
+      outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "rack_id_mismatch" });
       continue;
     }
 
-    const { index: newSharedIndex, xml: patchedSharedStrings } = findOrAddSharedString(sharedStringsXml, change.newStatus.trim());
-    sharedStringsXml = patchedSharedStrings;
-    if (!sharedStrings[newSharedIndex]) sharedStrings[newSharedIndex] = change.newStatus.trim();
+    // Verify EVERY changed field's expected value before writing ANY of
+    // them - a conflict on one field must not leave the row half-written.
+    let conflict: { field: RackEditableField; actual: string | null } | null = null;
+    for (const field of FIELDS) {
+      const edit = change[field];
+      if (!edit) continue;
+      const ref = `${table.columns[field]}${change.rowNumber}`;
+      const cellMatch: RegExpMatchArray | null = sheetXml.match(cellRegex(ref));
+      const actual = normalizeFieldValue(readFieldCellValue(cellMatch, sharedStrings));
+      if (actual !== normalizeFieldValue(edit.expected)) {
+        conflict = { field, actual };
+        break;
+      }
+    }
+    if (conflict) {
+      outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "field_mismatch", conflictField: conflict.field, conflictActualValue: conflict.actual });
+      continue;
+    }
 
-    if (statusCellMatch) {
-      const replaced: string = statusCellMatch[0].replace(/<v>\d*<\/v>/, `<v>${newSharedIndex}</v>`);
-      sheetXml = sheetXml.replace(statusCellMatch[0], replaced);
-    } else {
-      // Cell did not exist (blank status) - insert a new <c> into its row.
-      const rowMatch: RegExpMatchArray | null = sheetXml.match(new RegExp(`<row r="${change.rowNumber}"[^>]*>([\\s\\S]*?)<\\/row>`));
-      if (!rowMatch) {
-        outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "row_not_found" });
+    for (const field of FIELDS) {
+      const edit = change[field];
+      if (!edit) continue;
+      const nextValue = normalizeFieldValue(edit.next);
+      const currentValue = normalizeFieldValue(edit.expected);
+      if (nextValue === currentValue) continue; // already the target value
+
+      const ref = `${table.columns[field]}${change.rowNumber}`;
+      const cellMatch: RegExpMatchArray | null = sheetXml.match(cellRegex(ref));
+      if (nextValue === null) {
+        // Clearing to blank: drop the value/type, keep the cell (and its style) in place.
+        if (cellMatch) {
+          const styleAttr = cellMatch[0].match(/\bs="\d+"/)?.[0];
+          sheetXml = sheetXml.replace(cellMatch[0], `<c r="${ref}"${styleAttr ? ` ${styleAttr}` : ""}/>`);
+        }
+        changedCount++;
         continue;
       }
-      const newCell = `<c r="${statusRef}" t="s"><v>${newSharedIndex}</v></c>`;
-      sheetXml = sheetXml.replace(rowMatch[0], rowMatch[0].replace("</row>", `${newCell}</row>`));
+      const { index: newSharedIndex, xml: patchedSharedStrings } = findOrAddSharedString(sharedStringsXml, nextValue);
+      sharedStringsXml = patchedSharedStrings;
+      if (!sharedStrings[newSharedIndex]) sharedStrings[newSharedIndex] = nextValue;
+
+      if (cellMatch && /\bt="s"/.test(cellMatch[0])) {
+        const replaced: string = cellMatch[0].replace(/<v>\d*<\/v>/, `<v>${newSharedIndex}</v>`);
+        sheetXml = sheetXml.replace(cellMatch[0], replaced);
+      } else if (cellMatch) {
+        // Existing cell was inline-string/numeric typed - normalize to a shared-string cell, preserving its style.
+        const styleAttr = cellMatch[0].match(/\bs="\d+"/)?.[0];
+        const replacement = `<c r="${ref}"${styleAttr ? ` ${styleAttr}` : ""} t="s"><v>${newSharedIndex}</v></c>`;
+        sheetXml = sheetXml.replace(cellMatch[0], replacement);
+      } else {
+        // Cell did not exist (blank) - insert a new <c> into its row.
+        const rowMatch: RegExpMatchArray | null = sheetXml.match(new RegExp(`<row r="${change.rowNumber}"[^>]*>([\\s\\S]*?)<\\/row>`));
+        if (!rowMatch) continue;
+        const newCell = `<c r="${ref}" t="s"><v>${newSharedIndex}</v></c>`;
+        sheetXml = sheetXml.replace(rowMatch[0], rowMatch[0].replace("</row>", `${newCell}</row>`));
+      }
+      changedCount++;
     }
-    changedCount++;
     outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: true });
   }
 
@@ -534,9 +552,16 @@ export async function applyRackCapacityStatusChanges(
     }
   }
 
+  // One-time, idempotent relocation of any pre-v2.2.3 image still sitting on
+  // the old "Rack Capacity" K9 anchor - runs on every save (cheap no-op once
+  // done) so a plain field-only edit still completes the migration, not only
+  // a save that happens to include a fresh image upload.
+  await migrateRackCapacityImageToUnitCapacity(zip);
+
   let imageEmbedded = false;
   if (image) {
-    await embedRackCapacityImage(zip, sheetXmlPath, image);
+    const { xmlPath: rackUnitCapacitySheetPath } = await ensureRackUnitCapacitySheet(zip);
+    await embedRackCapacityImage(zip, rackUnitCapacitySheetPath, image);
     imageEmbedded = true;
   }
 
@@ -551,7 +576,7 @@ export async function applyRackCapacityStatusChanges(
 export interface RackCapacitySaveResult {
   path: string;
   backupPath: string | null;
-  outcomes: RackStatusChangeOutcome[];
+  outcomes: RackFieldChangeOutcome[];
   changedCount: number;
   imageEmbedded: boolean;
   savedAt: string;
@@ -571,12 +596,17 @@ export interface RackCapacitySaveResult {
  * null - a read-only/no-op attempt must never appear as a save in the
  * backup history.
  */
-export async function saveRackCapacityStatusChanges(
+export async function saveRackCapacityFieldChanges(
   filePath: string,
-  changes: RackStatusChange[],
+  changes: RackFieldChange[],
   options: { backupDir: string; backupKeep: number },
   image?: RackCapacityImageInput | null,
-  facilityId?: string | null
+  facilityId?: string | null,
+  /** Explicit "YYYY-MM" for the History snapshot this save should upsert -
+   *  the Editor's own Month/Year selector, not a silent system-month
+   *  assumption. Falls back to getActiveReportingMonth (the pre-v2.2.3
+   *  behavior) only when omitted, for backward compatibility. */
+  snapshotMonth?: string | null
 ): Promise<RackCapacitySaveResult> {
   let original: Buffer;
   try {
@@ -590,7 +620,7 @@ export async function saveRackCapacityStatusChanges(
     throw new WorkbookError("LOCKED", "The workbook is currently open in Excel (or another program). Close it and retry.", "lock");
   }
 
-  const { buffer: statusBuffer, outcomes, changedCount, imageEmbedded } = await applyRackCapacityStatusChanges(original, changes, image);
+  const { buffer: statusBuffer, outcomes, changedCount, imageEmbedded } = await applyRackCapacityFieldChanges(original, changes, image);
 
   if (changedCount === 0 && !imageEmbedded) {
     const rackCapacity = await readRackCapacityFromBuffer(original);
@@ -609,7 +639,7 @@ export async function saveRackCapacityStatusChanges(
   if (facilityId) {
     try {
       const zipForMonth = await JSZip.loadAsync(statusBuffer);
-      const month = await getActiveReportingMonth(zipForMonth);
+      const month = snapshotMonth ?? (await getActiveReportingMonth(zipForMonth));
       if (month) {
         const postSaveRackCapacity = await readRackCapacityFromBuffer(statusBuffer);
         if (postSaveRackCapacity) {

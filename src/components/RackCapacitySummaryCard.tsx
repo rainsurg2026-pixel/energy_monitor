@@ -97,13 +97,13 @@ export default function RackCapacitySummaryCard({ rackCapacity = null, lang = "e
       <div className="flex items-start gap-3">
         <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400"><Server className="w-5 h-5" /></div>
         <div>
-          <h3 className="text-base text-slate-100">{lang === "th" ? "ภาพรวมความจุแร็ค" : "Rack Capacity Overview"}</h3>
-          <p className="text-xs text-slate-400 mt-1">{lang === "th" ? "สรุปจากชีท Rack Capacity / Table7" : "Summary from Rack Capacity / Table7"}</p>
+          <h3 className="text-base text-slate-100">{lang === "th" ? "ความจุแร็คและการใช้งาน" : "Rack Capacity and Utilization"}</h3>
+          <p className="text-xs text-slate-400 mt-1">{lang === "th" ? "สรุปความจุ สถานะ และการใช้งานแร็ค" : "Rack capacity, status and utilization summary"}</p>
         </div>
       </div>
 
       {!rackCapacity ? (
-        <p className="text-sm text-slate-500">{lang === "th" ? "ไม่พบ Rack Capacity / Table7 ใน Workbook ปัจจุบัน" : "Rack Capacity / Table7 is unavailable in the current workbook."}</p>
+        <p className="text-sm text-slate-500">{lang === "th" ? "ไม่พบข้อมูลความจุแร็คในเวิร์กบุ๊กปัจจุบัน" : "Rack capacity data is unavailable in the current workbook."}</p>
       ) : (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">

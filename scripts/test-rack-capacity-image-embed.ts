@@ -4,7 +4,7 @@ import crypto from "node:crypto";
 import zlib from "node:zlib";
 import JSZip from "jszip";
 import ExcelJS from "exceljs";
-import { applyRackCapacityStatusChanges } from "../src/excel/RackCapacityWriter";
+import { applyRackCapacityFieldChanges } from "../src/excel/RackCapacityWriter";
 
 let failures = 0;
 function check(name: string, condition: boolean, detail = ""): void {
@@ -79,7 +79,7 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
 
   // ---- First embed: create ----
   const png1 = makeValidPng(400, 200, [200, 60, 60]);
-  const result1 = await applyRackCapacityStatusChanges(original, [], { bytes: png1, type: "png", width: 400, height: 200 });
+  const result1 = await applyRackCapacityFieldChanges(original, [], { bytes: png1, type: "png", width: 400, height: 200 });
   check(`${label}: first embed reports imageEmbedded`, result1.imageEmbedded === true);
   const zip1 = await JSZip.loadAsync(result1.buffer);
   const newDrawingNames = Object.keys(zip1.files).filter(n => /^xl\/drawings\/drawing\d+\.xml$/.test(n) && !beforeDrawingNames.has(n));
@@ -116,7 +116,7 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
 
   // ---- Second embed: replace (different image, different aspect ratio) ----
   const png2 = makeValidPng(100, 300, [40, 160, 90]);
-  const result2 = await applyRackCapacityStatusChanges(result1.buffer, [], { bytes: png2, type: "png", width: 100, height: 300 });
+  const result2 = await applyRackCapacityFieldChanges(result1.buffer, [], { bytes: png2, type: "png", width: 100, height: 300 });
   const zip2 = await JSZip.loadAsync(result2.buffer);
   const drawingNamesAfterReplace = Object.keys(zip2.files).filter(n => /^xl\/drawings\/drawing\d+\.xml$/.test(n) && !beforeDrawingNames.has(n));
   check(`${label}: replace reuses the SAME drawing part (no duplicate)`, drawingNamesAfterReplace.length === 1 && drawingNamesAfterReplace[0] === rackDrawingPath, JSON.stringify(drawingNamesAfterReplace));
@@ -141,7 +141,7 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
 
   // ---- Oversized image is downscaled but keeps aspect ratio, never distorted ----
   const png3 = makeValidPng(1600, 800, [10, 10, 200]);
-  const result3 = await applyRackCapacityStatusChanges(result2.buffer, [], { bytes: png3, type: "png", width: 1600, height: 800 });
+  const result3 = await applyRackCapacityFieldChanges(result2.buffer, [], { bytes: png3, type: "png", width: 1600, height: 800 });
   const zip3 = await JSZip.loadAsync(result3.buffer);
   const drawingXml3 = await zip3.file(rackDrawingPath)!.async("string");
   const extMatch = drawingXml3.match(/<xdr:ext cx="(\d+)" cy="(\d+)"\/>/)!;

@@ -10,6 +10,7 @@ import type { DeviceLists } from "../excel/SheetMapper";
 import { readUpsMappingFromBuffer } from "./upsMappingReader";
 import { readRackCapacityFromBuffer } from "./rackCapacityReader";
 import { readRackCapacityHistoryFromBuffer } from "../excel/RackCapacityHistoryWriter";
+import { readRackUnitCapacityFromBuffer, readRackUnitCapacityImageFromBuffer } from "../excel/RackUnitCapacityWriter";
 import type { ReportComparisonFacility, ReportData, ReportMonthlyRow, ReportStatus } from "./reportTypes";
 
 export interface BuildReportOptions {
@@ -87,6 +88,19 @@ export async function buildReportData(options: BuildReportOptions): Promise<Repo
   } catch {
     /* history sheet not yet created for this workbook */
   }
+  let rackUnitCapacity: ReportData["rackUnitCapacity"] = [];
+  try {
+    rackUnitCapacity = await readRackUnitCapacityFromBuffer(buffer);
+  } catch {
+    /* Rack Unit Capacity sheet not yet created for this workbook */
+  }
+  let rackUnitCapacityImageDataUri: string | null = null;
+  try {
+    const image = await readRackUnitCapacityImageFromBuffer(buffer);
+    if (image) rackUnitCapacityImageDataUri = `data:${image.mimeType};base64,${image.bytes.toString("base64")}`;
+  } catch {
+    /* no Rack Unit Capacity Image embedded, or unreadable - PDF just omits it */
+  }
 
   let comparison: ReportData["comparison"] = null;
   if (currentRow) {
@@ -146,6 +160,8 @@ export async function buildReportData(options: BuildReportOptions): Promise<Repo
     engineeringDashboard,
     rack,
     rackHistory,
+    rackUnitCapacity,
+    rackUnitCapacityImageDataUri,
     comparison
   };
 }

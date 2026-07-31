@@ -7,7 +7,18 @@
 import { MonthlyLog } from "../types";
 import type { DesktopBridge, DeviceLists, IpcResult, OpenWorkbookPayload } from "../desktop";
 import type { UpsGroupConfig } from "../utils/upsGroupAggregation";
-import { DataSnapshot, IDataProvider, ProviderCapabilities, ProviderError, RackCapacityImageRequest, RackCapacitySaveOutcome, RackStatusChangeRequest, SaveOutcome } from "./IDataProvider";
+import {
+  DataSnapshot,
+  IDataProvider,
+  ProviderCapabilities,
+  ProviderError,
+  RackCapacityImageRequest,
+  RackCapacitySaveOutcome,
+  RackFieldChangeRequest,
+  RackUnitCapacityInputRequest,
+  RackUnitCapacitySaveOutcome,
+  SaveOutcome
+} from "./IDataProvider";
 
 /**
  * Convert an IPC envelope into either its success payload or a thrown
@@ -36,7 +47,8 @@ function toSnapshot(payload: OpenWorkbookPayload): DataSnapshot {
     upsMapping: payload.upsMapping,
     upsMappingError: payload.upsMappingError,
     upsGroupHistory: payload.upsGroupHistory,
-    rackCapacityHistory: payload.rackCapacityHistory
+    rackCapacityHistory: payload.rackCapacityHistory,
+    rackUnitCapacity: payload.rackUnitCapacity
   };
 }
 
@@ -154,13 +166,18 @@ export class ExcelProvider implements IDataProvider {
     return { savedAt: saved.savedAt, backupPath: saved.backupPath, path: saved.path };
   }
 
-  async saveRackCapacity(changes: RackStatusChangeRequest[], image?: RackCapacityImageRequest | null): Promise<RackCapacitySaveOutcome> {
+  async saveRackCapacity(
+    changes: RackFieldChangeRequest[],
+    image?: RackCapacityImageRequest | null,
+    snapshotMonth?: string | null
+  ): Promise<RackCapacitySaveOutcome> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
     const result = unwrap(await this.bridge.excel.saveRackCapacity({
       path: this.currentPath,
       changes,
       image: image ? { bytes: image.bytes } : null,
-      facilityId: this.upsGroupContext?.facilityId ?? null
+      facilityId: this.upsGroupContext?.facilityId ?? null,
+      snapshotMonth
     }));
     return {
       savedAt: result.savedAt,
@@ -170,6 +187,24 @@ export class ExcelProvider implements IDataProvider {
       imageEmbedded: result.imageEmbedded,
       rackCapacity: result.rackCapacity,
       rackCapacityHistory: result.rackCapacityHistory
+    };
+  }
+
+  async saveRackUnitCapacity(
+    input: RackUnitCapacityInputRequest,
+    image?: RackCapacityImageRequest | null
+  ): Promise<RackUnitCapacitySaveOutcome> {
+    if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
+    const result = unwrap(await this.bridge.excel.saveRackUnitCapacity({
+      path: this.currentPath,
+      input,
+      image: image ? { bytes: image.bytes } : null
+    }));
+    return {
+      savedAt: result.savedAt,
+      backupPath: result.backupPath,
+      imageEmbedded: result.imageEmbedded,
+      rows: result.rows
     };
   }
 

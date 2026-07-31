@@ -48,35 +48,24 @@ import { calculateAverageElectricityRate, calculateEnergyCostForMonth, getAirVal
 import { calculateSrinakarinAggregate } from "../utils/srinakarinPower";
 import { patchUpsGroupHistoryBuffer } from "./UpsGroupHistoryWriter";
 import type { UpsGroupConfig } from "../utils/upsGroupAggregation";
+import {
+  WorkbookError,
+  entryText,
+  ensureExactCellFormatStyles,
+  getAttr,
+  workbookMonthSerial,
+  workbookUsesDate1904
+} from "./ExcelZipUtils";
+import type { SaveFailureStage, WorkbookErrorCode } from "./ExcelZipUtils";
 
-export type WorkbookErrorCode =
-  | "NOT_FOUND"
-  | "LOCKED"
-  | "INVALID_WORKBOOK"
-  | "VALIDATION_FAILED"
-  | "WRITE_FAILED";
-
-/**
- * Which step of saveWorkbook actually failed, in save-pipeline order. Set
- * only by saveWorkbook's own throw sites - open/read errors elsewhere in
- * this file leave it undefined. Lets the renderer's save-progress UI report
- * the real point of failure instead of guessing from the last stage it
- * optimistically marked as "in progress" (proven wrong: a LOCKED failure at
- * the pre-backup lock check was displayed with "Creating Backup" checked
- * off, even though zero backup was ever written).
- */
-export type SaveFailureStage = "read" | "validate" | "lock" | "backup" | "write";
-
-export class WorkbookError extends Error {
-  code: WorkbookErrorCode;
-  stage?: SaveFailureStage;
-  constructor(code: WorkbookErrorCode, message: string, stage?: SaveFailureStage) {
-    super(message);
-    this.name = "WorkbookError";
-    this.code = code;
-    this.stage = stage;
-  }
-}
+// Re-exported for existing external consumers (src/electron/ipc/excel.ts,
+// src/electron/sync/BackupManager.ts, src/excel/RackCapacityWriter.ts) that
+// import these by name from "./WorkbookWriter" - their definitions now live
+// in ExcelZipUtils.ts so RackCapacityHistoryWriter.ts (which is reachable
+// from the renderer bundle via reportDataBuilder.ts) never has to import
+// this file's fs/path/ExcelJS dependencies just for pure XML/date helpers.
+export { WorkbookError };
+export type { SaveFailureStage, WorkbookErrorCode };
 
 // ---------------------------------------------------------------------------
 // XML helpers
@@ -115,11 +104,6 @@ function indexToColLetter(index: number): string {
     n = Math.floor((n - 1) / 26);
   }
   return s;
-}
-
-function getAttr(tagAttrs: string, name: string): string | null {
-  const m = tagAttrs.match(new RegExp(`(?:^|\\s)${name}="([^"]*)"`));
-  return m ? m[1] : null;
 }
 
 interface ParsedCell {
@@ -175,73 +159,6 @@ function parseSharedStrings(xml: string | null): string[] {
     strings.push(xmlUnescape(text));
   }
   return strings;
-}
-
-async function ensureExactCellFormatStyles(
-  zip: JSZip,
-  sourceStyleIds: Iterable<string>,
-  formatCode: string
-): Promise<Map<string, string>> {
-  const stylesXml = await entryText(zip, "xl/styles.xml");
-  if (!stylesXml) throw new WorkbookError("INVALID_WORKBOOK", "Workbook is missing styles.xml.");
-
-  const numFmtMatches = [...stylesXml.matchAll(/<numFmt\b([^>]*)\/>/g)];
-  const formatMatch = numFmtMatches.find(match => getAttr(match[1], "formatCode") === formatCode);
-  let patchedStyles = stylesXml;
-  let numFmtId = formatMatch ? getAttr(formatMatch[1], "numFmtId") : null;
-  if (!numFmtId) {
-    const ids = numFmtMatches
-      .map(match => Number(getAttr(match[1], "numFmtId")))
-      .filter(Number.isFinite);
-    numFmtId = String(Math.max(163, ...ids) + 1);
-    const numFmt = `<numFmt numFmtId="${numFmtId}" formatCode="${formatCode}"/>`;
-    if (/<numFmts\b[^>]*>/.test(patchedStyles)) {
-      patchedStyles = patchedStyles.replace(/(<numFmts\b[^>]*>)/, `$1${numFmt}`);
-      patchedStyles = patchedStyles.replace(/(<numFmts\b[^>]*\bcount=")\d+("[^>]*>)/, (_all, pre, post) => {
-        const current = Number((_all.match(/count="(\d+)"/) ?? ["", "0"])[1]);
-        return `${pre}${current + 1}${post}`;
-      });
-    } else {
-      patchedStyles = patchedStyles.replace(/(<fonts\b)/, `<numFmts count="1">${numFmt}</numFmts>$1`);
-    }
-  }
-
-  const cellXfsMatch = patchedStyles.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/);
-  if (!cellXfsMatch) throw new WorkbookError("INVALID_WORKBOOK", "Workbook styles.xml is missing cellXfs.");
-  const xfXml = cellXfsMatch[1];
-  const xfNodes = [...xfXml.matchAll(/<xf\b[^>]*\/>|<xf\b[^>]*>[\s\S]*?<\/xf>/g)].map(match => match[0]);
-  const makeStyle = (sourceIndex: number): string => {
-    const source = xfNodes[sourceIndex] ?? `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>`;
-    const openingTagMatch = source.match(/^<xf\b[^>]*(?:\/>|>)/);
-    if (!openingTagMatch) return source;
-    const openingTag = openingTagMatch[0];
-    const withNumberFormat = /\bnumFmtId=/.test(openingTag)
-      ? openingTag.replace(/\bnumFmtId="[^"]*"/, `numFmtId="${numFmtId}"`)
-      : openingTag.replace(/\/?>(?:$)/, ` numFmtId="${numFmtId}"$&`);
-    const patchedOpening = withNumberFormat.replace(/\bapplyNumberFormat="[^"]*"/, "applyNumberFormat=\"1\"");
-    const withApply = /\bapplyNumberFormat="1"/.test(patchedOpening)
-      ? patchedOpening
-      : patchedOpening.replace(/\/?>(?:$)/, ` applyNumberFormat="1"$&`);
-    return withApply + source.slice(openingTag.length);
-  };
-  const styleOverrides = new Map<string, string>();
-  const addedStyles: string[] = [];
-  const styleIndexes = new Map(xfNodes.map((style, index) => [style, index]));
-  for (const sourceStyleId of new Set(sourceStyleIds)) {
-    const style = makeStyle(Number(sourceStyleId));
-    let index = styleIndexes.get(style);
-    if (index === undefined) {
-      index = xfNodes.length + addedStyles.length;
-      styleIndexes.set(style, index);
-      addedStyles.push(style);
-    }
-    styleOverrides.set(sourceStyleId, String(index));
-  }
-  if (addedStyles.length === 0) return styleOverrides;
-  const updatedXfs = `${xfXml}${addedStyles.join("")}`;
-  patchedStyles = patchedStyles.replace(cellXfsMatch[0], cellXfsMatch[0].replace(cellXfsMatch[1], updatedXfs).replace(/(<cellXfs\b[^>]*\bcount=")\d+("[^>]*>)/, `$1${xfNodes.length + addedStyles.length}$2`));
-  zip.file("xl/styles.xml", patchedStyles);
-  return styleOverrides;
 }
 
 /**
@@ -658,12 +575,6 @@ function adjustFormulaRows(formula: string, delta: number): string {
 // Zip plumbing
 // ---------------------------------------------------------------------------
 
-async function entryText(zip: JSZip, name: string): Promise<string | null> {
-  const file = zip.file(name);
-  if (!file) return null;
-  return file.async("string");
-}
-
 function resolveTarget(baseDir: string, target: string): string {
   if (target.startsWith("/")) return target.slice(1);
   const parts = (baseDir + "/" + target).split("/");
@@ -722,19 +633,6 @@ export function formatWorkbookMonth(value: unknown): string | null {
   if (!normalized) return null;
   const [year, month] = normalized.split("-").map(Number);
   return Number.isInteger(year) && month >= 1 && month <= 12 ? `${ENGLISH_MONTHS[month - 1]}-${String(year).slice(-2)}` : null;
-}
-
-function workbookMonthSerial(value: unknown, date1904 = false): number | null {
-  const normalized = normalizeMonthCell(value);
-  if (!normalized) return null;
-  const [year, month] = normalized.split("-").map(Number);
-  if (!Number.isInteger(year) || month < 1 || month > 12) return null;
-  const epoch = date1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30);
-  return Math.round((Date.UTC(year, month - 1, 1) - epoch) / 86_400_000);
-}
-
-function workbookUsesDate1904(workbookXml: string): boolean {
-  return /<workbookPr\b[^>]*\bdate1904="(?:1|true)"/i.test(workbookXml);
 }
 
 function buildCellXml(

@@ -25,7 +25,10 @@ const html = buildReportHtml(report);
 
 if (!html.includes("Export All Report") && !html.includes("Monthly Power")) throw new Error("Combined report title is missing.");
 if ((html.match(/<h2>Monthly Energy &amp; Cost Table<\/h2>/g) ?? []).length !== 1) throw new Error("Monthly table was duplicated or omitted.");
-if (/\bPUE\b|\bCO2\b|<img\b/i.test(html)) throw new Error("Forbidden report content was found.");
+// v2.2.3: the Rack Unit Capacity Image is a deliberate, expected <img> - any
+// OTHER <img> tag remains forbidden.
+const htmlWithoutRackUnitCapacityImage = html.replace(/<img[^>]*class="rack-unit-capacity-image"[^>]*\/>/g, "");
+if (/\bPUE\b|\bCO2\b|<img\b/i.test(htmlWithoutRackUnitCapacityImage)) throw new Error("Forbidden report content was found.");
 if (report.monthlyRows.length > 0 && !html.includes("Building Energy")) throw new Error("Energy report data is missing.");
 if (report.monthlyRows.length > 12) throw new Error("Report trends are not limited to the latest 12 months.");
 if (report.currentRow && report.monthlyRows.at(-1)?.month !== report.currentRow.month) throw new Error("Selected reporting month is not the final report month.");
@@ -56,13 +59,27 @@ for (const removed of ["Table of Contents", "Executive Summary", "Historical Ope
 }
 // v2.2.2: Rack Capacity Overview + Site Comparison are now deliberately part
 // of Export All Report (was previously explicitly excluded pre-v2.2.2).
-if (!html.includes("<h2>Rack Capacity Overview</h2>")) throw new Error("Rack Capacity Overview page is missing from Export All Report.");
+// v2.2.3: renamed "Rack Capacity Overview" -> "Rack Capacity and Utilization".
+if (!html.includes("<h2>Rack Capacity and Utilization</h2>")) throw new Error("Rack Capacity and Utilization page is missing from Export All Report.");
+if (html.includes("Rack Capacity Overview")) throw new Error("Old 'Rack Capacity Overview' heading is still present.");
+if (/\bTable7\b/.test(html)) throw new Error("Internal workbook table name 'Table7' leaked into the report.");
 if (report.rack && report.rack.records.length > 0) {
   if (!/Total Racks/.test(html)) throw new Error("Rack Capacity KPI cards are missing.");
   if (!/rack-donut-row/.test(html)) throw new Error("Rack Capacity donut chart is missing.");
-  if (/Rack Capacity Overview<\/h2><p class="note">Rack Capacity \/ Table7 is unavailable/.test(html)) throw new Error("Rack Capacity data exists but the PDF shows the unavailable-data fallback.");
+  if (/Rack Capacity and Utilization<\/h2><p class="note">Rack capacity data is unavailable/.test(html)) throw new Error("Rack Capacity data exists but the PDF shows the unavailable-data fallback.");
 } else {
   throw new Error(`${facilityId} workbook unexpectedly has no Rack Capacity / Table7 records - cannot verify the PDF renders real data.`);
+}
+// v2.2.3: Rack Unit Capacity block + trend page. The real production
+// workbook has no Rack Unit Capacity data yet (only ever created by an
+// actual app Save), so this asserts the "not yet available" path renders
+// correctly; scripts/test-rack-unit-capacity.ts covers the "data present"
+// rendering path against a saved copy.
+if (report.rackUnitCapacity.length === 0) {
+  if (!html.includes("Rack Unit Capacity data is not yet available in this workbook.")) throw new Error("Rack Unit Capacity 'not yet available' note is missing.");
+  if (!html.includes("Rack Unit Capacity Monthly Trend")) throw new Error("Rack Unit Capacity trend page is missing.");
+} else {
+  throw new Error(`${facilityId} workbook unexpectedly already has Rack Unit Capacity data - update this test to verify the real-data rendering path instead.`);
 }
 if (!html.includes("<h2>Site Comparison</h2>")) throw new Error("Site Comparison page is missing from Export All Report.");
 if (report.comparison?.self && !html.includes("Whole Building Energy (kWh)")) throw new Error("Site Comparison table headers are missing.");

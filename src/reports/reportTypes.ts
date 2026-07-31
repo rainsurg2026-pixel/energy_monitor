@@ -175,6 +175,11 @@ export interface ReportData {
   rack: RackCapacityReport | null;
   /** Persisted Rack Capacity History rows (facility total + per-zone), if any. */
   rackHistory: import("../excel/RackCapacityHistoryWriter").RackCapacityHistoryRow[];
+  /** Persisted Rack Unit Capacity rows (Month/Total(U)/Used(U)/Available(U)/
+   *  Availability %), if any. */
+  rackUnitCapacity: import("../excel/RackUnitCapacityWriter").RackUnitCapacityRow[];
+  /** The "Rack Unit Capacity Image", as a ready-to-embed data URI, if one is present. */
+  rackUnitCapacityImageDataUri: string | null;
   /** This facility's own current-row KPIs plus the sibling facility's, for
    *  the Site Comparison PDF page. Null when comparison data is unavailable. */
   comparison: { self: ReportComparisonFacility; other: ReportComparisonFacility | null } | null;

@@ -199,6 +199,69 @@ async function main() {
     })()`);
     await sleep(300);
 
+    // v2.2.3: Rack Capacity page restructuring - overview at top, then Rack
+    // Unit Capacity, then the field Editor, in that DOM order.
+    const sectionOrder = await evalJs(`[...document.querySelectorAll("section h3")].map(h => h.innerText.trim())`);
+    const overviewIdx = sectionOrder.findIndex(t => t.includes("Rack Capacity and Utilization") || t.includes("ความจุแร็คและการใช้งาน"));
+    const unitCapacityIdx = sectionOrder.findIndex(t => t.includes("Rack Unit Capacity") || t.includes("ความจุหน่วยแร็ค"));
+    const editorIdx = sectionOrder.findIndex(t => t.includes("Rack Capacity Editor") || t.includes("แก้ไขความจุแร็ค"));
+    check(
+      "rack capacity: overview -> Rack Unit Capacity -> Editor DOM order",
+      overviewIdx >= 0 && unitCapacityIdx > overviewIdx && editorIdx > unitCapacityIdx,
+      JSON.stringify(sectionOrder)
+    );
+    check("rack capacity: no leftover 'Rack Capacity Overview' heading", !rackCapacityText.includes("Rack Capacity Overview"));
+    check("rack capacity: no leftover internal 'Table7' name in the UI", !rackCapacityText.includes("Table7"));
+
+    // Rack Unit Capacity panel: fill Total (U)/Used (U), verify the live
+    // Available (U)/Availability % preview, then actually save (real IPC
+    // round-trip against the copied test workbook - safe, not production).
+    const unitCapacityFillResult = await evalJs(`(() => {
+      const section = [...document.querySelectorAll("section")].find(s => s.innerText.includes("Rack Unit Capacity") || s.innerText.includes("ความจุหน่วยแร็ค"));
+      if (!section) return { ok: false, reason: "section not found" };
+      const inputs = [...section.querySelectorAll('input[type="number"]')];
+      if (inputs.length !== 2) return { ok: false, reason: "expected 2 number inputs, found " + inputs.length };
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(inputs[0], "400");
+      inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(inputs[1], "350");
+      inputs[1].dispatchEvent(new Event("input", { bubbles: true }));
+      return { ok: true, text: section.innerText };
+    })()`);
+    check("rack unit capacity: Total (U)/Used (U) inputs found and fillable", unitCapacityFillResult.ok === true, JSON.stringify(unitCapacityFillResult));
+    await sleep(300);
+    const unitCapacityPreviewText = await evalJs(`[...document.querySelectorAll("section")].find(s => s.innerText.includes("Rack Unit Capacity") || s.innerText.includes("ความจุหน่วยแร็ค"))?.innerText ?? ""`);
+    check("rack unit capacity: live preview shows Available (U) = 50 (400-350)", /\b50\b/.test(unitCapacityPreviewText));
+    check("rack unit capacity: live preview shows Availability % = 12.50%", unitCapacityPreviewText.includes("12.50%"));
+
+    const unitCapacitySaveEnabled = await evalJs(`(() => {
+      const btn = [...document.querySelectorAll("button")].find(b => b.innerText.includes("Save Rack Unit Capacity") || b.innerText.includes("บันทึกความจุหน่วยแร็ค"));
+      return btn ? !btn.disabled : null;
+    })()`);
+    check("rack unit capacity: Save button enables once dirty", unitCapacitySaveEnabled === true);
+
+    await evalJs(`(() => {
+      const btn = [...document.querySelectorAll("button")].find(b => b.innerText.includes("Save Rack Unit Capacity") || b.innerText.includes("บันทึกความจุหน่วยแร็ค"));
+      btn?.click();
+    })()`);
+    let unitCapacitySavedText = "";
+    for (let i = 0; i < 20; i++) {
+      unitCapacitySavedText = await evalJs("document.body.innerText");
+      if (unitCapacitySavedText.includes("Rack Unit Capacity saved") || unitCapacitySavedText.includes("บันทึกความจุหน่วยแร็คแล้ว")) break;
+      await sleep(400);
+    }
+    check(
+      "rack unit capacity: save succeeds end-to-end (real IPC write to the test workbook copy)",
+      unitCapacitySavedText.includes("Rack Unit Capacity saved") || unitCapacitySavedText.includes("บันทึกความจุหน่วยแร็คแล้ว")
+    );
+
+    // Editor: the shared History-snapshot Month/Year selector is present.
+    const editorMonthSelectorPresent = await evalJs(`(() => {
+      const section = [...document.querySelectorAll("section")].find(s => s.innerText.includes("Rack Capacity Editor") || s.innerText.includes("แก้ไขความจุแร็ค"));
+      return section ? section.querySelectorAll("select").length >= 2 : false;
+    })()`);
+    check("rack capacity editor: shared Month/Year selector is present", editorMonthSelectorPresent === true);
+
     // History view
     await evalJs(`document.querySelectorAll("nav button")[3].click()`);
     await sleep(1200);

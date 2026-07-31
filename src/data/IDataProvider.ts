@@ -12,26 +12,36 @@ import { MonthlyLog } from "../types";
 import type { DeviceLists, ExcelIntegrityReport, WorkbookHealth, WorkbookValidation } from "../desktop";
 import type { DashboardUpsMappingReport, RackCapacitySummary, UpsGroupHistoryReport } from "../reports/reportTypes";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
+import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 
-export interface RackStatusChangeRequest {
-  rowNumber: number;
-  rackId: string;
-  expectedStatus: string | null;
-  newStatus: string;
+export interface RackFieldEditRequest {
+  expected: string | null;
+  next: string | null;
 }
 
-export interface RackStatusChangeOutcome {
+export interface RackFieldChangeRequest {
+  rowNumber: number;
+  rackId: string;
+  /** next is always a canonical status string when present. */
+  status?: { expected: string | null; next: string };
+  cabinetSize?: RackFieldEditRequest;
+  detail?: RackFieldEditRequest;
+  deviceType?: RackFieldEditRequest;
+}
+
+export interface RackFieldChangeOutcome {
   rowNumber: number;
   rackId: string;
   applied: boolean;
-  conflictActualStatus?: string | null;
-  conflictReason?: "row_not_found" | "rack_id_mismatch" | "status_mismatch";
+  conflictField?: "status" | "cabinetSize" | "detail" | "deviceType";
+  conflictActualValue?: string | null;
+  conflictReason?: "row_not_found" | "rack_id_mismatch" | "field_mismatch";
 }
 
 export interface RackCapacitySaveOutcome {
   savedAt: string;
   backupPath?: string | null;
-  outcomes: RackStatusChangeOutcome[];
+  outcomes: RackFieldChangeOutcome[];
   changedCount: number;
   imageEmbedded: boolean;
   rackCapacity: RackCapacitySummary | null;
@@ -40,6 +50,20 @@ export interface RackCapacitySaveOutcome {
 
 export interface RackCapacityImageRequest {
   bytes: Uint8Array;
+}
+
+export interface RackUnitCapacityInputRequest {
+  /** Canonical "YYYY-MM" - the UI's own Month/Year selector, first-of-month. */
+  month: string;
+  totalU: number;
+  usedU: number;
+}
+
+export interface RackUnitCapacitySaveOutcome {
+  savedAt: string;
+  backupPath?: string | null;
+  imageEmbedded: boolean;
+  rows: RackUnitCapacityRow[];
 }
 
 export type DataSourceKind = "excel" | "googleSheets";
@@ -63,6 +87,8 @@ export interface DataSnapshot {
   upsGroupHistory?: UpsGroupHistoryReport | null;
   /** Persisted "Rack Capacity History" monthly snapshots, if any exist yet. */
   rackCapacityHistory?: RackCapacityHistoryRow[];
+  /** Persisted "Rack Unit Capacity" monthly rows, if any exist yet. */
+  rackUnitCapacity?: RackUnitCapacityRow[];
 }
 
 export interface SaveOutcome {
@@ -130,9 +156,28 @@ export interface IDataProvider {
   ): Promise<Map<string, DataSnapshot>>;
 
   /**
-   * Staged Rack Capacity Status edits. Desktop/Excel-only (Rack Capacity
-   * editing requires a local workbook); providers that cannot support it
-   * simply omit this method, matching loadMultipleFacilities' optionality.
+   * Staged Rack Capacity Status/field edits. Desktop/Excel-only (Rack
+   * Capacity editing requires a local workbook); providers that cannot
+   * support it simply omit this method, matching loadMultipleFacilities'
+   * optionality. `snapshotMonth`, when given, is the explicit "YYYY-MM" the
+   * UI's own Month/Year selector chose for the History snapshot this save
+   * upserts - never a silent system-month assumption; omit to fall back to
+   * auto-detection.
    */
-  saveRackCapacity?(changes: RackStatusChangeRequest[], image?: RackCapacityImageRequest | null): Promise<RackCapacitySaveOutcome>;
+  saveRackCapacity?(
+    changes: RackFieldChangeRequest[],
+    image?: RackCapacityImageRequest | null,
+    snapshotMonth?: string | null
+  ): Promise<RackCapacitySaveOutcome>;
+
+  /**
+   * Rack Unit Capacity: Month/Total (U)/Used (U) upsert (Available (U) and
+   * Availability Capacity (%) are derived server-side, never entered
+   * directly) plus an optional "Rack Unit Capacity Image" upload, in one
+   * atomic save. Same optionality convention as saveRackCapacity.
+   */
+  saveRackUnitCapacity?(
+    input: RackUnitCapacityInputRequest,
+    image?: RackCapacityImageRequest | null
+  ): Promise<RackUnitCapacitySaveOutcome>;
 }

@@ -54,6 +54,7 @@ import FacilityComparison from "./components/FacilityComparison";
 import RackCapacityEditor from "./components/RackCapacityEditor";
 import RackCapacitySummaryCard from "./components/RackCapacitySummaryCard";
 import RackCapacityHistoryPanel from "./components/RackCapacityHistoryPanel";
+import RackUnitCapacityPanel from "./components/RackUnitCapacityPanel";
 import { 
   Shield, 
   Lock, 
@@ -171,6 +172,12 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [activeLog, setActiveLog] = useState<MonthlyLog | null>(null);
   const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "rackCapacity" | "history" | "comparison" | "settings">("dashboard");
+  // Shared Month/Year selector for the Rack Capacity page's Rack Unit
+  // Capacity panel and Rack Capacity Editor (which History snapshot a field
+  // edit's save upserts) - an explicit, user-visible choice, never a silent
+  // system-month assumption. Defaults to today's month; independent of Data
+  // Entry's own selectedMonth (that has separate historical-edit semantics).
+  const [rackCapacityMonth, setRackCapacityMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
 
   // --- DESKTOP (EXCEL WORKBOOK) SESSION ---
   // In the desktop app the Excel workbook is the primary data source; the
@@ -2050,7 +2057,7 @@ export default function App() {
               }`}
             >
               <Server className="w-4 h-4 text-fuchsia-400" />
-              <span>{lang === "th" ? "ความจุแร็ค" : "Rack Capacity"}</span>
+              <span>{lang === "th" ? "ความจุแร็คและการใช้งาน" : "Rack Capacity and Utilization"}</span>
             </button>
           )}
 
@@ -2378,13 +2385,23 @@ export default function App() {
         {/* --- VIEW: RACK CAPACITY MANAGEMENT (desktop) --- */}
         {currentView === "rackCapacity" && isDesktopApp && excelProvider && (
           <div className="space-y-6 animate-fadeIn">
+            <RackCapacitySummaryCard rackCapacity={workbook?.rackCapacity} lang={lang} />
+            <RackUnitCapacityPanel
+              rows={workbook?.rackUnitCapacity ?? []}
+              provider={excelProvider}
+              lang={lang}
+              month={rackCapacityMonth}
+              onMonthChange={setRackCapacityMonth}
+              onSaved={rows => setWorkbook(prev => (prev ? { ...prev, rackUnitCapacity: rows } : prev))}
+            />
             <RackCapacityEditor
               rackCapacity={workbook?.rackCapacity ?? null}
               provider={excelProvider}
               lang={lang}
+              month={rackCapacityMonth}
+              onMonthChange={setRackCapacityMonth}
               onSaved={(updated, history) => setWorkbook(prev => (prev ? { ...prev, rackCapacity: updated, rackCapacityHistory: history } : prev))}
             />
-            <RackCapacitySummaryCard rackCapacity={workbook?.rackCapacity} lang={lang} />
             <RackCapacityHistoryPanel rows={workbook?.rackCapacityHistory ?? []} lang={lang} />
           </div>
         )}

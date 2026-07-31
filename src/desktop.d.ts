@@ -8,6 +8,7 @@ import type {
   OpenWorkbookPayload,
   SaveWorkbookPayload,
   RackCapacitySavePayload,
+  RackUnitCapacitySavePayload,
   RecoverySnapshot,
   IpcResult,
   WorkbookAccessStatus
@@ -25,6 +26,7 @@ export type {
   OpenWorkbookPayload,
   SaveWorkbookPayload,
   RackCapacitySavePayload,
+  RackUnitCapacitySavePayload,
   RecoverySnapshot,
   IpcResult,
   WorkbookAccessStatus,
@@ -104,12 +106,20 @@ export interface DesktopBridge {
       devices?: DeviceLists;
       upsGroupHistory?: { facilityId: string; upsGroups: UpsGroupConfig[]; onlyMonths?: string[] };
     }): Promise<IpcResult<SaveWorkbookPayload | { canceled: true }>>;
-    /** Staged Rack Capacity Status edits. Only rows whose current on-disk
-     *  status matches `expectedStatus` are applied; the rest come back as
-     *  conflicts in the same result rather than throwing. */
+    /** Staged Rack Capacity field edits (Status/Cabinet Size/Detail/Device
+     *  Type). Only rows whose current on-disk value for every edited field
+     *  matches its `expected` are applied; the rest come back as conflicts
+     *  in the same result rather than throwing. */
     saveRackCapacity(payload: {
       path: string;
-      changes: Array<{ rowNumber: number; rackId: string; expectedStatus: string | null; newStatus: string }>;
+      changes: Array<{
+        rowNumber: number;
+        rackId: string;
+        status?: { expected: string | null; next: string };
+        cabinetSize?: { expected: string | null; next: string | null };
+        detail?: { expected: string | null; next: string | null };
+        deviceType?: { expected: string | null; next: string | null };
+      }>;
       /** Raw image bytes; re-validated by real content (magic bytes) in the
        *  main process regardless of what the renderer believes it is. */
       image?: { bytes: Uint8Array } | null;
@@ -117,7 +127,21 @@ export interface DesktopBridge {
        *  month lookup; omit to skip history entirely (status/image save
        *  still succeeds either way). */
       facilityId?: string | null;
+      /** Explicit "YYYY-MM" for the History snapshot this save should
+       *  upsert - the Editor's own Month/Year selector, not a silent
+       *  system-month assumption. Omit to fall back to auto-detection. */
+      snapshotMonth?: string | null;
     }): Promise<IpcResult<RackCapacitySavePayload>>;
+    /** Rack Unit Capacity: Month/Total (U)/Used (U) upsert (Available (U)
+     *  and Availability Capacity (%) are derived server-side) plus an
+     *  optional "Rack Unit Capacity Image" upload, in one atomic save. */
+    saveRackUnitCapacity(payload: {
+      path: string;
+      input: { month: string; totalU: number; usedU: number };
+      /** Raw image bytes; re-validated by real content (magic bytes) in the
+       *  main process regardless of what the renderer believes it is. */
+      image?: { bytes: Uint8Array } | null;
+    }): Promise<IpcResult<RackUnitCapacitySavePayload>>;
     checkLock(path: string): Promise<IpcResult<{ locked: boolean; excelOwnerFilePresent: boolean }>>;
     access(path: string): Promise<IpcResult<WorkbookAccessStatus>>;
     validate(path: string, devices?: DeviceLists): Promise<

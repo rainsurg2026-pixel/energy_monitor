@@ -21,8 +21,10 @@ import { listBackups, restoreBackup } from "../sync/BackupManager";
 import { addRecentFile, loadConfig, resolveBackupDir } from "../config";
 import { ensureDir, getExportsDir, getRecoveryPath, log } from "../paths";
 import { readRackCapacityFromBuffer } from "../../reports/rackCapacityReader";
-import { saveRackCapacityStatusChanges, RackStatusChange, RackCapacityImageInput } from "../../excel/RackCapacityWriter";
+import { saveRackCapacityFieldChanges, RackFieldChange, RackCapacityImageInput } from "../../excel/RackCapacityWriter";
 import { readRackCapacityHistoryFromBuffer, RackCapacityHistoryRow } from "../../excel/RackCapacityHistoryWriter";
+import { readRackUnitCapacityFromBuffer, RackUnitCapacityInput, RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
+import { saveRackUnitCapacity } from "../../excel/RackUnitCapacitySaveWriter";
 import { RACK_CANONICAL_STATUSES } from "../../utils/rackCapacity";
 import { validateImageBytes } from "../../utils/imageValidation";
 import { readUpsMappingFromBuffer } from "../../reports/upsMappingReader";
@@ -127,11 +129,34 @@ function sanitizeDevices(raw: unknown): DeviceLists | undefined {
   return { upsIds, dcIds, ...(airFields && airFields.length > 0 ? { airFields } : {}) };
 }
 
-/** Trust boundary for staged Rack Capacity status edits: only the four
- *  canonical statuses may ever be written (never an arbitrary UI-supplied
- *  string), and every change must carry the row identity + previously-read
- *  status the writer needs to detect a stale/conflicting edit server-side. */
-function sanitizeRackStatusChanges(raw: unknown): RackStatusChange[] {
+const RACK_FREE_TEXT_FIELDS = ["cabinetSize", "detail", "deviceType"] as const;
+
+/** A field value of `null`/`undefined` means "no edit to this field"; an
+ *  explicit `{ expected, next }` object (next may itself be null - clearing
+ *  a free-text field to blank is legitimate) means "apply this edit". */
+function sanitizeOptionalStringEdit(raw: unknown, label: string): { expected: string | null; next: string | null } | undefined {
+  if (raw === null || typeof raw === "undefined") return undefined;
+  if (typeof raw !== "object") throw new PayloadError(`${label} must be an object or omitted.`);
+  const o = raw as Record<string, unknown>;
+  const expectedRaw = o.expected;
+  if (expectedRaw !== null && typeof expectedRaw !== "undefined" && (typeof expectedRaw !== "string" || expectedRaw.length > 200)) {
+    throw new PayloadError(`${label}.expected must be a string or null.`);
+  }
+  const nextRaw = o.next;
+  if (nextRaw !== null && (typeof nextRaw !== "string" || nextRaw.length > 200)) {
+    throw new PayloadError(`${label}.next must be a string or null.`);
+  }
+  return { expected: typeof expectedRaw === "string" ? expectedRaw : null, next: typeof nextRaw === "string" ? nextRaw : null };
+}
+
+/** Trust boundary for staged Rack Capacity field edits: Status may only
+ *  ever be one of the four canonical values (never an arbitrary UI-supplied
+ *  string); Cabinet Size/Detail/Device Type are free text (no controlled
+ *  value list exists in the real workbook data) but still length-capped.
+ *  Every change carries the row identity + each edited field's
+ *  previously-read value, which the writer re-verifies server-side before
+ *  writing anything (optimistic concurrency, never trusting the renderer). */
+function sanitizeRackFieldChanges(raw: unknown): RackFieldChange[] {
   if (typeof raw === "undefined") return [];
   if (!Array.isArray(raw)) throw new PayloadError("changes must be an array.");
   if (raw.length > 500) throw new PayloadError("Too many changes in a single save (max 500).");
@@ -146,17 +171,58 @@ function sanitizeRackStatusChanges(raw: unknown): RackStatusChange[] {
     if (typeof rackId !== "string" || rackId.trim() === "" || rackId.length > 200) {
       throw new PayloadError(`changes[${index}].rackId must be a non-empty string.`);
     }
-    const rawExpectedStatus = o.expectedStatus;
-    if (rawExpectedStatus !== null && typeof rawExpectedStatus !== "undefined" && (typeof rawExpectedStatus !== "string" || rawExpectedStatus.length > 200)) {
-      throw new PayloadError(`changes[${index}].expectedStatus must be a string or null.`);
+
+    let status: RackFieldChange["status"];
+    if (o.status !== null && typeof o.status !== "undefined") {
+      const edit = sanitizeOptionalStringEdit(o.status, `changes[${index}].status`)!;
+      if (!edit.next || !RACK_CANONICAL_STATUSES.includes(edit.next as (typeof RACK_CANONICAL_STATUSES)[number])) {
+        throw new PayloadError(`changes[${index}].status.next must be one of: ${RACK_CANONICAL_STATUSES.join(", ")}.`);
+      }
+      status = { expected: edit.expected, next: edit.next };
     }
-    const expectedStatus: string | null = typeof rawExpectedStatus === "string" ? rawExpectedStatus : null;
-    const newStatus = o.newStatus;
-    if (typeof newStatus !== "string" || !RACK_CANONICAL_STATUSES.includes(newStatus as (typeof RACK_CANONICAL_STATUSES)[number])) {
-      throw new PayloadError(`changes[${index}].newStatus must be one of: ${RACK_CANONICAL_STATUSES.join(", ")}.`);
+
+    const fieldEdits: Partial<Record<(typeof RACK_FREE_TEXT_FIELDS)[number], RackFieldChange["cabinetSize"]>> = {};
+    for (const field of RACK_FREE_TEXT_FIELDS) {
+      fieldEdits[field] = sanitizeOptionalStringEdit(o[field], `changes[${index}].${field}`);
     }
-    return { rowNumber, rackId, expectedStatus, newStatus };
+
+    if (!status && !fieldEdits.cabinetSize && !fieldEdits.detail && !fieldEdits.deviceType) {
+      throw new PayloadError(`changes[${index}] must edit at least one field.`);
+    }
+    return { rowNumber, rackId, status, cabinetSize: fieldEdits.cabinetSize, detail: fieldEdits.detail, deviceType: fieldEdits.deviceType };
   });
+}
+
+/** Explicit "YYYY-MM" selected by the UI's own Month/Year selector - never
+ *  trust-but-verify a system-detected month; malformed input is dropped
+ *  (undefined) rather than passed through, so a bad value falls back to the
+ *  writer's own auto-detection instead of silently corrupting a snapshot. */
+function sanitizeSnapshotMonth(raw: unknown): string | null | undefined {
+  if (raw === null || typeof raw === "undefined") return undefined;
+  if (typeof raw !== "string" || !/^\d{4}-\d{2}$/.test(raw)) return undefined;
+  const month = Number(raw.slice(5, 7));
+  return month >= 1 && month <= 12 ? raw : undefined;
+}
+
+/** Trust boundary for a Rack Unit Capacity save: Month must be a real
+ *  "YYYY-MM" the UI's own selector produced (never freeform text), Total
+ *  (U)/Used (U) must be finite, non-negative numbers - Used (U) is allowed
+ *  to exceed Total (U) at the IPC layer (a real over-capacity state the
+ *  facility may need to record, not something to silently clamp/reject). */
+function sanitizeRackUnitCapacityInput(raw: unknown): RackUnitCapacityInput {
+  if (typeof raw !== "object" || raw === null) throw new PayloadError("Rack Unit Capacity input must be an object.");
+  const o = raw as Record<string, unknown>;
+  const month = sanitizeSnapshotMonth(o.month);
+  if (!month) throw new PayloadError("Rack Unit Capacity month must be a valid \"YYYY-MM\" string.");
+  const totalU = o.totalU;
+  const usedU = o.usedU;
+  if (typeof totalU !== "number" || !Number.isFinite(totalU) || totalU < 0) {
+    throw new PayloadError("Rack Unit Capacity Total (U) must be a non-negative number.");
+  }
+  if (typeof usedU !== "number" || !Number.isFinite(usedU) || usedU < 0) {
+    throw new PayloadError("Rack Unit Capacity Used (U) must be a non-negative number.");
+  }
+  return { month, totalU, usedU };
 }
 
 /** Trust boundary for the Rack Capacity K9 image: the renderer's own
@@ -198,6 +264,8 @@ export interface OpenWorkbookPayload {
   upsGroupHistory: UpsGroupHistoryReport | null;
   /** Persisted "Rack Capacity History" worksheet rows, if present. */
   rackCapacityHistory: RackCapacityHistoryRow[];
+  /** Persisted "Rack Unit Capacity" worksheet rows, if present. */
+  rackUnitCapacity: RackUnitCapacityRow[];
 }
 
 export interface SaveWorkbookPayload {
@@ -214,13 +282,22 @@ export interface RackCapacitySavePayload {
     rowNumber: number;
     rackId: string;
     applied: boolean;
-    conflictActualStatus?: string | null;
-    conflictReason?: "row_not_found" | "rack_id_mismatch" | "status_mismatch";
+    conflictField?: "status" | "cabinetSize" | "detail" | "deviceType";
+    conflictActualValue?: string | null;
+    conflictReason?: "row_not_found" | "rack_id_mismatch" | "field_mismatch";
   }>;
   changedCount: number;
   imageEmbedded: boolean;
   rackCapacity: RackCapacitySummary | null;
   rackCapacityHistory: RackCapacityHistoryRow[];
+}
+
+export interface RackUnitCapacitySavePayload {
+  path: string;
+  backupPath: string | null;
+  savedAt: string;
+  imageEmbedded: boolean;
+  rows: RackUnitCapacityRow[];
 }
 
 export interface RecoverySnapshot {
@@ -345,6 +422,14 @@ async function buildOpenPayload(
       log.warn(`Rack Capacity History unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  let rackUnitCapacity: RackUnitCapacityRow[] = [];
+  if (upsMappingBuffer) {
+    try {
+      rackUnitCapacity = await readRackUnitCapacityFromBuffer(upsMappingBuffer);
+    } catch (error) {
+      log.warn(`Rack Unit Capacity unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   if (trackRecent) {
     await addRecentFile(filePath);
@@ -363,7 +448,8 @@ async function buildOpenPayload(
     upsMapping,
     upsMappingError,
     upsGroupHistory,
-    rackCapacityHistory
+    rackCapacityHistory,
+    rackUnitCapacity
   };
 }
 
@@ -473,24 +559,26 @@ export function registerExcelIpc(): void {
     })
   );
 
-  // --- Rack Capacity: staged Status edits, save only what actually changed ---
+  // --- Rack Capacity: staged field edits, save only what actually changed ---
   ipcMain.handle("excel:saveRackCapacity", (_event, raw: unknown) =>
     wrap<RackCapacitySavePayload>("excel:saveRackCapacity", async () => {
       const body = (raw ?? {}) as Record<string, unknown>;
       const filePath = ensureWorkbookPath(body.path);
-      const changes: RackStatusChange[] = sanitizeRackStatusChanges(body.changes);
+      const changes: RackFieldChange[] = sanitizeRackFieldChanges(body.changes);
       const image = sanitizeRackImage(body.image);
-      if (changes.length === 0 && !image) throw new PayloadError("Save requires at least one status change or an image.");
+      if (changes.length === 0 && !image) throw new PayloadError("Save requires at least one field change or an image.");
       const facilityId = typeof body.facilityId === "string" && body.facilityId.length > 0 ? body.facilityId.slice(0, 100) : null;
+      const snapshotMonth = sanitizeSnapshotMonth(body.snapshotMonth);
       const config = await loadConfig();
-      const result = await saveRackCapacityStatusChanges(
+      const result = await saveRackCapacityFieldChanges(
         filePath,
         changes,
         { backupDir: resolveBackupDir(config), backupKeep: config.backupKeep },
         image,
-        facilityId
+        facilityId,
+        snapshotMonth
       );
-      log.info(`rack capacity saved: ${filePath} (${result.changedCount} status change(s), image: ${result.imageEmbedded}, backup: ${result.backupPath ?? "none"})`);
+      log.info(`rack capacity saved: ${filePath} (${result.changedCount} field change(s), image: ${result.imageEmbedded}, backup: ${result.backupPath ?? "none"})`);
       return {
         ok: true,
         path: result.path,
@@ -503,6 +591,32 @@ export function registerExcelIpc(): void {
           ? { totalRacks: result.rackCapacity.records.length, records: result.rackCapacity.records, byStatus: result.rackCapacity.byStatus, byZone: result.rackCapacity.byZone }
           : null,
         rackCapacityHistory: result.rackCapacityHistory
+      };
+    })
+  );
+
+  // --- Rack Unit Capacity: Month/Total(U)/Used(U) upsert + optional image ---
+  ipcMain.handle("excel:saveRackUnitCapacity", (_event, raw: unknown) =>
+    wrap<RackUnitCapacitySavePayload>("excel:saveRackUnitCapacity", async () => {
+      const body = (raw ?? {}) as Record<string, unknown>;
+      const filePath = ensureWorkbookPath(body.path);
+      const input = sanitizeRackUnitCapacityInput(body.input);
+      const image = sanitizeRackImage(body.image);
+      const config = await loadConfig();
+      const result = await saveRackUnitCapacity(
+        filePath,
+        input,
+        { backupDir: resolveBackupDir(config), backupKeep: config.backupKeep },
+        image
+      );
+      log.info(`rack unit capacity saved: ${filePath} (month ${input.month}, image: ${result.imageEmbedded}, backup: ${result.backupPath ?? "none"})`);
+      return {
+        ok: true,
+        path: result.path,
+        backupPath: result.backupPath,
+        savedAt: result.savedAt,
+        imageEmbedded: result.imageEmbedded,
+        rows: result.rows
       };
     })
   );
