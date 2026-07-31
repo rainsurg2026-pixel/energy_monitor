@@ -11,7 +11,7 @@
 | SemVer decision | MINOR — new Rack Unit Capacity worksheet/section, multi-field rack editing, explicit Month/Year History-snapshot selection, K9 image relocation; backward-compatible, no existing cell/range contract broken (Rack Capacity History gains an automatic, idempotent format migration). |
 | Git branch | `main` |
 | Parent commit | `40a0dec` ("release: Energy Monitor v2.2.2") |
-| Release commit | `52081e9` ("release: Energy Monitor v2.2.3") |
+| Release commit | `07ca336` ("release: Energy Monitor v2.2.3") |
 | Release tag | `v2.2.3` |
 | Source state | Reviewed working tree; no unrelated changes present. |
 
