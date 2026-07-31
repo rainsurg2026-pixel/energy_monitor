@@ -1,11 +1,13 @@
 import { initializeApp } from "firebase/app";
-import { 
-  getAuth, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
-  onAuthStateChanged, 
+import {
+  getAuth,
+  signInWithRedirect,
+  signInWithPopup,
+  GoogleAuthProvider,
+  onAuthStateChanged,
   User,
-  signOut
+  signOut,
+  getRedirectResult
 } from "firebase/auth";
 import firebaseConfig from "../firebase-applet-config.json";
 
@@ -27,6 +29,26 @@ export const initAuth = (
   onAuthSuccess?: (user: User, token: string) => void,
   onAuthFailure?: () => void
 ) => {
+  // Handle redirect result first
+  getRedirectResult(auth).then(async (result) => {
+    if (result) {
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      if (credential?.accessToken) {
+        cachedAccessToken = credential.accessToken;
+        const expiresAt = Date.now() + 3300 * 1000; // 55 minutes
+        localStorage.setItem("google_oauth_access_token", cachedAccessToken);
+        localStorage.setItem("google_oauth_token_expires_at", String(expiresAt));
+        if (onAuthSuccess) onAuthSuccess(result.user, cachedAccessToken);
+      } else {
+        console.error("Failed to get access token from Google Auth redirect result.");
+        if (onAuthFailure) onAuthFailure();
+      }
+    }
+  }).catch((error) => {
+    console.error("Error during redirect result processing:", error);
+    if (onAuthFailure) onAuthFailure();
+  });
+
   return onAuthStateChanged(auth, async (user: User | null) => {
     if (user) {
       // 1. Check memory cache first
@@ -60,26 +82,14 @@ export const initAuth = (
 };
 
 // Must be called from a button click or user interaction
-export const googleSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+export const googleSignIn = async (): Promise<void> => {
   try {
     isSigningIn = true;
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    if (!credential?.accessToken) {
-      throw new Error("Failed to get access token from Google Auth");
-    }
-
-    cachedAccessToken = credential.accessToken;
-    
-    // Save token and its expiration to localStorage (typically expires in 3600s, so save for 55 mins)
-    const expiresAt = Date.now() + 3300 * 1000; 
-    localStorage.setItem("google_oauth_access_token", cachedAccessToken);
-    localStorage.setItem("google_oauth_token_expires_at", String(expiresAt));
-
-    return { user: result.user, accessToken: cachedAccessToken };
+    // Force popup for local dev/iframe environments if redirect fails
+    await signInWithPopup(auth, provider);
   } catch (error: any) {
-    console.error("Sign in error:", error);
-    throw error;
+    console.error("Popup failed, trying redirect:", error);
+    await signInWithRedirect(auth, provider);
   } finally {
     isSigningIn = false;
   }
