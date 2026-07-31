@@ -263,7 +263,21 @@ try {
     throw new Error(`Facility workbook mapping is not isolated: ${JSON.stringify(mapped)}`);
   }
 
+  // Rack Capacity tab, packaged build: Rangsit's real total (358 racks) must
+  // render, proving the packaged asar bundle (recharts/lucide included)
+  // renders this new tab correctly, not just the dev build.
+  await evaluate(`document.querySelectorAll("nav button")[2]?.click()`);
+  await waitFor("Rangsit Rack Capacity data", () => evaluate("document.body.innerText.includes('358')"));
+  const rangsitRackText = await evaluate("document.body.innerText");
+  if (!/\b294\b/.test(rangsitRackText)) throw new Error("Rangsit Rack Capacity In Use count (294) did not render in the packaged build.");
+
   await selectFacility(evaluate, "srinakarin", "DC_Srinakarin.xlsm");
+  await evaluate(`document.querySelectorAll("nav button")[2]?.click()`);
+  await waitFor("Srinakarin Rack Capacity data (facility isolation)", () => evaluate("document.body.innerText.includes('237')"));
+  const srinakarinRackText = await evaluate("document.body.innerText");
+  if (/\b358\b/.test(srinakarinRackText)) throw new Error("Srinakarin Rack Capacity tab still shows Rangsit's total (358) - facility isolation leak.");
+  if (!/\b218\b/.test(srinakarinRackText)) throw new Error("Srinakarin Rack Capacity In Use count (218) did not render in the packaged build.");
+
   await evaluate("[...document.querySelectorAll('nav button')].find(button => button.innerText.includes('Site Comparison'))?.click()");
   const comparisonRows = await waitFor("comparison data", () => evaluate(`(() => {
     const section = document.querySelector('[data-testid="facility-comparison"]');
@@ -393,7 +407,8 @@ try {
   }
 
 
-  await evaluate(`[...document.querySelectorAll("nav button")].find(button => button.innerText.includes("4."))?.click()`);
+  // Nav order: Dashboard, Data Entry, Rack Capacity, Historical Logs, Site Comparison, Settings.
+  await evaluate(`document.querySelectorAll("nav button")[5]?.click()`);
   await waitFor("English language control", () => evaluate("Boolean([...document.querySelectorAll('button')].find(button => button.innerText.trim() === 'ภาษาไทย'))"));
   await evaluate(`[...document.querySelectorAll("button")].find(button => button.innerText.trim() === "ภาษาไทย")?.click()`);
   await waitFor("Thai Site Comparison", () => evaluate("[...document.querySelectorAll('nav button')].some(button => button.innerText.includes('เปรียบเทียบ'))"));
@@ -418,7 +433,7 @@ try {
   await evaluate(`[...document.querySelectorAll("button")].find(button => button.innerText.trim() === "English (EN)")?.click()`);
   await waitFor("English language control restored", () => evaluate("Boolean([...document.querySelectorAll('button')].find(button => button.innerText.trim() === 'ภาษาไทย (TH)'))"));
   await selectFacility(evaluate, "rangsit", "DC_Rangsit.xlsm");
-  await evaluate("[...document.querySelectorAll('nav button')].find(button => button.innerText.trim().startsWith('1.'))?.click()");
+  await evaluate("document.querySelectorAll('nav button')[1]?.click()");
   await waitFor("entry export button", () => evaluate("Boolean(document.querySelector('button[title=\"Ctrl+E / Ctrl+Shift+S\"]'))"), 30, 300);
   await evaluate("document.querySelector('button[title=\"Ctrl+E / Ctrl+Shift+S\"]')?.click()");
   await waitFor("export center", () => evaluate("document.body.innerText.includes('Export All Report') && document.body.innerText.includes('Current view as an A4 landscape PDF')"), 30, 300);

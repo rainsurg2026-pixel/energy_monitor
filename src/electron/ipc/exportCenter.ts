@@ -22,6 +22,8 @@ import { PayloadError, validateLogsPayload } from "../../excel/WorkbookValidator
 import { ensureDir, getExportsDir, log } from "../paths";
 import { calculateEnergyCostForMonth } from "../../utils/energyCost";
 import type { DashboardUpsTopology } from "../../utils/engineeringDashboard";
+import { loadFacilities } from "../facilities";
+import type { DeviceLists } from "../../excel/SheetMapper";
 
 type AllReportProgressStage = "preparing" | "validating" | "rendering" | "building" | "saving" | "completed";
 
@@ -72,6 +74,27 @@ function requireText(body: Record<string, unknown>, key: string, fallback = ""):
     throw new PayloadError(`Missing ${key}.`);
   }
   return value.trim();
+}
+
+/** Resolves the OTHER configured facility (by workbook path) for the Export
+ *  All Report's Site Comparison page. Best-effort: any failure here (facility
+ *  config missing/only one facility configured) yields `undefined`, which
+ *  reportDataBuilder.ts treats as "comparison page shows this facility only" -
+ *  never blocks the primary report. */
+async function resolveSiblingFacility(currentWorkbookPath: string): Promise<{ label: string; workbookPath: string; devices?: DeviceLists } | undefined> {
+  try {
+    const config = await loadFacilities();
+    const currentResolved = path.resolve(currentWorkbookPath);
+    const sibling = config.facilities.find(f => path.resolve(f.workbook) !== currentResolved);
+    if (!sibling) return undefined;
+    return {
+      label: sibling.displayName || sibling.name,
+      workbookPath: sibling.workbook,
+      devices: { upsIds: sibling.profile.devices.ups, dcIds: sibling.profile.devices.dc, airFields: sibling.profile.air.fields }
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 async function savePdfAtomically(win: BrowserWindow, target: string, buffer: Buffer): Promise<boolean> {
@@ -304,7 +327,8 @@ export function registerExportIpc(): void {
           import("./allReportPdf")
         ]);
         sendAllReportProgress(event, requestId, "preparing", "Re-reading active workbook");
-        const data = await buildReportData({ workbookPath, facility, dashboard, selectedMonth, appVersion });
+        const siblingFacility = await resolveSiblingFacility(workbookPath);
+        const data = await buildReportData({ workbookPath, facility, dashboard, selectedMonth, appVersion, siblingFacility });
         if (job.canceled) throw new ExportCancelledError();
         sendAllReportProgress(event, requestId, "validating", `${data.monthlyRows.length} historical month(s), ${data.rack?.records.length ?? 0} rack row(s)`);
         const rendered = await renderAllReportPdf(data, (stage, detail) => sendAllReportProgress(event, requestId, stage, detail), () => job.canceled);

@@ -143,6 +143,20 @@ export interface RackCapacitySummary {
   byZone: Array<{ zone: string; count: number }>;
 }
 
+/** One other facility's latest-comparable-month KPIs, for the Export All
+ *  Report's Site Comparison page. Best-effort: null when the sibling
+ *  workbook cannot be read (never blocks the primary report). */
+export interface ReportComparisonFacility {
+  label: string;
+  month: string | null;
+  buildingEnergyKwh: number | null;
+  buildingCostThb: number | null;
+  floorEnergyKwh: number | null;
+  floorCostThb: number | null;
+  averageRateThbPerKwh: number | null;
+  floorSharePercent: number | null;
+}
+
 export interface ReportData {
   title: string;
   thaiSubtitle: string;
@@ -159,4 +173,9 @@ export interface ReportData {
   currentRow: ReportMonthlyRow | null;
   engineeringDashboard: EngineeringDashboardSnapshot | null;
   rack: RackCapacityReport | null;
+  /** Persisted Rack Capacity History rows (facility total + per-zone), if any. */
+  rackHistory: import("../excel/RackCapacityHistoryWriter").RackCapacityHistoryRow[];
+  /** This facility's own current-row KPIs plus the sibling facility's, for
+   *  the Site Comparison PDF page. Null when comparison data is unavailable. */
+  comparison: { self: ReportComparisonFacility; other: ReportComparisonFacility | null } | null;
 }

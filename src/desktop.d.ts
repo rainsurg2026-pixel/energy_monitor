@@ -7,6 +7,7 @@
 import type {
   OpenWorkbookPayload,
   SaveWorkbookPayload,
+  RackCapacitySavePayload,
   RecoverySnapshot,
   IpcResult,
   WorkbookAccessStatus
@@ -23,6 +24,7 @@ import type { UpsGroupConfig } from "./utils/upsGroupAggregation";
 export type {
   OpenWorkbookPayload,
   SaveWorkbookPayload,
+  RackCapacitySavePayload,
   RecoverySnapshot,
   IpcResult,
   WorkbookAccessStatus,
@@ -102,6 +104,20 @@ export interface DesktopBridge {
       devices?: DeviceLists;
       upsGroupHistory?: { facilityId: string; upsGroups: UpsGroupConfig[]; onlyMonths?: string[] };
     }): Promise<IpcResult<SaveWorkbookPayload | { canceled: true }>>;
+    /** Staged Rack Capacity Status edits. Only rows whose current on-disk
+     *  status matches `expectedStatus` are applied; the rest come back as
+     *  conflicts in the same result rather than throwing. */
+    saveRackCapacity(payload: {
+      path: string;
+      changes: Array<{ rowNumber: number; rackId: string; expectedStatus: string | null; newStatus: string }>;
+      /** Raw image bytes; re-validated by real content (magic bytes) in the
+       *  main process regardless of what the renderer believes it is. */
+      image?: { bytes: Uint8Array } | null;
+      /** Drives the Rack Capacity History snapshot's Facility + reporting
+       *  month lookup; omit to skip history entirely (status/image save
+       *  still succeeds either way). */
+      facilityId?: string | null;
+    }): Promise<IpcResult<RackCapacitySavePayload>>;
     checkLock(path: string): Promise<IpcResult<{ locked: boolean; excelOwnerFilePresent: boolean }>>;
     access(path: string): Promise<IpcResult<WorkbookAccessStatus>>;
     validate(path: string, devices?: DeviceLists): Promise<

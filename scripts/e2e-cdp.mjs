@@ -122,17 +122,19 @@ async function main() {
     let navTexts = [];
     for (let i = 0; i < 30; i++) {
       navTexts = await evalJs(`[...document.querySelectorAll("nav button")].map(b => b.innerText.trim())`);
-      if (navTexts.length === 5) break;
+      if (navTexts.length === 6) break;
       await sleep(500);
     }
 
     console.log("\nVIEW WALKTHROUGH");
     check("app title", (await evalJs("document.title")).includes("Energy"), await evalJs("document.title"));
-    check("nav has 5 tabs (desktop)", Array.isArray(navTexts) && navTexts.length === 5, JSON.stringify(navTexts));
+    // Nav order: Dashboard, Data Entry, Rack Capacity, Historical Logs, Site Comparison, Settings.
+    check("nav has 6 tabs (desktop, incl. Rack Capacity)", Array.isArray(navTexts) && navTexts.length === 6, JSON.stringify(navTexts));
+    check("no nav label carries a numeric prefix", Array.isArray(navTexts) && navTexts.every(text => !/^\d+\./.test(text)), JSON.stringify(navTexts));
 
     // Entry view: wait for either real configured facility workbook, not the
     // removed one-off RST_E2E.xlsm fixture.
-    await evalJs(`[...document.querySelectorAll("nav button")].find(b => b.innerText.includes("1.")).click()`);
+    await evalJs(`document.querySelectorAll("nav button")[1].click()`);
     let entryText = "";
     for (let i = 0; i < 30; i++) {
       entryText = await evalJs("document.body.innerText");
@@ -151,13 +153,54 @@ async function main() {
     check("entry: no Google Sheets board (disabled on desktop)", !entryText.includes("Google Sheets Sync"));
 
     // Dashboard reports loaded workbook data after entry readiness.
-    await evalJs(`[...document.querySelectorAll("nav button")].find(b => b.innerText.includes("2.")).click()`);
+    await evalJs(`document.querySelectorAll("nav button")[0].click()`);
     await sleep(800);
     const dashboardText = await evalJs("document.body.innerText");
     check("dashboard view renders with data", dashboardText.length > 500 && !dashboardText.includes("Unable to load latest data"));
 
+    // Rack Capacity view (index 2: Dashboard, Data Entry, Rack Capacity, ...)
+    await evalJs(`document.querySelectorAll("nav button")[2].click()`);
+    await sleep(1200);
+    const rackCapacityText = await evalJs("document.body.innerText");
+    check("rack capacity view renders", rackCapacityText.includes("Rack Capacity") || rackCapacityText.includes("ความจุแร็ค"));
+    check("rack capacity shows a real zone/status filter and editor table", rackCapacityText.includes("Rack ID") || rackCapacityText.includes("รหัสแร็ค"));
+
+    // Overview cards must show real counts from the active workbook (Rangsit
+    // by default: 358 total, 294 In Use, 32 Reserved, 24 Pending Dismantle, 8
+    // Available - confirmed by direct OOXML inspection, not guessed).
+    check("rack capacity Total Racks card shows the real workbook total (358)", /\b358\b/.test(rackCapacityText));
+    check("rack capacity In Use card shows a real, non-fabricated count (294)", /\b294\b/.test(rackCapacityText));
+    check("rack capacity cards show a percentage (not raw 0-1 fraction)", /9\d\.\d\d%|8\d\.\d\d%/.test(rackCapacityText));
+
+    // Save Changes must start disabled - no staged edits yet.
+    const saveDisabledInitially = await evalJs(`(() => {
+      const btn = [...document.querySelectorAll("button")].find(b => b.innerText.includes("Save Changes") || b.innerText.includes("บันทึกการเปลี่ยนแปลง"));
+      return btn ? btn.disabled : null;
+    })()`);
+    check("rack capacity Save Changes is disabled with no pending edits", saveDisabledInitially === true);
+
+    // Rack ID search must actually filter the visible table rows.
+    const countBeforeFilter = await evalJs(`document.querySelectorAll("table tbody tr").length`);
+    await evalJs(`(() => {
+      const input = [...document.querySelectorAll("input")].find(i => i.placeholder && (i.placeholder.includes("AA01")));
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, "AA01");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    })()`);
+    await sleep(500);
+    const filteredText = await evalJs(`[...document.querySelectorAll("table tbody tr")].map(r => r.innerText).join("|")`);
+    const countAfterFilter = await evalJs(`document.querySelectorAll("table tbody tr").length`);
+    check("rack capacity Rack ID search narrows the visible rows", countAfterFilter > 0 && countAfterFilter < countBeforeFilter, `${countAfterFilter} vs ${countBeforeFilter}`);
+    check("rack capacity Rack ID search result actually matches the query", filteredText.includes("AA01"));
+    // Clear the search back out for a clean state for any later checks.
+    await evalJs(`(() => {
+      const btn = [...document.querySelectorAll("button")].find(b => b.innerText.includes("Clear Filters") || b.innerText.includes("ล้างตัวกรอง"));
+      btn?.click();
+    })()`);
+    await sleep(300);
+
     // History view
-    await evalJs(`[...document.querySelectorAll("nav button")].find(b => b.innerText.includes("3.")).click()`);
+    await evalJs(`document.querySelectorAll("nav button")[3].click()`);
     await sleep(1200);
     const historyText = await evalJs("document.body.innerText");
     check("history view renders", historyText.length > 300);
@@ -256,8 +299,8 @@ async function main() {
     const tooltipText = await evalJs("document.querySelector('.recharts-tooltip-wrapper')?.innerText ?? ''");
     check("energy tooltip exposes full-value unit", tooltipShown && /kWh/.test(tooltipText) && /\d{1,3}(?:,\d{3})*(?:\.\d+)?/.test(tooltipText), tooltipText);
 
-    // Settings & Integrity view
-    await evalJs(`[...document.querySelectorAll("nav button")].find(b => b.innerText.includes("4.")).click()`);
+    // Settings & Data Validation view (index 5: Dashboard, Data Entry, Rack Capacity, History, Comparison, Settings)
+    await evalJs(`document.querySelectorAll("nav button")[5].click()`);
     await sleep(800);
     const settingsText = await evalJs("document.body.innerText");
     check("integrity center present", settingsText.includes("ศูนย์ตรวจสอบ") || settingsText.includes("Integrity"));
@@ -269,12 +312,12 @@ async function main() {
     await evalJs(`[...document.querySelectorAll("button")].find(b => b.innerText.trim() === "English").click()`);
     await sleep(900);
     const afterLang = await evalJs("document.body.innerText");
-    check("language switch applies", afterLang.includes("Settings & Integrity"), "nav label did not switch to EN");
-    await evalJs(`[...document.querySelectorAll("nav button")].find(b => b.innerText.includes("Site Comparison"))?.click()`);
+    check("language switch applies", afterLang.includes("Settings & Data Validation"), "nav label did not switch to EN");
+    await evalJs(`document.querySelectorAll("nav button")[4].click()`);
     await sleep(600);
     const englishComparison = await evalJs("document.querySelector('[data-testid=\"facility-comparison\"]')?.innerText ?? ''");
     check("comparison language switch applies", englishComparison.includes("Reference Month") && englishComparison.includes("Last 3 Months") && /whole building energy/i.test(englishComparison), englishComparison);
-    await evalJs(`[...document.querySelectorAll("nav button")].find(b => b.innerText.includes("4."))?.click()`);
+    await evalJs(`document.querySelectorAll("nav button")[5].click()`);
     await sleep(300);
     const cfg = JSON.parse(readFileSync(path.join(testRoot, "config", "config.json"), "utf8"));
     check("config.json persisted language", cfg.language === "en", `language=${cfg.language}`);

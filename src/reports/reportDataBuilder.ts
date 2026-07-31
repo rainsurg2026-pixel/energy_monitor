@@ -8,7 +8,9 @@ import { buildEngineeringDashboardSnapshot } from "../utils/engineeringDashboard
 import type { DashboardUpsTopology } from "../utils/engineeringDashboard";
 import type { DeviceLists } from "../excel/SheetMapper";
 import { readUpsMappingFromBuffer } from "./upsMappingReader";
-import type { ReportData, ReportMonthlyRow, ReportStatus } from "./reportTypes";
+import { readRackCapacityFromBuffer } from "./rackCapacityReader";
+import { readRackCapacityHistoryFromBuffer } from "../excel/RackCapacityHistoryWriter";
+import type { ReportComparisonFacility, ReportData, ReportMonthlyRow, ReportStatus } from "./reportTypes";
 
 export interface BuildReportOptions {
   workbookPath: string;
@@ -17,6 +19,11 @@ export interface BuildReportOptions {
   appVersion: string;
   dashboard?: DashboardUpsTopology;
   devices?: DeviceLists;
+  /** The sibling facility, resolved by the caller (main process only - this
+   *  module stays decoupled from electron/facilities.ts), for the Export All
+   *  Report's Site Comparison page. Best-effort: read failures here never
+   *  block the primary report. */
+  siblingFacility?: { label: string; workbookPath: string; devices?: DeviceLists };
 }
 
 function rowStatus(row: ReportMonthlyRow): "Complete" | "Partial" {
@@ -68,6 +75,60 @@ export async function buildReportData(options: BuildReportOptions): Promise<Repo
   const upsMapping = await readUpsMappingFromBuffer(buffer);
   const engineeringDashboard = currentRow ? buildEngineeringDashboardSnapshot(logs, currentRow.month, upsMapping, options.dashboard) : null;
 
+  let rack = null;
+  try {
+    rack = await readRackCapacityFromBuffer(buffer);
+  } catch {
+    /* Rack Capacity / Table7 legitimately absent from some workbooks - the PDF page just shows "unavailable" */
+  }
+  let rackHistory: ReportData["rackHistory"] = [];
+  try {
+    rackHistory = await readRackCapacityHistoryFromBuffer(buffer);
+  } catch {
+    /* history sheet not yet created for this workbook */
+  }
+
+  let comparison: ReportData["comparison"] = null;
+  if (currentRow) {
+    const selfCalc = calculateEnergyCostForMonth(logs, currentRow.month);
+    const self: ReportComparisonFacility = {
+      label: options.facility,
+      month: currentRow.month,
+      buildingEnergyKwh: selfCalc.buildingEnergyKwh,
+      buildingCostThb: selfCalc.buildingElectricityCostThb,
+      floorEnergyKwh: selfCalc.floorEnergyKwh,
+      floorCostThb: selfCalc.floorElectricityCostThb,
+      averageRateThbPerKwh: selfCalc.averageElectricityRateThbPerKwh,
+      floorSharePercent: selfCalc.energySharePercent
+    };
+    let other: ReportComparisonFacility | null = null;
+    if (options.siblingFacility) {
+      try {
+        const siblingBuffer = await fs.readFile(options.siblingFacility.workbookPath);
+        const siblingRead = await readWorkbookFromBuffer(siblingBuffer, options.siblingFacility.devices);
+        const siblingLog = siblingRead.logs.find(l => l.month === currentRow.month);
+        if (siblingLog) {
+          const otherCalc = calculateEnergyCostForMonth(siblingRead.logs, currentRow.month);
+          other = {
+            label: options.siblingFacility.label,
+            month: currentRow.month,
+            buildingEnergyKwh: otherCalc.buildingEnergyKwh,
+            buildingCostThb: otherCalc.buildingElectricityCostThb,
+            floorEnergyKwh: otherCalc.floorEnergyKwh,
+            floorCostThb: otherCalc.floorElectricityCostThb,
+            averageRateThbPerKwh: otherCalc.averageElectricityRateThbPerKwh,
+            floorSharePercent: otherCalc.energySharePercent
+          };
+        }
+        // Sibling has no record for this exact month - a missing comparison
+        // metric, never a fabricated zero (same contract as FacilityComparison.tsx).
+      } catch {
+        /* sibling workbook unavailable - comparison page shows this facility only */
+      }
+    }
+    comparison = { self, other };
+  }
+
   return {
     title: "Monthly Power & Energy Report",
     thaiSubtitle: "รายงานสรุปพลังงานและค่าไฟฟ้า",
@@ -83,6 +144,8 @@ export async function buildReportData(options: BuildReportOptions): Promise<Repo
     monthlyRows,
     currentRow,
     engineeringDashboard,
-    rack: null
+    rack,
+    rackHistory,
+    comparison
   };
 }

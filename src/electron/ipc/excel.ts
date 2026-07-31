@@ -21,6 +21,10 @@ import { listBackups, restoreBackup } from "../sync/BackupManager";
 import { addRecentFile, loadConfig, resolveBackupDir } from "../config";
 import { ensureDir, getExportsDir, getRecoveryPath, log } from "../paths";
 import { readRackCapacityFromBuffer } from "../../reports/rackCapacityReader";
+import { saveRackCapacityStatusChanges, RackStatusChange, RackCapacityImageInput } from "../../excel/RackCapacityWriter";
+import { readRackCapacityHistoryFromBuffer, RackCapacityHistoryRow } from "../../excel/RackCapacityHistoryWriter";
+import { RACK_CANONICAL_STATUSES } from "../../utils/rackCapacity";
+import { validateImageBytes } from "../../utils/imageValidation";
 import { readUpsMappingFromBuffer } from "../../reports/upsMappingReader";
 import { readUpsGroupHistoryFromBuffer } from "../../reports/upsGroupHistoryReader";
 import type { DashboardUpsMappingReport, RackCapacitySummary, UpsGroupHistoryReport } from "../../reports/reportTypes";
@@ -123,6 +127,55 @@ function sanitizeDevices(raw: unknown): DeviceLists | undefined {
   return { upsIds, dcIds, ...(airFields && airFields.length > 0 ? { airFields } : {}) };
 }
 
+/** Trust boundary for staged Rack Capacity status edits: only the four
+ *  canonical statuses may ever be written (never an arbitrary UI-supplied
+ *  string), and every change must carry the row identity + previously-read
+ *  status the writer needs to detect a stale/conflicting edit server-side. */
+function sanitizeRackStatusChanges(raw: unknown): RackStatusChange[] {
+  if (typeof raw === "undefined") return [];
+  if (!Array.isArray(raw)) throw new PayloadError("changes must be an array.");
+  if (raw.length > 500) throw new PayloadError("Too many changes in a single save (max 500).");
+  return raw.map((entry, index) => {
+    if (typeof entry !== "object" || entry === null) throw new PayloadError(`changes[${index}] must be an object.`);
+    const o = entry as Record<string, unknown>;
+    const rowNumber = o.rowNumber;
+    if (typeof rowNumber !== "number" || !Number.isInteger(rowNumber) || rowNumber < 1 || rowNumber > 100000) {
+      throw new PayloadError(`changes[${index}].rowNumber must be a positive integer.`);
+    }
+    const rackId = o.rackId;
+    if (typeof rackId !== "string" || rackId.trim() === "" || rackId.length > 200) {
+      throw new PayloadError(`changes[${index}].rackId must be a non-empty string.`);
+    }
+    const rawExpectedStatus = o.expectedStatus;
+    if (rawExpectedStatus !== null && typeof rawExpectedStatus !== "undefined" && (typeof rawExpectedStatus !== "string" || rawExpectedStatus.length > 200)) {
+      throw new PayloadError(`changes[${index}].expectedStatus must be a string or null.`);
+    }
+    const expectedStatus: string | null = typeof rawExpectedStatus === "string" ? rawExpectedStatus : null;
+    const newStatus = o.newStatus;
+    if (typeof newStatus !== "string" || !RACK_CANONICAL_STATUSES.includes(newStatus as (typeof RACK_CANONICAL_STATUSES)[number])) {
+      throw new PayloadError(`changes[${index}].newStatus must be one of: ${RACK_CANONICAL_STATUSES.join(", ")}.`);
+    }
+    return { rowNumber, rackId, expectedStatus, newStatus };
+  });
+}
+
+/** Trust boundary for the Rack Capacity K9 image: the renderer's own
+ *  validation is never trusted alone - bytes are re-validated by real magic
+ *  numbers/dimension parsing here, in the main process, before anything is
+ *  written to the workbook. A crafted "type"/"width"/"height" that doesn't
+ *  match the actual bytes is rejected, not merely relabeled. */
+function sanitizeRackImage(raw: unknown): RackCapacityImageInput | null {
+  if (raw === null || typeof raw === "undefined") return null;
+  if (typeof raw !== "object") throw new PayloadError("image must be an object or null.");
+  const o = raw as Record<string, unknown>;
+  const bytesInput = o.bytes;
+  if (!(bytesInput instanceof Uint8Array)) throw new PayloadError("image.bytes must be raw byte data.");
+  const bytes = Buffer.from(bytesInput);
+  const validated = validateImageBytes(bytes);
+  if (validated.ok === false) throw new PayloadError(`Uploaded file is not a valid PNG/JPEG image (${validated.reason}).`);
+  return { bytes, type: validated.image.type, width: validated.image.width, height: validated.image.height };
+}
+
 // ---------------------------------------------------------------------------
 // Payload shapes shared with the renderer (via `import type`)
 // ---------------------------------------------------------------------------
@@ -143,12 +196,31 @@ export interface OpenWorkbookPayload {
   upsMappingError: string | null;
   /** Persisted "2. UPS Group History" worksheet, if present. */
   upsGroupHistory: UpsGroupHistoryReport | null;
+  /** Persisted "Rack Capacity History" worksheet rows, if present. */
+  rackCapacityHistory: RackCapacityHistoryRow[];
 }
 
 export interface SaveWorkbookPayload {
   path: string;
   backupPath: string | null;
   savedAt: string;
+}
+
+export interface RackCapacitySavePayload {
+  path: string;
+  backupPath: string | null;
+  savedAt: string;
+  outcomes: Array<{
+    rowNumber: number;
+    rackId: string;
+    applied: boolean;
+    conflictActualStatus?: string | null;
+    conflictReason?: "row_not_found" | "rack_id_mismatch" | "status_mismatch";
+  }>;
+  changedCount: number;
+  imageEmbedded: boolean;
+  rackCapacity: RackCapacitySummary | null;
+  rackCapacityHistory: RackCapacityHistoryRow[];
 }
 
 export interface RecoverySnapshot {
@@ -265,6 +337,14 @@ async function buildOpenPayload(
       log.warn(`UPS Group History unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  let rackCapacityHistory: RackCapacityHistoryRow[] = [];
+  if (upsMappingBuffer) {
+    try {
+      rackCapacityHistory = await readRackCapacityHistoryFromBuffer(upsMappingBuffer);
+    } catch (error) {
+      log.warn(`Rack Capacity History unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   if (trackRecent) {
     await addRecentFile(filePath);
@@ -282,7 +362,8 @@ async function buildOpenPayload(
     rackCapacity,
     upsMapping,
     upsMappingError,
-    upsGroupHistory
+    upsGroupHistory,
+    rackCapacityHistory
   };
 }
 
@@ -389,6 +470,40 @@ export function registerExcelIpc(): void {
       });
 	      log.info(`workbook saved: ${filePath} (${result.months} months, backup: ${result.backupPath ?? "none"})`);
 	      return { ok: true, path: result.path, backupPath: result.backupPath, savedAt: new Date().toISOString() };
+    })
+  );
+
+  // --- Rack Capacity: staged Status edits, save only what actually changed ---
+  ipcMain.handle("excel:saveRackCapacity", (_event, raw: unknown) =>
+    wrap<RackCapacitySavePayload>("excel:saveRackCapacity", async () => {
+      const body = (raw ?? {}) as Record<string, unknown>;
+      const filePath = ensureWorkbookPath(body.path);
+      const changes: RackStatusChange[] = sanitizeRackStatusChanges(body.changes);
+      const image = sanitizeRackImage(body.image);
+      if (changes.length === 0 && !image) throw new PayloadError("Save requires at least one status change or an image.");
+      const facilityId = typeof body.facilityId === "string" && body.facilityId.length > 0 ? body.facilityId.slice(0, 100) : null;
+      const config = await loadConfig();
+      const result = await saveRackCapacityStatusChanges(
+        filePath,
+        changes,
+        { backupDir: resolveBackupDir(config), backupKeep: config.backupKeep },
+        image,
+        facilityId
+      );
+      log.info(`rack capacity saved: ${filePath} (${result.changedCount} status change(s), image: ${result.imageEmbedded}, backup: ${result.backupPath ?? "none"})`);
+      return {
+        ok: true,
+        path: result.path,
+        backupPath: result.backupPath,
+        savedAt: result.savedAt,
+        outcomes: result.outcomes,
+        changedCount: result.changedCount,
+        imageEmbedded: result.imageEmbedded,
+        rackCapacity: result.rackCapacity
+          ? { totalRacks: result.rackCapacity.records.length, records: result.rackCapacity.records, byStatus: result.rackCapacity.byStatus, byZone: result.rackCapacity.byZone }
+          : null,
+        rackCapacityHistory: result.rackCapacityHistory
+      };
     })
   );
 

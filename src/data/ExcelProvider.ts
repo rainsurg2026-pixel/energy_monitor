@@ -7,7 +7,7 @@
 import { MonthlyLog } from "../types";
 import type { DesktopBridge, DeviceLists, IpcResult, OpenWorkbookPayload } from "../desktop";
 import type { UpsGroupConfig } from "../utils/upsGroupAggregation";
-import { DataSnapshot, IDataProvider, ProviderCapabilities, ProviderError, SaveOutcome } from "./IDataProvider";
+import { DataSnapshot, IDataProvider, ProviderCapabilities, ProviderError, RackCapacityImageRequest, RackCapacitySaveOutcome, RackStatusChangeRequest, SaveOutcome } from "./IDataProvider";
 
 /**
  * Convert an IPC envelope into either its success payload or a thrown
@@ -35,7 +35,8 @@ function toSnapshot(payload: OpenWorkbookPayload): DataSnapshot {
     rackCapacity: payload.rackCapacity,
     upsMapping: payload.upsMapping,
     upsMappingError: payload.upsMappingError,
-    upsGroupHistory: payload.upsGroupHistory
+    upsGroupHistory: payload.upsGroupHistory,
+    rackCapacityHistory: payload.rackCapacityHistory
   };
 }
 
@@ -151,6 +152,25 @@ export class ExcelProvider implements IDataProvider {
     const saved = result as { ok: true; path: string; backupPath: string | null; savedAt: string };
     this.currentPath = saved.path;
     return { savedAt: saved.savedAt, backupPath: saved.backupPath, path: saved.path };
+  }
+
+  async saveRackCapacity(changes: RackStatusChangeRequest[], image?: RackCapacityImageRequest | null): Promise<RackCapacitySaveOutcome> {
+    if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
+    const result = unwrap(await this.bridge.excel.saveRackCapacity({
+      path: this.currentPath,
+      changes,
+      image: image ? { bytes: image.bytes } : null,
+      facilityId: this.upsGroupContext?.facilityId ?? null
+    }));
+    return {
+      savedAt: result.savedAt,
+      backupPath: result.backupPath,
+      outcomes: result.outcomes,
+      changedCount: result.changedCount,
+      imageEmbedded: result.imageEmbedded,
+      rackCapacity: result.rackCapacity,
+      rackCapacityHistory: result.rackCapacityHistory
+    };
   }
 
   async checkLock(): Promise<{ locked: boolean; excelOwnerFilePresent: boolean }> {

@@ -7,7 +7,6 @@ import { calculateEnergyCostForMonth, getAirValue } from "../utils/energyCost";
 import { buildEngineeringDashboardSnapshot, getDaysInMonth, getPreviousMonth } from "../utils/engineeringDashboard";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 import TrendLineChart from "./TrendLineChart";
-import RackCapacitySummaryCard from "./RackCapacitySummaryCard";
 import { 
   TrendingUp, 
   Zap, 
@@ -392,7 +391,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
         </div>
       </div>
 
-      <RackCapacitySummaryCard rackCapacity={rackCapacity} />
+      {/* Rack Capacity now has its own dedicated tab (see RackCapacityEditor). */}
 
       {/* DETAILED ACCORDION BLOCKS */}
       <div className="space-y-4">

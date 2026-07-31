@@ -11,6 +11,36 @@
 import { MonthlyLog } from "../types";
 import type { DeviceLists, ExcelIntegrityReport, WorkbookHealth, WorkbookValidation } from "../desktop";
 import type { DashboardUpsMappingReport, RackCapacitySummary, UpsGroupHistoryReport } from "../reports/reportTypes";
+import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
+
+export interface RackStatusChangeRequest {
+  rowNumber: number;
+  rackId: string;
+  expectedStatus: string | null;
+  newStatus: string;
+}
+
+export interface RackStatusChangeOutcome {
+  rowNumber: number;
+  rackId: string;
+  applied: boolean;
+  conflictActualStatus?: string | null;
+  conflictReason?: "row_not_found" | "rack_id_mismatch" | "status_mismatch";
+}
+
+export interface RackCapacitySaveOutcome {
+  savedAt: string;
+  backupPath?: string | null;
+  outcomes: RackStatusChangeOutcome[];
+  changedCount: number;
+  imageEmbedded: boolean;
+  rackCapacity: RackCapacitySummary | null;
+  rackCapacityHistory: RackCapacityHistoryRow[];
+}
+
+export interface RackCapacityImageRequest {
+  bytes: Uint8Array;
+}
 
 export type DataSourceKind = "excel" | "googleSheets";
 
@@ -31,6 +61,8 @@ export interface DataSnapshot {
   upsMappingError?: string | null;
   /** Persisted "2. UPS Group History" worksheet, if present. */
   upsGroupHistory?: UpsGroupHistoryReport | null;
+  /** Persisted "Rack Capacity History" monthly snapshots, if any exist yet. */
+  rackCapacityHistory?: RackCapacityHistoryRow[];
 }
 
 export interface SaveOutcome {
@@ -96,4 +128,11 @@ export interface IDataProvider {
     facilities: Array<{ path: string; label: string; devices?: DeviceLists } | { spreadsheetId: string; label: string }>,
     options?: { signal?: AbortSignal }
   ): Promise<Map<string, DataSnapshot>>;
+
+  /**
+   * Staged Rack Capacity Status edits. Desktop/Excel-only (Rack Capacity
+   * editing requires a local workbook); providers that cannot support it
+   * simply omit this method, matching loadMultipleFacilities' optionality.
+   */
+  saveRackCapacity?(changes: RackStatusChangeRequest[], image?: RackCapacityImageRequest | null): Promise<RackCapacitySaveOutcome>;
 }

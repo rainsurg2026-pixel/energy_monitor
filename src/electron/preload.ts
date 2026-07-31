@@ -26,6 +26,7 @@ const desktopBridge = {
     openMultiple: (requests: unknown[]) => invoke("excel:openMultiple", requests),
     reload: (path: string, devices?: unknown, upsGroupContext?: unknown) => invoke("excel:reload", path, devices, upsGroupContext),
     save: (payload: { path: string; logs: unknown[]; devices?: unknown }) => invoke("excel:save", payload),
+    saveRackCapacity: (payload: { path: string; changes: unknown[]; image?: { bytes: Uint8Array } | null; facilityId?: string | null }) => invoke("excel:saveRackCapacity", payload),
     saveAs: (payload: { sourcePath: string; logs: unknown[]; devices?: unknown }) => invoke("excel:saveAs", payload),
     checkLock: (path: string) => invoke("excel:checkLock", path),
     access: (path: string) => invoke("excel:access", path),

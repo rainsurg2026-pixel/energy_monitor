@@ -51,6 +51,9 @@ import BenchmarkDashboard from "./components/BenchmarkDashboard";
 import ForecastDashboard from "./components/ForecastDashboard";
 import SmartInsightPanel from "./components/SmartInsightPanel";
 import FacilityComparison from "./components/FacilityComparison";
+import RackCapacityEditor from "./components/RackCapacityEditor";
+import RackCapacitySummaryCard from "./components/RackCapacitySummaryCard";
+import RackCapacityHistoryPanel from "./components/RackCapacityHistoryPanel";
 import { 
   Shield, 
   Lock, 
@@ -67,7 +70,8 @@ import {
   AlertTriangle,
   BarChart4,
   TableProperties,
-  RefreshCw
+  RefreshCw,
+  Server
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -166,7 +170,7 @@ export default function App() {
   const [logs, setLogs] = useState<MonthlyLog[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [activeLog, setActiveLog] = useState<MonthlyLog | null>(null);
-  const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "history" | "comparison" | "settings">("dashboard");
+  const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "rackCapacity" | "history" | "comparison" | "settings">("dashboard");
 
   // --- DESKTOP (EXCEL WORKBOOK) SESSION ---
   // In the desktop app the Excel workbook is the primary data source; the
@@ -2009,7 +2013,7 @@ export default function App() {
         {/* SEGMENTED NAVIGATION BAR */}
         <nav
           className={`grid grid-cols-1 ${
-            isDesktopApp ? "sm:grid-cols-2 lg:grid-cols-5" : "sm:grid-cols-3"
+            isDesktopApp ? "sm:grid-cols-2 lg:grid-cols-6" : "sm:grid-cols-3"
           } gap-2 bg-slate-900 border border-slate-850 p-1.5 rounded-2xl shadow-md`}
         >
           <button
@@ -2021,7 +2025,7 @@ export default function App() {
             }`}
           >
             <BarChart4 className="w-4 h-4 text-indigo-400" />
-            <span>{lang === "th" ? "2. หน้าสรุปแดชบอร์ด" : "2. Dashboard Summary"}</span>
+            <span>{lang === "th" ? "หน้าสรุปแดชบอร์ด" : "Dashboard Summary"}</span>
           </button>
 
           <button
@@ -2033,8 +2037,22 @@ export default function App() {
             }`}
           >
             <FileSpreadsheet className="w-4 h-4 text-teal-400" />
-            <span>{lang === "th" ? "1. หน้ากรอกข้อมูล" : "1. Data Entry Sheet"}</span>
+            <span>{lang === "th" ? "หน้ากรอกข้อมูล" : "Data Entry Sheet"}</span>
           </button>
+
+          {isDesktopApp && (
+            <button
+              onClick={() => setCurrentView("rackCapacity")}
+              className={`px-4 py-3.5 text-xs font-bold rounded-xl flex items-center justify-center gap-2.5 transition-all cursor-pointer ${
+                currentView === "rackCapacity"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/15"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-850/50"
+              }`}
+            >
+              <Server className="w-4 h-4 text-fuchsia-400" />
+              <span>{lang === "th" ? "ความจุแร็ค" : "Rack Capacity"}</span>
+            </button>
+          )}
 
           <button
             onClick={() => setCurrentView("history")}
@@ -2045,7 +2063,7 @@ export default function App() {
             }`}
           >
             <TableProperties className="w-4 h-4 text-amber-400" />
-            <span>{lang === "th" ? "3. ประวัติรายเดือนทั้งหมด" : "3. Historical Logs"}</span>
+            <span>{lang === "th" ? "ประวัติรายเดือนทั้งหมด" : "Historical Logs"}</span>
           </button>
 
           {isDesktopApp && (
@@ -2072,7 +2090,7 @@ export default function App() {
               }`}
             >
               <Settings className="w-4 h-4 text-emerald-400" />
-              <span>{lang === "th" ? "4. ตั้งค่า & ตรวจสอบข้อมูล" : "4. Settings & Integrity"}</span>
+              <span>{lang === "th" ? "ตั้งค่า & ตรวจสอบข้อมูล" : "Settings & Data Validation"}</span>
             </button>
           )}
         </nav>
@@ -2355,6 +2373,20 @@ export default function App() {
           ) : (
             renderReportingUnavailableFallback()
           )
+        )}
+
+        {/* --- VIEW: RACK CAPACITY MANAGEMENT (desktop) --- */}
+        {currentView === "rackCapacity" && isDesktopApp && excelProvider && (
+          <div className="space-y-6 animate-fadeIn">
+            <RackCapacityEditor
+              rackCapacity={workbook?.rackCapacity ?? null}
+              provider={excelProvider}
+              lang={lang}
+              onSaved={(updated, history) => setWorkbook(prev => (prev ? { ...prev, rackCapacity: updated, rackCapacityHistory: history } : prev))}
+            />
+            <RackCapacitySummaryCard rackCapacity={workbook?.rackCapacity} lang={lang} />
+            <RackCapacityHistoryPanel rows={workbook?.rackCapacityHistory ?? []} lang={lang} />
+          </div>
         )}
 
         {/* --- VIEW 3: MONTHLY HISTORICAL CATEGORIZED RECORDS --- */}

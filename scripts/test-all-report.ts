@@ -54,7 +54,19 @@ for (const dashboardSection of ["UPS Load Status", "Air Conditioning Energy Cons
 for (const removed of ["Table of Contents", "Executive Summary", "Historical Operations Summary", "Smart Insights and Data-quality Warnings", "Forecast Information", "Forecast Summary", "Benchmark Information", "Benchmark Summary", "Trend Analytics & Historical Charts"]) {
   if (html.includes(removed)) throw new Error(`Removed All Report section is still present: ${removed}`);
 }
-if (/Rack Capacity|Rack Inventory|Rack Validation/i.test(html)) throw new Error("Rack content leaked into Export All Report.");
+// v2.2.2: Rack Capacity Overview + Site Comparison are now deliberately part
+// of Export All Report (was previously explicitly excluded pre-v2.2.2).
+if (!html.includes("<h2>Rack Capacity Overview</h2>")) throw new Error("Rack Capacity Overview page is missing from Export All Report.");
+if (report.rack && report.rack.records.length > 0) {
+  if (!/Total Racks/.test(html)) throw new Error("Rack Capacity KPI cards are missing.");
+  if (!/rack-donut-row/.test(html)) throw new Error("Rack Capacity donut chart is missing.");
+  if (/Rack Capacity Overview<\/h2><p class="note">Rack Capacity \/ Table7 is unavailable/.test(html)) throw new Error("Rack Capacity data exists but the PDF shows the unavailable-data fallback.");
+} else {
+  throw new Error(`${facilityId} workbook unexpectedly has no Rack Capacity / Table7 records - cannot verify the PDF renders real data.`);
+}
+if (!html.includes("<h2>Site Comparison</h2>")) throw new Error("Site Comparison page is missing from Export All Report.");
+if (report.comparison?.self && !html.includes("Whole Building Energy (kWh)")) throw new Error("Site Comparison table headers are missing.");
+if (/Rack Inventory|Rack Validation/i.test(html)) throw new Error("Unexpected legacy rack-report naming leaked into Export All Report.");
 if (/Page 0 of 0/i.test(html)) throw new Error("Invalid page numbering placeholder was included.");
 for (const section of ["Monthly Energy &amp; Cost Table", "Report Information and Data Source"]) {
   if (!html.includes(`<h2>${section}</h2>`)) throw new Error(`Required section is missing: ${section}`);
@@ -62,7 +74,9 @@ for (const section of ["Monthly Energy &amp; Cost Table", "Report Information an
 for (const chart of ["Total 4th Floor Energy Trend", "UPS System Energy Trend", "Air Conditioning Energy Trend", "DC Power Panel Energy Trend", "Estimated 4th Floor Cost Trend", "Building Average Electricity Rate Trend"]) {
   if (!html.includes(chart)) throw new Error(`Required chart series is missing: ${chart}`);
 }
-if ((html.match(/class="page trend-page"/g) ?? []).length !== 6) throw new Error("Each trend must occupy one full report page.");
+const rackTotalHistoryMonths = new Set(report.rackHistory.filter(r => r.rackZone === "(Total)").map(r => r.snapshotMonth)).size;
+const expectedTrendPages = 6 + (rackTotalHistoryMonths >= 2 ? 2 : 0); // + Rack Capacity Usage%/Availability% once >=2 months of history exist
+if ((html.match(/class="page trend-page"/g) ?? []).length !== expectedTrendPages) throw new Error(`Each trend must occupy one full report page (expected ${expectedTrendPages}).`);
 const expectedPointLabels = [
   ...report.monthlyRows.map(row => row.floorEnergyKwh),
   ...report.monthlyRows.map(row => row.upsEnergyKwh),
@@ -71,7 +85,11 @@ const expectedPointLabels = [
   ...report.monthlyRows.map(row => row.floorCostThb),
   ...report.monthlyRows.map(row => row.averageRateThbPerKwh)
 ].filter(value => value !== null && Number.isFinite(value)).length;
-if ((html.match(/class="point-value"/g) ?? []).length !== expectedPointLabels) throw new Error("Every valid trend point must receive a numeric label.");
+const rackTrendTotalRows = report.rackHistory.filter(r => r.rackZone === "(Total)").slice(-12);
+const expectedRackPointLabels = rackTotalHistoryMonths >= 2
+  ? [...rackTrendTotalRows.map(r => r.usagePct), ...rackTrendTotalRows.map(r => r.availabilityPct)].filter(value => value !== null && Number.isFinite(value)).length
+  : 0;
+if ((html.match(/class="point-value"/g) ?? []).length !== expectedPointLabels + expectedRackPointLabels) throw new Error("Every valid trend point must receive a numeric label.");
 if (!html.includes('"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif')) throw new Error("Report font stack is missing.");
 
 const after = await fs.stat(workbookPath);
