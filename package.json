@@ -3,7 +3,7 @@
   "productName": "Data Center Energy & Facility Monitor",
   "description": "Offline-first Windows desktop app for monthly data center power & energy logging, reporting and forecasting, backed by an Excel workbook.",
   "private": true,
-  "version": "2.2.0",
+  "version": "2.2.1",
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {

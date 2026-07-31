@@ -378,6 +378,7 @@ function applyGlobalNumericNumberFormats(
   sheetXml: string,
   sharedStrings: string[],
   numberStyles: Map<string, string>,
+  percentageStyles: Map<string, string>,
   centeredStyles?: Map<string, string>,
   sheetName?: string
 ): string {
@@ -394,6 +395,7 @@ function applyGlobalNumericNumberFormats(
   const airExceptionColumns = new Set<string>();
   let airHeaderRow = -1;
   let airEndRow = Number.POSITIVE_INFINITY;
+  const percentageRegions = sheetName === "Dashboard-FAC" ? dashboardPercentageRegions(rows, sharedStrings) : [];
   if (sheetName === "Dashboard-FAC") {
     const airHeader = rows.find(row => row.cells.some(cell => {
       const key = cellText(cell, sharedStrings).replace(/[^a-z0-9]/gi, "").toLowerCase();
@@ -419,6 +421,7 @@ function applyGlobalNumericNumberFormats(
   const formatCell = (row: ParsedRow, cell: ParsedCell): string => {
     if (monthColumns.has(cell.colLetter) || (sheetName === "Dashboard-FAC" && cell.colLetter === "H" && row.rowNumber === 1)) return row.raw;
     if (sheetName === "Dashboard-FAC" && row.rowNumber > airHeaderRow && row.rowNumber < airEndRow && airExceptionColumns.has(cell.colLetter)) return row.raw;
+    if (sheetName === "Dashboard-FAC" && isDashboardPercentageCell(row, cell, percentageRegions)) return row.raw;
     if (!hasNumericValue(cell) && !isNumericFormula(cell)) return row.raw;
     const numberStyle = numberStyles.get(cell.styleId ?? "0") ?? cell.styleId;
     const styleId = centeredStyles?.get(numberStyle ?? "0") ?? numberStyle;
@@ -440,7 +443,10 @@ function applyGlobalNumericNumberFormats(
     for (const cell of row.cells) raw = formatCell({ ...row, raw }, cell);
     return raw;
   });
-  return sheetXml.replace(sheetDataMatch[0], `<sheetData${sheetDataMatch[1]}>${patchedRows.join("")}<\/sheetData>`);
+  const formatted = sheetXml.replace(sheetDataMatch[0], `<sheetData${sheetDataMatch[1]}>${patchedRows.join("")}<\/sheetData>`);
+  return sheetName === "Dashboard-FAC"
+    ? applyDashboardPercentageNumberFormats(formatted, sharedStrings, percentageStyles, centeredStyles)
+    : formatted;
 }
 
 /** Keep the existing Dashboard-FAC calculations, but extend their DC source
@@ -451,6 +457,71 @@ function patchDashboardDcLookupRanges(sheetXml: string): string {
     .replace(/'3\. DC Data Log'!\$B\$3:\$B\$12/g, "PPC_DC[DC Power Panel]")
     .replace(/'3\. DC Data Log'!\$C\$3:\$C\$12/g, "PPC_DC[DC Voltage (V)]")
     .replace(/'3\. DC Data Log'!\$D\$3:\$D\$12/g, "PPC_DC[DC Current (A)]");
+}
+
+interface DashboardPercentageRegion {
+  column: string;
+  startRow: number;
+  endRow: number;
+}
+
+function dashboardPercentageRegions(rows: ParsedRow[], sharedStrings: string[]): DashboardPercentageRegion[] {
+  const regions: DashboardPercentageRegion[] = [];
+  for (const row of rows) {
+    for (const cell of row.cells) {
+      if (!cellText(cell, sharedStrings).includes("%")) continue;
+      const nextHeader = rows.find(candidate => candidate.rowNumber > row.rowNumber && (() => {
+        const next = candidate.cells.find(item => item.colLetter === cell.colLetter);
+        return Boolean(next && next.formula === null && cellText(next, sharedStrings).trim() !== "");
+      })());
+      regions.push({ column: cell.colLetter, startRow: row.rowNumber + 1, endRow: nextHeader?.rowNumber ?? Number.POSITIVE_INFINITY });
+    }
+  }
+  return regions;
+}
+
+function isDashboardPercentageCell(row: ParsedRow, cell: ParsedCell, regions: DashboardPercentageRegion[]): boolean {
+  return regions.some(region => region.column === cell.colLetter && row.rowNumber >= region.startRow && row.rowNumber < region.endRow);
+}
+
+function applyDashboardPercentageNumberFormats(
+  sheetXml: string,
+  sharedStrings: string[],
+  percentageStyles: Map<string, string>,
+  centeredStyles?: Map<string, string>
+): string {
+  const sheetDataMatch = sheetXml.match(/<sheetData([^>]*)>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) return sheetXml;
+  const rows = parseRows(sheetDataMatch[2]);
+  const regions = dashboardPercentageRegions(rows, sharedStrings);
+  if (regions.length === 0) return sheetXml;
+  const numericFormula = (cell: ParsedCell) => cell.formula !== null && !/PPC-Mapping/i.test(cell.formula);
+  const numericValue = (cell: ParsedCell) => {
+    const value = cell.inner?.match(/<v>([^<]*)<\/v>/)?.[1]?.trim();
+    return value !== undefined && value !== "" && Number.isFinite(Number(value));
+  };
+  const patchedRows = rows.map(row => {
+    let raw = row.raw;
+    for (const cell of row.cells) {
+      if (!isDashboardPercentageCell(row, cell, regions) || (!numericValue(cell) && !numericFormula(cell))) continue;
+      const percentageStyle = percentageStyles.get(cell.styleId ?? "0") ?? cell.styleId;
+      const styleId = centeredStyles?.get(percentageStyle ?? "0") ?? percentageStyle;
+      if (!styleId) continue;
+      const ref = `${cell.colLetter}${row.rowNumber}`;
+      const escapedRef = ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      raw = raw.replace(new RegExp(`<c\\b(?=[^>]*\\br="${escapedRef}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`), match => {
+        const end = match.indexOf(">");
+        const opening = match.slice(0, end + 1);
+        const rest = match.slice(end + 1);
+        const formatted = /\bs="[^"]*"/.test(opening)
+          ? opening.replace(/\bs="[^"]*"/, `s="${styleId}"`)
+          : opening.replace(/\/?>(?:$)/, suffix => ` s="${styleId}"${suffix}`);
+        return formatted + rest;
+      });
+    }
+    return raw;
+  });
+  return sheetXml.replace(sheetDataMatch[0], `<sheetData${sheetDataMatch[1]}>${patchedRows.join("")}<\/sheetData>`);
 }
 
 /** Remove stale formula error caches so Excel can recalculate the preserved
@@ -2043,10 +2114,12 @@ export async function patchWorkbookBuffer(
   }
   const numberStyles = await ensureExactCellFormatStyles(zip, appWrittenStyleIds, "#,##0.00");
   const monthStyles = await ensureExactCellFormatStyles(zip, appWrittenStyleIds, "mmm-yy");
+  const percentageStyles = await ensureExactCellFormatStyles(zip, appWrittenStyleIds, "0.00%");
   const centeredStyles = await ensureCenteredCellStyles(zip, [
     ...appWrittenStyleIds,
     ...numberStyles.values(),
-    ...monthStyles.values()
+    ...monthStyles.values(),
+    ...percentageStyles.values()
   ]);
   const calculatedEnergyCosts = new Map(
     logs.map(log => [log.month, calculateEnergyCostForMonth(logs, log.month).floorElectricityCostThb] as const)
@@ -2098,6 +2171,7 @@ export async function patchWorkbookBuffer(
             : applyMeasurementNumberFormats(dashboardXml, sharedStrings, numberStyles, centeredStyles),
           sharedStrings,
           numberStyles,
+          percentageStyles,
           centeredStyles,
           location.name
         ),
@@ -2165,10 +2239,12 @@ export async function patchSrinakarinWorkbookBuffer(original: Buffer, logs: Mont
   }
   const numberStyles = await ensureExactCellFormatStyles(zip, appWrittenStyleIds, "#,##0.00");
   const monthStyles = await ensureExactCellFormatStyles(zip, appWrittenStyleIds, "mmm-yy");
+  const percentageStyles = await ensureExactCellFormatStyles(zip, appWrittenStyleIds, "0.00%");
   const centeredStyles = await ensureCenteredCellStyles(zip, [
     ...appWrittenStyleIds,
     ...numberStyles.values(),
-    ...monthStyles.values()
+    ...monthStyles.values(),
+    ...percentageStyles.values()
   ]);
   for (const [sheetName, sheetPatches] of Object.entries(patches)) {
     const location = sheets.find(sheet => sheet.name === sheetName);
@@ -2224,6 +2300,7 @@ export async function patchSrinakarinWorkbookBuffer(original: Buffer, logs: Mont
             : applyMeasurementNumberFormats(dashboardXml, sharedStrings, numberStyles, centeredStyles),
           sharedStrings,
           numberStyles,
+          percentageStyles,
           centeredStyles,
           location.name
         ),
@@ -2248,6 +2325,30 @@ export async function patchSrinakarinWorkbookBuffer(original: Buffer, logs: Mont
       : workbookXml.replace("</workbook>", `<calcPr fullCalcOnLoad="1"/></workbook>`);
     zip.file("xl/workbook.xml", patched);
   }
+
+  // Drop calcChain (Excel rebuilds it); stale entries cause repair prompts.
+  if (zip.file("xl/calcChain.xml")) {
+    zip.remove("xl/calcChain.xml");
+    const contentTypes = await entryText(zip, "[Content_Types].xml");
+    if (contentTypes) {
+      zip.file("[Content_Types].xml", contentTypes.replace(/<Override[^>]*PartName="\/xl\/calcChain\.xml"[^>]*\/>/, ""));
+    }
+    const workbookRels = await entryText(zip, "xl/_rels/workbook.xml.rels");
+    if (workbookRels) {
+      zip.file("xl/_rels/workbook.xml.rels", workbookRels.replace(/<Relationship\b[^>]*Target="calcChain\.xml"[^>]*\/>/, ""));
+    }
+  }
+
+  // Ask Excel to refresh pivot caches on open so the dashboard reflects edits.
+  for (const name of Object.keys(zip.files)) {
+    if (/^xl\/pivotCache\/pivotCacheDefinition\d+\.xml$/.test(name)) {
+      const xml = await entryText(zip, name);
+      if (xml && !/refreshOnLoad=/.test(xml)) {
+        zip.file(name, xml.replace(/<pivotCacheDefinition\b/, `<pivotCacheDefinition refreshOnLoad="1"`));
+      }
+    }
+  }
+
   return (await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } })) as Buffer;
 }
 

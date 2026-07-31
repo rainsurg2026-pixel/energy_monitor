@@ -51,6 +51,11 @@ const hashEntries = async (file: string): Promise<Record<string, string>> => {
       // preserve the table definition/style while ignoring only range refs.
       data = data.replace(/(<table\b[^>]*\bref=")[^"]+(")/g, "$1<range>$2").replace(/(<autoFilter\b[^>]*\bref=")[^"]+(")/g, "$1<range>$2");
     }
+    if (name.startsWith("xl/pivotCache/pivotCacheDefinition")) {
+      // The save path intentionally flags pivot caches to refresh on load;
+      // preserve the rest of the cache definition while ignoring that flag.
+      data = data.replace(/\s*refreshOnLoad="[^"]*"/g, "");
+    }
     result[name] = crypto.createHash("sha256").update(data).digest("hex");
   }
   return result;
@@ -59,6 +64,32 @@ const sourceParts = await hashEntries(source);
 const savedParts = await hashEntries(target);
 for (const name of Object.keys(sourceParts)) {
   if (sourceParts[name] !== savedParts[name]) throw new Error(`Workbook managed asset changed: ${name}`);
+}
+
+const savedZip = await JSZip.loadAsync(await fs.readFile(target));
+const savedNames = Object.keys(savedZip.files);
+if (savedNames.includes("xl/calcChain.xml")) throw new Error("Stale calcChain.xml was not removed on save.");
+const savedWorkbookXml = await savedZip.file("xl/workbook.xml")!.async("string");
+if (!savedWorkbookXml.includes('fullCalcOnLoad="1"')) throw new Error("Saved workbook did not request a full recalculation on next open.");
+const savedContentTypes = await savedZip.file("[Content_Types].xml")!.async("string");
+if (savedContentTypes.includes("calcChain")) throw new Error("Dangling calcChain content-type override was not removed.");
+const savedWorkbookRels = await savedZip.file("xl/_rels/workbook.xml.rels")!.async("string");
+if (savedWorkbookRels.includes("calcChain")) throw new Error("Dangling calcChain relationship was not removed.");
+const savedPivotCacheXml = await savedZip.file("xl/pivotCache/pivotCacheDefinition1.xml")?.async("string");
+if (!savedPivotCacheXml?.includes('refreshOnLoad="1"')) throw new Error("Pivot cache was not flagged to refresh on load.");
+
+const dashboardSheetXml = await savedZip.file("xl/worksheets/sheet1.xml")!.async("string");
+const percentageCellRefs = ["F4", "G4", "G40"];
+for (const ref of percentageCellRefs) {
+  const cellMatch = dashboardSheetXml.match(new RegExp(`<c\\b[^>]*\\br="${ref}"[^>]*(?:/>|>[\\s\\S]*?</c>)`));
+  const styleId = cellMatch?.[0].match(/\bs="(\d+)"/)?.[1];
+  if (!styleId) throw new Error(`Dashboard-FAC ${ref} is missing a cell style.`);
+  const stylesXml = await savedZip.file("xl/styles.xml")!.async("string");
+  const cellXfs = stylesXml.match(/<cellXfs count="\d+">([\s\S]*?)<\/cellXfs>/)![1];
+  const xfNodes = [...cellXfs.matchAll(/<xf\b[^>]*\/>|<xf\b[^>]*>[\s\S]*?<\/xf>/g)].map(m => m[0]);
+  const numFmtId = xfNodes[Number(styleId)]?.match(/numFmtId="(\d+)"/)?.[1];
+  const numFmts = new Map([...stylesXml.matchAll(/<numFmt numFmtId="(\d+)" formatCode="([^"]*)"\/>/g)].map(m => [m[1], m[2]]));
+  if (numFmts.get(numFmtId ?? "") !== "0.00%") throw new Error(`Dashboard-FAC ${ref} is not formatted as 0.00% (percentage semantics).`);
 }
 
 const workbook = new ExcelJS.Workbook();

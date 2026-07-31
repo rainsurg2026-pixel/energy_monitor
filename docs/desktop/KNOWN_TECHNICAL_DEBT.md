@@ -108,3 +108,38 @@ suite at a copied fixture (mirroring the pattern already used by
 `test-production-stress-fault.ts`, all of which copy into
 `dist-electron/test-work/` before asserting "before" state) instead of
 reading the project-root live workbook directly.
+
+---
+
+## 4. UPS/PPC dashboard reads Dashboard-FAC's cached formula values, not a live recalculation
+
+**Status: Known, non-blocking (Dashboard-FAC investigation, 2026-07-31).**
+
+`src/reports/upsMappingReader.ts` (used by `DashboardSummary`'s UPS Summary/
+Detail panels and the "All Report" PDF export) reads Dashboard-FAC's
+header-matched cells directly via ExcelJS. ExcelJS does not run a formula
+engine — it returns whatever `<v>` value Excel (or `WorkbookWriter.ts`) last
+cached for each formula cell. As of the v2.2.1 fix, both facilities' save
+paths correctly set `fullCalcOnLoad="1"` and drop `xl/calcChain.xml`, so a
+human opening either workbook in real Excel will get a fresh recalculation.
+But the app itself does not run Excel's calculation engine: if the app
+re-reads a workbook immediately after `WorkbookWriter.ts` saves it — without
+a real Excel session recalculating and re-saving in between — the UPS/PPC
+Summary and Detail panels will reflect Dashboard-FAC's pre-save cached
+values, not the just-written source data.
+
+**This is NOT a correctness issue introduced by v2.2.1.** It is a
+pre-existing characteristic of reading an offline `.xlsm` without a bundled
+formula engine, and it predates this investigation.
+
+**This is NOT the same gap that v2.2.1 fixed.** The top-level Building/Floor
+Energy KPIs (`DashboardSummary`'s main cards) are unaffected — they are
+independently recomputed from `4. Electricity Cost Log` in
+`src/utils/energyCost.ts` and never read Dashboard-FAC's cache at runtime.
+
+**Recommended future solution** (not implemented — documentation only):
+extend the same pattern `energyCost.ts` already uses — recompute the UPS/PPC
+Summary and Detail figures directly from the raw log sheets in TypeScript,
+the way the Building/Floor KPIs already are — so `upsMappingReader.ts` no
+longer depends on Dashboard-FAC's cache being fresh. Out of scope for the
+v2.2.1 patch (narrower, workbook-level fix); tracked here for a future pass.
