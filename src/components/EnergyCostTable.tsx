@@ -5,6 +5,7 @@ import { formatMonthYear } from "../utils";
 import { calculateAverageElectricityRate } from "../utils/energyCost";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 import { EntrySectionApi } from "../utils/completion";
+import NumericEntryInput from "./NumericEntryInput";
 
 interface EnergyCostTableProps {
   monthStr: string;
@@ -144,7 +145,7 @@ export default function EnergyCostTable({
 
       {/* Inputs Layout */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+        <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-emerald-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-emerald-300 border-b border-slate-800/80">
               <th className="py-3.5 px-4 font-normal">Month</th>
@@ -161,22 +162,20 @@ export default function EnergyCostTable({
               
               {/* Building Energy Kwh Input */}
               <td className="py-5 px-2">
-                <input
-                  type="number"
+                <NumericEntryInput
                   placeholder="45000"
-                  value={record.buildingEnergyKwh ?? ""}
-                  onChange={(e) => handleInputChange("buildingEnergyKwh", e.target.value)}
+                  value={record.buildingEnergyKwh}
+                  onChange={value => handleInputChange("buildingEnergyKwh", value)}
                   className="w-full max-w-[220px] ml-auto bg-emerald-950/5 hover:bg-emerald-950/10 focus:bg-emerald-950/15 border border-slate-800 focus:border-emerald-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                 />
               </td>
 
               {/* Building Electricity Cost Thb Input */}
               <td className="py-5 px-2">
-                <input
-                  type="number"
+                <NumericEntryInput
                   placeholder="180000"
-                  value={record.buildingElectricityCostThb ?? ""}
-                  onChange={(e) => handleInputChange("buildingElectricityCostThb", e.target.value)}
+                  value={record.buildingElectricityCostThb}
+                  onChange={value => handleInputChange("buildingElectricityCostThb", value)}
                   className="w-full max-w-[220px] ml-auto bg-emerald-950/5 hover:bg-emerald-950/10 focus:bg-emerald-950/15 border border-slate-800 focus:border-emerald-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                 />
               </td>

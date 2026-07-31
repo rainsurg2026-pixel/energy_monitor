@@ -1,193 +1,110 @@
-import type { ReportData, ReportMonthlyRow, RackCapacityReport } from "../reportTypes";
+import type { EngineeringDashboardSnapshot, ReportData, ReportMonthlyRow } from "../reportTypes";
 import { formatNumber } from "../../utils/numberFormatBridge";
 
-const FONT_STACK = 'Prompt, "Noto Sans Thai", Tahoma, sans-serif';
+const FONT_STACK = '"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif';
 
 function escapeHtml(value: unknown): string {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
-
-function format2(value: number | null | undefined): string {
-  return typeof value === "number" && Number.isFinite(value)
-    ? formatNumber(value)
-    : "—";
-}
-
-function formatPercent(value: number | null | undefined): string {
-  return value === null || value === undefined ? "—" : `${format2(value)}%`;
-}
-
+function format2(value: number | null | undefined): string { return typeof value === "number" && Number.isFinite(value) ? formatNumber(value) : "—"; }
 function formatMonth(month: string | null): string {
   if (!month) return "—";
-  const [year, monthNumber] = month.split("-").map(Number);
-  if (!year || !monthNumber) return month;
-  return new Date(Date.UTC(year, monthNumber - 1, 1)).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+  const [year, number] = month.split("-").map(Number);
+  return year && number ? new Date(Date.UTC(year, number - 1, 1)).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" }) : month;
+}
+function kpi(label: string, value: string, unit: string, note: string): string {
+  return `<div class="kpi"><div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${escapeHtml(value)}</div><div class="kpi-unit">${escapeHtml(unit)}</div><div class="kpi-note">${escapeHtml(note)}</div></div>`;
+}
+function table(headers: string[], rows: string[][], className = ""): string {
+  return `<div class="table-wrap ${className}"><table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map((cell, index) => `<td${index === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
 }
 
-function valueOrDash(value: number | null): string {
-  return value === null ? "—" : format2(value);
+function compactNumber(value: number, values: Array<number | null>): string {
+  void values;
+  const absolute = Math.abs(value);
+  if (absolute >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(2)}B`;
+  if (absolute >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (absolute >= 1_000) return `${(value / 1_000).toFixed(2)}K`;
+  return formatNumber(value);
 }
 
-interface ChartSeries {
-  name: string;
-  color: string;
-  values: Array<number | null>;
-  dash?: string;
-}
-
-function chartPath(values: Array<number | null>, x: (index: number) => number, y: (value: number) => number): string {
-  let path = "";
-  let open = false;
-  values.forEach((value, index) => {
-    if (value === null || !Number.isFinite(value)) {
-      open = false;
-      return;
-    }
-    path += `${open ? " L" : "M"} ${x(index).toFixed(2)} ${y(value).toFixed(2)}`;
-    open = true;
-  });
-  return path;
-}
-
-function lineChartSvg(title: string, unit: string, labels: string[], series: ChartSeries[], description: string): string {
-  const width = 1080;
-  const height = 460;
-  const left = 72;
-  const right = 22;
-  const top = 38;
-  const bottom = 100;
-  const plotWidth = width - left - right;
-  const plotHeight = height - top - bottom;
-  const values = series.flatMap(item => item.values.filter((value): value is number => value !== null && Number.isFinite(value)));
-  if (values.length === 0) return `<div class="empty-chart">No valid ${escapeHtml(unit)} values are available.</div>`;
-  const min = Math.min(...values, 0);
-  const max = Math.max(...values, 0);
-  const range = max - min || 1;
-  const x = (index: number) => left + (labels.length <= 1 ? plotWidth / 2 : ((index + 1) / (labels.length + 1)) * plotWidth);
-  const y = (value: number) => top + ((max - value) / range) * plotHeight;
+function trendPage(title: string, unit: string, color: string, rows: ReportMonthlyRow[], values: Array<number | null>, explanation: string): string {
+  const defined = values.filter((value): value is number => value !== null && Number.isFinite(value));
+  if (!defined.length) return `<section class="page trend-page"><h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)}</p><p>No valid values are available for this selected reporting window.</p></section>`;
+  const width = 1600, height = 810, left = 140, right = 80, top = 82, bottom = 110;
+  const actualMin = Math.min(...defined), actualMax = Math.max(...defined), rawRange = actualMax - actualMin || Math.max(Math.abs(actualMax) * 0.2, 1);
+  const domainMin = Math.min(0, actualMin - rawRange * 0.16), domainMax = actualMax + rawRange * 0.18;
+  const range = domainMax - domainMin || 1;
+  const x = (index: number) => left + (rows.length < 2 ? (width - left - right) / 2 : index * (width - left - right) / (rows.length - 1));
+  const y = (value: number) => top + (domainMax - value) / range * (height - top - bottom);
   const grid = [0, 1, 2, 3, 4].map(step => {
-    const value = max - (range * step) / 4;
-    const yy = y(value);
-    return `<line x1="${left}" y1="${yy.toFixed(2)}" x2="${width - right}" y2="${yy.toFixed(2)}" class="grid"/><text x="${left - 10}" y="${(yy + 4).toFixed(2)}" text-anchor="end" class="axis">${escapeHtml(format2(value))}</text>`;
+    const value = domainMax - range * step / 4;
+    return `<line x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}" class="grid"/><text x="${left - 14}" y="${y(value) + 6}" text-anchor="end" class="axis-tick">${escapeHtml(compactNumber(value, values))}</text>`;
   }).join("");
-  const xLabels = labels.map((label, index) => `<text transform="translate(${x(index).toFixed(2)},${height - 45}) rotate(-45)" text-anchor="end" class="axis">${escapeHtml(label)}</text>`).join("");
-  const lines = series.map((item, seriesIndex) => {
-    const path = chartPath(item.values, x, y);
-    const points = item.values.map((value, index) => value === null || !Number.isFinite(value)
-      ? ""
-      : `<circle cx="${x(index).toFixed(2)}" cy="${y(value).toFixed(2)}" r="3.2" fill="${item.color}"/><text x="${x(index).toFixed(2)}" y="${(y(value) - 10 - (seriesIndex % 2) * 11).toFixed(2)}" text-anchor="middle" class="point-label">${escapeHtml(format2(value))}</text>`).join("");
-    return `<path d="${path}" fill="none" stroke="${item.color}" stroke-width="2.4" ${item.dash ? `stroke-dasharray="${item.dash}"` : ""}/>${points}`;
+  let path = "";
+  values.forEach((value, index) => { if (value !== null && Number.isFinite(value)) path += `${path ? " L" : "M"}${x(index)},${y(value)}`; });
+  const points = values.map((value, index) => {
+    if (value === null || !Number.isFinite(value)) return "";
+    const pointY = y(value);
+    const labelY = Math.max(top + 20, Math.min(height - bottom - 10, pointY + (index % 2 === 0 ? -22 : 30)));
+    return `<circle cx="${x(index)}" cy="${pointY}" r="6" fill="${color}"/><text x="${x(index)}" y="${labelY}" text-anchor="middle" class="point-value">${escapeHtml(compactNumber(value, values))}</text>`;
   }).join("");
-  const legend = series.map(item => `<span class="legend"><i style="background:${item.color}"></i>${escapeHtml(item.name)}</span>`).join("");
-  return `<div class="chart-block"><h3>${escapeHtml(title)}</h3><p class="chart-caption">${escapeHtml(description)}</p><div class="legend-row">${legend}<span class="unit">${escapeHtml(unit)}</span></div><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}">${grid}${lines}${xLabels}</svg></div>`;
-}
-
-function barChartSvg(title: string, labels: string[], values: number[], color: string, description: string): string {
-  if (values.length === 0) return `<div class="empty-chart">No valid values are available.</div>`;
-  const width = 1080;
-  const height = 300;
-  const left = 54;
-  const right = 18;
-  const top = 28;
-  const bottom = 70;
-  const max = Math.max(...values, 1);
-  const slot = (width - left - right) / values.length;
-  const bars = values.map((value, index) => {
-    const barWidth = Math.max(8, slot * 0.68);
-    const x = left + index * slot + (slot - barWidth) / 2;
-    const barHeight = ((height - top - bottom) * value) / max;
-    const y = height - bottom - barHeight;
-    return `<rect x="${x.toFixed(2)}" y="${y.toFixed(2)}" width="${barWidth.toFixed(2)}" height="${barHeight.toFixed(2)}" rx="3" fill="${color}"/><text x="${(x + barWidth / 2).toFixed(2)}" y="${(y - 7).toFixed(2)}" text-anchor="middle" class="point-label">${escapeHtml(format2(value))}</text><text transform="translate(${(x + barWidth / 2).toFixed(2)},${height - 28}) rotate(-45)" text-anchor="end" class="axis">${escapeHtml(labels[index])}</text>`;
-  }).join("");
-  return `<div class="chart-block"><h3>${escapeHtml(title)}</h3><p class="chart-caption">${escapeHtml(description)}</p><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}"><line x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}" class="axis-line"/>${bars}</svg></div>`;
+  const labels = rows.map((row, index) => `<text x="${x(index)}" y="${height - 48}" text-anchor="middle" class="month-label">${escapeHtml(formatMonth(row.month))}</text>`).join("");
+  const firstIndex = values.findIndex(value => value !== null && Number.isFinite(value));
+  let lastIndex = -1;
+  for (let index = values.length - 1; index >= 0; index--) if (values[index] !== null && Number.isFinite(values[index])) { lastIndex = index; break; }
+  const first = firstIndex >= 0 ? values[firstIndex] as number : null;
+  const last = lastIndex >= 0 ? values[lastIndex] as number : null;
+  let previousIndex = -1;
+  for (let index = lastIndex - 1; index >= 0; index--) if (values[index] !== null && Number.isFinite(values[index])) { previousIndex = index; break; }
+  const previous = previousIndex >= 0 ? values[previousIndex] as number : null;
+  const minimum = Math.min(...defined), maximum = Math.max(...defined);
+  const direction = first === null || last === null || last === first ? "unchanged from the first valid month" : last > first ? "increased from the first valid month" : "decreased from the first valid month";
+  const comparison = previous === null || last === null ? "No prior valid month is available for comparison." : `${last >= previous ? "Increase" : "Decrease"} of ${format2(Math.abs(last - previous))} ${unit} from ${formatMonth(rows[previousIndex].month)}.`;
+  const details = `Selected month ${formatMonth(rows.at(-1)?.month ?? null)}: ${last === null ? "—" : `${format2(last)} ${unit}`}. ${comparison} Minimum ${format2(minimum)} ${unit}; maximum ${format2(maximum)} ${unit}. The selected value ${direction}.`;
+  return `<section class="page trend-page"><h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)} · latest ${rows.length}-month window ending at ${escapeHtml(formatMonth(rows.at(-1)?.month ?? null))}</p><svg class="trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}">${grid}<path d="${path}" fill="none" stroke="${color}" stroke-width="5"/>${points}${labels}</svg><p class="chart-explanation">${escapeHtml(explanation)} ${escapeHtml(details)}</p></section>`;
 }
 
 function monthlyTable(rows: ReportMonthlyRow[]): string {
-  const body = rows.map(row => `<tr><td>${escapeHtml(formatMonth(row.month))}</td><td>${valueOrDash(row.buildingEnergyKwh)}</td><td>${valueOrDash(row.buildingCostThb)}</td><td>${valueOrDash(row.floorEnergyKwh)}</td><td>${valueOrDash(row.floorCostThb)}</td><td>${valueOrDash(row.averageRateThbPerKwh)}</td><td>${formatPercent(row.floorSharePercent)}</td><td>${valueOrDash(row.upsEnergyKwh)}</td><td>${valueOrDash(row.airEnergyKwh)}</td><td>${valueOrDash(row.dcEnergyKwh)}</td><td>${escapeHtml(row.status)}</td></tr>`).join("");
-  return `<p class="table-caption">Authoritative monthly values re-read from the workbook. Blank values remain blank and are shown as —; numeric zero remains a valid value.</p><div class="table-wrap"><table><thead><tr><th>Reporting Month</th><th>Building Energy (kWh)</th><th>Building Cost (THB)</th><th>4th Floor Energy (kWh)</th><th>4th Floor Cost (THB)</th><th>Average Rate (THB/kWh)</th><th>4th Floor Share</th><th>UPS Energy (kWh)</th><th>Air Energy (kWh)</th><th>DC Energy (kWh)</th><th>Data Status</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  return table(["Month", "Building Energy", "Building Cost", "4th Floor Energy", "4th Floor Cost", "Average Rate", "UPS", "Air", "DC", "Status"], rows.map(row => [formatMonth(row.month), format2(row.buildingEnergyKwh), format2(row.buildingCostThb), format2(row.floorEnergyKwh), format2(row.floorCostThb), format2(row.averageRateThbPerKwh), format2(row.upsEnergyKwh), format2(row.airEnergyKwh), format2(row.dcEnergyKwh), escapeHtml(row.status)]));
 }
 
-function kpi(label: string, value: string, unit = ""): string {
-  return `<div class="kpi"><div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${escapeHtml(value)}</div>${unit ? `<div class="kpi-unit">${escapeHtml(unit)}</div>` : ""}</div>`;
+function upsComparison(title: string, groups: EngineeringDashboardSnapshot["upsGroups"]): string {
+  if (!groups.length) return "";
+  return `<article class="block"><h3>${escapeHtml(title)}</h3><p class="note">Current load capacity compared with rated maximum.</p><div class="ups-comparison">${groups.map(group => {
+    const load = group.loadPercent ?? 0;
+    const tone = load >= 80 ? "high" : load >= 50 ? "medium" : "normal";
+    return `<div class="ups-bar-row"><span>${escapeHtml(group.name)}</span><div class="ups-track"><i class="${tone}" style="width:${Math.min(100, Math.max(0, load))}%"></i></div><strong>${escapeHtml(format2(group.loadPercent))}%</strong></div>`;
+  }).join("")}</div></article>`;
 }
 
-function rackSection(rack: RackCapacityReport): string {
-  const statusLabels = rack.byStatus.map(item => item.status);
-  const statusValues = rack.byStatus.map(item => item.count);
-  const zoneRows = rack.byZone.map(item => `<tr><td>${escapeHtml(item.zone)}</td><td>${item.count}</td><td>—</td><td>—</td></tr>`).join("");
-  const statusRows = rack.byStatus.map(item => `<tr><td>${escapeHtml(item.status)}</td><td>${item.count}</td></tr>`).join("");
-  const validationRows = [
-    ...rack.validation.duplicateIds.map(id => `<li>Duplicate Rack ID: ${escapeHtml(id)}</li>`),
-    ...rack.validation.missingRequiredFields.map(item => `<li>Missing ${escapeHtml(item.field)} at workbook row ${item.rowNumber}</li>`),
-    ...rack.validation.invalidStatuses.map(item => `<li>Invalid status “${escapeHtml(item.status)}” at workbook row ${item.rowNumber}</li>`),
-    ...rack.validation.invalidDataTypes.map(item => `<li>Unexpected ${escapeHtml(item.type)} value in ${escapeHtml(item.field)} at workbook row ${item.rowNumber}</li>`)
-  ].join("");
-  return `<section class="report-section"><h2>Rack Capacity Summary</h2><p class="section-intro">This section summarizes the read-only Rack Capacity / Table7 source. Counts are grouped by status, zone, cabinet size, and device type. Unsupported U-capacity fields are not inferred.</p><p class="muted">Source: ${escapeHtml(rack.sourceSheet)} / ${escapeHtml(rack.sourceTable)}. Total U, Used U, Available U, Reserved U, and utilization are unavailable in the workbook.</p><div class="kpi-grid">${kpi("Total Racks", format2(rack.records.length), "racks")}${kpi("Active / In Use", format2(rack.byStatus.find(item => item.status === "In Use")?.count ?? null), "racks")}${kpi("Available", format2(rack.byStatus.find(item => item.status === "Available")?.count ?? null), "racks")}${kpi("Reserved", format2(rack.byStatus.find(item => item.status === "Reserved")?.count ?? null), "racks")}${kpi("Total Capacity U", "—", "unavailable")}${kpi("Rack Utilization", "—", "unavailable")}</div>${barChartSvg("Rack status counts", statusLabels, statusValues, "#d9776a", "Number of Rack Capacity records grouped by the workbook Status field.")}<div class="two-col">${barChartSvg("Rack counts by zone", rack.byZone.map(item => item.zone), rack.byZone.map(item => item.count), "#7c9cc8", "Number of records grouped by Rack Zone.")}${barChartSvg("Rack counts by cabinet size", rack.byCabinetSize.map(item => item.cabinetSize), rack.byCabinetSize.map(item => item.count), "#7aa88a", "Number of records grouped by the source Cabinet Size value.")}</div><div class="two-col">${barChartSvg("Rack counts by device type", rack.byDeviceType.map(item => item.deviceType), rack.byDeviceType.map(item => item.count), "#b296c7", "Number of records grouped by the source Device Type value.")}<div><p class="table-caption">Zone summary. U-capacity columns are intentionally unavailable and remain —.</p><div class="table-wrap"><table><thead><tr><th>Rack Zone</th><th>Rack Count</th><th>Used U</th><th>Available U</th></tr></thead><tbody>${zoneRows}</tbody></table></div></div></div><div class="two-col"><div><p class="table-caption">Status summary used by the charts above.</p><div class="table-wrap"><table><thead><tr><th>Status</th><th>Count</th></tr></thead><tbody>${statusRows}</tbody></table></div></div><div><h3>Rack validation</h3>${validationRows ? `<ul>${validationRows}</ul>` : `<p class="ok">No duplicate IDs, missing required fields, or invalid statuses detected.</p>`}<p class="muted">Unsupported U metrics: ${escapeHtml(rack.validation.unsupportedUMetrics.join(", "))}.</p></div></div></section>`;
-}
-
-function forecastSection(data: ReportData): string {
-  const blocks: string[] = [];
-  for (const forecast of [data.energyForecast, data.costForecast]) {
-    if (!forecast) continue;
-    const labels = forecast.points.map(point => formatMonth(point.monthStr));
-    blocks.push(lineChartSvg(`${forecast.metric} forecast`, forecast.unit, labels, [
-      { name: "Actual", color: "#5d7fa8", values: forecast.points.map(point => point.actual) },
-      { name: "Forecast", color: "#d9776a", values: forecast.points.map(point => point.forecast), dash: "8 5" }
-    ], "Solid points show actual workbook history; the dashed line shows the application forecast after the last actual month."));
-  }
-  return blocks.join("");
-}
-
-function rackInventorySection(rack: RackCapacityReport): string {
-  const rows = rack.records.map(record => `<tr><td>${escapeHtml(record.rackZone ?? "—")}</td><td>${escapeHtml(record.rackId ?? "—")}</td><td>${escapeHtml(record.status ?? "—")}</td><td>${escapeHtml(record.cabinetSize ?? "—")}</td><td>${escapeHtml(record.detail ?? "—")}</td><td>${escapeHtml(record.deviceType ?? "—")}</td><td>${escapeHtml(record.remarks ?? "—")}</td></tr>`).join("");
-  return `<section class="report-section"><h2>Rack Inventory</h2><p class="section-intro">One row per Rack Capacity / Table7 record. This is a read-only inventory view; blank source cells remain —.</p><p class="table-caption">Fields are copied from the workbook without deriving U-capacity or utilization values.</p><div class="table-wrap"><table><thead><tr><th>Rack Zone</th><th>Rack ID</th><th>Status</th><th>Cabinet Size</th><th>Detail</th><th>Device Type</th><th>Remarks</th></tr></thead><tbody>${rows}</tbody></table></div></section>`;
+function engineeringDashboard(data: ReportData, dashboard: EngineeringDashboardSnapshot): string {
+  const upsRows = dashboard.upsGroups.map((row, index) => [String(index + 1), escapeHtml(row.name), format2(row.totalKw), format2(row.totalKva), format2(row.capacity), `${format2(row.loadPercent)}%`, `${format2(row.availablePercent)}%`, format2(row.monthlyEnergyKwh)]);
+  const showAcPowerPanel = dashboard.upsDetails.some(row => row.acPowerPanel !== "—" && row.acPowerPanel !== "-");
+  const upsDetails = dashboard.upsDetails.map(row => [String(row.no), escapeHtml(row.umdb), escapeHtml(row.upsId), ...(showAcPowerPanel ? [escapeHtml(row.acPowerPanel)] : []), escapeHtml(row.sts), escapeHtml(row.oudb), format2(row.voltage), format2(row.current), format2(row.loadKw), format2(row.loadKva), format2(row.capacity), `${format2(row.loadPercent)}%`]);
+  const detailedHeaders = ["No.", "UMDB", "UPS ID", ...(showAcPowerPanel ? ["AC Panel"] : []), "STS", "OUDB", "V", "A", "kW", "kVA", "Capacity", "Load %"];
+  const hasOverallUps = dashboard.upsOverallGroups.length > 0;
+  const srinakarinOverall = hasOverallUps ? `<h3>1. UPS Load Status</h3><article class="block"><h3>1.1 UPS Load Status - Overall</h3>${table(["No.", "UPS", "Total Load (kW)", "Total Load (kVA)", "UPS Capacity (kVA)", "Load (%)", "Available (%)"], dashboard.upsOverallGroups.map((row, index) => [String(index + 1), escapeHtml(row.name), format2(row.totalKw), format2(row.totalKva), format2(row.capacity), `${format2(row.loadPercent)}%`, `${format2(row.availablePercent)}%`]))}</article>${upsComparison("UPS Loads Comparison (%) - Overall", dashboard.upsOverallGroups)}` : "";
+  const detailedUpsTitle = hasOverallUps ? "1.2 UPS and PPC Load Status – DCM 4th Floor" : "1. UPS Load Status — DCM 4th Floor";
+  const detailedComparisonTitle = hasOverallUps ? "UPS and PPC Loads Comparison (%) – DCM 4th Floor" : "UPS Loads Comparison (%)";
+  const airRows = [[formatMonth(dashboard.previousMonth), ...dashboard.airFields.map(field => format2(dashboard.airPrevious[field])), "—"], [formatMonth(data.reportingMonth), ...dashboard.airFields.map(field => format2(dashboard.airCurrent[field])), "—"], ["Monthly Difference", ...dashboard.airFields.map(field => format2(dashboard.airDifference[field])), dashboard.airEnergyKwh === null ? "—" : `${format2(dashboard.airEnergyKwh)} kWh`]];
+  const dcRows = dashboard.dcPanels.map((row, index) => [String(index + 1), escapeHtml(row.panelId), format2(row.voltage), format2(row.current), format2(row.dcPowerW), format2(row.acCurrentA), format2(row.acPowerW), format2(row.monthlyEnergyKwh)]);
+  const overall = table(["Reporting Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Avg Rate (THB/kWh)", "4th Floor Share (%)"], [[formatMonth(data.reportingMonth), format2(dashboard.buildingEnergyKwh), format2(dashboard.buildingCostThb), format2(dashboard.floorEnergyKwh), format2(dashboard.floorCostThb), format2(dashboard.averageRateThbPerKwh), `${format2(dashboard.floorSharePercent)}%`]]);
+  return `<section class="page dashboard-page"><div class="dashboard-head"><div><p class="eyebrow">SELECTED-MONTH ENGINEERING ANALYSIS</p><h2>Building Energy Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${dashboard.daysInMonth} days in selected month</p></div><div class="dashboard-tag">Engineering analysis<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis">${kpi("Total 4th Floor Energy", format2(dashboard.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Estimated 4th Floor Electricity Cost", format2(dashboard.floorCostThb), "THB", "Calculated from building average rate")}${kpi("4th Floor Energy Share", `${format2(dashboard.floorSharePercent)}%`, "of building energy", `Building total: ${format2(dashboard.buildingEnergyKwh)} kWh`)}${kpi("Building Average Electricity Rate", format2(dashboard.averageRateThbPerKwh), "THB/kWh", `Building cost: ${format2(dashboard.buildingCostThb)} THB`)}</div>${srinakarinOverall}<article class="block"><h3>${detailedUpsTitle}</h3>${table(["No.", "UPS Group", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %", "Monthly Energy kWh"], upsRows)}<p class="note">UPS group capacity and mapping values are read directly from Dashboard-FAC. Monthly energy uses load × 24 hours × selected-month days.</p></article>${upsComparison(detailedComparisonTitle, dashboard.upsGroups)}</section><section class="page dashboard-page"><div class="continuation">Building Energy Dashboard · ${escapeHtml(formatMonth(data.reportingMonth))}</div><article class="block"><h3>${showAcPowerPanel ? "UPS / PPC Detailed Configuration Mapping" : "UPS Detailed Configuration Mapping"}</h3>${table(detailedHeaders, upsDetails, "dense")}<p class="note">Detail total: ${format2(dashboard.detailedVoltageAvg)} V average · ${format2(dashboard.detailedCurrentSum)} A · ${format2(dashboard.totalUpsKw)} kW · ${format2(dashboard.totalUpsKva)} kVA.</p></article><article class="block"><h3>2. Air Conditioning Energy Consumption — 4th Floor</h3>${table(["Reporting Month", ...dashboard.airFields.map(field => `${field.toUpperCase()} (GWh)`), "Total AC Energy"], airRows)}<p class="note">Air-conditioning energy is the complete GWh meter difference × 1,000,000. Missing readings remain unavailable, rather than being treated as zero.</p></article><article class="block"><h3>3. DC Power Panel Load Status</h3>${table(["No.", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current @220V (A)", "AC Power (W)", "Monthly Energy (kWh)"], dcRows)}<p class="note">DC total: ${format2(dashboard.totalDcPowerW)} W DC · ${format2(dashboard.totalDcAcCurrentA)} A AC · ${format2(dashboard.totalDcAcPowerW)} W AC · ${format2(dashboard.totalDcEnergyKwh)} kWh.</p></article><article class="block"><h3>4. Overall Energy Consumption & Electricity Cost</h3>${overall}</article></section>`;
 }
 
 export function buildReportHtml(data: ReportData): string {
-  const labels = data.monthlyRows.map(row => formatMonth(row.month));
-  const current = data.currentRow;
-  const benchmarks = data.benchmarks.map(item => `<tr><td>${escapeHtml(item.metric)}</td><td>${escapeHtml(item.unit)}</td><td>${escapeHtml(formatMonth(item.period))}</td><td>${format2(item.current)}</td><td>${format2(item.baseline)}</td><td>${escapeHtml(item.baselineLabel)}</td></tr>`).join("");
-  const omitted = data.sections.filter(section => !section.included).map(section => `${section.title}: ${section.reason ?? "not available"}`).join("; ");
-  const sectionNotes = omitted ? `<p class="muted">Omitted sections: ${escapeHtml(omitted)}</p>` : "";
-  const warningList = data.validationWarnings.map(warning => `<li>${escapeHtml(warning)}</li>`).join("");
-  const insightList = data.insights.map(insight => `<li>${escapeHtml(insight)}</li>`).join("");
-  const energyChart = lineChartSvg("แนวโน้มการใช้พลังงานไฟฟ้า", "kWh", labels, [
-    { name: "Building Energy", color: "#5d7fa8", values: data.monthlyRows.map(row => row.buildingEnergyKwh) },
-    { name: "4th Floor Energy", color: "#d9776a", values: data.monthlyRows.map(row => row.floorEnergyKwh) }
-  ], "Monthly building consumption compared with the authoritative 4th Floor energy value for each reporting month.");
-  const costChart = lineChartSvg("แนวโน้มค่าไฟฟ้า", "THB", labels, [
-    { name: "Building Cost", color: "#5d7fa8", values: data.monthlyRows.map(row => row.buildingCostThb) },
-    { name: "4th Floor Cost", color: "#d9776a", values: data.monthlyRows.map(row => row.floorCostThb) }
-  ], "Monthly electricity cost comparison. Blank workbook values remain gaps rather than being converted to zero.");
-  const subsystemChart = lineChartSvg("UPS, Air, and DC Energy", "kWh", labels, [
-    { name: "UPS", color: "#7c9cc8", values: data.monthlyRows.map(row => row.upsEnergyKwh) },
-    { name: "Air", color: "#7aa88a", values: data.monthlyRows.map(row => row.airEnergyKwh) },
-    { name: "DC", color: "#b296c7", values: data.monthlyRows.map(row => row.dcEnergyKwh) }
-  ], "Subsystem energy series are shown for context; missing source values are left as gaps in the lines.");
-  const kpis = current
-    ? `<div class="kpi-grid">${kpi("Building Energy", valueOrDash(current.buildingEnergyKwh), "kWh")}${kpi("Building Cost", valueOrDash(current.buildingCostThb), "THB")}${kpi("4th Floor Energy", valueOrDash(current.floorEnergyKwh), "kWh")}${kpi("4th Floor Cost", valueOrDash(current.floorCostThb), "THB")}${kpi("Average Rate", valueOrDash(current.averageRateThbPerKwh), "THB/kWh")}${kpi("4th Floor Share", formatPercent(current.floorSharePercent))}${kpi("UPS Energy", valueOrDash(current.upsEnergyKwh), "kWh")}${kpi("Air Energy", valueOrDash(current.airEnergyKwh), "kWh")}${kpi("DC Energy", valueOrDash(current.dcEnergyKwh), "kWh")}</div>`
-    : `<p class="muted">No selected reporting month is available.</p>`;
-  const benchmarkSection = data.benchmarks.length > 0 ? `<section class="report-section"><h2>Benchmark Summary</h2><p class="section-intro">Current values are compared with the selected workbook/application baseline. This table is descriptive and does not alter source calculations.</p><div class="table-wrap"><table><thead><tr><th>Metric</th><th>Unit</th><th>Period</th><th>Current</th><th>Baseline</th><th>Reference</th></tr></thead><tbody>${benchmarks}</tbody></table></div></section>` : "";
-  const forecast = data.energyForecast || data.costForecast ? `<section class="report-section"><h2>Forecast Summary</h2><p class="muted">Forecasts use the existing application linear-regression utility. Actual values end at ${escapeHtml(formatMonth(data.energyForecast?.lastActualMonth ?? data.costForecast?.lastActualMonth ?? null))}; forecast horizon is ${data.energyForecast?.horizonMonths ?? data.costForecast?.horizonMonths ?? 0} month(s).</p>${forecastSection(data)}</section>` : "";
-  const rack = data.rack ? `${rackSection(data.rack)}${rackInventorySection(data.rack)}` : "";
-
+  const range = `${formatMonth(data.historicalStart)} – ${formatMonth(data.historicalEnd)}`;
+  const dashboard = data.engineeringDashboard ? engineeringDashboard(data, data.engineeringDashboard) : "";
+  const trendPages = [
+    ["Total 4th Floor Energy Trend", "kWh", "#6366f1", data.monthlyRows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy for the selected reporting window."],
+    ["UPS System Energy Trend", "kWh", "#3b82f6", data.monthlyRows.map(row => row.upsEnergyKwh), "Monthly UPS system energy utilization."],
+    ["Air Conditioning Energy Trend", "kWh", "#14b8a6", data.monthlyRows.map(row => row.airEnergyKwh), "Meter-difference energy; gaps indicate an unavailable prior reading."],
+    ["DC Power Panel Energy Trend", "kWh", "#f59e0b", data.monthlyRows.map(row => row.dcEnergyKwh), "Monthly DC panel energy estimate."],
+    ["Estimated 4th Floor Cost Trend", "THB", "#10b981", data.monthlyRows.map(row => row.floorCostThb), "Estimated cost at the building average electricity rate."],
+    ["Building Average Electricity Rate Trend", "THB/kWh", "#f97316", data.monthlyRows.map(row => row.averageRateThbPerKwh), "Building electricity cost divided by building energy."],
+  ] as const;
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(data.title)}</title><style>
-  @page{size:A4 landscape;margin:14mm 12mm 15mm 12mm}*{box-sizing:border-box}html,body{margin:0;background:#fffaf7;color:#243247;font-family:${FONT_STACK};font-size:10.5px;line-height:1.45}body{padding:0 0 18mm}.cover{height:180mm;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:30px;line-height:1.2;margin:0 0 12px;color:#29415d}.cover h2{font-size:17px;font-weight:400;color:#7c6a68;margin:0 0 26px}.cover .meta{border-top:1px solid #e6d9d2;padding-top:16px;line-height:1.9;color:#5f6f82}.report-section{page-break-before:always;padding-top:2mm}.report-section:first-of-type{page-break-before:always}.report-section h2{font-size:19px;margin:0 0 8px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:6px}.report-section h3,.chart-block h3{font-size:13px;color:#3e5874;margin:10px 0 4px}.section-intro,.chart-caption,.table-caption{color:#5f7083;margin:0 0 8px;line-height:1.45}.chart-caption,.table-caption{font-size:9.5px}.muted{color:#6c7b8c}.ok{color:#3d8064}.kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:10px 0 14px}.kpi{min-height:66px;padding:11px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:7px}.kpi-label{font-size:9px;color:#67788b;text-transform:uppercase;letter-spacing:.04em}.kpi-value{font-size:17px;font-weight:700;margin-top:7px;color:#29415d;word-break:break-word}.kpi-unit{font-size:9px;color:#7c6a68;margin-top:2px}.chart-block{margin:12px 0 16px;background:#fff;border:1px solid #e7dcd6;border-radius:8px;padding:11px;break-inside:avoid}.chart-block svg{width:100%;height:auto;display:block}.grid{stroke:#eadfda;stroke-width:1}.axis-line{stroke:#98a6b6;stroke-width:1}.axis{fill:#657488;font-size:9px}.point-label{fill:#344c67;font-size:8px;font-weight:400}.legend-row{display:flex;align-items:center;gap:16px;margin-bottom:3px;color:#5e6f82;font-size:9px}.legend{display:inline-flex;align-items:center;gap:5px}.legend i{display:inline-block;width:12px;height:4px;border-radius:3px}.unit{margin-left:auto;color:#8a6f69}.report-grid{display:grid;gap:10px}.grid-4{grid-template-columns:repeat(4,minmax(0,1fr))}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:10px}.table-wrap{overflow:visible;margin:8px 0;break-inside:auto}table{border-collapse:collapse;width:100%;background:#fff;font-size:8.8px;line-height:1.35;table-layout:auto}thead{display:table-header-group}th{background:#eee3dd;color:#40566e;text-align:right;font-weight:700;padding:7px 6px;border:1px solid #dfd1ca;white-space:normal}th:first-child,td:first-child{text-align:left}td{text-align:right;padding:6px;border:1px solid #eadfda;vertical-align:top;word-break:break-word}tr{break-inside:avoid}ul{margin:6px 0 0 18px;padding:0;line-height:1.6}.empty-chart{padding:20px;color:#7d8997;background:#fff;border:1px dashed #d9cbc4}.page-footer{position:fixed;bottom:-10mm;left:0;right:0;text-align:center;color:#7d8997;font-size:8px}.page-footer .page::after{content:counter(page) " of " counter(pages)}
-  </style></head><body><div class="page-footer">${escapeHtml(data.sourceWorkbook)} · ${escapeHtml(data.generatedAt)} · Page <span class="page"></span></div>
-  <main class="cover"><h1>${escapeHtml(data.title)}</h1><h2>${escapeHtml(data.thaiSubtitle)}</h2><div class="meta"><div>Facility: ${escapeHtml(data.facility)}</div><div>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}</div><div>Historical range: ${escapeHtml(formatMonth(data.historicalStart))} – ${escapeHtml(formatMonth(data.historicalEnd))}</div><div>Source workbook: ${escapeHtml(data.sourceWorkbook)}</div><div>Generated: ${escapeHtml(data.generatedAt)}</div><div>Application version: ${escapeHtml(data.appVersion)}</div><div>Data status: ${escapeHtml(data.status)}</div></div></main>
-  <section class="report-section"><h2>Table of Contents</h2><ol><li>Executive Summary</li><li>Energy &amp; Cost KPI Summary</li><li>Energy Consumption Trend</li><li>Electricity Cost Trend</li><li>UPS, Air, and DC Summary</li><li>Historical Operations Summary</li><li>Monthly Energy &amp; Cost Table</li><li>Benchmark Summary and Forecast Summary (when available)</li><li>Smart Insights and Data-quality Warnings</li><li>Rack Capacity Summary and Rack Inventory (when available)</li><li>Report Information and Data Source</li></ol></section>
-  <section class="report-section"><h2>Executive Summary</h2><p class="muted">This combined report contains the validated workbook history, Energy &amp; Cost trends, subsystem context, forecasts, benchmarks, and the read-only Rack Capacity summary.</p>${sectionNotes}</section>
-  <section class="report-section"><h2>Energy &amp; Cost KPI Summary</h2><p class="section-intro">Selected-month KPIs copied from the authoritative workbook row. Values are displayed with the workbook-compatible units and precision.</p>${kpis}</section>
-  <section class="report-section"><h2>Energy Consumption Trend</h2>${energyChart}</section>
-  <section class="report-section"><h2>Electricity Cost Trend</h2>${costChart}</section>
-  <section class="report-section"><h2>UPS, Air, and DC Summary</h2>${subsystemChart}</section>
-  <section class="report-section"><h2>Historical Operations Summary</h2><p class="section-intro">Historical Energy, Cost, and subsystem values are sourced from the re-read workbook and calculated through the shared application utilities. The complete month-by-month values are listed once in the Monthly Energy &amp; Cost Table.</p>${data.currentRow ? `<div class="report-grid grid-4"><div class="kpi"><span class="kpi-label">Reporting month</span><strong>${escapeHtml(formatMonth(data.currentRow.month))}</strong></div><div class="kpi"><span class="kpi-label">Building Energy</span><strong>${format2(data.currentRow.buildingEnergyKwh)}</strong></div><div class="kpi"><span class="kpi-label">Building Cost</span><strong>${format2(data.currentRow.buildingCostThb)}</strong></div><div class="kpi"><span class="kpi-label">Status</span><strong>${escapeHtml(data.currentRow.status)}</strong></div></div>` : `<p class="muted">No reporting month is available.</p>`}</section>
-  <section class="report-section"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section>
-  ${benchmarkSection}${forecast}<section class="report-section"><h2>Smart Insights and Data-quality Warnings</h2><p class="section-intro">These notes describe validation and operational observations; they do not replace workbook values.</p><ul>${insightList}</ul>${warningList ? `<h3>Validation warnings</h3><ul>${warningList}</ul>` : ""}</section>${rack}<section class="report-section"><h2>Report Information and Data Source</h2><p class="table-caption">Export metadata and coverage information for this generated report.</p><div class="table-wrap"><table><tbody><tr><th>Source workbook</th><td>${escapeHtml(data.sourceWorkbook)}</td></tr><tr><th>Reporting month</th><td>${escapeHtml(formatMonth(data.reportingMonth))}</td></tr><tr><th>Historical range</th><td>${escapeHtml(formatMonth(data.historicalStart))} – ${escapeHtml(formatMonth(data.historicalEnd))}</td></tr><tr><th>Energy monthly rows</th><td>${data.monthlyRows.length}</td></tr><tr><th>Rack rows</th><td>${data.rack?.records.length ?? 0}</td></tr><tr><th>Data status</th><td>${escapeHtml(data.status)}</td></tr><tr><th>Omitted sections</th><td>${escapeHtml(omitted || "None")}</td></tr></tbody></table></div></section>
-  <script>document.body.dataset.reportReady="true";</script></body></html>`;
+@page{size:A4 landscape;margin:8mm 9mm 12mm}*{box-sizing:border-box}html,body{margin:0;color:#243247;background:#fff;font:12px/1.3 ${FONT_STACK}}.cover{height:180mm;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:34px;margin:0;color:#29415d}.cover h2{font-size:20px;font-weight:400;color:#7c6a68}.meta{margin-top:16px;border-top:1px solid #e6d9d2;padding-top:12px;color:#5f6f82}.page{page-break-before:always;padding-top:1mm}.page h2{font-size:23px;margin:0 0 7px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:5px}.page h3{font-size:16px;color:#3e5874;margin:0 0 6px}.dashboard-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #e8d7d0;padding-bottom:8px}.dashboard-head h2{border:0;padding:0;margin:0}.dashboard-head p{margin:3px 0;color:#5f6f82}.eyebrow{font-size:9px!important;font-weight:bold;letter-spacing:1px;color:#a25e4c!important}.dashboard-tag{font-size:10px;text-align:right;color:#52687f;border-left:1px solid #e7d9d2;padding-left:12px}.continuation{font-size:10px;font-weight:bold;color:#68798a;border-bottom:1px solid #e7d9d2;padding-bottom:4px;margin-bottom:7px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:9px 0}.kpi{min-height:74px;padding:9px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:6px;break-inside:avoid}.kpi-label{font-size:10px;color:#67788b;text-transform:uppercase;font-weight:bold}.kpi-value{font-size:21px;font-weight:700;margin-top:5px;color:#29415d}.kpi-unit,.kpi-note,.note{font-size:10px;color:#64758a}.kpi-note{margin-top:3px}.block{margin:9px 0;padding:9px;border:1px solid #e7dcd6;border-radius:6px;break-inside:avoid}.note{margin:6px 0 0}.table-wrap{margin:4px 0;overflow:hidden}table{border-collapse:collapse;width:100%;font-size:10px}th,td{padding:4px;border:1px solid #eadfda;text-align:right;vertical-align:top}td.left,th:first-child{text-align:left}th{background:#eee3dd;color:#40566e;font-weight:bold}.dense table{font-size:8.5px}.dense th,.dense td{padding:3px}.ups-comparison{display:grid;gap:7px;margin-top:8px}.ups-bar-row{display:grid;grid-template-columns:90px 1fr 52px;gap:8px;align-items:center;font-size:11px}.ups-bar-row strong{text-align:right}.ups-track{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden}.ups-track i{display:block;height:100%;border-radius:99px;background:#10b981}.ups-track i.medium{background:#f59e0b}.ups-track i.high{background:#e05b4c}.trend-page{height:183mm;display:flex;flex-direction:column}.trend-page h2{font-size:26px;margin-bottom:2px}.chart-unit{margin:0 0 5px;color:#657488;font-size:12px}.trend-svg{width:100%;height:142mm;flex:1;overflow:visible}.grid{stroke:#dce4ea;stroke-width:1}.axis-tick,.month-label,.point-value{fill:#44566b;font-family:${FONT_STACK}}.axis-tick{font-size:20px}.month-label{font-size:19px}.point-value{font-size:19px;font-weight:bold}.chart-explanation{margin:2px 5mm 0;font-size:12px;color:#52687f;text-align:center}.report-info{font-size:13px;line-height:1.55}
+</style></head><body><main class="cover"><h1>${escapeHtml(data.title)}</h1><h2>${escapeHtml(data.thaiSubtitle)}</h2><div class="meta">Facility: ${escapeHtml(data.facility)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}<br>Source workbook: ${escapeHtml(data.sourceWorkbook)}<br>Application version: ${escapeHtml(data.appVersion)}</div></main>${dashboard}${trendPages.map(([title, unit, color, values, explanation]) => trendPage(title, unit, color, data.monthlyRows, values, explanation)).join("")}<section class="page"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section><section class="page report-info"><h2>Report Information and Data Source</h2><p>Source workbook: ${escapeHtml(data.sourceWorkbook)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}<br>Data status: ${escapeHtml(data.status)}</p></section><script>document.body.dataset.reportReady="true";</script></body></html>`;
 }

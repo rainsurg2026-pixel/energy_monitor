@@ -8,6 +8,7 @@
 
 import { MonthlyLog, UpsRecord, DcRecord } from "../types";
 import { FieldId, TabKey } from "./ExcelSchema";
+import { getAirValue } from "../utils/energyCost";
 
 export const DEFAULT_UPS_IDS = [
   "UPS 11A",
@@ -60,7 +61,7 @@ export function parseSafeNumber(val: unknown): number | null {
   const str = String(val).replace(/,/g, "").trim();
   if (str === "") return null;
   const num = Number(str);
-  return isNaN(num) ? null : num;
+  return Number.isFinite(num) ? num : null;
 }
 
 /** One parsed data row: canonical month + field values. */
@@ -86,7 +87,12 @@ export function createEmptyLog(month: string, devices: DeviceLists = DEFAULT_DEV
     })),
     air,
     dc: devices.dcIds.map(id => ({ panelId: id, voltage: null, current: null })),
-    energyCost: { buildingEnergyKwh: null, buildingElectricityCostThb: null },
+    energyCost: {
+      buildingEnergyKwh: null,
+      buildingElectricityCostThb: null,
+      floorElectricityCostThb: null,
+      averageElectricityRateThbPerKwh: null
+    },
     lastSavedUps: null,
     lastSavedAir: null,
     lastSavedDc: null,
@@ -152,7 +158,9 @@ export function rowsToLogs(rowsByTab: Record<TabKey, SheetRow[]>, devices: Devic
     const log = getLog(row.month);
     log.energyCost = {
       buildingEnergyKwh: parseSafeNumber(row.values.buildingEnergyKwh),
-      buildingElectricityCostThb: parseSafeNumber(row.values.buildingElectricityCostThb)
+      buildingElectricityCostThb: parseSafeNumber(row.values.buildingElectricityCostThb),
+      floorElectricityCostThb: parseSafeNumber(row.values.floorElectricityCostThb),
+      averageElectricityRateThbPerKwh: parseSafeNumber(row.values.averageElectricityRateThbPerKwh)
     };
     if (row.values.timestamp) log.lastSavedEnergyCost = String(row.values.timestamp);
   }
@@ -199,7 +207,7 @@ export function logsToRows(logs: MonthlyLog[], devices: DeviceLists = DEFAULT_DE
       timestamp: log.lastSavedAir
     };
     for (const field of devices.airFields ?? DEFAULT_DEVICE_LISTS.airFields!) {
-      (airValues as Record<string, string | number | null>)[field] = field in log.air ? (log.air as unknown as Record<string, number | null>)[field] : log.air.meters?.[field] ?? null;
+      (airValues as Record<string, string | number | null>)[field] = getAirValue(log, field);
     }
     result.AIR.push({ month: log.month, values: airValues });
 

@@ -1,16 +1,15 @@
 // Stages the distributable portable folder layout and zips it:
 //
-//   release/Energy Monitor/
-//     Energy Monitor.exe      (from electron-builder portable target)
+//   release/Energy Monitor-vX.Y.Z/
+//     Energy Monitor-vX.Y.Z.exe
 //     DC_Rangsit.xlsm         (the default facility workbook)
 //     DC_Srinakarin.xlsm      (the second facility workbook)
 //     config/  backup/  logs/  exports/   (empty, created for clarity)
-//     docs/                   (user/deployment guides, if built)
 //     README.md
 //
-//   release/EnergyMonitor_Portable.zip
+//   release/Energy Monitor-vX.Y.Z.zip
 //
-// The user extracts the ZIP anywhere and double-clicks Energy Monitor.exe -
+// The user extracts the ZIP anywhere and double-clicks the versioned EXE -
 // no installer, no admin rights, fully offline.
 import { promises as fs } from "fs";
 import { spawnSync } from "child_process";
@@ -20,9 +19,11 @@ import { fileURLToPath } from "url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
 const release = path.join(root, "release");
-const exe = path.join(release, "Energy Monitor.exe");
-const stage = path.join(release, "Energy Monitor");
-const zipPath = path.join(release, `Energy Monitor v${pkg.version} Portable.zip`);
+const packageName = `Energy Monitor-v${pkg.version}`;
+const executableName = `${packageName}.exe`;
+const exe = path.join(release, executableName);
+const stage = path.join(release, packageName);
+const zipPath = path.join(release, `${packageName}.zip`);
 
 async function exists(p) {
   return fs.access(p).then(() => true).catch(() => false);
@@ -39,8 +40,8 @@ async function main() {
 
   // Executable + facility workbook databases. Keep both configured facilities
   // beside the executable so the first launch works without a file picker.
-  await fs.copyFile(exe, path.join(stage, "Energy Monitor.exe"));
-  for (const workbookName of ["DC_Rangsit.xlsm", "DC_Srinakarin.xlsm", "SNK_Dashboard_Renew_Voltage-1_EnergyMonitorReady.xlsm"]) {
+  await fs.copyFile(exe, path.join(stage, executableName));
+  for (const workbookName of ["DC_Rangsit.xlsm", "DC_Srinakarin.xlsm"]) {
     const workbook = await exists(path.join(root, workbookName))
       ? path.join(root, workbookName)
       : path.join(root, "release", workbookName);
@@ -52,23 +53,13 @@ async function main() {
   }
 
   // Portable folder layout
-  for (const dir of ["config", "backup", "logs", "exports", "docs"]) {
+  for (const dir of ["config", "backup", "logs", "exports"]) {
     await fs.mkdir(path.join(stage, dir), { recursive: true });
-  }
-
-  // Documentation (if generated). Recursive copy: docs/desktop/ contains
-  // both files and subdirectories (e.g. adr/), and fs.copyFile only handles
-  // files.
-  const docsSrc = path.join(root, "docs", "desktop");
-  if (await exists(docsSrc)) {
-    for (const entry of await fs.readdir(docsSrc)) {
-      await fs.cp(path.join(docsSrc, entry), path.join(stage, "docs", entry), { recursive: true });
-    }
   }
   await fs.writeFile(path.join(stage, "README.md"), `# Energy Monitor — Portable Package
 
 1. Extract this folder anywhere on a writable Windows drive.
-2. Double-click **Energy Monitor.exe**.
+2. Double-click **${executableName}**.
 3. The default facility is **DC_Rangsit.xlsm**. **DC_Srinakarin.xlsm** is also included for facility selection.
 
 The application is fully portable and works without Microsoft Office or an internet connection.
@@ -79,7 +70,6 @@ Folders created beside the executable:
 - backup/ workbook backups
 - logs/ startup and application diagnostics
 - exports/ generated reports and exports
-- docs/ user and deployment documentation
 `, "utf8");
 
   // Zip via PowerShell (built into Windows)

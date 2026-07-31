@@ -21,6 +21,7 @@ import { MonthlyLog } from "../../types";
 import { PayloadError, validateLogsPayload } from "../../excel/WorkbookValidator";
 import { ensureDir, getExportsDir, log } from "../paths";
 import { calculateEnergyCostForMonth } from "../../utils/energyCost";
+import type { DashboardUpsTopology } from "../../utils/engineeringDashboard";
 
 type AllReportProgressStage = "preparing" | "validating" | "rendering" | "building" | "saving" | "completed";
 
@@ -134,6 +135,7 @@ async function buildPng(win: BrowserWindow): Promise<Buffer> {
 
 async function buildReportWorkbook(logs: MonthlyLog[], meta: { facility: string }): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
+  const numericFormat = "#,##0.00";
   wb.creator = "Energy Monitor";
   wb.created = new Date();
 
@@ -204,7 +206,7 @@ async function buildReportWorkbook(logs: MonthlyLog[], meta: { facility: string 
   for (const l of logs) for (const u of l.ups) ups.addRow([l.month, u.upsId, u.voltage, u.current, u.loadKw, u.loadKva]);
   applyHeader(ups, "UPS Loads", "Monthly UPS measurements");
   ups.columns.forEach(c => (c.width = 16));
-  for (let row = 2; row <= ups.rowCount; row++) for (const column of [3, 4, 5, 6]) ups.getCell(row, column).numFmt = "#,##0.00";
+  for (let row = 2; row <= ups.rowCount; row++) for (const column of [3, 4, 5, 6]) ups.getCell(row, column).numFmt = numericFormat;
 
   const air = wb.addWorksheet("Air Conditioning");
   const airFields = logs.some(log => log.air.meters && Object.keys(log.air.meters).length > 0)
@@ -219,14 +221,14 @@ async function buildReportWorkbook(logs: MonthlyLog[], meta: { facility: string 
   }
   applyHeader(air, "Air Conditioning", "Monthly air-conditioning energy readings");
   air.columns.forEach(c => (c.width = 16));
-  for (let row = 2; row <= air.rowCount; row++) for (let column = 2; column <= airFields.length + 1; column++) air.getCell(row, column).numFmt = "#,##0.0000";
+  for (let row = 2; row <= air.rowCount; row++) for (let column = 2; column <= airFields.length + 1; column++) air.getCell(row, column).numFmt = numericFormat;
 
   const dc = wb.addWorksheet("DC Power Panels");
   dc.addRow(["Month", "DC Panel", "Voltage (V)", "Current (A)"]);
   for (const l of logs) for (const d of l.dc) dc.addRow([l.month, d.panelId, d.voltage, d.current]);
   applyHeader(dc, "DC Power Panels", "Monthly DC panel readings");
   dc.columns.forEach(c => (c.width = 16));
-  for (let row = 2; row <= dc.rowCount; row++) for (const column of [3, 4]) dc.getCell(row, column).numFmt = "#,##0.00";
+  for (let row = 2; row <= dc.rowCount; row++) for (const column of [3, 4]) dc.getCell(row, column).numFmt = numericFormat;
 
   const energy = wb.addWorksheet("Energy & Cost");
   energy.addRow([
@@ -251,7 +253,7 @@ async function buildReportWorkbook(logs: MonthlyLog[], meta: { facility: string 
     ]);
   }
   for (let row = 2; row <= energy.rowCount; row++) {
-    for (const column of [2, 3, 4, 5, 6]) energy.getCell(row, column).numFmt = "#,##0.00";
+    for (const column of [2, 3, 4, 5, 6]) energy.getCell(row, column).numFmt = numericFormat;
     energy.getCell(row, 7).numFmt = "0.00%";
   }
   applyHeader(energy, "Energy & Cost", "Authoritative monthly energy and cost values");
@@ -290,6 +292,7 @@ export function registerExportIpc(): void {
       const requestId = requireText(body, "requestId");
       const workbookPath = requireText(body, "workbookPath");
       const facility = requireText(body, "facility", "Facility").slice(0, 100);
+      const dashboard = body.dashboard as DashboardUpsTopology | undefined;
       const selectedMonth = typeof body.selectedMonth === "string" && body.selectedMonth.trim() !== "" ? body.selectedMonth.trim() : null;
       const appVersion = requireText(body, "appVersion", "Unknown").slice(0, 80);
       const win = windowFor(event);
@@ -301,7 +304,7 @@ export function registerExportIpc(): void {
           import("./allReportPdf")
         ]);
         sendAllReportProgress(event, requestId, "preparing", "Re-reading active workbook");
-        const data = await buildReportData({ workbookPath, facility, selectedMonth, appVersion });
+        const data = await buildReportData({ workbookPath, facility, dashboard, selectedMonth, appVersion });
         if (job.canceled) throw new ExportCancelledError();
         sendAllReportProgress(event, requestId, "validating", `${data.monthlyRows.length} historical month(s), ${data.rack?.records.length ?? 0} rack row(s)`);
         const rendered = await renderAllReportPdf(data, (stage, detail) => sendAllReportProgress(event, requestId, stage, detail), () => job.canceled);

@@ -59,10 +59,11 @@ async function main(): Promise<void> {
   // and src/reports/upsMappingReader.ts. facility.profile.dashboard remains
   // as valid, unused fallback infrastructure; it is no longer the active
   // source DashboardSummary renders from.
-  check("DashboardSummary reads UPS groups from the workbook (upsMapping.summary), not static config",
-    dashboardSource.includes("upsMapping?.summary"));
-  check("DashboardSummary reads UPS mapping from the workbook (upsMapping.mapping), not static config",
-    dashboardSource.includes("upsMapping?.mapping"));
+  const dashboardCalculationSource = await fs.readFile(path.join(root, "src", "utils", "engineeringDashboard.ts"), "utf8");
+  check("DashboardSummary reads UPS groups from the shared workbook calculation, not static config",
+    dashboardSource.includes("buildEngineeringDashboardSnapshot") && dashboardCalculationSource.includes("upsMapping?.summary"));
+  check("DashboardSummary reads UPS mapping from the shared workbook calculation, not static config",
+    dashboardSource.includes("buildEngineeringDashboardSnapshot") && dashboardCalculationSource.includes("upsMapping?.mapping"));
   check("UniversalFilterBar reads its UPS options from facility.profile.dashboard",
     filterBarSource.includes("facility?.profile.dashboard.upsGroups") &&
     filterBarSource.includes("facility?.profile.dashboard.upsMapping"));
@@ -79,8 +80,8 @@ async function main(): Promise<void> {
   // Dashboard-FAC mapping table without crashing, i.e. it uses `?? []`,
   // never assumes the array is non-empty. ---
   check("DashboardSummary defaults to an empty array when upsMapping is unavailable",
-    dashboardSource.includes("upsMapping?.summary ?? []") &&
-    dashboardSource.includes("upsMapping?.mapping ?? []"));
+    dashboardCalculationSource.includes("upsMapping?.summary ?? []") &&
+    dashboardCalculationSource.includes("upsMapping?.mapping ?? []"));
 
   // --- Data integrity: config moved, not altered - the values now in
   // profile.json are byte-for-byte the values that used to be hardcoded in

@@ -50,6 +50,7 @@ import ExecutiveDashboard from "./components/ExecutiveDashboard";
 import BenchmarkDashboard from "./components/BenchmarkDashboard";
 import ForecastDashboard from "./components/ForecastDashboard";
 import SmartInsightPanel from "./components/SmartInsightPanel";
+import FacilityComparison from "./components/FacilityComparison";
 import { 
   Shield, 
   Lock, 
@@ -165,7 +166,7 @@ export default function App() {
   const [logs, setLogs] = useState<MonthlyLog[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [activeLog, setActiveLog] = useState<MonthlyLog | null>(null);
-  const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "history" | "settings">("dashboard");
+  const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "history" | "comparison" | "settings">("dashboard");
 
   // --- DESKTOP (EXCEL WORKBOOK) SESSION ---
   // In the desktop app the Excel workbook is the primary data source; the
@@ -1454,6 +1455,17 @@ export default function App() {
     return `${facility}_${selectedMonth || new Date().toISOString().slice(0, 7)}_Report`;
   }, [activeFacility, selectedMonth]);
 
+  /** Lets React remove export UI before Chromium captures the current page. */
+  const waitForCleanExportCapture = async () => {
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await document.fonts?.ready;
+    await Promise.all(Array.from(document.images).map(image => image.complete ? Promise.resolve() : new Promise<void>(resolve => {
+      image.addEventListener("load", () => resolve(), { once: true });
+      image.addEventListener("error", () => resolve(), { once: true });
+    })));
+    await new Promise(resolve => setTimeout(resolve, 50));
+  };
+
   /** One entry point for every export format (toolbar, filter bar, Ctrl+E). */
   const runExport = async (kind: ExportKind) => {
     if (!desktopBridge) {
@@ -1474,6 +1486,7 @@ export default function App() {
           defaultName: `${facility.replace(/\s+/g, "")}_All_Report`,
           workbookPath: workbook.path,
           facility,
+          dashboard: activeFacility?.profile.dashboard,
           selectedMonth: selectedMonth || null,
           appVersion: appVersion ?? "Unknown"
         });
@@ -1996,7 +2009,7 @@ export default function App() {
         {/* SEGMENTED NAVIGATION BAR */}
         <nav
           className={`grid grid-cols-1 ${
-            isDesktopApp ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-3"
+            isDesktopApp ? "sm:grid-cols-2 lg:grid-cols-5" : "sm:grid-cols-3"
           } gap-2 bg-slate-900 border border-slate-850 p-1.5 rounded-2xl shadow-md`}
         >
           <button
@@ -2034,6 +2047,20 @@ export default function App() {
             <TableProperties className="w-4 h-4 text-amber-400" />
             <span>{lang === "th" ? "3. ประวัติรายเดือนทั้งหมด" : "3. Historical Logs"}</span>
           </button>
+
+          {isDesktopApp && (
+            <button
+              onClick={() => setCurrentView("comparison")}
+              className={`px-4 py-3.5 text-xs font-bold rounded-xl flex items-center justify-center gap-2.5 transition-all cursor-pointer ${
+                currentView === "comparison"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/15"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-850/50"
+              }`}
+            >
+              <BarChart4 className="w-4 h-4 text-cyan-400" />
+              <span>{lang === "th" ? "เปรียบเทียบไซต์" : "Site Comparison"}</span>
+            </button>
+          )}
 
           {isDesktopApp && (
             <button
@@ -2370,7 +2397,12 @@ export default function App() {
           )
         )}
 
-        {/* --- VIEW 4: SETTINGS & INTEGRITY CENTER (desktop) --- */}
+        {/* --- VIEW 4: SITE COMPARISON (desktop, read-only) --- */}
+        {currentView === "comparison" && isDesktopApp && excelProvider && facilities.length > 0 && (
+          <FacilityComparison facilities={facilities} provider={excelProvider} lang={lang} />
+        )}
+
+        {/* --- VIEW 5: SETTINGS & INTEGRITY CENTER (desktop) --- */}
         {currentView === "settings" && isDesktopApp && desktopBridge && appConfig && (
           <div className="space-y-6 animate-fadeIn">
             {workbook && (
@@ -2810,8 +2842,9 @@ export default function App() {
           if (exportRequestId && desktopBridge) void desktopBridge.exportCenter.cancel(exportRequestId);
         }}
         onExport={async kind => {
-          await runExport(kind);
           setExportCenterOpen(false);
+          await waitForCleanExportCapture();
+          await runExport(kind);
         }}
       />
 

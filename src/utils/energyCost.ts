@@ -91,10 +91,13 @@ export function getAirFields(log: MonthlyLog): string[] {
 }
 
 export function getAirValue(log: MonthlyLog, field: string): number | null {
-  const meters = log.air.meters;
-  if (meters && Object.prototype.hasOwnProperty.call(meters, field)) return meters[field] ?? null;
   const fixed = log.air as unknown as Record<string, number | null | undefined>;
-  return fixed[field] ?? null;
+  const meter = log.air.meters?.[field] ?? null;
+  // EB41/EB42 are top-level records; configured EB43/EB44 fields are meters.
+  // Keep a fallback for records saved by older releases on the other path.
+  return (LEGACY_AIR_FIELDS as readonly string[]).includes(field)
+    ? fixed[field] ?? meter
+    : meter ?? fixed[field] ?? null;
 }
 
 /** Excel direct arithmetic cannot safely be replaced by a zero for a blank lookup. */
@@ -158,6 +161,22 @@ export function calculateAverageElectricityRate(
     : buildingElectricityCostThb / buildingEnergyKwh;
 }
 
+/**
+ * Dashboard-FAC E32/E40: 4th-floor cost is the building's unit rate
+ * multiplied by the calculated 4th-floor energy. The cost is never entered
+ * by a user and is blank whenever the source values cannot form a safe rate.
+ */
+export function calculateFloorElectricityCost(
+  buildingEnergyKwh: number | null,
+  buildingElectricityCostThb: number | null,
+  floorEnergyKwh: number | null
+): number | null {
+  const averageRate = calculateAverageElectricityRate(buildingEnergyKwh, buildingElectricityCostThb);
+  return averageRate === null || floorEnergyKwh === null || !Number.isFinite(floorEnergyKwh)
+    ? null
+    : averageRate * floorEnergyKwh;
+}
+
 export function calculateEnergyCostForMonth(
   logs: readonly MonthlyLog[],
   reportingMonth: string
@@ -200,10 +219,11 @@ export function calculateEnergyCostForMonth(
     buildingEnergyKwh,
     buildingElectricityCostThb
   );
-  const floorElectricityCostThb =
-    averageElectricityRateThbPerKwh === null || floorEnergyKwh === null
-      ? null
-      : averageElectricityRateThbPerKwh * floorEnergyKwh;
+  const floorElectricityCostThb = calculateFloorElectricityCost(
+    buildingEnergyKwh,
+    buildingElectricityCostThb,
+    floorEnergyKwh
+  );
   const energySharePercent =
     floorEnergyKwh === null || buildingEnergyKwh === null || buildingEnergyKwh === 0
       ? null

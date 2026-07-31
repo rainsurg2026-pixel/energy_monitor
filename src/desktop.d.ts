@@ -17,7 +17,7 @@ import type { BackupEntry } from "./electron/sync/BackupManager";
 import type { WorkbookHealth } from "./excel/WorkbookValidator";
 import type { ExcelIntegrityReport, WorkbookValidation } from "./excel/WorkbookReader";
 import type { DeviceLists } from "./excel/SheetMapper";
-import type { FacilityEntry, FacilityProfile } from "./electron/facilities";
+import type { FacilityEntry, FacilityProfile, FacilityDashboardConfig } from "./electron/facilities";
 import type { UpsGroupConfig } from "./utils/upsGroupAggregation";
 
 export type {
@@ -34,7 +34,8 @@ export type {
   WorkbookValidation,
   DeviceLists,
   FacilityEntry,
-  FacilityProfile
+  FacilityProfile,
+  FacilityDashboardConfig
 };
 
 export interface ExportProgress {
@@ -48,6 +49,7 @@ export interface AllReportExportPayload {
   defaultName: string;
   workbookPath: string;
   facility: string;
+  dashboard?: FacilityDashboardConfig;
   selectedMonth: string | null;
   appVersion: string;
 }
@@ -79,6 +81,10 @@ export interface DesktopBridge {
       devices?: DeviceLists,
       upsGroupContext?: { facilityId: string; upsGroups: UpsGroupConfig[] }
     ): Promise<IpcResult<OpenWorkbookPayload | { canceled: true }>>;
+    /** Read-only multi-workbook open for site comparison. Per-path devices required. */
+    openMultiple(
+      requests: Array<{ path: string; devices: DeviceLists }>
+    ): Promise<IpcResult<{ workbooks: Record<string, OpenWorkbookPayload> }>>;
     reload(
       path: string,
       devices?: DeviceLists,
@@ -127,6 +133,7 @@ export interface DesktopBridge {
     excel(payload: {
       defaultName: string;
       facility: string;
+      dashboard?: FacilityDashboardConfig;
       logs: unknown[];
     }): Promise<IpcResult<{ path: string } | { canceled: true }>>;
     allReport(payload: AllReportExportPayload): Promise<IpcResult<{ path: string } | { canceled: true }>>;

@@ -5,11 +5,21 @@ import { buildReportHtml } from "../src/reports/pdf/reportHtml";
 
 const workbookPath = path.resolve(process.env.ENERGY_MONITOR_WORKBOOK ?? "DC_Rangsit.xlsm");
 const before = await fs.stat(workbookPath);
+const facilityId = workbookPath.toLowerCase().includes("srinakarin") ? "srinakarin" : "rangsit";
+const dashboard = JSON.parse(await fs.readFile(path.resolve(`config/${facilityId}/profile.json`), "utf8")).dashboard;
 const report = await buildReportData({
   workbookPath,
   facility: "Test Facility",
   selectedMonth: null,
-  appVersion: "test"
+  appVersion: "test",
+  dashboard
+});
+const earlyReport = await buildReportData({
+  workbookPath,
+  facility: "Test Facility",
+  selectedMonth: "2021-06",
+  appVersion: "test",
+  dashboard
 });
 const html = buildReportHtml(report);
 
@@ -17,18 +27,53 @@ if (!html.includes("Export All Report") && !html.includes("Monthly Power")) thro
 if ((html.match(/<h2>Monthly Energy &amp; Cost Table<\/h2>/g) ?? []).length !== 1) throw new Error("Monthly table was duplicated or omitted.");
 if (/\bPUE\b|\bCO2\b|<img\b/i.test(html)) throw new Error("Forbidden report content was found.");
 if (report.monthlyRows.length > 0 && !html.includes("Building Energy")) throw new Error("Energy report data is missing.");
-if (report.rack && !html.includes("Rack Capacity")) throw new Error("Rack Capacity section is missing.");
-for (const section of ["Executive Summary", "Energy &amp; Cost KPI Summary", "Energy Consumption Trend", "Electricity Cost Trend", "UPS, Air, and DC Summary", "Historical Operations Summary", "Smart Insights and Data-quality Warnings", "Report Information and Data Source"]) {
+if (report.monthlyRows.length > 12) throw new Error("Report trends are not limited to the latest 12 months.");
+if (report.currentRow && report.monthlyRows.at(-1)?.month !== report.currentRow.month) throw new Error("Selected reporting month is not the final report month.");
+if (earlyReport.monthlyRows.length > 12 || earlyReport.monthlyRows.at(-1)?.month !== "2021-06" || earlyReport.monthlyRows.some(row => row.month > "2021-06")) {
+  throw new Error("Selected-month range included future months or failed to handle fewer than 12 records.");
+}
+if (!html.includes("Building Energy Dashboard")) throw new Error("Full selected-month Engineering Dashboard is missing.");
+if (html.includes("Selected-Month Building Energy Dashboard Summary")) throw new Error("The old simplified dashboard page is still present.");
+if (!html.includes("UPS Loads Comparison (%)")) throw new Error("UPS load comparison is missing from the printable dashboard.");
+if (facilityId === "rangsit" && !report.engineeringDashboard?.upsGroups.every(group => group.totalKw > 0 && group.totalKva > 0 && group.monthlyEnergyKwh > 0 && group.loadPercent !== null)) {
+  throw new Error("Rangsit selected-month UPS groups were not calculated from the loaded UPS records.");
+}
+if (facilityId === "srinakarin") {
+  const expectedIds = ["UPS 41A", "UPS 41B", "UPS 11A", "UPS 11B", "UPS 13A", "UPS 13B", "UPS 12A", "UPS 12B", "UPS 12A", "UPS 12B"];
+  if (JSON.stringify(report.engineeringDashboard?.upsDetails.map(row => row.upsId)) !== JSON.stringify(expectedIds)) throw new Error("Srinakarin dashboard UPS IDs do not match the workbook mapping sequence.");
+  for (const required of ["1. UPS Load Status", "1.1 UPS Load Status - Overall", "1.2 UPS and PPC Load Status – DCM 4th Floor", "UPS Loads Comparison (%) - Overall", "UPS and PPC Loads Comparison (%) – DCM 4th Floor"]) {
+    if (!html.includes(required)) throw new Error(`Srinakarin UPS dashboard section is missing: ${required}`);
+  }
+  if (report.engineeringDashboard?.upsOverallGroups.length !== 3) throw new Error("Srinakarin UPS Load Status - Overall is missing.");
+} else if (html.includes("AC Panel")) {
+  throw new Error("Rangsit All Report must omit the AC Power Panel column.");
+}
+for (const dashboardSection of ["UPS Load Status", "Air Conditioning Energy Consumption", "DC Power Panel Load Status", "Overall Energy Consumption"]) {
+  if (!html.includes(dashboardSection)) throw new Error(`Engineering Dashboard section is missing: ${dashboardSection}`);
+}
+for (const removed of ["Table of Contents", "Executive Summary", "Historical Operations Summary", "Smart Insights and Data-quality Warnings", "Forecast Information", "Forecast Summary", "Benchmark Information", "Benchmark Summary", "Trend Analytics & Historical Charts"]) {
+  if (html.includes(removed)) throw new Error(`Removed All Report section is still present: ${removed}`);
+}
+if (/Rack Capacity|Rack Inventory|Rack Validation/i.test(html)) throw new Error("Rack content leaked into Export All Report.");
+if (/Page 0 of 0/i.test(html)) throw new Error("Invalid page numbering placeholder was included.");
+for (const section of ["Monthly Energy &amp; Cost Table", "Report Information and Data Source"]) {
   if (!html.includes(`<h2>${section}</h2>`)) throw new Error(`Required section is missing: ${section}`);
 }
-for (const chart of ["Building Energy", "4th Floor Energy", "Building Cost", "4th Floor Cost"]) {
+for (const chart of ["Total 4th Floor Energy Trend", "UPS System Energy Trend", "Air Conditioning Energy Trend", "DC Power Panel Energy Trend", "Estimated 4th Floor Cost Trend", "Building Average Electricity Rate Trend"]) {
   if (!html.includes(chart)) throw new Error(`Required chart series is missing: ${chart}`);
 }
-if (!html.includes('Prompt, "Noto Sans Thai", Tahoma, sans-serif')) throw new Error("Offline-safe font stack is missing.");
-if (report.rack && !["Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"].every(field => html.includes(`<th>${field}</th>`))) {
-  throw new Error("Rack inventory fields are incomplete.");
-}
+if ((html.match(/class="page trend-page"/g) ?? []).length !== 6) throw new Error("Each trend must occupy one full report page.");
+const expectedPointLabels = [
+  ...report.monthlyRows.map(row => row.floorEnergyKwh),
+  ...report.monthlyRows.map(row => row.upsEnergyKwh),
+  ...report.monthlyRows.map(row => row.airEnergyKwh),
+  ...report.monthlyRows.map(row => row.dcEnergyKwh),
+  ...report.monthlyRows.map(row => row.floorCostThb),
+  ...report.monthlyRows.map(row => row.averageRateThbPerKwh)
+].filter(value => value !== null && Number.isFinite(value)).length;
+if ((html.match(/class="point-value"/g) ?? []).length !== expectedPointLabels) throw new Error("Every valid trend point must receive a numeric label.");
+if (!html.includes('"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif')) throw new Error("Report font stack is missing.");
 
 const after = await fs.stat(workbookPath);
 if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error("The source workbook changed during the report test.");
-console.log(`All-report data test passed: ${report.monthlyRows.length} month(s), ${report.rack?.records.length ?? 0} rack row(s).`);
+console.log(`All-report data test passed: ${report.monthlyRows.length} selected-range month(s).`);

@@ -98,14 +98,15 @@ function mergeLog(map: Map<string, MonthlyLog>, month: string): MonthlyLog {
       eb41b: null,
       eb42a: null,
       eb42b: null,
-      eb43a: null,
-      eb43b: null,
-      eb44a: null,
-      eb44b: null,
       meters: {}
     },
     dc: [],
-    energyCost: { buildingEnergyKwh: null, buildingElectricityCostThb: null },
+    energyCost: {
+      buildingEnergyKwh: null,
+      buildingElectricityCostThb: null,
+      floorElectricityCostThb: null,
+      averageElectricityRateThbPerKwh: null
+    },
     lastSavedUps: null,
     lastSavedAir: null,
     lastSavedDc: null,
@@ -188,9 +189,6 @@ function readAirSheet(ws: ExcelJS.Worksheet, logs: Map<string, MonthlyLog>): voi
       if (key in log.air) {
         (log.air as unknown as Record<string, number | null | undefined>)[key] = value;
       }
-      if (["eb43a", "eb43b", "eb44a", "eb44b"].includes(key)) {
-        (log.air as unknown as Record<string, number | null | undefined>)[key] = value;
-      }
     }
     log.air.meters = meters;
   }
@@ -229,6 +227,8 @@ function readEnergySheet(ws: ExcelJS.Worksheet, logs: Map<string, MonthlyLog>): 
   const monthCol = header.headers.get("month");
   const buildingEnergyCol = firstColumn(header.headers, [key => key.includes("building"), key => key.includes("energy") || key.includes("consumption")]);
   const buildingCostCol = firstColumn(header.headers, [key => key.includes("building"), key => key.includes("cost")]);
+  const floorCostCol = firstColumn(header.headers, [key => key.includes("4th") || key.includes("floor"), key => key.includes("cost")]);
+  const averageRateCol = firstColumn(header.headers, [key => key.includes("average"), key => key.includes("rate")]);
   if (!monthCol || !buildingEnergyCol || !buildingCostCol) return;
   for (let r = header.row + 1; r <= ws.rowCount; r++) {
     const row = ws.getRow(r);
@@ -237,7 +237,9 @@ function readEnergySheet(ws: ExcelJS.Worksheet, logs: Map<string, MonthlyLog>): 
     const log = mergeLog(logs, month);
     log.energyCost = {
       buildingEnergyKwh: numberValue(plain(row.getCell(buildingEnergyCol))),
-      buildingElectricityCostThb: numberValue(plain(row.getCell(buildingCostCol)))
+      buildingElectricityCostThb: numberValue(plain(row.getCell(buildingCostCol))),
+      floorElectricityCostThb: floorCostCol ? numberValue(plain(row.getCell(floorCostCol))) : null,
+      averageElectricityRateThbPerKwh: averageRateCol ? numberValue(plain(row.getCell(averageRateCol))) : null
     };
   }
 }

@@ -3,6 +3,7 @@ import { AirRecord } from "../types";
 import { Save, Check, RotateCcw } from "lucide-react";
 import { formatMonthYear } from "../utils";
 import { EntrySectionApi } from "../utils/completion";
+import NumericEntryInput from "./NumericEntryInput";
 
 interface AirTableProps {
   monthStr: string;
@@ -28,6 +29,13 @@ export default function AirTable({
 }: AirTableProps) {
   const fields = meterFields?.length ? meterFields : ["eb41a", "eb41b", "eb42a", "eb42b"];
   const label = (field: string) => meterLabels?.[field] ?? `${field.toUpperCase()} (GWh)`;
+  // The original four Rangsit meters are stored directly on AirRecord. Extra
+  // facility-specific meters live in `meters`, so read each field from the
+  // same location that handleInputChange writes to.
+  const valueForField = (field: string) =>
+    ["eb41a", "eb41b", "eb42a", "eb42b"].includes(field)
+      ? record[field as keyof Pick<AirRecord, "eb41a" | "eb41b" | "eb42a" | "eb42b">]
+      : record.meters?.[field];
   const [record, setRecord] = useState<AirRecord>({
     eb41a: null,
     eb41b: null,
@@ -53,12 +61,13 @@ export default function AirTable({
       setRecord(prev => ({ ...prev, meters: { ...(prev.meters ?? {}), [field]: next } }));
       return;
     }
-    
-    if (value === "") {
-      setRecord(prev => ({ ...prev, [field]: null }));
-    } else {
-      setRecord(prev => ({ ...prev, [field]: next }));
-    }
+
+    setRecord(prev => {
+      const { meters: previousMeters, ...rest } = prev;
+      const meters = { ...(previousMeters ?? {}) };
+      delete meters[field];
+      return { ...rest, [field]: next, ...(Object.keys(meters).length ? { meters } : {}) };
+    });
   };
 
   // RC3: expose commit/reset to the sticky toolbar; report live drafts.
@@ -146,7 +155,7 @@ export default function AirTable({
 
       {/* Inputs Layout */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+        <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-teal-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-teal-300 border-b border-slate-800/80">
               <th className="py-3.5 px-4 font-normal">Month</th>
@@ -161,13 +170,12 @@ export default function AirTable({
               
               {fields.map(field => (
                 <td key={field} className="py-5 px-2">
-                  <input
-                    type="number"
+                  <NumericEntryInput
                     step="0.0001"
                     placeholder="0.0000"
-                    value={record.meters?.[field] ?? ""}
-                    onChange={e => {
-                      handleInputChange(field, e.target.value);
+                    value={valueForField(field)}
+                    onChange={value => {
+                      handleInputChange(field, value);
                     }}
                     className="w-full max-w-[150px] ml-auto bg-teal-950/5 hover:bg-teal-950/10 focus:bg-teal-950/15 border border-slate-800 focus:border-teal-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                   />

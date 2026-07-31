@@ -9,7 +9,7 @@
  */
 
 import { MonthlyLog } from "../types";
-import type { ExcelIntegrityReport, WorkbookHealth, WorkbookValidation } from "../desktop";
+import type { DeviceLists, ExcelIntegrityReport, WorkbookHealth, WorkbookValidation } from "../desktop";
 import type { DashboardUpsMappingReport, RackCapacitySummary, UpsGroupHistoryReport } from "../reports/reportTypes";
 
 export type DataSourceKind = "excel" | "googleSheets";
@@ -83,5 +83,17 @@ export interface IDataProvider {
    * Persist a single month. Providers that only support full writes may
    * implement this as saveAll.
    */
+
   saveMonth(log: MonthlyLog, allLogs: MonthlyLog[]): Promise<SaveOutcome>;
+
+  /**
+   * Side-effect-free multi-facility load for site comparison.
+   * Excel: each entry supplies its own workbook path + DeviceLists so Rangsit
+   * and Srinakarin never share meter/UPS config.
+   * Returns Map keyed by facility path (or spreadsheetId for sheets providers).
+   */
+  loadMultipleFacilities?(
+    facilities: Array<{ path: string; label: string; devices?: DeviceLists } | { spreadsheetId: string; label: string }>,
+    options?: { signal?: AbortSignal }
+  ): Promise<Map<string, DataSnapshot>>;
 }

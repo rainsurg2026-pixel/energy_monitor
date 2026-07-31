@@ -180,8 +180,11 @@ async function buildOpenPayload(
   filePath: string,
   devices?: DeviceLists,
   upsGroupContext?: { facilityId: string; upsGroups: UpsGroupConfig[] },
-  onMigrationProgress?: (stage: MigrationStage) => void
+  onMigrationProgress?: (stage: MigrationStage) => void,
+  options?: { trackRecent?: boolean; allowMigration?: boolean }
 ): Promise<{ ok: true } & OpenWorkbookPayload> {
+  const trackRecent = options?.trackRecent !== false;
+  const allowMigration = options?.allowMigration !== false;
   let read = await readWorkbookFromFile(filePath, devices);
   if (!read.validation.ok) {
     throw new WorkbookError(
@@ -191,10 +194,8 @@ async function buildOpenPayload(
   }
 
   // One-time, idempotent UPS Group History migration (dedicated service).
-  // Runs only on open/reload, never triggered by Historical Explorer. If it
-  // writes to the workbook, everything below is re-derived from the fresh
-  // file so the returned payload always reflects what is actually on disk.
-  if (upsGroupContext) {
+  // Runs only on open/reload, never on multi-facility comparison reads.
+  if (allowMigration && upsGroupContext) {
     try {
       const config = await loadConfig();
       const migration = await migrateUpsGroupHistoryIfNeeded(
@@ -265,8 +266,10 @@ async function buildOpenPayload(
     }
   }
 
-  await addRecentFile(filePath);
-  app.addRecentDocument(filePath);
+  if (trackRecent) {
+    await addRecentFile(filePath);
+    app.addRecentDocument(filePath);
+  }
   log.info(`workbook opened: ${filePath} (${read.logs.length} months)`);
   return {
     ok: true,
@@ -281,6 +284,37 @@ async function buildOpenPayload(
     upsMappingError,
     upsGroupHistory
   };
+}
+
+/** Multi-facility comparison must supply a per-path DeviceLists. Soft-fallback
+ *  to DEFAULT (Rangsit) would silently corrupt Srinakarin airFields/UPS ids. */
+function requireDevices(raw: unknown, label: string): DeviceLists {
+  const devices = sanitizeDevices(raw);
+  const rawAirFields = typeof raw === "object" && raw !== null
+    ? (raw as Record<string, unknown>).airFields
+    : undefined;
+  const hasAirFields = Array.isArray(rawAirFields) && rawAirFields.length > 0;
+  if (!devices || !hasAirFields || !devices.airFields) {
+    throw new PayloadError(`${label} must include non-empty upsIds, dcIds, and airFields.`);
+  }
+  return devices;
+}
+
+function sanitizeOpenMultipleRequests(raw: unknown): Array<{ path: string; devices: DeviceLists }> {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new PayloadError("openMultiple expects a non-empty array of { path, devices } requests.");
+  }
+  if (raw.length > 8) throw new PayloadError("openMultiple supports at most 8 workbooks.");
+  return raw.map((item, index) => {
+    if (typeof item !== "object" || item === null) {
+      throw new PayloadError(`openMultiple request[${index}] must be an object.`);
+    }
+    const body = item as Record<string, unknown>;
+    return {
+      path: ensureWorkbookPath(body.path, `request[${index}].path`),
+      devices: requireDevices(body.devices, `request[${index}].devices`)
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -314,6 +348,22 @@ export function registerExcelIpc(): void {
     })
   );
 
+  // Multi-facility comparison: per-path devices, no recent-file/migration side effects.
+  ipcMain.handle("excel:openMultiple", (_event, rawRequests: unknown) =>
+    wrap<{ workbooks: Record<string, OpenWorkbookPayload> }>("excel:openMultiple", async () => {
+      const requests = sanitizeOpenMultipleRequests(rawRequests);
+      const results: Record<string, OpenWorkbookPayload> = {};
+      for (const request of requests) {
+        const buildResult = await buildOpenPayload(request.path, request.devices, undefined, undefined, {
+          trackRecent: false,
+          allowMigration: false
+        });
+        results[request.path] = buildResult as OpenWorkbookPayload;
+      }
+      return { ok: true, workbooks: results };
+    })
+  );
+
   // --- Reload current workbook from disk ---
   ipcMain.handle("excel:reload", (event, rawPath: unknown, rawDevices?: unknown, rawUpsGroupContext?: unknown) =>
     wrap<OpenWorkbookPayload>("excel:reload", async () => {
@@ -337,8 +387,8 @@ export function registerExcelIpc(): void {
         devices: sanitizeDevices(body.devices),
         upsGroupHistory: sanitizeUpsGroupHistoryOptions(body.upsGroupHistory)
       });
-      log.info(`workbook saved: ${filePath} (${result.months} months, backup: ${result.backupPath ?? "none"})`);
-      return { ok: true, path: result.path, backupPath: result.backupPath, savedAt: new Date().toISOString() };
+	      log.info(`workbook saved: ${filePath} (${result.months} months, backup: ${result.backupPath ?? "none"})`);
+	      return { ok: true, path: result.path, backupPath: result.backupPath, savedAt: new Date().toISOString() };
     })
   );
 

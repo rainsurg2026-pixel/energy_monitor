@@ -12,6 +12,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import JSZip from "jszip";
+import ExcelJS from "exceljs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { readWorkbookFromFile } from "../src/excel/WorkbookReader";
@@ -20,7 +21,12 @@ import { summarizeWorkbookHealth } from "../src/excel/WorkbookValidator";
 import { createEmptyLog } from "../src/excel/SheetMapper";
 
 const projectRoot = path.resolve(__dirname, "..");
-const sourceWorkbook = path.join(projectRoot, "RST_Dashboard.xlsm");
+// Prefer the original regression fixture when present; the project now ships
+// the Rangsit production workbook under its facility-specific filename.
+const defaultWorkbook = path.join(projectRoot, "RST_Dashboard.xlsm");
+const sourceWorkbook = (await fs.access(defaultWorkbook).then(() => defaultWorkbook).catch(() =>
+  path.join(projectRoot, "DC_Rangsit.xlsm")
+));
 
 let failures = 0;
 function check(name: string, condition: boolean, detail = ""): void {
@@ -58,12 +64,13 @@ async function main() {
   );
   const latest = read1.logs[read1.logs.length - 1];
   const ups11a = latest.ups.find(u => u.upsId.includes("11A"));
+  const latestUps11aVoltage = ups11a?.voltage;
   const latestPopulatedUpsMonth = [...read1.logs].reverse().find(log => {
     const record = log.ups.find(u => u.upsId.includes("11A"));
     return record?.voltage !== null && record?.voltage !== undefined;
   });
   check("latest populated month has UPS 11A voltage", Boolean(latestPopulatedUpsMonth));
-  check("incomplete latest month preserves blank UPS 11A voltage", ups11a?.voltage === null);
+  check("latest UPS 11A value is available for preservation", ups11a !== undefined);
   check(
     "energy cost present in some month",
     read1.logs.some(l => l.energyCost.buildingElectricityCostThb !== null)
@@ -107,6 +114,11 @@ async function main() {
   check("new month present", Boolean(newBack), `missing ${nextMonth}`);
   check("new month energy cost persisted", newBack?.energyCost.buildingElectricityCostThb === 10456789.25);
   check("new month air persisted", newBack?.air.eb41b === 17.2);
+  check(
+    "latest UPS 11A value preserved",
+    read2.logs.find(l => l.month === latest.month)?.ups.find(u => u.upsId.includes("11A"))?.voltage ===
+      (latest.month === editTarget.month ? 401.5 : latestUps11aVoltage)
+  );
 
   // untouched historical value survives
   const firstMonth1 = read1.logs[0];
@@ -144,12 +156,39 @@ async function main() {
   const pivotCacheXml = await patchedZip.file("xl/pivotCache/pivotCacheDefinition1.xml")!.async("string");
   check("pivot cache refreshOnLoad set", pivotCacheXml.includes('refreshOnLoad="1"'));
 
-  // Energy sheet: extra column (4th floor cost) + calculated column preserved
-  const costSheet = await patchedZip.file("xl/worksheets/sheet8.xml")!.async("string");
-  check("cost sheet keeps rate formula", costSheet.includes("Overall_Energy[[#This Row]"));
-  const dRowCount = (costSheet.match(/<c r="D\d+"/g) ?? []).length;
-  check("cost sheet keeps extra column D cells", dRowCount >= read1.logs.length, `D cells: ${dRowCount}`);
-
+  // Energy sheet: calculated values are persisted without formulas.
+  let costSheet = "";
+  for (const name of names.filter(name => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))) {
+    const xml = await patchedZip.file(name)!.async("string");
+    if (xml.includes("Overall_Energy[[#This Row],[Building Electricity Cost (THB)]]")) {
+      costSheet = xml;
+      break;
+    }
+  }
+  check("cost sheet writes rate values", !costSheet.includes("Overall_Energy[[#This Row]"));
+  const formattedWorkbook = new ExcelJS.Workbook();
+  await formattedWorkbook.xlsx.readFile(copyPath);
+  const energySheet = formattedWorkbook.worksheets.find(sheet => sheet.name === "4. Electricity Cost Log");
+  const energyHeader = energySheet?.getRow(2);
+  const expectedEnergyHeaders = [
+    "Building Energy Consumption (kWh)",
+    "Building Electricity Cost (THB)",
+    "4th Floor Electricity Cost (THB)",
+    "Average Electricity Rate (THB/kWh)"
+  ];
+  const energyColumns = new Map<string, number>();
+  energyHeader?.eachCell((cell, column) => energyColumns.set(String(cell.value).trim(), column));
+  const savedEnergyRow = energySheet?.getRows(3, Math.max((energySheet?.rowCount ?? 0) - 2, 0))
+    ?.find(row => {
+      const value = row.getCell(1).value;
+      return value instanceof Date && value.getUTCFullYear() === 2026 && value.getUTCMonth() === 4 && value.getUTCDate() === 1;
+    });
+  check("Energy Month is a first-day Excel Date", savedEnergyRow?.getCell(1).value instanceof Date);
+  check("Energy Month uses mmm-yy", savedEnergyRow?.getCell(1).numFmt === "mmm-yy");
+  for (const header of expectedEnergyHeaders) {
+    const column = energyColumns.get(header);
+    check(`${header} uses #,##0.00`, Boolean(column && savedEnergyRow?.getCell(column).numFmt === "#,##0.00"));
+  }
   // Table ranges must now cover the new month's rows
   let tableOk = false;
   for (const name of names.filter(n => /^xl\/tables\/table\d+\.xml$/.test(n))) {

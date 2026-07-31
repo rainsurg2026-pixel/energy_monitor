@@ -4,6 +4,7 @@ import { Save, Check, RotateCcw, AlertCircle } from "lucide-react";
 import { motion } from "motion/react";
 import { formatMonthYear } from "../utils";
 import { EntrySectionApi } from "../utils/completion";
+import NumericEntryInput from "./NumericEntryInput";
 
 interface UpsTableProps {
   monthStr: string;
@@ -167,7 +168,7 @@ export default function UpsTable({
 
       {/* Interactive Table Container */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+        <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-indigo-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-indigo-300 border-b border-slate-800/80">
               <th className="py-3.5 px-4 font-normal">Month</th>
@@ -198,12 +199,11 @@ export default function UpsTable({
                   {/* Aggregate values are formula-managed in Srinakarin. */}
                   <td className="py-3.5 px-2">
                     <div className="relative max-w-[120px] ml-auto">
-                      <input
-                        type="number"
+                      <NumericEntryInput
                         step="0.1"
                         placeholder="220"
-                        value={row.voltage ?? ""}
-                        onChange={(e) => handleInputChange(idx, "voltage", e.target.value)}
+                        value={row.voltage}
+                        onChange={value => handleInputChange(idx, "voltage", value)}
                         disabled={phases.length > 0}
                         className={`w-full bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all ${
                           isVoltageAbnormal 
@@ -223,12 +223,11 @@ export default function UpsTable({
                   {/* Current Input */}
                   <td className="py-3.5 px-2">
                     <div className="relative max-w-[120px] ml-auto">
-                      <input
-                        type="number"
+                      <NumericEntryInput
                         step="0.1"
                         placeholder="15.0"
-                        value={row.current ?? ""}
-                        onChange={(e) => handleInputChange(idx, "current", e.target.value)}
+                        value={row.current}
+                        onChange={value => handleInputChange(idx, "current", value)}
                         disabled={phases.length > 0}
                         className={`w-full bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all ${
                           isCurrentHigh
@@ -241,12 +240,11 @@ export default function UpsTable({
 
                   {/* Load kW Input */}
                   <td className="py-3.5 px-2">
-                    <input
-                      type="number"
+                    <NumericEntryInput
                       step="0.01"
                       placeholder="3.20"
-                      value={row.loadKw ?? ""}
-                      onChange={(e) => handleInputChange(idx, "loadKw", e.target.value)}
+                      value={row.loadKw}
+                      onChange={value => handleInputChange(idx, "loadKw", value)}
                       disabled={phases.length > 0}
                       className="w-full max-w-[120px] ml-auto bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                     />
@@ -254,12 +252,11 @@ export default function UpsTable({
 
                   {/* Load kVA Input */}
                   <td className="py-3.5 px-4">
-                    <input
-                      type="number"
+                    <NumericEntryInput
                       step="0.01"
                       placeholder="3.50"
-                      value={row.loadKva ?? ""}
-                      onChange={(e) => handleInputChange(idx, "loadKva", e.target.value)}
+                      value={row.loadKva}
+                      onChange={value => handleInputChange(idx, "loadKva", value)}
                       disabled={phases.length > 0}
                       className="w-full max-w-[120px] ml-auto bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                     />
@@ -271,11 +268,10 @@ export default function UpsTable({
                     <td className="py-2 px-4 text-indigo-300 text-xs">{row.upsId} - {phase}</td>
                     {(["voltage", "current", "loadKw", "loadKva"] as const).map(field => (
                       <td key={field} className="py-2 px-2">
-                        <input
-                          type="number"
+                        <NumericEntryInput
                           step={field === "voltage" || field === "current" ? "0.1" : "0.01"}
-                          value={reading[field] ?? ""}
-                          onChange={e => handlePhaseInputChange(idx, phase, field, e.target.value)}
+                          value={reading[field]}
+                          onChange={value => handlePhaseInputChange(idx, phase, field, value)}
                           className="w-full max-w-[120px] ml-auto bg-indigo-950/20 border border-indigo-700/50 focus:border-indigo-400 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none"
                         />
                       </td>

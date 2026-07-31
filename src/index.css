@@ -107,9 +107,39 @@ html.theme-light .recharts-default-tooltip {
  * whole app. Charts keep their own series colors and remain dark-optimized.
  */
 /* RC4: sections failing save-validation outline their empty inputs. */
+
+/* Engineering dashboard tables keep existing data-cell alignment while every
+   header is centered consistently, including future dashboard tables that
+   opt into this shared class. */
+.dashboard-table > thead > tr > th {
+  text-align: center !important;
+  vertical-align: middle;
+}
+.dashboard-table > tbody > tr > td {
+  text-align: center !important;
+  vertical-align: middle;
+}
 .highlight-missing input:placeholder-shown {
   border-color: rgb(244 63 94 / 0.75) !important;
   box-shadow: 0 0 0 1px rgb(244 63 94 / 0.4);
+}
+
+/* Shared entry-table contract: fixed tracks keep every header directly above
+ * its field, while numeric controls and their text share the same centre. */
+.entry-data-table {
+  table-layout: fixed;
+}
+
+.entry-data-table th,
+.entry-data-table td {
+  text-align: center !important;
+  vertical-align: middle;
+}
+
+.entry-data-table input {
+  display: block;
+  margin-inline: auto !important;
+  text-align: center !important;
 }
 
 html.theme-light {

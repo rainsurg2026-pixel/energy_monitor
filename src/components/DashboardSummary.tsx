@@ -3,7 +3,8 @@ import { MonthlyLog, UpsRecord, AirRecord, DcRecord } from "../types";
 import type { DashboardUpsMappingReport, RackCapacitySummary } from "../reports/reportTypes";
 import type { FacilityEntry } from "../desktop";
 import { formatMonthYear } from "../utils";
-import { calculateEnergyCostForMonth, getAirFields, getAirValue } from "../utils/energyCost";
+import { calculateEnergyCostForMonth, getAirValue } from "../utils/energyCost";
+import { buildEngineeringDashboardSnapshot, getDaysInMonth, getPreviousMonth } from "../utils/engineeringDashboard";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 import TrendLineChart from "./TrendLineChart";
 import RackCapacitySummaryCard from "./RackCapacitySummaryCard";
@@ -36,28 +37,6 @@ interface DashboardSummaryProps {
 }
 
 type TrendPeriod = "last3" | "last6" | "last12";
-
-// Helper to calculate days in month
-function getDaysInMonth(monthStr: string): number {
-  if (!monthStr) return 30;
-  const [yearStr, monthStrPart] = monthStr.split("-");
-  const year = parseInt(yearStr, 10);
-  const month = parseInt(monthStrPart, 10);
-  return new Date(year, month, 0).getDate();
-}
-
-// Get the previous month string "YYYY-MM"
-function getPreviousMonthStr(monthStr: string): string {
-  if (!monthStr) return "";
-  const [yearStr, monthStrPart] = monthStr.split("-");
-  let year = parseInt(yearStr, 10);
-  let month = parseInt(monthStrPart, 10) - 1;
-  if (month === 0) {
-    month = 12;
-    year -= 1;
-  }
-  return `${year}-${month.toString().padStart(2, "0")}`;
-}
 
 function getUpsLoadTone(loadPct: number | null): { bar: string; text: string } {
   if (!Number.isFinite(loadPct) || loadPct < 50) return { bar: "bg-emerald-500", text: "text-emerald-500" };
@@ -218,7 +197,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
   // Helper: Find previous month log dynamically
   const prevMonthLog = useMemo(() => {
     if (!selectedMonth) return null;
-    const targetPrevStr = getPreviousMonthStr(selectedMonth);
+    const targetPrevStr = getPreviousMonth(selectedMonth);
     return logs.find(l => l.month === targetPrevStr) || null;
   }, [logs, selectedMonth]);
 
@@ -227,131 +206,22 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
     return getDaysInMonth(selectedMonth);
   }, [selectedMonth]);
 
-  // Detailed calculations for active log
+  // The same selected-month calculation is also used by the printable report.
   const summaryCalculations = useMemo(() => {
-    if (!activeLog) return null;
-
-    // --- 1. UPS CALCULATIONS ---
-    // UPS Summary and UPS Mapping are read directly from the workbook's
-    // Dashboard-FAC sheet (src/reports/upsMappingReader.ts) - the same
-    // UMDB/STS/OUDB/AC Power Panel/Capacity/Load(%) a user sees opening the
-    // workbook in Excel. This component performs zero aggregation of its
-    // own for these two tables; Load(%) is the one derived value
-    // (loadKva / capacity * 100), matching the workbook's own formula.
-    const computedUpsGroups = (upsMapping?.summary ?? []).map(row => {
-      const totalKw = row.totalLoadKw ?? 0;
-      const totalKva = row.totalLoadKva ?? 0;
-      const loadPct = row.loadPercent;
-      const availPct = loadPct === null ? null : Math.max(0, 100 - loadPct);
-      return {
-        name: row.name,
-        totalKw,
-        totalKva,
-        capacity: row.capacity,
-        loadPct,
-        availPct,
-        monthlyEnergyKwh: totalKw * 24 * daysInMonth
-      };
-    });
-
-    const totalUpsKw = computedUpsGroups.reduce((acc, g) => acc + g.totalKw, 0);
-    const totalUpsKva = computedUpsGroups.reduce((acc, g) => acc + g.totalKva, 0);
-    const totalUpsEnergyKwh = computedUpsGroups.reduce((acc, g) => acc + g.monthlyEnergyKwh, 0);
-
-    const upsDetailsMap = (upsMapping?.mapping ?? []).map(row => ({
-      no: row.no,
-      umdb: row.umdb,
-      upsId: row.upsId,
-      acPowerPanel: row.acPowerPanel,
-      sts: row.sts,
-      oudb: row.oudb,
-      voltage: row.voltage ?? 0,
-      current: row.current ?? 0,
-      loadKw: row.loadKw ?? 0,
-      loadKva: row.loadKva ?? 0,
-      capacity: row.capacity,
-      loadPct: row.loadPercent
-    }));
-
-    const detailedVoltageAvg = upsDetailsMap.length > 0
-      ? upsDetailsMap.reduce((acc, u) => acc + u.voltage, 0) / upsDetailsMap.length
-      : null;
-    const detailedCurrentSum = upsDetailsMap.reduce((acc, u) => acc + u.current, 0);
-
-    // --- 2. AIR CONDITIONING CALCULATIONS ---
-    const airFields = getAirFields(activeLog);
-    const airDiff = Object.fromEntries(airFields.map(field => {
-      const currentValue = getAirValue(activeLog, field);
-      const previousValue = prevMonthLog ? getAirValue(prevMonthLog, field) : null;
-      return [field, currentValue !== null && previousValue !== null ? currentValue - previousValue : null];
-    })) as Record<string, number | null>;
-
-    const airDiffValues = airFields.map(field => airDiff[field]);
-    const airDiffSumGwh = airDiffValues.every(value => value !== null)
-      ? airDiffValues.reduce((sum, value) => sum + (value as number), 0)
-      : null;
-    const airEnergyKwh = airDiffSumGwh === null ? null : airDiffSumGwh * 1000000;
-
-    // --- 3. DC POWER PANEL CALCULATIONS ---
-    const computedDc = activeLog.dc.map(p => {
-      const v = p.voltage === null ? 0 : p.voltage;
-      const a = p.current === null ? 0 : p.current;
-      const dcPowerW = v * a;
-      const acPowerW = (dcPowerW / 200) * 220;
-      const acCurrentA = acPowerW / 220;
-      const monthlyEnergyKwh = (acPowerW * 24 * daysInMonth) / 1000;
-
-      return {
-        panelId: p.panelId,
-        voltage: v,
-        current: a,
-        dcPowerW,
-        acPowerW,
-        acCurrentA,
-        monthlyEnergyKwh
-      };
-    });
-
-    const totalDcPowerW = computedDc.reduce((acc, d) => acc + d.dcPowerW, 0);
-    const totalDcAcCurrentA = computedDc.reduce((acc, d) => acc + d.acCurrentA, 0);
-    const totalDcAcPowerW = computedDc.reduce((acc, d) => acc + d.acPowerW, 0);
-    const totalDcEnergyKwh = computedDc.reduce((acc, d) => acc + d.monthlyEnergyKwh, 0);
-
-    // --- 4. OVERALL SUMMARY ---
-    const energyCost = calculateEnergyCostForMonth(logs, activeLog.month);
-    const totalFloorEnergyKwh = energyCost.floorEnergyKwh;
-    const buildingEnergyKwh = energyCost.buildingEnergyKwh;
-    const buildingCostThb = energyCost.buildingElectricityCostThb;
-    const avgElectricityRate = energyCost.averageElectricityRateThbPerKwh;
-    const estimatedFloorCostThb = energyCost.floorElectricityCostThb;
-    const floorSharePercent = energyCost.energySharePercent;
-
+    const snapshot = buildEngineeringDashboardSnapshot(logs, selectedMonth, upsMapping, facility?.profile.dashboard);
+    if (!snapshot) return null;
     return {
-      computedUpsGroups,
-      totalUpsKw,
-      totalUpsKva,
-      totalUpsEnergyKwh,
-      upsDetailsMap,
-      detailedVoltageAvg,
-      detailedCurrentSum,
-      airFields,
-      airDiff,
-      airDiffSumGwh,
-      airEnergyKwh,
-      computedDc,
-      totalDcPowerW,
-      totalDcAcCurrentA,
-      totalDcAcPowerW,
-      totalDcEnergyKwh,
-      totalFloorEnergyKwh,
-      avgElectricityRate,
-      estimatedFloorCostThb,
-      floorSharePercent,
-      buildingEnergyKwh,
-      buildingCostThb,
-      prevMonthDisplay: prevMonthLog ? formatMonthYear(prevMonthLog.month) : null
+      ...snapshot,
+      computedUpsGroups: snapshot.upsGroups.map(group => ({ ...group, loadPct: group.loadPercent, availPct: group.availablePercent })),
+      upsDetailsMap: snapshot.upsDetails.map(row => ({ ...row, loadPct: row.loadPercent })),
+      airDiff: snapshot.airDifference,
+      computedDc: snapshot.dcPanels,
+      totalFloorEnergyKwh: snapshot.floorEnergyKwh,
+      avgElectricityRate: snapshot.averageRateThbPerKwh,
+      estimatedFloorCostThb: snapshot.floorCostThb,
+      prevMonthDisplay: snapshot.previousMonth ? formatMonthYear(snapshot.previousMonth) : null
     };
-  }, [activeLog, prevMonthLog, daysInMonth, upsMapping]);
+  }, [logs, selectedMonth, upsMapping, facility]);
 
   // Historical trend data is calculated once per month and reused by each
   // parameter chart. Null values remain null so incomplete records are not
@@ -419,6 +289,8 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
   }
 
   const calcs = summaryCalculations;
+  const showAcPowerPanel = calcs.upsDetailsMap.some(row => row.acPowerPanel !== "—" && row.acPowerPanel !== "-");
+  const hasOverallUps = calcs.upsOverallGroups.length > 0;
 
   return (
     <div className="space-y-10">
@@ -533,7 +405,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
           >
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-indigo-400 shrink-0" />
-              <span>{t.upsSection}</span>
+              <span>{hasOverallUps ? "1. UPS Load Status" : t.upsSection}</span>
             </div>
             
           </button>
@@ -542,9 +414,40 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
             <div className="p-5 border-t border-slate-850 bg-slate-950/40 space-y-6">
               
               {/* Table 1: Summary UPS */}
+              {hasOverallUps && (
+                <div className="space-y-4">
+                  <div className="overflow-x-auto">
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">1.1 UPS Load Status - Overall</h4>
+                  <table className="dashboard-table w-full text-left text-xs font-sans">
+                    <thead><tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+                      <th className="py-2.5 px-3">{t.no}</th><th className="py-2.5 px-3">UPS</th><th className="py-2.5 px-3">{t.totalKw}</th><th className="py-2.5 px-3">{t.totalKva}</th><th className="py-2.5 px-3">{t.capacity}</th><th className="py-2.5 px-3">{t.loadPercent}</th><th className="py-2.5 px-3">{t.availablePercent}</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-slate-850">
+                      {calcs.upsOverallGroups.map((group, index) => <tr key={group.name} className="hover:bg-slate-900/40"><td className="py-3 px-3 font-mono">{index + 1}</td><td className="py-3 px-3 font-semibold">{group.name}</td><td className="py-3 px-3 font-mono">{formatNumber2(group.totalKw)}</td><td className="py-3 px-3 font-mono">{formatNumber2(group.totalKva)}</td><td className="py-3 px-3 font-mono">{formatNumber2(group.capacity)}</td><td className="py-3 px-3 font-mono">{formatNumber2(group.loadPercent)}%</td><td className="py-3 px-3 font-mono">{formatNumber2(group.availablePercent)}%</td></tr>)}
+                    </tbody>
+                  </table>
+                  </div>
+                  <div className="bg-slate-900/80 border border-slate-850 p-4 rounded-xl">
+                    <div className="space-y-1 mb-4">
+                      <h4 className="text-[11px] uppercase tracking-wider font-bold text-indigo-400">UPS Loads Comparison (%) - Overall</h4>
+                      <p className="text-[10px] text-slate-500">Current load capacity compared with rated maximum</p>
+                    </div>
+                    <div className="space-y-3.5">
+                      {calcs.upsOverallGroups.map((group) => {
+                        const tone = getUpsLoadTone(group.loadPercent);
+                        return <div key={group.name} className="space-y-1.5">
+                          <div className="flex justify-between text-[11px] font-semibold text-slate-300"><span>{group.name}</span><span className={`font-mono ${tone.text}`}>{formatNumber2(group.loadPercent)}%</span></div>
+                          <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-850/50"><div className={`h-full rounded-full ${tone.bar}`} style={{ width: `${Math.min(100, group.loadPercent ?? 0)}%` }} /></div>
+                        </div>;
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {hasOverallUps && <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">1.2 UPS and PPC Load Status – DCM 4th Floor</h4>}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                 <div className="lg:col-span-8 overflow-x-auto">
-                  <table className="w-full text-left text-xs font-sans">
+                  <table className="dashboard-table w-full text-left text-xs font-sans">
                     <thead>
                       <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
                         <th className="py-2.5 px-3">{t.no}</th>
@@ -587,7 +490,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                 {/* Sidebar UPS bar graph rendering */}
                 <div className="lg:col-span-4 bg-slate-900/80 border border-slate-850 p-4 rounded-xl flex flex-col justify-between">
                   <div className="space-y-1 mb-4">
-                    <h4 className="text-[11px] uppercase tracking-wider font-bold text-indigo-400">UPS Loads Comparison (%)</h4>
+                    <h4 className="text-[11px] uppercase tracking-wider font-bold text-indigo-400">{hasOverallUps ? "UPS and PPC Loads Comparison (%) – DCM 4th Floor" : "UPS Loads Comparison (%)"}</h4>
                     <p className="text-[10px] text-slate-500">Current load capacity compared with rated maximum</p>
                   </div>
 
@@ -613,15 +516,15 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
 
               {/* Table 2: Mapping Detailed UPS */}
               <div className="pt-2 border-t border-slate-850/60">
-                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">UMDB / UPS / AC Power Panel / STS / OUDB Detailed Configuration Mapping</h4>
+                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">{showAcPowerPanel ? "UMDB / UPS / AC Power Panel / STS / OUDB Detailed Configuration Mapping" : "UMDB / UPS / STS / OUDB Detailed Configuration Mapping"}</h4>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-[11px] font-sans">
+                  <table className="dashboard-table w-full text-left text-[11px] font-sans">
                     <thead>
                       <tr className="border-b border-slate-800 text-slate-500 uppercase tracking-wider text-[9px] font-bold">
                         <th className="py-2 px-2.5">{t.no}</th>
                         <th className="py-2 px-2.5">{t.umdb}</th>
                         <th className="py-2 px-2.5">{t.upsId}</th>
-                        <th className="py-2 px-2.5">{t.acPowerPanel}</th>
+                        {showAcPowerPanel && <th className="py-2 px-2.5">{t.acPowerPanel}</th>}
                         <th className="py-2 px-2.5">{t.sts}</th>
                         <th className="py-2 px-2.5">{t.oudb}</th>
                         <th className="py-2 px-2.5 text-right">{t.voltage}</th>
@@ -638,7 +541,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                           <td className="py-2 px-2.5 font-mono text-slate-500">{u.no}</td>
                           <td className="py-2 px-2.5 text-slate-400 font-mono">{u.umdb}</td>
                           <td className="py-2 px-2.5 font-medium text-slate-200">{u.upsId}</td>
-                          <td className="py-2 px-2.5 font-mono text-slate-400">{u.acPowerPanel}</td>
+                          {showAcPowerPanel && <td className="py-2 px-2.5 font-mono text-slate-400">{u.acPowerPanel}</td>}
                           <td className="py-2 px-2.5 font-mono text-slate-400">{u.sts}</td>
                           <td className="py-2 px-2.5 font-mono text-slate-400">{u.oudb}</td>
                           <td className="py-2 px-2.5 text-right font-mono text-orange-200">{formatNumber2(u.voltage)}</td>
@@ -651,7 +554,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                       ))}
                       {/* Detailed total row */}
                       <tr className="border-t border-slate-800 bg-slate-900/20 font-semibold text-slate-200">
-                        <td className="py-2 px-2.5" colSpan={6}>Total</td>
+                        <td className="py-2 px-2.5" colSpan={showAcPowerPanel ? 6 : 5}>Total</td>
                         <td className="py-2 px-2.5 text-right font-mono text-orange-200">{formatNumber2(calcs.detailedVoltageAvg)} (Avg)</td>
                         <td className="py-2 px-2.5 text-right font-mono text-orange-200">{formatNumber2(calcs.detailedCurrentSum)}</td>
                         <td className="py-2 px-2.5 text-right font-mono">{formatNumber2(calcs.totalUpsKw)}</td>
@@ -683,7 +586,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
           {(
             <div className="p-5 border-t border-slate-850 bg-slate-950/40 space-y-4">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs font-sans">
+                <table className="dashboard-table w-full text-left text-xs font-sans">
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
                       <th className="py-2.5 px-3">{t.repMonth}</th>
@@ -745,7 +648,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
           {(
             <div className="p-5 border-t border-slate-850 bg-slate-950/40 space-y-4">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs font-sans">
+                <table className="dashboard-table w-full text-left text-xs font-sans">
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
                       <th className="py-2.5 px-3">{t.no}</th>
@@ -804,7 +707,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
           {(
             <div className="p-5 border-t border-slate-850 bg-slate-950/40 space-y-4">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs font-sans">
+                <table className="dashboard-table w-full text-left text-xs font-sans">
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
                       <th className="py-2.5 px-3">{t.repMonth}</th>

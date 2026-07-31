@@ -1,5 +1,5 @@
 # Electron Builder - portable internal-tool build (no installer, no admin).
-# Output: release/Energy Monitor.exe
+# Output: release/Energy Monitor-v<version>.exe
 # The renderer (dist/) and the bundled main process (dist-electron/) are the
 # only runtime payload; all npm packages are compiled in by Vite/esbuild, so
 # node_modules never ships.
@@ -39,4 +39,4 @@ win:
         - x64
 
 portable:
-  artifactName: "Energy Monitor.exe"
+  artifactName: "Energy Monitor-v${version}.exe"

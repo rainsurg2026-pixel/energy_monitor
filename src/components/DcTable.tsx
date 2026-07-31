@@ -3,6 +3,7 @@ import { DcRecord } from "../types";
 import { Save, Check, RotateCcw } from "lucide-react";
 import { formatMonthYear } from "../utils";
 import { EntrySectionApi } from "../utils/completion";
+import NumericEntryInput from "./NumericEntryInput";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 
 interface DcTableProps {
@@ -139,7 +140,7 @@ export default function DcTable({
 
       {/* Table Container */}
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
+        <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-amber-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-amber-300 border-b border-slate-800/80">
               <th className="py-3.5 px-4 font-normal">Month</th>
@@ -170,12 +171,11 @@ export default function DcTable({
                   {/* DC Voltage Input */}
                   <td className="py-3.5 px-2">
                     <div className="relative max-w-[150px] ml-auto">
-                      <input
-                        type="number"
+                      <NumericEntryInput
                         step="0.1"
                         placeholder="54.0"
-                        value={row.voltage ?? ""}
-                        onChange={(e) => handleInputChange(idx, "voltage", e.target.value)}
+                        value={row.voltage}
+                        onChange={value => handleInputChange(idx, "voltage", value)}
                         className={`w-full bg-amber-950/5 hover:bg-amber-950/10 focus:bg-amber-950/15 border rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all ${
                           isVoltageAbnormal 
                             ? "border-amber-600/50 text-amber-300 bg-amber-950/5 focus:border-amber-500" 
@@ -193,12 +193,11 @@ export default function DcTable({
 
                   {/* DC Current Input */}
                   <td className="py-3.5 px-2">
-                    <input
-                      type="number"
+                    <NumericEntryInput
                       step="0.1"
                       placeholder="85.0"
-                      value={row.current ?? ""}
-                      onChange={(e) => handleInputChange(idx, "current", e.target.value)}
+                      value={row.current}
+                      onChange={value => handleInputChange(idx, "current", value)}
                       className="w-full max-w-[150px] ml-auto bg-amber-950/5 hover:bg-amber-950/10 focus:bg-amber-950/15 border border-slate-800 focus:border-amber-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                     />
                   </td>

@@ -73,8 +73,11 @@ async function main(): Promise<void> {
   await fs.copyFile(path.join(root, "DC_Rangsit.xlsm"), target);
   const backupDir = path.join(workDir, "backup");
 
-  const JUN = "2021-06";
-  const JUL = "2021-07";
+  // Rangsit's UPS input sheet is deliberately the live 2026 log. Historical
+  // months have Energy/Air/DC data but no UPS input rows, so a UPS persistence
+  // stress cycle must target supported, populated UPS months.
+  const JUN = "2026-05";
+  const JUL = "2026-06";
   const UNTOUCHED = "2022-01";
 
   // Baseline: production acceptance already ran a migration once, matching
@@ -89,7 +92,7 @@ async function main(): Promise<void> {
   check(`Baseline: control month ${UNTOUCHED} exists in the fixture (needed for Scenario 8)`, Boolean(untouchedRawRowsBaseline));
 
   // ===========================================================
-  console.log("\nSCENARIO 1: Modify JUN-21, Save, close+reopen, verify no corruption");
+  console.log(`\nSCENARIO 1: Modify ${JUN}, Save, close+reopen, verify no corruption`);
   {
     const read = await readWorkbookFromFile(target, DEVICES);
     const mutated = bumpMonth(read.logs, JUN, 5);
@@ -116,7 +119,7 @@ async function main(): Promise<void> {
   }
 
   // ===========================================================
-  console.log("\nSCENARIO 2: Modify JUN-21, Save, modify again, Save again - no duplicate rows");
+  console.log(`\nSCENARIO 2: Modify ${JUN}, Save, modify again, Save again - no duplicate rows`);
   {
     const read = await readWorkbookFromFile(target, DEVICES);
     const mutated1 = bumpMonth(read.logs, JUN, 1);
@@ -126,12 +129,12 @@ async function main(): Promise<void> {
     await saveWorkbook(target, mutated2, { backupDir, backupKeep: 5, devices: DEVICES, upsGroupHistory: { facilityId: "rangsit", upsGroups: RANGSIT_GROUPS, onlyMonths: [JUN] } });
     const history = await readUpsGroupHistoryFromBuffer(await fs.readFile(target));
     const junRows = history!.rows.filter(r => r.month === JUN);
-    check("Scenario 2: exactly one History row per group for JUN-21 (no duplicates across two saves)", junRows.length === RANGSIT_GROUPS.length, `${junRows.length} rows`);
+    check(`Scenario 2: exactly one History row per group for ${JUN} (no duplicates across two saves)`, junRows.length === RANGSIT_GROUPS.length, `${junRows.length} rows`);
     check("Scenario 2: total row count unchanged from baseline (no net growth)", history!.rows.length === baselineHistory!.rows.length);
   }
 
   // ===========================================================
-  console.log("\nSCENARIO 3: Modify JUN-21, Save, modify JUL-21, Save - JUN remains unchanged");
+  console.log(`\nSCENARIO 3: Modify ${JUN}, Save, modify ${JUL}, Save - ${JUN} remains unchanged`);
   {
     const beforeJunRows = (await readUpsGroupHistoryFromBuffer(await fs.readFile(target)))!.rows.filter(r => r.month === JUN);
     const read = await readWorkbookFromFile(target, DEVICES);
@@ -139,7 +142,7 @@ async function main(): Promise<void> {
     await saveWorkbook(target, mutatedJul, { backupDir, backupKeep: 5, devices: DEVICES, upsGroupHistory: { facilityId: "rangsit", upsGroups: RANGSIT_GROUPS, onlyMonths: [JUL] } });
     const afterJunRows = (await readUpsGroupHistoryFromBuffer(await fs.readFile(target)))!.rows.filter(r => r.month === JUN);
     check(
-      "Scenario 3: JUN-21's History rows (values + generatedAt) are byte-for-byte unchanged after a JUL-21 save",
+      `Scenario 3: ${JUN}'s History rows (values + generatedAt) are byte-for-byte unchanged after a ${JUL} save`,
       JSON.stringify(beforeJunRows) === JSON.stringify(afterJunRows)
     );
   }

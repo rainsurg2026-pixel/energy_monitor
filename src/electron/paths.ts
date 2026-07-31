@@ -17,6 +17,9 @@ import path from "path";
 
 export function getAppRoot(): string {
   if (process.env.PORTABLE_EXECUTABLE_DIR) return process.env.PORTABLE_EXECUTABLE_DIR;
+  // Test-only override keeps development E2E runs from writing migration data
+  // into the real workbooks/config beside the repository.
+  if (!app.isPackaged && process.env.ENERGY_MONITOR_APP_ROOT) return path.resolve(process.env.ENERGY_MONITOR_APP_ROOT);
   if (app.isPackaged) return path.dirname(process.execPath);
   return app.getAppPath();
 }

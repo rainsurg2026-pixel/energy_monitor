@@ -282,8 +282,8 @@ export async function upsertUpsGroupHistoryRows(
   xmlPath: string,
   rows: UpsGroupHistoryRow[],
   overwriteExisting: boolean
-): Promise<void> {
-  if (rows.length === 0) return;
+): Promise<boolean> {
+  if (rows.length === 0) return false;
   const xml = await entryText(zip, xmlPath);
   if (!xml) throw new Error(`UPS Group History worksheet part missing: ${xmlPath}`);
   const sheetDataMatch = xml.match(/<sheetData\s*\/>|<sheetData>([\s\S]*?)<\/sheetData>/);
@@ -297,6 +297,7 @@ export async function upsertUpsGroupHistoryRows(
   const finalRowsByNumber = new Map<number, string>();
   for (const r of existingRows) finalRowsByNumber.set(r.rowNumber, r.raw);
   finalRowsByNumber.set(1, headerRow.raw);
+  let changed = false;
 
   for (const row of rows) {
     const key = rowKey(row.facility, row.month, row.group);
@@ -307,20 +308,24 @@ export async function upsertUpsGroupHistoryRows(
       // the row or refresh its Generated Timestamp - only an actual value
       // change does. This is what makes "Save with no edits" a true no-op.
       if (valuesEqual(existing.values, rowValuesOf(row))) continue;
+      changed = true;
       finalRowsByNumber.set(existing.rowNumber, buildRowXml(existing.rowNumber, row));
     } else {
+      changed = true;
       const newRowNumber = ++maxRowNumber;
       finalRowsByNumber.set(newRowNumber, buildRowXml(newRowNumber, row));
       byKey.set(key, { rowNumber: newRowNumber, raw: "", key, values: rowValuesOf(row) });
     }
   }
 
+  if (!changed) return false;
   const orderedRowNumbers = Array.from(finalRowsByNumber.keys()).sort((a, b) => a - b);
   const newSheetData = `<sheetData>${orderedRowNumbers.map(n => finalRowsByNumber.get(n)).join("")}</sheetData>`;
   let patched = xml.replace(sheetDataMatch[0], () => newSheetData);
   const lastCol = indexToColLetter(HEADERS.length);
   patched = patched.replace(/<dimension ref="[^"]*"\/>/, `<dimension ref="A1:${lastCol}${maxRowNumber}"/>`);
   zip.file(xmlPath, patched);
+  return true;
 }
 
 /**
@@ -338,7 +343,7 @@ export async function patchUpsGroupHistoryBuffer(
 ): Promise<Buffer> {
   if (upsGroups.length === 0) return original;
   const zip = await JSZip.loadAsync(original);
-  const { xmlPath } = await ensureUpsGroupHistorySheet(zip);
+  const { xmlPath, created } = await ensureUpsGroupHistorySheet(zip);
 
   const targetLogs = onlyMonths ? logs.filter(log => onlyMonths.includes(log.month)) : logs;
   const generatedAt = new Date().toISOString();
@@ -358,6 +363,7 @@ export async function patchUpsGroupHistoryBuffer(
     }))
   );
 
-  await upsertUpsGroupHistoryRows(zip, xmlPath, rows, Boolean(onlyMonths));
+  const changed = await upsertUpsGroupHistoryRows(zip, xmlPath, rows, Boolean(onlyMonths));
+  if (!created && !changed) return original;
   return (await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } })) as Buffer;
 }

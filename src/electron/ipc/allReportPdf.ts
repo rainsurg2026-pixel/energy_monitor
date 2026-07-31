@@ -66,7 +66,9 @@ export async function renderAllReportPdf(
       printBackground: true,
       pageSize: "A4",
       landscape: true,
-      preferCSSPageSize: true
+      preferCSSPageSize: true,
+      displayHeaderFooter: true,
+      footerTemplate: '<div style="width:100%;font:8px sans-serif;color:#657488;text-align:center"><span class="pageNumber"></span> of <span class="totalPages"></span></div>'
     });
     if (isCanceled()) throw new ExportCancelledError();
     const validation = validatePdfBuffer(buffer);

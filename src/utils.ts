@@ -144,18 +144,20 @@ const STORAGE_PREFIX = "facility_monthly_logs_";
 // In-memory logs store (Do NOT persist to localStorage)
 const inMemoryLogs: Record<string, MonthlyLog> = {};
 
-// Clean up any legacy persistent monthly logs from localStorage on load
-try {
-  const keysToRemove: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && key.startsWith(STORAGE_PREFIX)) {
-      keysToRemove.push(key);
+// Clean up legacy persistent monthly logs only in browser contexts.
+if (typeof localStorage !== "undefined") {
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(STORAGE_PREFIX)) {
+        keysToRemove.push(key);
+      }
     }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+  } catch (e) {
+    console.error("Failed to clean legacy localStorage keys", e);
   }
-  keysToRemove.forEach(k => localStorage.removeItem(k));
-} catch (e) {
-  console.error("Failed to clean legacy localStorage keys", e);
 }
 
 export function loadAllLogs(): MonthlyLog[] {

@@ -36,3 +36,17 @@ export function formatCompactNumber(value: number | null | undefined): string {
   if (abs >= 1_000) return `${(value / 1_000).toFixed(0)}K`;
   return formatNumber(value);
 }
+
+/**
+ * Compact label for chart data points. Strips trailing zeros, supports
+ * B/M/K suffixes. Returns empty string (not "—") for invalid values so
+ * chart labels disappear cleanly.
+ */
+export function formatCompactLabel(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "";
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000) return parseFloat((value / 1_000_000_000).toFixed(2)) + "B";
+  if (abs >= 1_000_000) return parseFloat((value / 1_000_000).toFixed(2)) + "M";
+  if (abs >= 1_000) return parseFloat((value / 1_000).toFixed(2)) + "K";
+  return value.toFixed(2).replace(/\.00$/, "");
+}

@@ -1,5 +1,3 @@
-import type { ForecastPoint } from "../utils/analytics";
-
 export type ReportStatus = "Complete" | "Partial" | "Validation warning";
 
 /** One persisted row from the "2. UPS Group History" worksheet. */
@@ -104,36 +102,45 @@ export interface DashboardUpsMappingReport {
   mapping: DashboardUpsMappingRow[];
 }
 
+/** Selected-month values rendered by both the live Engineering Dashboard and
+ * the printable All Report.  The dashboard calculation helper owns these
+ * derived values so the two surfaces cannot drift. */
+export interface EngineeringDashboardSnapshot {
+  daysInMonth: number;
+  previousMonth: string | null;
+  upsGroups: Array<{ name: string; totalKw: number; totalKva: number; capacity: number | null; loadPercent: number | null; availablePercent: number | null; monthlyEnergyKwh: number }>;
+  /** Srinakarin's existing UPS11/12/13 overall view; empty for Rangsit. */
+  upsOverallGroups: Array<{ name: string; totalKw: number; totalKva: number; capacity: number | null; loadPercent: number | null; availablePercent: number | null; monthlyEnergyKwh: number }>;
+  upsDetails: Array<{ no: number; umdb: string; upsId: string; acPowerPanel: string; sts: string; oudb: string; voltage: number; current: number; loadKw: number; loadKva: number; capacity: number | null; loadPercent: number | null }>;
+  totalUpsKw: number;
+  totalUpsKva: number;
+  totalUpsEnergyKwh: number;
+  detailedVoltageAvg: number | null;
+  detailedCurrentSum: number;
+  airFields: string[];
+  airPrevious: Record<string, number | null>;
+  airCurrent: Record<string, number | null>;
+  airDifference: Record<string, number | null>;
+  airEnergyKwh: number | null;
+  dcPanels: Array<{ panelId: string; voltage: number; current: number; dcPowerW: number; acCurrentA: number; acPowerW: number; monthlyEnergyKwh: number }>;
+  totalDcPowerW: number;
+  totalDcAcCurrentA: number;
+  totalDcAcPowerW: number;
+  totalDcEnergyKwh: number;
+  buildingEnergyKwh: number | null;
+  buildingCostThb: number | null;
+  floorEnergyKwh: number | null;
+  floorCostThb: number | null;
+  averageRateThbPerKwh: number | null;
+  floorSharePercent: number | null;
+}
+
 /** Lightweight read-only summary used by the dashboard card. */
 export interface RackCapacitySummary {
   totalRacks: number;
   records: RackRecord[];
   byStatus: Array<{ status: string; count: number }>;
   byZone: Array<{ zone: string; count: number }>;
-}
-
-export interface ReportBenchmark {
-  metric: "Building Energy" | "Building Cost";
-  unit: "kWh" | "THB";
-  period: string;
-  current: number;
-  baseline: number;
-  baselineLabel: string;
-}
-
-export interface ReportForecast {
-  metric: "Building Energy" | "Building Cost";
-  unit: "kWh" | "THB";
-  lastActualMonth: string;
-  horizonMonths: number;
-  points: ForecastPoint[];
-}
-
-export interface ReportSectionStatus {
-  id: string;
-  title: string;
-  included: boolean;
-  reason?: string;
 }
 
 export interface ReportData {
@@ -150,10 +157,6 @@ export interface ReportData {
   validationWarnings: string[];
   monthlyRows: ReportMonthlyRow[];
   currentRow: ReportMonthlyRow | null;
-  energyForecast: ReportForecast | null;
-  costForecast: ReportForecast | null;
-  benchmarks: ReportBenchmark[];
-  insights: string[];
+  engineeringDashboard: EngineeringDashboardSnapshot | null;
   rack: RackCapacityReport | null;
-  sections: ReportSectionStatus[];
 }

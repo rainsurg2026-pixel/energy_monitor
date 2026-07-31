@@ -1,4 +1,5 @@
 import { MonthlyLog } from "../types";
+import { parseSafeNumber } from "../excel/SheetMapper";
 import { getAirFields, getAirValue } from "./energyCost";
 
 /**
@@ -36,7 +37,7 @@ export interface EntrySectionApi {
   hasChanges: () => boolean;
 }
 
-const isFilled = (v: number | null | undefined): boolean => v !== null && v !== undefined && !Number.isNaN(v);
+const isFilled = (v: unknown): boolean => parseSafeNumber(v) !== null;
 
 function section(filled: number, total: number): SectionCompletion {
   return { filled, total, percent: total === 0 ? 100 : Math.round((filled / total) * 100) };

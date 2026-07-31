@@ -38,14 +38,13 @@ import {
   TabKey,
   normalizeMonthCell,
   resolveColumns,
-  resolveSheetNames,
-  yyyyMmToExcelSerial
+  resolveSheetNames
 } from "./ExcelSchema";
 import { DEFAULT_DEVICE_LISTS, DeviceLists, SheetRow, logsToRows, rowKey } from "./SheetMapper";
 import { readWorkbookFromBuffer } from "./WorkbookReader";
 import { isSrinakarinWorkbook } from "./SrinakarinWorkbookAdapter";
 import { writeWorkbookMeta } from "./WorkbookVersion";
-import { calculateAverageElectricityRate, calculateEnergyCostForMonth } from "../utils/energyCost";
+import { calculateAverageElectricityRate, calculateEnergyCostForMonth, getAirValue } from "../utils/energyCost";
 import { calculateSrinakarinAggregate } from "../utils/srinakarinPower";
 import { patchUpsGroupHistoryBuffer } from "./UpsGroupHistoryWriter";
 import type { UpsGroupConfig } from "../utils/upsGroupAggregation";
@@ -138,11 +137,6 @@ interface ParsedRow {
   cells: ParsedCell[];
 }
 
-interface EnergyStyleOverrides {
-  numberStyleId: string;
-  formulaStyleId: string;
-}
-
 const CELL_RE = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
 const ROW_RE = /<row\b[^>]*?r="(\d+)"[^>]*?(?:\/>|>[\s\S]*?<\/row>)/g;
 
@@ -183,12 +177,16 @@ function parseSharedStrings(xml: string | null): string[] {
   return strings;
 }
 
-async function ensureExactEnergyNumberStyles(zip: JSZip): Promise<EnergyStyleOverrides> {
+async function ensureExactCellFormatStyles(
+  zip: JSZip,
+  sourceStyleIds: Iterable<string>,
+  formatCode: string
+): Promise<Map<string, string>> {
   const stylesXml = await entryText(zip, "xl/styles.xml");
   if (!stylesXml) throw new WorkbookError("INVALID_WORKBOOK", "Workbook is missing styles.xml.");
 
   const numFmtMatches = [...stylesXml.matchAll(/<numFmt\b([^>]*)\/>/g)];
-  const formatMatch = numFmtMatches.find(match => getAttr(match[1], "formatCode") === "#,##0.00");
+  const formatMatch = numFmtMatches.find(match => getAttr(match[1], "formatCode") === formatCode);
   let patchedStyles = stylesXml;
   let numFmtId = formatMatch ? getAttr(formatMatch[1], "numFmtId") : null;
   if (!numFmtId) {
@@ -196,7 +194,7 @@ async function ensureExactEnergyNumberStyles(zip: JSZip): Promise<EnergyStyleOve
       .map(match => Number(getAttr(match[1], "numFmtId")))
       .filter(Number.isFinite);
     numFmtId = String(Math.max(163, ...ids) + 1);
-    const numFmt = `<numFmt numFmtId="${numFmtId}" formatCode="#,##0.00"/>`;
+    const numFmt = `<numFmt numFmtId="${numFmtId}" formatCode="${formatCode}"/>`;
     if (/<numFmts\b[^>]*>/.test(patchedStyles)) {
       patchedStyles = patchedStyles.replace(/(<numFmts\b[^>]*>)/, `$1${numFmt}`);
       patchedStyles = patchedStyles.replace(/(<numFmts\b[^>]*\bcount=")\d+("[^>]*>)/, (_all, pre, post) => {
@@ -217,24 +215,324 @@ async function ensureExactEnergyNumberStyles(zip: JSZip): Promise<EnergyStyleOve
     const openingTagMatch = source.match(/^<xf\b[^>]*(?:\/>|>)/);
     if (!openingTagMatch) return source;
     const openingTag = openingTagMatch[0];
-    const patchedOpening = openingTag
-      .replace(/\bnumFmtId="[^"]*"/, `numFmtId="${numFmtId}"`)
-      .replace(/\bapplyNumberFormat="[^"]*"/, "applyNumberFormat=\"1\"");
+    const withNumberFormat = /\bnumFmtId=/.test(openingTag)
+      ? openingTag.replace(/\bnumFmtId="[^"]*"/, `numFmtId="${numFmtId}"`)
+      : openingTag.replace(/\/?>(?:$)/, ` numFmtId="${numFmtId}"$&`);
+    const patchedOpening = withNumberFormat.replace(/\bapplyNumberFormat="[^"]*"/, "applyNumberFormat=\"1\"");
     const withApply = /\bapplyNumberFormat="1"/.test(patchedOpening)
       ? patchedOpening
       : patchedOpening.replace(/\/?>(?:$)/, ` applyNumberFormat="1"$&`);
     return withApply + source.slice(openingTag.length);
   };
-  const numberStyleId = String(xfNodes.length);
-  const formulaStyleId = String(xfNodes.length + 1);
-  // DC_Rangsit.xlsm's verified Overall_Energy source styles: D uses xf 7 and
-  // E uses xf 62. Only the number format is replaced; borders/alignment remain.
-  const numberStyle = makeStyle(7);
-  const formulaStyle = makeStyle(62);
-  const updatedXfs = `${xfXml}${numberStyle}${formulaStyle}`;
-  patchedStyles = patchedStyles.replace(cellXfsMatch[0], cellXfsMatch[0].replace(cellXfsMatch[1], updatedXfs).replace(/(<cellXfs\b[^>]*\bcount=")\d+("[^>]*>)/, `$1${xfNodes.length + 2}$2`));
+  const styleOverrides = new Map<string, string>();
+  const addedStyles: string[] = [];
+  const styleIndexes = new Map(xfNodes.map((style, index) => [style, index]));
+  for (const sourceStyleId of new Set(sourceStyleIds)) {
+    const style = makeStyle(Number(sourceStyleId));
+    let index = styleIndexes.get(style);
+    if (index === undefined) {
+      index = xfNodes.length + addedStyles.length;
+      styleIndexes.set(style, index);
+      addedStyles.push(style);
+    }
+    styleOverrides.set(sourceStyleId, String(index));
+  }
+  if (addedStyles.length === 0) return styleOverrides;
+  const updatedXfs = `${xfXml}${addedStyles.join("")}`;
+  patchedStyles = patchedStyles.replace(cellXfsMatch[0], cellXfsMatch[0].replace(cellXfsMatch[1], updatedXfs).replace(/(<cellXfs\b[^>]*\bcount=")\d+("[^>]*>)/, `$1${xfNodes.length + addedStyles.length}$2`));
   zip.file("xl/styles.xml", patchedStyles);
-  return { numberStyleId, formulaStyleId };
+  return styleOverrides;
+}
+
+/**
+ * Clone the supplied styles with centered alignment only.  Fonts, fills,
+ * borders, number formats and all existing alignment settings are retained.
+ */
+async function ensureCenteredCellStyles(
+  zip: JSZip,
+  sourceStyleIds: Iterable<string>
+): Promise<Map<string, string>> {
+  const stylesXml = await entryText(zip, "xl/styles.xml");
+  if (!stylesXml) throw new WorkbookError("INVALID_WORKBOOK", "Workbook is missing styles.xml.");
+  const cellXfsMatch = stylesXml.match(/<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/);
+  if (!cellXfsMatch) throw new WorkbookError("INVALID_WORKBOOK", "Workbook styles.xml is missing cellXfs.");
+  const xfXml = cellXfsMatch[1];
+  const xfNodes = [...xfXml.matchAll(/<xf\b[^>]*\/>|<xf\b[^>]*>[\s\S]*?<\/xf>/g)].map(match => match[0]);
+  const makeCentered = (sourceIndex: number): string => {
+    const source = xfNodes[sourceIndex] ?? `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>`;
+    const openingMatch = source.match(/^<xf\b[^>]*(?:\/>|>)/);
+    if (!openingMatch) return source;
+    const opening = openingMatch[0];
+    const withApply = /\bapplyAlignment="1"/.test(opening)
+      ? opening
+      : /\bapplyAlignment=/.test(opening)
+        ? opening.replace(/\bapplyAlignment="[^"]*"/, "applyAlignment=\"1\"")
+        : opening.replace(/\/?>(?:$)/, ` applyAlignment="1"$&`);
+    const body = source.slice(opening.length);
+    const centeredAlignment = (alignment: string): string => {
+      const horizontal = /\bhorizontal=/.test(alignment)
+        ? alignment.replace(/\bhorizontal="[^"]*"/, "horizontal=\"center\"")
+        : alignment.replace(/\/?>(?:$)/, ` horizontal="center"$&`);
+      return /\bvertical=/.test(horizontal)
+        ? horizontal.replace(/\bvertical="[^"]*"/, "vertical=\"center\"")
+        : horizontal.replace(/\/?>(?:$)/, ` vertical="center"$&`);
+    };
+    if (/^<xf\b[^>]*\/>$/.test(opening)) {
+      return `${withApply.replace(/\/>$/, ">")}<alignment horizontal="center" vertical="center"/></xf>`;
+    }
+    if (/<alignment\b[^>]*(?:\/>|>[\s\S]*?<\/alignment>)/.test(body)) {
+      return withApply + body.replace(/<alignment\b[^>]*(?:\/>|>[\s\S]*?<\/alignment>)/, centeredAlignment);
+    }
+    return `${withApply}${body.replace(/<\/xf>$/, '<alignment horizontal="center" vertical="center"/></xf>')}`;
+  };
+
+  const overrides = new Map<string, string>();
+  const added: string[] = [];
+  const styleIndexes = new Map(xfNodes.map((style, index) => [style, index]));
+  for (const sourceStyleId of new Set(sourceStyleIds)) {
+    const style = makeCentered(Number(sourceStyleId));
+    let index = styleIndexes.get(style);
+    if (index === undefined) {
+      index = xfNodes.length + added.length;
+      styleIndexes.set(style, index);
+      added.push(style);
+    }
+    overrides.set(sourceStyleId, String(index));
+  }
+  if (added.length === 0) return overrides;
+  const updatedXfs = `${xfXml}${added.join("")}`;
+  const patched = stylesXml.replace(
+    cellXfsMatch[0],
+    cellXfsMatch[0]
+      .replace(cellXfsMatch[1], updatedXfs)
+      .replace(/(<cellXfs\b[^>]*\bcount=")\d+("[^>]*>)/, `$1${xfNodes.length + added.length}$2`)
+  );
+  zip.file("xl/styles.xml", patched);
+  return overrides;
+}
+
+function sheetCellStyleIds(sheetXml: string): Set<string> {
+  const sheetDataMatch = sheetXml.match(/<sheetData\s*\/>|<sheetData>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) return new Set(["0"]);
+  const rows = parseRows(sheetDataMatch[1] ?? "");
+  const styles = new Set<string>();
+  for (const row of rows) for (const cell of row.cells) styles.add(cell.styleId ?? "0");
+  return styles.size ? styles : new Set(["0"]);
+}
+
+/** Apply only the required number format to existing V/A/kW/kVA data cells. */
+function applyMeasurementNumberFormats(
+  sheetXml: string,
+  sharedStrings: string[],
+  numberStyles: Map<string, string>,
+  centeredStyles?: Map<string, string>
+): string {
+  const sheetDataMatch = sheetXml.match(/<sheetData([^>]*)>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) return sheetXml;
+  const rows = parseRows(sheetDataMatch[2]);
+  const header = rows.find(row => {
+    const keys = row.cells.map(cell => cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, ""));
+    return (keys.includes("month") || keys.includes("no")) &&
+      keys.some(key => key.includes("voltage") || key.includes("current") || key.includes("kw") || key.includes("kva"));
+  });
+  if (!header) return sheetXml;
+  const columns = new Set(header.cells
+    .filter(cell => {
+      const key = cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, "");
+      return key.includes("voltage") || key.includes("current") || key.includes("kw") || key.includes("kva");
+    })
+    .map(cell => cell.colLetter));
+  if (columns.size === 0) return sheetXml;
+
+  const patchedRows = rows.map(row => {
+    if (row.rowNumber <= header.rowNumber) return row.raw;
+    let raw = row.raw;
+    for (const cell of row.cells.filter(candidate => columns.has(candidate.colLetter))) {
+      const numberStyle = numberStyles.get(cell.styleId ?? "0") ?? cell.styleId;
+      const styleId = centeredStyles?.get(numberStyle ?? "0") ?? numberStyle;
+      if (!styleId) continue;
+      const ref = `${cell.colLetter}${row.rowNumber}`;
+      const escapedRef = ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      raw = raw.replace(new RegExp(`<c\\b(?=[^>]*\\br="${escapedRef}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`), match => {
+        const end = match.indexOf(">");
+        const opening = match.slice(0, end + 1);
+        const rest = match.slice(end + 1);
+        const formatted = /\bs="[^"]*"/.test(opening)
+          ? opening.replace(/\bs="[^"]*"/, `s="${styleId}"`)
+          : opening.replace(/\/?>(?:$)/, suffix => ` s="${styleId}"${suffix}`);
+        return formatted + rest;
+      });
+    }
+    return raw;
+  });
+  return sheetXml.replace(sheetDataMatch[0], `<sheetData${sheetDataMatch[1]}>${patchedRows.join("")}<\/sheetData>`);
+}
+
+/**
+ * Apply the workbook-wide numeric display rule without changing stored values
+ * or formulas. Month/date columns and text lookup formulas retain their
+ * existing formats; Dashboard-FAC's Air GWh source/difference cells are the
+ * sole numeric exception and retain the source workbook's precision.
+ */
+function applyGlobalNumericNumberFormats(
+  sheetXml: string,
+  sharedStrings: string[],
+  numberStyles: Map<string, string>,
+  centeredStyles?: Map<string, string>,
+  sheetName?: string
+): string {
+  const sheetDataMatch = sheetXml.match(/<sheetData([^>]*)>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) return sheetXml;
+  const rows = parseRows(sheetDataMatch[2]);
+  const monthColumns = new Set<string>();
+  for (const row of rows) {
+    for (const cell of row.cells) {
+      const key = cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (key === "month" || key === "reportingmonth") monthColumns.add(cell.colLetter);
+    }
+  }
+  const airExceptionColumns = new Set<string>();
+  let airHeaderRow = -1;
+  let airEndRow = Number.POSITIVE_INFINITY;
+  if (sheetName === "Dashboard-FAC") {
+    const airHeader = rows.find(row => row.cells.some(cell => {
+      const key = cellText(cell, sharedStrings).replace(/[^a-z0-9]/gi, "").toLowerCase();
+      return key.startsWith("eb") && key.endsWith("gwh");
+    }));
+    if (airHeader) {
+      airHeaderRow = airHeader.rowNumber;
+      for (const cell of airHeader.cells) {
+        const key = cellText(cell, sharedStrings).replace(/[^a-z0-9]/gi, "").toLowerCase();
+        if (key.startsWith("eb") && key.endsWith("gwh")) airExceptionColumns.add(cell.colLetter);
+      }
+      airEndRow = rows.find(row => row.rowNumber > airHeaderRow && /^\d+\.?\s*(?:dc|overall)/i.test(cellText(row.cells[0] ?? { colLetter: "", attrs: "", inner: null, styleId: null, type: null, formula: null }, sharedStrings)))?.rowNumber ?? Number.POSITIVE_INFINITY;
+    }
+  }
+  const isNumericFormula = (cell: ParsedCell): boolean => {
+    if (cell.formula === null) return false;
+    return !/PPC-Mapping/i.test(cell.formula);
+  };
+  const hasNumericValue = (cell: ParsedCell): boolean => {
+    const value = cell.inner?.match(/<v>([^<]*)<\/v>/)?.[1]?.trim();
+    return value !== undefined && value !== "" && Number.isFinite(Number(value));
+  };
+  const formatCell = (row: ParsedRow, cell: ParsedCell): string => {
+    if (monthColumns.has(cell.colLetter) || (sheetName === "Dashboard-FAC" && cell.colLetter === "H" && row.rowNumber === 1)) return row.raw;
+    if (sheetName === "Dashboard-FAC" && row.rowNumber > airHeaderRow && row.rowNumber < airEndRow && airExceptionColumns.has(cell.colLetter)) return row.raw;
+    if (!hasNumericValue(cell) && !isNumericFormula(cell)) return row.raw;
+    const numberStyle = numberStyles.get(cell.styleId ?? "0") ?? cell.styleId;
+    const styleId = centeredStyles?.get(numberStyle ?? "0") ?? numberStyle;
+    if (!styleId) return row.raw;
+    const ref = `${cell.colLetter}${row.rowNumber}`;
+    const escapedRef = ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return row.raw.replace(new RegExp(`<c\\b(?=[^>]*\\br=\"${escapedRef}\")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`), match => {
+      const end = match.indexOf(">");
+      const opening = match.slice(0, end + 1);
+      const rest = match.slice(end + 1);
+      const formatted = /\bs="[^"]*"/.test(opening)
+        ? opening.replace(/\bs="[^"]*"/, `s="${styleId}"`)
+        : opening.replace(/\/?>(?:$)/, suffix => ` s="${styleId}"${suffix}`);
+      return formatted + rest;
+    });
+  };
+  const patchedRows = rows.map(row => {
+    let raw = row.raw;
+    for (const cell of row.cells) raw = formatCell({ ...row, raw }, cell);
+    return raw;
+  });
+  return sheetXml.replace(sheetDataMatch[0], `<sheetData${sheetDataMatch[1]}>${patchedRows.join("")}<\/sheetData>`);
+}
+
+/** Keep the existing Dashboard-FAC calculations, but extend their DC source
+ * ranges to the existing table so newly appended months participate. */
+function patchDashboardDcLookupRanges(sheetXml: string): string {
+  return sheetXml
+    .replace(/'3\. DC Data Log'!\$A\$3:\$A\$12/g, "PPC_DC[Month]")
+    .replace(/'3\. DC Data Log'!\$B\$3:\$B\$12/g, "PPC_DC[DC Power Panel]")
+    .replace(/'3\. DC Data Log'!\$C\$3:\$C\$12/g, "PPC_DC[DC Voltage (V)]")
+    .replace(/'3\. DC Data Log'!\$D\$3:\$D\$12/g, "PPC_DC[DC Current (A)]");
+}
+
+/** Remove stale formula error caches so Excel can recalculate the preserved
+ * Dashboard-FAC formulas from the now-normalized numeric source cells. */
+function clearFormulaErrorCaches(sheetXml: string): string {
+  return sheetXml.replace(/<v(?:\s[^>]*)?>#(?:VALUE|REF|N\/A|DIV\/0|NAME|NUM|NULL)!?<\/v>/gi, "");
+}
+
+function validatePersistedDcInputs(
+  zip: JSZip,
+  sheets: SheetLocation[],
+  sharedStrings: string[]
+): Promise<void> {
+  return (async () => {
+    const location = sheets.find(sheet => sheet.name === "3. DC Data Log");
+    if (!location) return;
+    const xml = await entryText(zip, location.xmlPath);
+    const sheetData = xml?.match(/<sheetData[^>]*>([\s\S]*?)<\/sheetData>/)?.[1];
+    if (!sheetData) throw new WorkbookError("VALIDATION_FAILED", "DC save validation failed: 3. DC Data Log has no data.", "validate");
+    const rows = parseRows(sheetData);
+    const header = rows.find(row => row.cells.some(cell => cellText(cell, sharedStrings).trim().toLowerCase() === "month"));
+    if (!header) throw new WorkbookError("VALIDATION_FAILED", "DC save validation failed: 3. DC Data Log header is missing.", "validate");
+    const columns = new Map(header.cells.map(cell => [cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, ""), cell.colLetter]));
+    const monthCol = columns.get("month");
+    const idCol = columns.get("dcpowerpanel");
+    const voltageCol = columns.get("dcvoltagev");
+    const currentCol = columns.get("dccurrenta");
+    if (!monthCol || !idCol || !voltageCol || !currentCol) throw new WorkbookError("VALIDATION_FAILED", "DC save validation failed: required columns are missing.", "validate");
+    for (const row of rows.filter(candidate => candidate.rowNumber > header.rowNumber)) {
+      const month = normalizeMonthCell(cellText(row.cells.find(cell => cell.colLetter === monthCol) ?? { colLetter: "", attrs: "", inner: null, styleId: null, type: null, formula: null }, sharedStrings));
+      const id = cellText(row.cells.find(cell => cell.colLetter === idCol) ?? { colLetter: "", attrs: "", inner: null, styleId: null, type: null, formula: null }, sharedStrings).trim();
+      if (!month?.startsWith("2026-") || !id) continue;
+      for (const [field, column] of [["DC Voltage (V)", voltageCol], ["DC Current (A)", currentCol]] as const) {
+        const cell = row.cells.find(candidate => candidate.colLetter === column);
+        const value = cell?.inner?.match(/<v>([^<]*)<\/v>/)?.[1];
+        if (value !== undefined && value !== "" && !Number.isFinite(Number(value))) {
+          throw new WorkbookError("VALIDATION_FAILED", `DC save validation failed: ${month}, ${id}, ${field}, ${column}${row.rowNumber} is not a finite numeric value.`, "validate");
+        }
+      }
+    }
+  })();
+}
+
+/** Center exactly the header and valid monthly-record cells in a monthly table. */
+function centerMonthlySheetRecords(
+  sheetXml: string,
+  sharedStrings: string[],
+  centeredStyles: Map<string, string>
+): string {
+  const sheetDataMatch = sheetXml.match(/<sheetData([^>]*)>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) return sheetXml;
+  const rows = parseRows(sheetDataMatch[2]);
+  const header = rows.find(row => row.cells.some(cell => cellText(cell, sharedStrings).trim().toLowerCase() === "month"));
+  if (!header) return sheetXml;
+  const monthCol = header.cells.find(cell => cellText(cell, sharedStrings).trim().toLowerCase() === "month")?.colLetter;
+  if (!monthCol) return sheetXml;
+  const centerRow = (row: ParsedRow): string => {
+    let raw = row.raw;
+    for (const cell of row.cells) {
+      const styleId = centeredStyles.get(cell.styleId ?? "0");
+      if (!styleId) continue;
+      const ref = `${cell.colLetter}${row.rowNumber}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      raw = raw.replace(new RegExp(`<c\\b(?=[^>]*\\br="${ref}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`), match => {
+        const end = match.indexOf(">");
+        const opening = match.slice(0, end + 1);
+        const rest = match.slice(end + 1);
+        const centered = /\bs="[^"]*"/.test(opening)
+          ? opening.replace(/\bs="[^"]*"/, `s="${styleId}"`)
+          : opening.replace(/\/?>(?:$)/, suffix => ` s="${styleId}"${suffix}`);
+        return centered + rest;
+      });
+    }
+    return raw;
+  };
+  const patchedRows = rows.map(row => {
+    if (row.rowNumber === header.rowNumber) return centerRow(row);
+    const monthCell = row.cells.find(cell => cell.colLetter === monthCol);
+    return row.rowNumber > header.rowNumber && normalizeMonthCell(monthCell ? cellText(monthCell, sharedStrings) : null)
+      ? centerRow(row)
+      : row.raw;
+  });
+  return sheetXml.replace(sheetDataMatch[0], `<sheetData${sheetDataMatch[1]}>${patchedRows.join("")}<\/sheetData>`);
 }
 
 function cellText(cell: ParsedCell, sharedStrings: string[]): string {
@@ -346,6 +644,28 @@ interface PatchStats {
   dataRows: number;
 }
 
+const ENGLISH_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+export function formatWorkbookMonth(value: unknown): string | null {
+  const normalized = normalizeMonthCell(value);
+  if (!normalized) return null;
+  const [year, month] = normalized.split("-").map(Number);
+  return Number.isInteger(year) && month >= 1 && month <= 12 ? `${ENGLISH_MONTHS[month - 1]}-${String(year).slice(-2)}` : null;
+}
+
+function workbookMonthSerial(value: unknown, date1904 = false): number | null {
+  const normalized = normalizeMonthCell(value);
+  if (!normalized) return null;
+  const [year, month] = normalized.split("-").map(Number);
+  if (!Number.isInteger(year) || month < 1 || month > 12) return null;
+  const epoch = date1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30);
+  return Math.round((Date.UTC(year, month - 1, 1) - epoch) / 86_400_000);
+}
+
+function workbookUsesDate1904(workbookXml: string): boolean {
+  return /<workbookPr\b[^>]*\bdate1904="(?:1|true)"/i.test(workbookXml);
+}
+
 function buildCellXml(
   ref: string,
   styleId: string | null,
@@ -385,6 +705,169 @@ interface InputPatchOptions {
   firstMatchingColumnOnly?: boolean;
   /** Final aggregate rows may contain placeholder formulas such as `14+0`. */
   replaceFormulaCells?: boolean;
+  /** Preserve a formula while refreshing its cached result from the app calculation. */
+  updateFormulaCaches?: boolean;
+  /** Exact display styles for app-written numeric cells. */
+  numberStyles?: Map<string, string>;
+  /** Exact display styles for app-written Month cells. */
+  monthStyles?: Map<string, string>;
+  /** Workbook date system. */
+  date1904?: boolean;
+}
+
+function isMonthIn2026(value: unknown): boolean {
+  return normalizeMonthCell(value)?.startsWith("2026-") ?? false;
+}
+
+function isPpc43Id(value: string): boolean {
+  return /^ppc\s*43(?:\s*[ab])?(?:\s*-|$)/i.test(value.trim());
+}
+
+/**
+ * Sheet 1.4.1's Current (A) is the exact Panel 1 + Panel 2 total from
+ * Sheet 1.6 for the same PPC43 phase.  Never fall back to the old phase
+ * value: a missing source must make the save fail instead of retaining it.
+ */
+function ppc43PanelCurrentTotal(
+  input: SrinakarinInputSnapshot | undefined,
+  month: string,
+  phaseId: string
+): number | null {
+  const match = phaseId.match(/^\s*(ppc\s*43[ab])\s*-\s*([rst])\s*$/i);
+  if (!match) return null;
+  const base = match[1].replace(/\s+/g, " ").trim();
+  const phase = match[2].toUpperCase();
+  const normalized = (value: string): string => value.replace(/\s+/g, " ").trim().toLowerCase();
+  const required = [1, 2].map(panel => `${base} - ${phase} - Panel ${panel}`);
+  const values = required.map(id => {
+    const entry = Object.entries(input?.ppc43Current ?? {})
+      .find(([sourceId]) => normalized(sourceId) === normalized(id));
+    return entry?.[1];
+  });
+  if (values.some(value => typeof value !== "number" || !Number.isFinite(value))) {
+    throw new WorkbookError(
+      "VALIDATION_FAILED",
+      `Missing PPC43 panel current source for ${normalizeMonthCell(month) ?? month}, ${base}, phase ${phase} (Panel 1 and Panel 2 are required).`
+    );
+  }
+  return (values[0] as number) + (values[1] as number);
+}
+
+/**
+ * Remove records that do not belong in an input table while retaining the
+ * table's existing cells, styles and formulas for every kept record. Rows are
+ * compacted so the table range contains no blank historical records.
+ */
+function retainInputSheetRecords(
+  sheetXml: string,
+  sharedStrings: string[],
+  keepRecord: (month: string, id: string | null) => boolean
+): InputPatchResult {
+  const sheetDataMatch = sheetXml.match(/<sheetData([^>]*)>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) return { xml: sheetXml, lastDataRow: 0 };
+  const rows = parseRows(sheetDataMatch[2]);
+  const header = rows.find(row => row.cells.some(cell => cellText(cell, sharedStrings).trim().toLowerCase() === "month"));
+  if (!header) return { xml: sheetXml, lastDataRow: rows.reduce((max, row) => Math.max(max, row.rowNumber), 0) };
+
+  const headers = new Map<string, string>();
+  for (const cell of header.cells) {
+    const key = cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!headers.has(key)) headers.set(key, cell.colLetter);
+  }
+  const monthCol = headers.get("month");
+  const idCol = [...headers.entries()].find(([key]) => key.includes("ups") || key.includes("panel") || key.includes("acpower"))?.[1];
+  if (!monthCol) return { xml: sheetXml, lastDataRow: rows.reduce((max, row) => Math.max(max, row.rowNumber), 0) };
+
+  const keptRows: string[] = [];
+  let nextRowNumber = header.rowNumber;
+  for (const row of rows) {
+    if (row.rowNumber <= header.rowNumber) {
+      keptRows.push(row.raw);
+      continue;
+    }
+    const month = normalizeMonthCell(cellText(row.cells.find(cell => cell.colLetter === monthCol) ?? { colLetter: "", attrs: "", inner: null, styleId: null, type: null, formula: null }, sharedStrings));
+    const id = idCol ? cellText(row.cells.find(cell => cell.colLetter === idCol) ?? { colLetter: "", attrs: "", inner: null, styleId: null, type: null, formula: null }, sharedStrings).trim() || null : null;
+    if (!month || (idCol && !id) || !keepRecord(month, id)) continue;
+
+    const targetRowNumber = ++nextRowNumber;
+    if (targetRowNumber === row.rowNumber) {
+      keptRows.push(row.raw);
+      continue;
+    }
+    const delta = targetRowNumber - row.rowNumber;
+    const renumbered = row.raw
+      .replace(/(<row\b[^>]*\br=")\d+"/, `$1${targetRowNumber}"`)
+      .replace(/(\br="[A-Z]+)\d+"/g, `$1${targetRowNumber}"`)
+      .replace(/(<f\b[^>]*>)([\s\S]*?)(<\/f>)/g, (_all, open: string, formula: string, close: string) => `${open}${adjustFormulaRows(formula, delta)}${close}`);
+    keptRows.push(renumbered);
+  }
+
+  const patchedSheetData = `<sheetData${sheetDataMatch[1]}>${keptRows.join("")}<\/sheetData>`;
+  let xml = sheetXml.replace(sheetDataMatch[0], patchedSheetData);
+  const maxColumn = header.cells.reduce((max, cell) => Math.max(max, colLetterToIndex(cell.colLetter)), 1);
+  xml = xml.replace(/<dimension ref="[^"]*"\/>/, `<dimension ref="A1:${indexToColLetter(maxColumn)}${nextRowNumber}"/>`);
+  return { xml, lastDataRow: nextRowNumber };
+}
+
+/**
+ * Discard only preformatted empty rows from a formula-backed input table and
+ * compact its valid Month(+ID) records without changing their formatting,
+ * row height or relative formulas.
+ */
+function compactInputSheetRecords(
+  sheetXml: string,
+  sharedStrings: string[],
+  idRequired: boolean
+): InputPatchResult {
+  const sheetDataMatch = sheetXml.match(/<sheetData([^>]*)>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) return { xml: sheetXml, lastDataRow: 0 };
+  const rows = parseRows(sheetDataMatch[2]);
+  const header = rows.find(row => row.cells.some(cell => cellText(cell, sharedStrings).trim().toLowerCase() === "month"));
+  if (!header) return { xml: sheetXml, lastDataRow: rows.reduce((max, row) => Math.max(max, row.rowNumber), 0) };
+  const headers = new Map<string, string>();
+  for (const cell of header.cells) {
+    const key = cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!headers.has(key)) headers.set(key, cell.colLetter);
+  }
+  const monthCol = headers.get("month");
+  const idCol = idRequired
+    ? [...headers.entries()].find(([key]) => key.includes("ups") || key.includes("panel") || key.includes("acpower"))?.[1]
+    : undefined;
+  if (!monthCol || (idRequired && !idCol)) return { xml: sheetXml, lastDataRow: rows.reduce((max, row) => Math.max(max, row.rowNumber), 0) };
+
+  const kept: string[] = [];
+  let nextRowNumber = header.rowNumber;
+  for (const row of rows) {
+    if (row.rowNumber <= header.rowNumber) {
+      kept.push(row.raw);
+      continue;
+    }
+    const monthCell = row.cells.find(cell => cell.colLetter === monthCol);
+    const idCell = idCol ? row.cells.find(cell => cell.colLetter === idCol) : undefined;
+    const month = normalizeMonthCell(monthCell ? cellText(monthCell, sharedStrings) : null);
+    const hasId = !idRequired || Boolean(idCell && cellText(idCell, sharedStrings).trim());
+    if (!month || !hasId) continue;
+    const targetRowNumber = ++nextRowNumber;
+    if (targetRowNumber === row.rowNumber) {
+      kept.push(row.raw);
+      continue;
+    }
+    const delta = targetRowNumber - row.rowNumber;
+    kept.push(row.raw
+      .replace(/(<row\b[^>]*\br=")\d+"/, `$1${targetRowNumber}"`)
+      .replace(/(\br="[A-Z]+)\d+"/g, `$1${targetRowNumber}"`)
+      .replace(/(<f\b[^>]*>)([\s\S]*?)(<\/f>)/g, (_all, open: string, formula: string, close: string) => `${open}${adjustFormulaRows(formula, delta)}${close}`));
+  }
+  const patchedSheetData = `<sheetData${sheetDataMatch[1]}>${kept.join("")}<\/sheetData>`;
+  let xml = sheetXml.replace(sheetDataMatch[0], patchedSheetData);
+  const maxColumn = header.cells.reduce((max, cell) => Math.max(max, colLetterToIndex(cell.colLetter)), 1);
+  xml = xml.replace(/<dimension ref="[^"]*"\/>/, `<dimension ref="A1:${indexToColLetter(maxColumn)}${nextRowNumber}"/>`);
+  return { xml, lastDataRow: nextRowNumber };
+}
+
+function copiedRowAttrs(row: ParsedRow, rowNumber: number): string {
+  const attrs = row.raw.match(/^<row\b([^>]*)>/)?.[1] ?? "";
+  return attrs.replace(/\br="\d+"/, `r="${rowNumber}"`).trim() || `r="${rowNumber}"`;
 }
 
 function inputKey(month: string, id?: string): string {
@@ -431,6 +914,19 @@ function patchInputSheetXmlWithStats(
     if (patch && (monthCell || !idRequired)) existingKeys.add(key);
     if (!patch) return row.raw;
     let raw = row.raw;
+    if (monthCell) {
+      const monthRef = `${monthCol}${row.rowNumber}`;
+      const escapedRef = monthRef.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      raw = raw.replace(
+        new RegExp(`<c\\b(?=[^>]*\\br="${escapedRef}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`),
+        buildCellXml(
+          monthRef,
+          options.monthStyles?.get(monthCell?.styleId ?? "0") ?? monthCell?.styleId,
+          "month",
+          workbookMonthSerial(patch.month, options.date1904)
+        )
+      );
+    }
     for (const [field, value] of Object.entries(patch.values)) {
       const normalizedField = field.toLowerCase().replace(/[^a-z0-9]/g, "");
       // includes(), not startsWith(): some sheets prefix the field name in
@@ -443,8 +939,11 @@ function patchInputSheetXmlWithStats(
       const columns = options.firstMatchingColumnOnly ? matchingColumns.slice(0, 1) : matchingColumns;
       for (const col of columns) {
         const cell = row.cells.find(candidate => candidate.colLetter === col);
-        if (!cell || (cell.formula !== null && !options.replaceFormulaCells)) continue;
-        const replacement = buildCellXml(`${col}${row.rowNumber}`, cell.styleId, "number", value);
+        if (!cell || (cell.formula !== null && !options.replaceFormulaCells && !options.updateFormulaCaches)) continue;
+        const styleId = options.numberStyles?.get(cell.styleId ?? "0") ?? cell.styleId;
+        const replacement = cell.formula !== null && options.updateFormulaCaches
+          ? buildFormulaCellXml(`${col}${row.rowNumber}`, styleId, cell.formula, value)
+          : buildCellXml(`${col}${row.rowNumber}`, styleId, "number", value);
         const escapedRef = `${col}${row.rowNumber}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         raw = raw.replace(new RegExp(`<c\\b(?=[^>]*\\br="${escapedRef}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`), replacement);
       }
@@ -463,17 +962,21 @@ function patchInputSheetXmlWithStats(
   const missingPatches = [...new Map(patches.map(patch => [inputKey(patch.month, patch.id), patch])).values()]
     .filter(patch => !existingKeys.has(inputKey(patch.month, patch.id)));
   if (template && missingPatches.length > 0) {
-    const templateAttrs = template.raw.match(/^<row\b([^>]*)>/)?.[1] ?? `r="${template.rowNumber}"`;
     for (const patch of missingPatches) {
       const rowNumber = ++lastDataRow;
-      const rowAttrs = templateAttrs.replace(/\br="\d+"/, `r="${rowNumber}"`);
+      const rowAttrs = copiedRowAttrs(template, rowNumber);
       const rowCells = template.cells.map(cell => {
         const ref = `${cell.colLetter}${rowNumber}`;
         if (cell.colLetter === monthCol) {
-          return buildCellXml(ref, cell.styleId, "month", yyyyMmToExcelSerial(patch.month));
+          return buildCellXml(
+            ref,
+            options.monthStyles?.get(cell.styleId ?? "0") ?? cell.styleId,
+            "month",
+            workbookMonthSerial(patch.month, options.date1904)
+          );
         }
         if (idCol && cell.colLetter === idCol) {
-          return buildCellXml(ref, cell.styleId, "text", patch.id ?? null);
+          return buildCellXml(ref, null, "text", patch.id ?? null);
         }
         const fieldEntry = headerColumns.find(([key, col]) => col === cell.colLetter &&
           Object.keys(patch.values).some(field => {
@@ -485,14 +988,13 @@ function patchInputSheetXmlWithStats(
             const normalizedField = candidate.toLowerCase().replace(/[^a-z0-9]/g, "");
             return fieldEntry[0] === normalizedField || fieldEntry[0].includes(normalizedField);
           });
-          return buildCellXml(ref, cell.styleId, "number", field ? patch.values[field] : null);
+          const value = field ? patch.values[field] : null;
+          const styleId = options.numberStyles?.get(cell.styleId ?? "0") ?? cell.styleId;
+          return cell.formula !== null && options.updateFormulaCaches
+            ? buildFormulaCellXml(ref, styleId, adjustFormulaRows(cell.formula, rowNumber - template.rowNumber), value)
+            : buildCellXml(ref, styleId, "number", value);
         }
-        if (cell.formula !== null) {
-          const cached = cell.inner?.match(/<v>([\s\S]*?)<\/v>/)?.[1];
-          const cachedValue = cached !== undefined && Number.isFinite(Number(cached)) ? Number(cached) : null;
-          return buildFormulaCellXml(ref, cell.styleId, adjustFormulaRows(cell.formula, rowNumber - template.rowNumber), cachedValue);
-        }
-        return `<c r="${ref}"${cell.styleId ? ` s="${cell.styleId}"` : ""}/>`;
+        return "";
       }).join("");
       patchedRows.push(`<row ${rowAttrs}>${rowCells}</row>`);
     }
@@ -515,30 +1017,639 @@ export function patchInputSheetXml(
   return patchInputSheetXmlWithStats(sheetXml, patches, idRequired, sharedStrings, options).xml;
 }
 
+/**
+ * Sheet 1.2 is a formula-backed table.  Its existing AVERAGEIFS/SUMIFS
+ * formulas are part of the workbook contract, so only their cached values
+ * are refreshed here.  New rows copy those exact template formulas.
+ */
+function patchSrinakarinUpsAverageSheetXml(
+  sheetXml: string,
+  patches: InputPatch[],
+  sharedStrings: string[],
+  options: InputPatchOptions
+): InputPatchResult {
+  sheetXml = compactInputSheetRecords(sheetXml, sharedStrings, true).xml;
+  const sheetDataMatch = sheetXml.match(/<sheetData([^>]*)>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.2 UPS Data Log_Average has no sheetData.");
+  const rows = parseRows(sheetDataMatch[2]);
+  const header = rows.find(row => row.cells.some(cell => cellText(cell, sharedStrings).trim().toLowerCase() === "month"));
+  if (!header) throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.2 UPS Data Log_Average is missing its header.");
+
+  const headerColumns = header.cells.map(cell => [cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, ""), cell.colLetter] as const);
+  const columnFor = (field: string): string | undefined => {
+    const normalized = field.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return headerColumns.find(([key]) => key === normalized || key.includes(normalized))?.[1];
+  };
+  const monthCol = columnFor("month");
+  const idCol = columnFor("ups");
+  const formulaFields = ["voltage", "current", "loadKw", "loadKva"];
+  if (!monthCol || !idCol || formulaFields.some(field => !columnFor(field))) {
+    throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.2 UPS Data Log_Average is missing a required mapped column.");
+  }
+
+  const formulaCellXml = (cell: ParsedCell | undefined, ref: string, value: number | null, rowDelta = 0): string => {
+    if (!cell || cell.formula === null) {
+      throw new WorkbookError("INVALID_WORKBOOK", `Sheet 1.2 UPS Data Log_Average is missing its formula at ${ref}.`);
+    }
+    const styleId = options.numberStyles?.get(cell.styleId ?? "0") ?? cell.styleId;
+    return buildFormulaCellXml(ref, styleId, adjustFormulaRows(cell.formula, rowDelta), value);
+  };
+
+  const byKey = new Map(patches.map(patch => [inputKey(patch.month, patch.id), patch]));
+  const existingKeys = new Set<string>();
+  const patchedRows = rows.map(row => {
+    if (row.rowNumber <= header.rowNumber) return row.raw;
+    const monthCell = row.cells.find(cell => cell.colLetter === monthCol);
+    const idCell = row.cells.find(cell => cell.colLetter === idCol);
+    const patch = byKey.get(inputKey(monthCell ? cellText(monthCell, sharedStrings) : "", idCell ? cellText(idCell, sharedStrings) : undefined));
+    if (!patch) return row.raw;
+    existingKeys.add(inputKey(patch.month, patch.id));
+    let raw = row.raw;
+    const replaceCell = (ref: string, replacement: string): void => {
+      const escapedRef = ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      raw = raw.replace(new RegExp(`<c\\b(?=[^>]*\\br="${escapedRef}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`), replacement);
+    };
+    if (monthCell) {
+      replaceCell(`${monthCol}${row.rowNumber}`, buildCellXml(
+        `${monthCol}${row.rowNumber}`,
+        options.monthStyles?.get(monthCell.styleId ?? "0") ?? monthCell.styleId,
+        "month",
+        workbookMonthSerial(patch.month, options.date1904)
+      ));
+    }
+    for (const field of formulaFields) {
+      const column = columnFor(field)!;
+      const cell = row.cells.find(candidate => candidate.colLetter === column);
+      replaceCell(`${column}${row.rowNumber}`, formulaCellXml(cell, `${column}${row.rowNumber}`, patch.values[field] ?? null));
+    }
+    return raw;
+  });
+
+  const template = rows.find(row => row.rowNumber > header.rowNumber &&
+    row.cells.find(cell => cell.colLetter === monthCol) && row.cells.find(cell => cell.colLetter === idCol));
+  let lastDataRow = rows.reduce((max, row) => Math.max(max, row.rowNumber), header.rowNumber);
+  const missingPatches = [...byKey.values()].filter(patch => !existingKeys.has(inputKey(patch.month, patch.id)));
+  if (missingPatches.length > 0 && !template) {
+    throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.2 UPS Data Log_Average has no formula template row.");
+  }
+  for (const patch of missingPatches) {
+    const rowNumber = ++lastDataRow;
+    const monthCell = template!.cells.find(cell => cell.colLetter === monthCol)!;
+    const cells = [
+      buildCellXml(`${monthCol}${rowNumber}`, options.monthStyles?.get(monthCell.styleId ?? "0") ?? monthCell.styleId, "month", workbookMonthSerial(patch.month, options.date1904)),
+      buildCellXml(`${idCol}${rowNumber}`, null, "text", patch.id ?? null),
+      ...formulaFields.map(field => {
+        const column = columnFor(field)!;
+        return formulaCellXml(template!.cells.find(cell => cell.colLetter === column), `${column}${rowNumber}`, patch.values[field] ?? null, rowNumber - template!.rowNumber);
+      })
+    ].join("");
+    patchedRows.push(`<row ${copiedRowAttrs(template!, rowNumber)}>${cells}</row>`);
+  }
+
+  const patchedSheetData = `<sheetData${sheetDataMatch[1]}>${patchedRows.join("")}<\/sheetData>`;
+  let xml = sheetXml.replace(sheetDataMatch[0], patchedSheetData);
+  const maxColumn = header.cells.reduce((max, cell) => Math.max(max, colLetterToIndex(cell.colLetter)), 1);
+  xml = xml.replace(/<dimension ref="[^"]*"\/>/, `<dimension ref="A1:${indexToColLetter(maxColumn)}${lastDataRow}"/>`);
+  return { xml, lastDataRow };
+}
+
+/**
+ * Sheet 1.5 mirrors the same formula-backed pattern as 1.2, but its kW/kVA
+ * columns include legacy literal formulas for PPC 44B.  Preserve every
+ * existing formula and refresh only its cached value; plain kW/kVA cells are
+ * still written from the matching PPC record.
+ */
+function patchSrinakarinPpcAverageSheetXml(
+  sheetXml: string,
+  patches: InputPatch[],
+  sharedStrings: string[],
+  options: InputPatchOptions
+): InputPatchResult {
+  sheetXml = compactInputSheetRecords(sheetXml, sharedStrings, true).xml;
+  const sheetDataMatch = sheetXml.match(/<sheetData([^>]*)>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.5 AC PPC Log_Average has no sheetData.");
+  const rows = parseRows(sheetDataMatch[2]);
+  const header = rows.find(row => row.cells.some(cell => cellText(cell, sharedStrings).trim().toLowerCase() === "month"));
+  if (!header) throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.5 AC PPC Log_Average is missing its header.");
+
+  const columns = header.cells.map(cell => ({ key: cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, ""), column: cell.colLetter }));
+  const monthCol = columns.find(column => column.key === "month")?.column;
+  const idCol = columns.find(column => column.key.includes("acpowerpanel"))?.column;
+  const valueCols = {
+    voltage: columns.find(column => column.key.includes("voltage"))?.column,
+    current: columns.find(column => column.key.includes("current"))?.column,
+    loadKw: columns.find(column => column.key.includes("loadkw"))?.column,
+    loadKva: columns.find(column => column.key.includes("loadkva"))?.column
+  };
+  if (!monthCol || !idCol || Object.values(valueCols).some(column => !column)) {
+    throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.5 AC PPC Log_Average is missing a required mapped column.");
+  }
+
+  const byKey = new Map(patches.map(patch => [inputKey(patch.month, patch.id), patch]));
+  const existingKeys = new Set<string>();
+  const replaceCell = (raw: string, ref: string, replacement: string): string => {
+    const escapedRef = ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return raw.replace(new RegExp(`<c\\b(?=[^>]*\\br="${escapedRef}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`), replacement);
+  };
+  const renderedValue = (cell: ParsedCell | undefined, ref: string, value: number | null, rowDelta = 0): string => {
+    if (!cell) return buildCellXml(ref, null, "number", value);
+    const styleId = options.numberStyles?.get(cell.styleId ?? "0") ?? cell.styleId;
+    return cell.formula !== null
+      ? buildFormulaCellXml(ref, styleId, adjustFormulaRows(cell.formula, rowDelta), value)
+      : buildCellXml(ref, styleId, "number", value);
+  };
+
+  const patchedRows = rows.map(row => {
+    if (row.rowNumber <= header.rowNumber) return row.raw;
+    const monthCell = row.cells.find(cell => cell.colLetter === monthCol);
+    const idCell = row.cells.find(cell => cell.colLetter === idCol);
+    const patch = byKey.get(inputKey(monthCell ? cellText(monthCell, sharedStrings) : "", idCell ? cellText(idCell, sharedStrings) : undefined));
+    if (!patch) return row.raw;
+    existingKeys.add(inputKey(patch.month, patch.id));
+    let raw = row.raw;
+    raw = replaceCell(raw, `${monthCol}${row.rowNumber}`, buildCellXml(
+      `${monthCol}${row.rowNumber}`,
+      options.monthStyles?.get(monthCell?.styleId ?? "0") ?? monthCell?.styleId ?? null,
+      "month",
+      workbookMonthSerial(patch.month, options.date1904)
+    ));
+    for (const [field, column] of Object.entries(valueCols) as Array<[keyof typeof valueCols, string]>) {
+      const cell = row.cells.find(candidate => candidate.colLetter === column);
+      raw = replaceCell(raw, `${column}${row.rowNumber}`, renderedValue(cell, `${column}${row.rowNumber}`, patch.values[field] ?? null));
+    }
+    return raw;
+  });
+
+  let lastDataRow = rows.reduce((max, row) => Math.max(max, row.rowNumber), header.rowNumber);
+  const missingPatches = [...byKey.values()].filter(patch => !existingKeys.has(inputKey(patch.month, patch.id)));
+  for (const patch of missingPatches) {
+    const template = rows.find(row => {
+      const idCell = row.cells.find(cell => cell.colLetter === idCol);
+      return row.rowNumber > header.rowNumber && idCell !== undefined &&
+        cellText(idCell, sharedStrings).trim().toLowerCase() === patch.id?.trim().toLowerCase();
+    })
+      ?? rows.find(row => row.rowNumber > header.rowNumber && row.cells.some(cell => cell.colLetter === monthCol) && row.cells.some(cell => cell.colLetter === idCol));
+    if (!template) throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.5 AC PPC Log_Average has no row template.");
+    const rowNumber = ++lastDataRow;
+    const monthCell = template.cells.find(cell => cell.colLetter === monthCol);
+    const cells = [
+      buildCellXml(`${monthCol}${rowNumber}`, options.monthStyles?.get(monthCell?.styleId ?? "0") ?? monthCell?.styleId ?? null, "month", workbookMonthSerial(patch.month, options.date1904)),
+      buildCellXml(`${idCol}${rowNumber}`, null, "text", patch.id ?? null),
+      ...Object.entries(valueCols).map(([field, column]) => renderedValue(
+        template.cells.find(cell => cell.colLetter === column),
+        `${column}${rowNumber}`,
+        patch.values[field] ?? null,
+        rowNumber - template.rowNumber
+      ))
+    ].join("");
+    patchedRows.push(`<row ${copiedRowAttrs(template, rowNumber)}>${cells}</row>`);
+  }
+
+  const patchedSheetData = `<sheetData${sheetDataMatch[1]}>${patchedRows.join("")}<\/sheetData>`;
+  let xml = sheetXml.replace(sheetDataMatch[0], patchedSheetData);
+  const maxColumn = header.cells.reduce((max, cell) => Math.max(max, colLetterToIndex(cell.colLetter)), 1);
+  xml = xml.replace(/<dimension ref="[^"]*"\/>/, `<dimension ref="A1:${indexToColLetter(maxColumn)}${lastDataRow}"/>`);
+  return { xml, lastDataRow };
+}
+
+type Ppc43AverageFormulaField = "voltage" | "current";
+
+/** A valid C/D formula must remain tied to the matching 1.4.1 Month and PPC. */
+function isValidPpc43AverageFormula(field: Ppc43AverageFormulaField, formula: string | null | undefined): formula is string {
+  if (!formula || /#(?:REF|VALUE|DIV\/0)/i.test(formula)) return false;
+  const normalized = xmlUnescape(formula).replace(/\s+/g, "").toLowerCase();
+  const source = field === "voltage" ? "l43ab[voltage(v)]" : "l43ab[current(a)]";
+  return [
+    "averageifs(",
+    source,
+    "l43ab[month]",
+    "ppc_data43ab[[#thisrow],[month]]",
+    "l43ab[acpowerpanel]",
+    "ppc_data43ab[[#thisrow],[acpowerpanel]]&\"-*\""
+  ].every(token => normalized.includes(token));
+}
+
+/**
+ * Sheet 1.5.1 is likewise formula-backed: the workbook owns its AVERAGEIFS
+ * and SUMIFS formulas, while the save path refreshes their matching-month
+ * cached results from the same 1.4.1 / 1.7 source values.
+ */
+function patchSrinakarinPpc43AverageSheetXml(
+  sheetXml: string,
+  patches: InputPatch[],
+  sharedStrings: string[],
+  options: InputPatchOptions
+): InputPatchResult {
+  sheetXml = compactInputSheetRecords(sheetXml, sharedStrings, true).xml;
+  const sheetDataMatch = sheetXml.match(/<sheetData([^>]*)>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.5.1 AC PPC Log_Average(43AB) has no sheetData.");
+  const rows = parseRows(sheetDataMatch[2]);
+  const header = rows.find(row => row.cells.some(cell => cellText(cell, sharedStrings).trim().toLowerCase() === "month"));
+  if (!header) throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.5.1 AC PPC Log_Average(43AB) is missing its header.");
+
+  const headerColumns = header.cells.map(cell => [cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, ""), cell.colLetter] as const);
+  const columnFor = (field: string): string | undefined => {
+    const normalized = field.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return headerColumns.find(([key]) => key === normalized || key.includes(normalized))?.[1];
+  };
+  const monthCol = columnFor("month");
+  const idCol = headerColumns.find(([key]) => key.includes("panel") || key.includes("acpower"))?.[1];
+  const formulaFields = ["voltage", "current", "loadKw", "loadKva"];
+  if (!monthCol || !idCol || formulaFields.some(field => !columnFor(field))) {
+    throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.5.1 AC PPC Log_Average(43AB) is missing a required mapped column.");
+  }
+
+  const nearestValidFormulaCell = (field: Ppc43AverageFormulaField, rowNumber: number): ParsedCell | undefined => {
+    const column = columnFor(field)!;
+    return rows
+      .filter(row => row.rowNumber > header.rowNumber)
+      .sort((left, right) => Math.abs(left.rowNumber - rowNumber) - Math.abs(right.rowNumber - rowNumber))
+      .map(row => row.cells.find(cell => cell.colLetter === column))
+      .find(cell => isValidPpc43AverageFormula(field, cell?.formula));
+  };
+
+  const formulaCellXml = (cell: ParsedCell | undefined, ref: string, value: number | null, rowDelta = 0): string => {
+    if (!cell || cell.formula === null) {
+      throw new WorkbookError("INVALID_WORKBOOK", `Sheet 1.5.1 AC PPC Log_Average(43AB) is missing its formula at ${ref}.`);
+    }
+    const styleId = options.numberStyles?.get(cell.styleId ?? "0") ?? cell.styleId;
+    return buildFormulaCellXml(ref, styleId, adjustFormulaRows(cell.formula, rowDelta), value);
+  };
+
+  // C/D are the only formulas repaired here.  E/F keep their established
+  // formula handling because their workbook formulas are outside this fix.
+  const restoredAverageFormulaCellXml = (
+    field: Ppc43AverageFormulaField,
+    cell: ParsedCell | undefined,
+    ref: string,
+    value: number | null
+  ): string => {
+    const source = isValidPpc43AverageFormula(field, cell?.formula)
+      ? cell
+      : nearestValidFormulaCell(field, Number(ref.replace(/^[A-Z]+/, "")));
+    if (!source?.formula) {
+      throw new WorkbookError("INVALID_WORKBOOK", `Sheet 1.5.1 AC PPC Log_Average(43AB) has no valid ${field} formula template for ${ref}.`);
+    }
+    const styleId = options.numberStyles?.get(cell?.styleId ?? source.styleId ?? "0") ?? (cell?.styleId ?? source.styleId);
+    // C/D use structured references only.  Do not run the generic A1 row
+    // shifter here: it misreads the L43AB table name as cell L43 and corrupts
+    // it when appending a row.
+    return buildFormulaCellXml(ref, styleId, source.formula, value);
+  };
+
+  const byKey = new Map(patches.map(patch => [inputKey(patch.month, patch.id), patch]));
+  const existingKeys = new Set<string>();
+  const patchedRows = rows.map(row => {
+    if (row.rowNumber <= header.rowNumber) return row.raw;
+    const monthCell = row.cells.find(cell => cell.colLetter === monthCol);
+    const idCell = row.cells.find(cell => cell.colLetter === idCol);
+    const patch = byKey.get(inputKey(monthCell ? cellText(monthCell, sharedStrings) : "", idCell ? cellText(idCell, sharedStrings) : undefined));
+    if (!patch) return row.raw;
+    existingKeys.add(inputKey(patch.month, patch.id));
+    let raw = row.raw;
+    const replaceCell = (ref: string, replacement: string): void => {
+      const escapedRef = ref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      raw = raw.replace(new RegExp(`<c\\b(?=[^>]*\\br="${escapedRef}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`), replacement);
+    };
+    if (monthCell) {
+      replaceCell(`${monthCol}${row.rowNumber}`, buildCellXml(
+        `${monthCol}${row.rowNumber}`,
+        options.monthStyles?.get(monthCell.styleId ?? "0") ?? monthCell.styleId,
+        "month",
+        workbookMonthSerial(patch.month, options.date1904)
+      ));
+    }
+    for (const field of formulaFields) {
+      const column = columnFor(field)!;
+      const cell = row.cells.find(candidate => candidate.colLetter === column);
+      const replacement = field === "voltage" || field === "current"
+        ? restoredAverageFormulaCellXml(field, cell, `${column}${row.rowNumber}`, patch.values[field] ?? null)
+        : formulaCellXml(cell, `${column}${row.rowNumber}`, patch.values[field] ?? null);
+      replaceCell(`${column}${row.rowNumber}`, replacement);
+    }
+    return raw;
+  });
+
+  const template = rows.find(row => row.rowNumber > header.rowNumber &&
+    row.cells.find(cell => cell.colLetter === monthCol) && row.cells.find(cell => cell.colLetter === idCol));
+  let lastDataRow = rows.reduce((max, row) => Math.max(max, row.rowNumber), header.rowNumber);
+  const missingPatches = [...byKey.values()].filter(patch => !existingKeys.has(inputKey(patch.month, patch.id)));
+  if (missingPatches.length > 0 && !template) {
+    throw new WorkbookError("INVALID_WORKBOOK", "Sheet 1.5.1 AC PPC Log_Average(43AB) has no formula template row.");
+  }
+  for (const patch of missingPatches) {
+    const rowNumber = ++lastDataRow;
+    const monthCell = template!.cells.find(cell => cell.colLetter === monthCol)!;
+    const cells = [
+      buildCellXml(`${monthCol}${rowNumber}`, options.monthStyles?.get(monthCell.styleId ?? "0") ?? monthCell.styleId, "month", workbookMonthSerial(patch.month, options.date1904)),
+      buildCellXml(`${idCol}${rowNumber}`, null, "text", patch.id ?? null),
+      ...formulaFields.map(field => {
+        const column = columnFor(field)!;
+        const cell = template!.cells.find(cell => cell.colLetter === column);
+        return field === "voltage" || field === "current"
+          ? restoredAverageFormulaCellXml(field, cell, `${column}${rowNumber}`, patch.values[field] ?? null)
+          : formulaCellXml(cell, `${column}${rowNumber}`, patch.values[field] ?? null, rowNumber - template!.rowNumber);
+      })
+    ].join("");
+    patchedRows.push(`<row ${copiedRowAttrs(template!, rowNumber)}>${cells}</row>`);
+  }
+
+  const patchedSheetData = `<sheetData${sheetDataMatch[1]}>${patchedRows.join("")}<\/sheetData>`;
+  let xml = sheetXml.replace(sheetDataMatch[0], patchedSheetData);
+  const maxColumn = header.cells.reduce((max, cell) => Math.max(max, colLetterToIndex(cell.colLetter)), 1);
+  xml = xml.replace(/<dimension ref="[^"]*"\/>/, `<dimension ref="A1:${indexToColLetter(maxColumn)}${lastDataRow}"/>`);
+  return { xml, lastDataRow };
+}
+
+/** Verify the repaired C/D formulas and Dashboard-FAC's existing dependency path. */
+async function validateSrinakarinPpc43AveragePersistence(
+  zip: JSZip,
+  sheets: SheetLocation[],
+  sharedStrings: string[],
+  patches: InputPatch[]
+): Promise<void> {
+  if (patches.length === 0) return;
+  // Match the patcher's last-write-wins behavior when callers submit a
+  // selected-month update alongside an older in-memory copy of that month.
+  const finalPatches = [...new Map(patches.map(patch => [inputKey(patch.month, patch.id), patch])).values()];
+  const averageLocation = sheets.find(sheet => sheet.name === "1.5.1 AC PPC Log_Average(43AB)");
+  if (!averageLocation) throw new WorkbookError("VALIDATION_FAILED", "PPC43 average validation failed: Sheet 1.5.1 AC PPC Log_Average(43AB) is missing.", "validate");
+  const averageXml = await entryText(zip, averageLocation.xmlPath);
+  const sheetData = averageXml?.match(/<sheetData[^>]*>([\s\S]*?)<\/sheetData>/)?.[1];
+  if (!sheetData) throw new WorkbookError("VALIDATION_FAILED", "PPC43 average validation failed: Sheet 1.5.1 has no sheetData.", "validate");
+  const rows = parseRows(sheetData);
+  const header = rows.find(row => row.cells.some(cell => cellText(cell, sharedStrings).trim().toLowerCase() === "month"));
+  if (!header) throw new WorkbookError("VALIDATION_FAILED", "PPC43 average validation failed: Sheet 1.5.1 header is missing.", "validate");
+  const columnFor = (field: string): string | undefined => header.cells
+    .map(cell => [cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, ""), cell.colLetter] as const)
+    .find(([name]) => name === field || name.includes(field))?.[1];
+  const monthCol = columnFor("month");
+  const idCol = header.cells
+    .map(cell => [cellText(cell, sharedStrings).toLowerCase().replace(/[^a-z0-9]/g, ""), cell.colLetter] as const)
+    .find(([name]) => name.includes("panel") || name.includes("acpower"))?.[1];
+  const voltageCol = columnFor("voltage");
+  const currentCol = columnFor("current");
+  if (!monthCol || !idCol || !voltageCol || !currentCol) {
+    throw new WorkbookError("VALIDATION_FAILED", "PPC43 average validation failed: Sheet 1.5.1 C/D mapping is missing.", "validate");
+  }
+
+  const rowByKey = new Map<string, ParsedRow[]>();
+  for (const row of rows.filter(candidate => candidate.rowNumber > header.rowNumber)) {
+    const monthCell = row.cells.find(cell => cell.colLetter === monthCol);
+    const idCell = row.cells.find(cell => cell.colLetter === idCol);
+    if (!monthCell || !idCell) continue;
+    const month = cellText(monthCell, sharedStrings);
+    const id = cellText(idCell, sharedStrings);
+    const key = inputKey(month, id);
+    if (!normalizeMonthCell(month) || !id.trim()) continue;
+    const matches = rowByKey.get(key) ?? [];
+    matches.push(row);
+    rowByKey.set(key, matches);
+  }
+  const failure = (patch: InputPatch, field: Ppc43AverageFormulaField, ref: string, reason: string): WorkbookError =>
+    new WorkbookError("VALIDATION_FAILED", `PPC43 average validation failed for ${patch.month}, ${patch.id}, ${field === "voltage" ? "Voltage (V)" : "Current (A)"}, ${ref}: ${reason}`, "validate");
+
+  for (const patch of finalPatches) {
+    const matchingRows = rowByKey.get(inputKey(patch.month, patch.id)) ?? [];
+    if (matchingRows.length !== 1) {
+      throw failure(patch, "voltage", `${voltageCol}?`, matchingRows.length === 0 ? "matching Month/PPC row is missing" : "matching Month/PPC rows are duplicated");
+    }
+    const row = matchingRows[0];
+    for (const [field, column] of [["voltage", voltageCol], ["current", currentCol]] as const) {
+      const ref = `${column}${row.rowNumber}`;
+      const cell = row.cells.find(candidate => candidate.colLetter === column);
+      if (!isValidPpc43AverageFormula(field, cell?.formula)) {
+        throw failure(patch, field, ref, "formula does not reference the matching 1.4.1 Month and PPC source");
+      }
+      const expected = patch.values[field];
+      const actual = Number(cellText(cell, sharedStrings));
+      if (typeof expected !== "number" || !Number.isFinite(expected) || !Number.isFinite(actual)) {
+        throw failure(patch, field, ref, "calculated value is not a finite number");
+      }
+      if (Math.abs(actual - expected) > 1e-9) {
+        throw failure(patch, field, ref, `cached value ${actual} does not match calculated value ${expected}`);
+      }
+    }
+  }
+
+  const dashboardLocation = sheets.find(sheet => sheet.name === "Dashboard-FAC");
+  const dashboardXml = dashboardLocation ? await entryText(zip, dashboardLocation.xmlPath) : null;
+  const dashboardData = dashboardXml?.match(/<sheetData[^>]*>([\s\S]*?)<\/sheetData>/)?.[1];
+  if (!dashboardData) throw new WorkbookError("VALIDATION_FAILED", "PPC43 average validation failed: Dashboard-FAC is missing its data.", "validate");
+  const dashboardRows = parseRows(dashboardData);
+  const activeMonthCell = dashboardRows.find(row => row.rowNumber === 1)?.cells.find(cell => cell.colLetter === "H");
+  const activeMonth = activeMonthCell ? normalizeMonthCell(cellText(activeMonthCell, sharedStrings)) : null;
+  for (const id of ["PPC 43A", "PPC 43B"]) {
+    const row = dashboardRows.find(candidate => candidate.cells.some(cell => cellText(cell, sharedStrings).trim() === id));
+    if (!row) throw new WorkbookError("VALIDATION_FAILED", `PPC43 average validation failed: Dashboard-FAC row for ${id} is missing.`, "validate");
+    for (const [field, sourceToken] of [["voltage", "ppc_data43ab[voltage(v)]"], ["current", "ppc_data43ab[current(a)]"]] as const) {
+      const cell = row.cells.find(candidate => (candidate.formula ?? "").replace(/\s+/g, "").toLowerCase().includes(sourceToken));
+      const normalizedFormula = cell?.formula?.replace(/\s+/g, "").toLowerCase() ?? "";
+      if (!cell || !normalizedFormula.includes("xlookup(") || !normalizedFormula.includes("ppc_data43ab[month]=$h$1") || !normalizedFormula.includes("ppc_data43ab[acpowerpanel]")) {
+        throw new WorkbookError("VALIDATION_FAILED", `PPC43 average validation failed: Dashboard-FAC ${id} ${field} dependency formula was changed.`, "validate");
+      }
+      const activePatch = activeMonth ? finalPatches.find(patch => patch.month === activeMonth && patch.id === id) : undefined;
+      if (activePatch) {
+        const actual = Number(cellText(cell, sharedStrings));
+        const expected = activePatch.values[field];
+        if (typeof expected !== "number" || !Number.isFinite(expected) || !Number.isFinite(actual) || Math.abs(actual - expected) > 1e-9) {
+          throw new WorkbookError("VALIDATION_FAILED", `PPC43 average validation failed: Dashboard-FAC ${id} ${field} is incomplete for ${activeMonth}.`, "validate");
+        }
+      }
+    }
+  }
+}
+
+function finiteValues(rows: InputPatch[], field: string): number[] {
+  return rows.map(row => row.values[field]).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+}
+
+/** Exact cached results of Sheet 1.2's AVERAGEIFS/SUMIFS formula pair. */
+function deriveSrinakarinUpsAveragePatches(phasePatches: InputPatch[]): InputPatch[] {
+  const finalPhaseByKey = new Map(phasePatches.map(patch => [inputKey(patch.month, patch.id), patch]));
+  const groups = new Map<string, InputPatch[]>();
+  for (const patch of finalPhaseByKey.values()) {
+    const baseId = patch.id?.replace(/\s+-\s+[RST]$/i, "").trim();
+    if (!baseId) continue;
+    const key = inputKey(patch.month, baseId);
+    const group = groups.get(key) ?? [];
+    group.push(patch);
+    groups.set(key, group);
+  }
+  return [...groups.entries()].map(([key, phases]) => {
+    const separator = key.indexOf("|");
+    const month = key.slice(0, separator);
+    const id = phases[0].id!.replace(/\s+-\s+[RST]$/i, "").trim();
+    const average = (field: string): number | null => {
+      const values = finiteValues(phases, field);
+      return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+    };
+    const sum = (field: string): number => finiteValues(phases, field).reduce((total, value) => total + value, 0);
+    return { month, id, values: { voltage: average("voltage"), current: average("current"), loadKw: sum("loadKw"), loadKva: sum("loadKva") } };
+  });
+}
+
+/** Sheet 1.3 stores the paired-A/B kW and kVA sums from Sheet 1.2. */
+function deriveSrinakarinUpsSumPatches(averagePatches: InputPatch[]): InputPatch[] {
+  const groups = new Map<string, InputPatch[]>();
+  for (const patch of averagePatches) {
+    const baseId = patch.id?.replace(/[AB]$/i, "").trim();
+    if (!baseId || !/[AB]$/i.test(patch.id ?? "")) continue;
+    const key = inputKey(patch.month, baseId);
+    const group = groups.get(key) ?? [];
+    group.push(patch);
+    groups.set(key, group);
+  }
+  return [...groups.entries()].map(([key, rows]) => {
+    const separator = key.indexOf("|");
+    return {
+      month: key.slice(0, separator),
+      id: rows[0].id!.replace(/[AB]$/i, "").trim(),
+      values: {
+        loadKw: finiteValues(rows, "loadKw").reduce((total, value) => total + value, 0),
+        loadKva: finiteValues(rows, "loadKva").reduce((total, value) => total + value, 0)
+      }
+    };
+  });
+}
+
+const SRINAKARIN_PPC_AVERAGE_IDS = new Set(["PPC 41A", "PPC 41B", "PPC 42A", "PPC 42B", "PPC 44A", "PPC 44B"]);
+
+/** Cached values for Sheet 1.5: V/A from its 1.4 AVERAGEIFS source; kW/kVA from the corresponding PPC row. */
+function deriveSrinakarinPpcAveragePatches(logs: MonthlyLog[], phasePatches: InputPatch[]): InputPatch[] {
+  const phasesByKey = new Map<string, InputPatch[]>();
+  // Match the source-sheet writer: a later edit for the same Month/PPC/phase
+  // replaces the earlier value before Sheet 1.5's AVERAGEIFS cache is formed.
+  const finalPhaseByKey = new Map(phasePatches.map(patch => [inputKey(patch.month, patch.id), patch]));
+  for (const patch of finalPhaseByKey.values()) {
+    const baseId = patch.id?.replace(/\s+-\s+[RST]$/i, "").trim();
+    if (!baseId || !SRINAKARIN_PPC_AVERAGE_IDS.has(baseId)) continue;
+    const key = inputKey(patch.month, baseId);
+    const phases = phasesByKey.get(key) ?? [];
+    phases.push(patch);
+    phasesByKey.set(key, phases);
+  }
+  const average = (rows: InputPatch[], field: string): number | null => {
+    const values = finiteValues(rows, field);
+    return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  };
+  const patches: InputPatch[] = [];
+  for (const log of logs) {
+    for (const record of log.ups) {
+      const id = record.upsId.replace(/\s+/g, " ").trim();
+      if (!SRINAKARIN_PPC_AVERAGE_IDS.has(id)) continue;
+      const phases = phasesByKey.get(inputKey(log.month, id)) ?? [];
+      // Sheet 1.5 is the calculated view of 1.4. Do not manufacture PPC
+      // rows for historical aggregate-only months that have no 1.4 source.
+      if (phases.length === 0) continue;
+      patches.push({
+        month: log.month,
+        id,
+        values: {
+          voltage: average(phases, "voltage"),
+          current: average(phases, "current"),
+          loadKw: record.loadKw,
+          loadKva: record.loadKva
+        }
+      });
+    }
+  }
+  return patches;
+}
+
+/** Cached results for Sheet 1.5.1's existing AVERAGEIFS/SUMIFS formulas. */
+function deriveSrinakarinPpc43AveragePatches(logs: MonthlyLog[]): InputPatch[] {
+  const normalized = (value: string): string => value.replace(/\s+/g, " ").trim().toLowerCase();
+  const average = (values: Array<number | null | undefined>): number | null => {
+    const present = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    return present.length ? present.reduce((sum, value) => sum + value, 0) / present.length : null;
+  };
+  const sum = (values: Array<number | null | undefined>): number | null => {
+    const present = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    return present.length ? present.reduce((total, value) => total + value, 0) : null;
+  };
+
+  return logs.flatMap(log => ["PPC 43A", "PPC 43B"].flatMap(id => {
+    const input = log.srinakarinInputs;
+    const phases = Object.entries(input?.acPhase ?? {})
+      .filter(([phaseId]) => normalized(phaseId).startsWith(`${normalized(id)} - `));
+    if (phases.length === 0) return [];
+    const requiredPhases = ["R", "S", "T"].map(phase => {
+      const phaseRecord = Object.entries(input?.acPhase ?? {})
+        .find(([phaseId]) => normalized(phaseId) === normalized(`${id} - ${phase}`));
+      if (!phaseRecord || typeof phaseRecord[1].voltage !== "number" || !Number.isFinite(phaseRecord[1].voltage)) {
+        throw new WorkbookError(
+          "VALIDATION_FAILED",
+          `PPC43 average validation failed for ${log.month}, ${id}, Voltage (V), C: ${phase} phase voltage is required.`,
+          "validate"
+        );
+      }
+      let current: number | null;
+      try {
+        current = ppc43PanelCurrentTotal(input, log.month, phaseRecord[0]);
+      } catch (error) {
+        throw new WorkbookError(
+          "VALIDATION_FAILED",
+          `PPC43 average validation failed for ${log.month}, ${id}, Current (A), D: ${error instanceof Error ? error.message : "Panel 1 and Panel 2 current are required."}`,
+          "validate"
+        );
+      }
+      if (typeof current !== "number" || !Number.isFinite(current)) {
+        throw new WorkbookError(
+          "VALIDATION_FAILED",
+          `PPC43 average validation failed for ${log.month}, ${id}, Current (A), D: ${phase} phase Panel 1 + Panel 2 current is required.`,
+          "validate"
+        );
+      }
+      return { voltage: phaseRecord[1].voltage, current };
+    });
+    const panels = Object.entries(input?.ppc43Panel ?? {})
+      .filter(([panelId]) => normalized(panelId).startsWith(`${normalized(id)} panel `));
+    return [{
+      month: log.month,
+      id,
+      values: {
+        voltage: average(requiredPhases.map(phase => phase.voltage)),
+        // 1.4.1's Current formula is SUMIFS over Sheet 1.6. Match those
+        // three Panel 1 + Panel 2 phase totals exactly.
+        current: average(requiredPhases.map(phase => phase.current)),
+        loadKw: panels.length ? sum(panels.map(([, values]) => values.loadKw)) : null,
+        loadKva: panels.length ? sum(panels.map(([, values]) => values.loadKva)) : null
+      }
+    }];
+  }));
+}
+
 function srinakarinInputPatches(logs: MonthlyLog[]): Record<string, InputPatch[]> {
   const result: Record<string, InputPatch[]> = {
-    "1. UPS Data Log": [],
     "1.1 UPS Data Log By Phase": [],
+    "1.2 UPS Data Log_Average": [],
+    "1.3 UPS Data Log_Average SUM": [],
+    "1. UPS Data Log": [],
     "1.4 AC PPC Log By Phase": [],
     "1.4.1 AC PPC Log By Phase(43AB)": [],
     "1.6 AC PPC43 (A)": [],
     "1.7 AC PPC43 Panel (A)": [],
+    "1.5.1 AC PPC Log_Average(43AB)": [],
+    "1.5 AC PPC Log_Average": [],
     "2. Air Energy Consumption Log": [],
     "3. DC Data Log": [],
     "4. Electricity Cost Log": []
   };
   for (const log of logs) {
-    for (const aggregate of calculateSrinakarinAggregate(log)) {
-      result["1. UPS Data Log"].push({
-        month: log.month,
-        id: aggregate.upsId,
-        values: {
-          voltage: aggregate.voltage,
-          current: aggregate.current,
-          loadKw: aggregate.loadKw,
-          loadKva: aggregate.loadKva
-        }
-      });
+    if (isMonthIn2026(log.month)) {
+      for (const aggregate of calculateSrinakarinAggregate(log)) {
+        result["1. UPS Data Log"].push({
+          month: log.month,
+          id: aggregate.upsId,
+          values: {
+            voltage: aggregate.voltage,
+            current: aggregate.current,
+            loadKw: aggregate.loadKw,
+            loadKva: aggregate.loadKva
+          }
+        });
+      }
     }
     const input: SrinakarinInputSnapshot | undefined = log.srinakarinInputs;
     for (const [id, values] of Object.entries(input?.upsPhase ?? {})) result["1.1 UPS Data Log By Phase"].push({ month: log.month, id, values });
@@ -548,19 +1659,39 @@ function srinakarinInputPatches(logs: MonthlyLog[]): Record<string, InputPatch[]
       }
     }
     for (const [id, values] of Object.entries(input?.acPhase ?? {})) {
-      const target = id.includes("43") ? "1.4.1 AC PPC Log By Phase(43AB)" : "1.4 AC PPC Log By Phase";
-      result[target].push({ month: log.month, id, values });
+      const target = isPpc43Id(id) ? "1.4.1 AC PPC Log By Phase(43AB)" : "1.4 AC PPC Log By Phase";
+      const totalCurrent = target === "1.4.1 AC PPC Log By Phase(43AB)"
+        ? ppc43PanelCurrentTotal(input, log.month, id)
+        : null;
+      result[target].push({
+        month: log.month,
+        id,
+        values: totalCurrent === null ? values : { ...values, current: totalCurrent }
+      });
     }
     for (const [id, value] of Object.entries(input?.ppc43Current ?? {})) result["1.6 AC PPC43 (A)"].push({ month: log.month, id, values: { panelcurrenta: value } });
     for (const [id, values] of Object.entries(input?.ppc43Panel ?? {})) result["1.7 AC PPC43 Panel (A)"].push({ month: log.month, id, values });
     const airValues: Record<string, number | null> = {};
     for (const field of log.energyCalculation?.airFields ?? ["eb41a", "eb41b", "eb42a", "eb42b"]) {
-      airValues[field] = log.air.meters?.[field] ?? (log.air as unknown as Record<string, number | null | undefined>)[field] ?? null;
+      airValues[field] = getAirValue(log, field);
     }
     result["2. Air Energy Consumption Log"].push({ month: log.month, values: airValues });
     for (const dc of log.dc) result["3. DC Data Log"].push({ month: log.month, id: dc.panelId, values: { voltage: dc.voltage, current: dc.current } });
-    result["4. Electricity Cost Log"].push({ month: log.month, values: { buildingenergyconsumptionkwh: log.energyCost.buildingEnergyKwh, buildingelectricitycostthb: log.energyCost.buildingElectricityCostThb } });
+    const energy = calculateEnergyCostForMonth(logs, log.month);
+    result["4. Electricity Cost Log"].push({
+      month: log.month,
+      values: {
+        buildingenergyconsumptionkwh: log.energyCost.buildingEnergyKwh,
+        buildingelectricitycostthb: log.energyCost.buildingElectricityCostThb,
+        floorelectricitycostthb: energy.floorElectricityCostThb,
+        averageelectricityratethbkwh: energy.averageElectricityRateThbPerKwh
+      }
+    });
   }
+  result["1.2 UPS Data Log_Average"] = deriveSrinakarinUpsAveragePatches(result["1.1 UPS Data Log By Phase"]);
+  result["1.3 UPS Data Log_Average SUM"] = deriveSrinakarinUpsSumPatches(result["1.2 UPS Data Log_Average"]);
+  result["1.5 AC PPC Log_Average"] = deriveSrinakarinPpcAveragePatches(logs, result["1.4 AC PPC Log By Phase"]);
+  result["1.5.1 AC PPC Log_Average(43AB)"] = deriveSrinakarinPpc43AveragePatches(logs);
   return result;
 }
 
@@ -577,7 +1708,10 @@ function patchSheetXml(
   schema: SheetSchema,
   rows: SheetRow[],
   sharedStrings: string[],
-  energyStyles?: EnergyStyleOverrides
+  numberStyles: Map<string, string>,
+  monthStyles: Map<string, string>,
+  centeredStyles: Map<string, string>,
+  date1904: boolean
 ): { xml: string; lastDataRow: number; headerRowNumber: number } {
   const sheetDataMatch = xml.match(/<sheetData\s*\/>|<sheetData>([\s\S]*?)<\/sheetData>/);
   if (!sheetDataMatch) throw new WorkbookError("INVALID_WORKBOOK", `Sheet for ${schema.key} has no sheetData.`);
@@ -635,19 +1769,7 @@ function patchSheetXml(
           "Energy 4th Floor Electricity Cost must be a stored-value column, not a formula column."
         );
       }
-      if (field === "averageElectricityRateThbPerKwh" && hasStoredValue) {
-        throw new WorkbookError(
-          "INVALID_WORKBOOK",
-          "Energy Average Electricity Rate must remain a formula-managed column."
-        );
-      }
-      if (field === "averageElectricityRateThbPerKwh" && cells.length > 0 && !hasFormula) {
-        throw new WorkbookError(
-          "INVALID_WORKBOOK",
-          "Energy Average Electricity Rate has no formula template to preserve."
-        );
-      }
-      if (hasFormula && hasStoredValue) {
+      if (hasFormula && hasStoredValue && field !== "averageElectricityRateThbPerKwh") {
         throw new WorkbookError(
           "INVALID_WORKBOOK",
           `Energy calculated column ${field} mixes formulas and stored values.`
@@ -684,16 +1806,29 @@ function patchSheetXml(
   const extraCols = orderedCols.filter(c => !managedCols.has(c));
 
   // --- Style / formula templates from the last data row (fallback: first) ---
-  const rowsWithMonth = schema.key === "ENERGY"
-    ? dataRows.filter(row => {
-        const monthCell = row.cells.find(cell => cell.colLetter === byField!.get("month"));
-        return normalizeMonthCell(monthCell ? cellText(monthCell, sharedStrings) : null) !== null;
-      })
-    : dataRows;
-  const templateRow = rowsWithMonth[rowsWithMonth.length - 1] ?? dataRows[dataRows.length - 1] ?? null;
+  const monthCol = byField.get("month")!;
+  const deviceCol = byField.get("deviceId") ?? null;
+  // The workbook templates include preformatted empty rows.  They must not
+  // become the style/formula source for an actual record.
+  const validDataRows = dataRows.filter(row => {
+    const monthCell = row.cells.find(cell => cell.colLetter === monthCol);
+    if (!normalizeMonthCell(monthCell ? cellText(monthCell, sharedStrings) : null)) return false;
+    if (!deviceCol) return true;
+    const deviceCell = row.cells.find(cell => cell.colLetter === deviceCol);
+    return Boolean(deviceCell && cellText(deviceCell, sharedStrings).trim());
+  });
+  const rowsWithMonth = validDataRows;
+  const templateRow = rowsWithMonth[rowsWithMonth.length - 1] ?? null;
   const templateByCol = new Map<string, ParsedCell>();
   if (templateRow) for (const cell of templateRow.cells) templateByCol.set(cell.colLetter, cell);
   const templateRowNumber = templateRow?.rowNumber ?? headerRowNumber + 1;
+  const appStyleId = (field: FieldId, col: string, row?: ParsedRow): string | null => {
+    const sourceStyle = row?.cells.find(cell => cell.colLetter === col)?.styleId ?? templateByCol.get(col)?.styleId ?? "0";
+    const kind = schema.columns.find(column => column.field === field)?.kind;
+    const styles = field === "month" ? monthStyles : kind === "number" ? numberStyles : undefined;
+    const formattedStyle = styles?.get(sourceStyle) ?? sourceStyle;
+    return centeredStyles.get(formattedStyle) ?? (formattedStyle === "0" ? null : formattedStyle);
+  };
   let formulaTemplateRowNumber = templateRowNumber;
   if (schema.key === "ENERGY") {
     const averageRateColumn = byField.get("averageElectricityRateThbPerKwh");
@@ -709,10 +1844,9 @@ function patchSheetXml(
     }
   }
   // --- Carry unmanaged cells across the rewrite, keyed by row identity ---
-  const monthCol = byField.get("month")!;
-  const deviceCol = byField.get("deviceId") ?? null;
   const extrasByKey = new Map<string, Map<string, ParsedCell>>();
-  for (const row of dataRows) {
+  const sourceRowsByKey = new Map<string, ParsedRow>();
+  for (const row of validDataRows) {
     const monthCell = row.cells.find(c => c.colLetter === monthCol);
     const monthText = monthCell ? cellText(monthCell, sharedStrings) : "";
     const month = normalizeMonthCell(monthText !== "" ? monthText : null);
@@ -724,19 +1858,31 @@ function patchSheetXml(
       if (!managedCols.has(cell.colLetter)) map.set(cell.colLetter, cell);
     }
     extrasByKey.set(key, map);
+    sourceRowsByKey.set(key, row);
   }
 
   // --- Generate new data rows ---
   const columnKind = new Map<FieldId, "month" | "text" | "number" | "timestamp">();
   for (const col of schema.columns) columnKind.set(col.field, col.kind);
 
+  const rowsByKey = new Map<string, SheetRow>();
+  for (const row of rows) {
+    rowsByKey.set(rowKey(schema.key, row.month, (row.values.deviceId as string) ?? null), row);
+  }
+  const rowsToWrite = [...rowsByKey.values()];
+  const rowAttrs = (rowNumber: number, sourceRow?: ParsedRow): string => {
+    const source = sourceRow ?? templateRow;
+    const attrs = source?.raw.match(/^<row\b([^>]*)>/)?.[1] ?? "";
+    return attrs.replace(/\br="\d+"/, `r="${rowNumber}"`).trim() || `r="${rowNumber}"`;
+  };
   const newRowsXml: string[] = [];
   let rowNumber = headerRowNumber;
-  for (const row of rows) {
+  for (const row of rowsToWrite) {
     rowNumber++;
     const cellsXml: string[] = [];
     const key = rowKey(schema.key, row.month, (row.values.deviceId as string) ?? null);
     const extras = extrasByKey.get(key);
+    const sourceRow = sourceRowsByKey.get(key);
 
     for (const col of orderedCols) {
       const ref = `${col}${rowNumber}`;
@@ -744,69 +1890,48 @@ function patchSheetXml(
       const resolvedField = Array.from(byField.entries()).find(([, fieldCol]) => fieldCol === col)?.[0];
 
       if (field) {
-        const template = templateByCol.get(col);
-        const styleId = schema.key === "ENERGY" && energyStyles &&
-          (field === "buildingEnergyKwh" || field === "buildingElectricityCostThb")
-          ? energyStyles.numberStyleId
-          : template?.styleId ?? null;
         if (field === "month") {
-          cellsXml.push(buildCellXml(ref, styleId, "month", yyyyMmToExcelSerial(row.month)));
+          cellsXml.push(buildCellXml(ref, appStyleId(field, col, sourceRow), "month", workbookMonthSerial(row.month, date1904)));
         } else if (field === "deviceId") {
-          cellsXml.push(buildCellXml(ref, styleId, "text", String(row.values.deviceId ?? "")));
+          cellsXml.push(buildCellXml(ref, appStyleId(field, col, sourceRow), "text", String(row.values.deviceId ?? "")));
         } else {
           const kind = columnKind.get(field) ?? "number";
           const value = row.values[field] ?? null;
-          cellsXml.push(buildCellXml(ref, styleId, kind, value as string | number | null));
+          cellsXml.push(buildCellXml(ref, appStyleId(field, col, sourceRow), kind, value as string | number | null));
         }
         continue;
       }
 
-      // Calculated floor cost is stored as a numeric value, while the rate
-      // column remains a workbook-managed formula. A null calculation clears
-      // any stale stored value but retains the exact numeric-cell format.
+      // Calculated Energy fields are exported as final numeric values.
       if (schema.key === "ENERGY" && resolvedField === "floorElectricityCostThb") {
         const value = row.values.floorElectricityCostThb;
-        if (value !== null && value !== undefined) {
-          cellsXml.push(buildCellXml(ref, energyStyles?.numberStyleId ?? templateByCol.get(col)?.styleId ?? null, "number", value as number));
-        } else {
-          cellsXml.push(buildCellXml(ref, energyStyles?.numberStyleId ?? templateByCol.get(col)?.styleId ?? null, "number", null));
-        }
+        cellsXml.push(buildCellXml(ref, appStyleId(resolvedField, col, sourceRow), "number", value as number | null));
+        continue;
+      }
+      if (schema.key === "ENERGY" && resolvedField === "averageElectricityRateThbPerKwh") {
+        cellsXml.push(buildCellXml(ref, appStyleId(resolvedField, col, sourceRow), "number", cachedAverageRate(row)));
         continue;
       }
 
       // Unmanaged column: carry the original cell, else derive from template.
       const carried = extras?.get(col);
       if (carried) {
-        if (schema.key === "ENERGY" && resolvedField === "averageElectricityRateThbPerKwh" && carried.formula === null) {
-          const template = templateByCol.get(col);
-          if (!template || template.formula === null) {
-            throw new WorkbookError("INVALID_WORKBOOK", "Energy Average Electricity Rate is missing its formula template.");
-          }
-          const styleId = energyStyles?.formulaStyleId ?? template.styleId;
-          const formula = adjustFormulaRows(template.formula, rowNumber - formulaTemplateRowNumber);
-          cellsXml.push(buildFormulaCellXml(
-            ref,
-            styleId,
-            formula,
-            cachedAverageRate(row)
-          ));
-          continue;
-        }
         if (carried.formula !== null) {
           const template = templateByCol.get(col);
-          const styleId = schema.key === "ENERGY" && resolvedField === "averageElectricityRateThbPerKwh"
-            ? energyStyles?.formulaStyleId ?? carried.styleId
-            : carried.styleId;
           const formula = carried.formula || template?.formula || "";
           cellsXml.push(buildFormulaCellXml(
             ref,
-            styleId,
-            formula,
-            resolvedField === "averageElectricityRateThbPerKwh" ? cachedAverageRate(row) : null
+            centeredStyles.get(carried.styleId ?? "0") ?? carried.styleId,
+            adjustFormulaRows(formula, rowNumber - (sourceRow?.rowNumber ?? templateRowNumber)),
+            null
           ));
         } else {
           // Rewrite the row part of the ref, keep everything else untouched.
-          const attrs = carried.attrs.replace(/r="[A-Z]+\d+"/, `r="${ref}"`);
+          const originalStyle = carried.styleId ?? "0";
+          const styleId = centeredStyles.get(originalStyle) ?? carried.styleId;
+          const attrs = carried.attrs
+            .replace(/r="[A-Z]+\d+"/, `r="${ref}"`)
+            .replace(/\bs="[^"]*"/, `s="${styleId}"`);
           cellsXml.push(carried.inner === null ? `<c${attrs}/>` : `<c${attrs}>${carried.inner}</c>`);
         }
         continue;
@@ -814,25 +1939,36 @@ function patchSheetXml(
 
       const template = templateByCol.get(col);
       if (template && template.formula !== null) {
-        const styleId = schema.key === "ENERGY" && resolvedField === "averageElectricityRateThbPerKwh"
-          ? energyStyles?.formulaStyleId ?? template.styleId
-          : template.styleId;
         const formula = adjustFormulaRows(template.formula, rowNumber - formulaTemplateRowNumber);
         cellsXml.push(buildFormulaCellXml(
           ref,
-          styleId,
+          centeredStyles.get(template.styleId ?? "0") ?? template.styleId,
           formula,
-          resolvedField === "averageElectricityRateThbPerKwh" ? cachedAverageRate(row) : null
+          null
         ));
       } else if (template?.styleId) {
-        cellsXml.push(`<c r="${ref}" s="${template.styleId}"/>`);
+        const styleId = centeredStyles.get(template.styleId) ?? template.styleId;
+        cellsXml.push(`<c r="${ref}" s="${styleId}"/>`);
       }
       // No template and no carried cell -> emit nothing for this column.
     }
-    newRowsXml.push(`<row r="${rowNumber}">${cellsXml.join("")}</row>`);
+    newRowsXml.push(`<row ${rowAttrs(rowNumber, sourceRow)}>${cellsXml.join("")}</row>`);
   }
 
-  const keptRows = parsedRows.filter(r => r.rowNumber <= headerRowNumber).map(r => r.raw);
+  const keptRows = parsedRows.filter(r => r.rowNumber < headerRowNumber).map(r => r.raw);
+  let centeredHeader = headerRow.raw;
+  for (const cell of headerRow.cells) {
+    const sourceStyle = cell.styleId ?? "0";
+    const styleId = centeredStyles.get(sourceStyle);
+    if (!styleId) continue;
+    const ref = `${cell.colLetter}${headerRowNumber}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    centeredHeader = centeredHeader.replace(new RegExp(`<c\\b(?=[^>]*\\br="${ref}")[^>]*(?:\\/>|>[\\s\\S]*?<\\/c>)`), value =>
+      /\bs="[^"]*"/.test(value)
+        ? value.replace(/\bs="[^"]*"/, `s="${styleId}"`)
+        : value.replace(/<c\b/, `<c s="${styleId}"`)
+    );
+  }
+  keptRows.push(centeredHeader);
   const newSheetData = `<sheetData>${keptRows.join("")}${newRowsXml.join("")}</sheetData>`;
   let patched = xml.replace(sheetDataMatch[0], () => newSheetData);
 
@@ -895,9 +2031,23 @@ export async function patchWorkbookBuffer(
   const zip = await JSZip.loadAsync(original);
   const sheets = await locateSheets(zip);
   const resolved = resolveSheetNames(sheets.map(s => s.name));
-  const energyStyles = await ensureExactEnergyNumberStyles(zip);
   const sharedStrings = parseSharedStrings(await entryText(zip, "xl/sharedStrings.xml"));
   const rowsByTab = logsToRows(logs, devices);
+  // Sheet 1 is the current-year UPS log. Keep historical data in every
+  // other worksheet, but never reintroduce non-2026 UPS records here.
+  rowsByTab.UPS = rowsByTab.UPS.filter(row => isMonthIn2026(row.month));
+  const date1904 = workbookUsesDate1904((await entryText(zip, "xl/workbook.xml")) ?? "");
+  const appWrittenStyleIds = new Set<string>();
+  for (const location of sheets) {
+    for (const styleId of sheetCellStyleIds((await entryText(zip, location.xmlPath)) ?? "")) appWrittenStyleIds.add(styleId);
+  }
+  const numberStyles = await ensureExactCellFormatStyles(zip, appWrittenStyleIds, "#,##0.00");
+  const monthStyles = await ensureExactCellFormatStyles(zip, appWrittenStyleIds, "mmm-yy");
+  const centeredStyles = await ensureCenteredCellStyles(zip, [
+    ...appWrittenStyleIds,
+    ...numberStyles.values(),
+    ...monthStyles.values()
+  ]);
   const calculatedEnergyCosts = new Map(
     logs.map(log => [log.month, calculateEnergyCostForMonth(logs, log.month).floorElectricityCostThb] as const)
   );
@@ -928,12 +2078,36 @@ export async function patchWorkbookBuffer(
       schema,
       rowsByTab[schema.key],
       sharedStrings,
-      schema.key === "ENERGY" ? energyStyles : undefined
+      numberStyles,
+      monthStyles,
+      centeredStyles,
+      date1904
     );
     zip.file(location.xmlPath, patchedXml);
     await patchSheetTables(zip, location.xmlPath, patchedXml, lastDataRow);
     stats.push({ tab: schema.key, sheetName, dataRows: rowsByTab[schema.key].length });
   }
+  for (const location of sheets) {
+    const xml = await entryText(zip, location.xmlPath);
+    if (xml) {
+      const dashboardXml = location.name === "Dashboard-FAC" ? patchDashboardDcLookupRanges(xml) : xml;
+      zip.file(location.xmlPath, centerMonthlySheetRecords(
+        applyGlobalNumericNumberFormats(
+          location.name === "Dashboard-FAC"
+            ? dashboardXml
+            : applyMeasurementNumberFormats(dashboardXml, sharedStrings, numberStyles, centeredStyles),
+          sharedStrings,
+          numberStyles,
+          centeredStyles,
+          location.name
+        ),
+        sharedStrings,
+        centeredStyles
+      ));
+      zip.file(location.xmlPath, clearFormulaErrorCaches(await entryText(zip, location.xmlPath) ?? ""));
+    }
+  }
+  await validatePersistedDcInputs(zip, sheets, sharedStrings);
 
   // Force a full recalculation on next open (formula caches are stale now).
   const workbookXml = (await entryText(zip, "xl/workbook.xml"))!;
@@ -984,21 +2158,88 @@ export async function patchSrinakarinWorkbookBuffer(original: Buffer, logs: Mont
   const sheets = await locateSheets(zip);
   const sharedStrings = parseSharedStrings(await entryText(zip, "xl/sharedStrings.xml"));
   const patches = srinakarinInputPatches(logs);
+  const date1904 = workbookUsesDate1904((await entryText(zip, "xl/workbook.xml")) ?? "");
+  const appWrittenStyleIds = new Set<string>();
+  for (const location of sheets) {
+    for (const styleId of sheetCellStyleIds((await entryText(zip, location.xmlPath)) ?? "")) appWrittenStyleIds.add(styleId);
+  }
+  const numberStyles = await ensureExactCellFormatStyles(zip, appWrittenStyleIds, "#,##0.00");
+  const monthStyles = await ensureExactCellFormatStyles(zip, appWrittenStyleIds, "mmm-yy");
+  const centeredStyles = await ensureCenteredCellStyles(zip, [
+    ...appWrittenStyleIds,
+    ...numberStyles.values(),
+    ...monthStyles.values()
+  ]);
   for (const [sheetName, sheetPatches] of Object.entries(patches)) {
-    if (sheetPatches.length === 0) continue;
     const location = sheets.find(sheet => sheet.name === sheetName);
-    if (!location) continue;
-    const xml = await entryText(zip, location.xmlPath);
+    if (!location) {
+      if (["1.1 UPS Data Log By Phase", "1.2 UPS Data Log_Average", "1.3 UPS Data Log_Average SUM", "1.5 AC PPC Log_Average", "1.5.1 AC PPC Log_Average(43AB)"].includes(sheetName)) {
+        throw new WorkbookError("INVALID_WORKBOOK", `Required Srinakarin helper sheet is missing: ${sheetName}.`);
+      }
+      continue;
+    }
+    let xml = await entryText(zip, location.xmlPath);
     if (!xml) continue;
+    let retained: InputPatchResult | undefined;
+    if (sheetName === "1. UPS Data Log") {
+      retained = retainInputSheetRecords(xml, sharedStrings, month => isMonthIn2026(month));
+      xml = retained.xml;
+    } else if (sheetName === "1.4.1 AC PPC Log By Phase(43AB)") {
+      retained = retainInputSheetRecords(xml, sharedStrings, (_month, id) => id !== null && isPpc43Id(id));
+      xml = retained.xml;
+    }
+    if (sheetPatches.length === 0) {
+      zip.file(location.xmlPath, xml);
+      if (retained) await patchSheetTables(zip, location.xmlPath, xml, retained.lastDataRow);
+      continue;
+    }
     const idRequired = !["2. Air Energy Consumption Log", "4. Electricity Cost Log"].includes(sheetName);
     const isMonthlyAggregate = sheetName === "1. UPS Data Log";
-    const patchedInput = patchInputSheetXmlWithStats(xml, sheetPatches, idRequired, sharedStrings, {
+    const patchOptions: InputPatchOptions = {
       firstMatchingColumnOnly: isMonthlyAggregate,
-      replaceFormulaCells: isMonthlyAggregate
-    });
+      replaceFormulaCells: isMonthlyAggregate || sheetName === "4. Electricity Cost Log",
+      updateFormulaCaches: sheetName === "1.4.1 AC PPC Log By Phase(43AB)",
+      numberStyles,
+      monthStyles,
+      date1904
+    };
+    const patchedInput = sheetName === "1.2 UPS Data Log_Average"
+      ? patchSrinakarinUpsAverageSheetXml(xml, sheetPatches, sharedStrings, patchOptions)
+      : sheetName === "1.5 AC PPC Log_Average"
+        ? patchSrinakarinPpcAverageSheetXml(xml, sheetPatches, sharedStrings, patchOptions)
+        : sheetName === "1.5.1 AC PPC Log_Average(43AB)"
+          ? patchSrinakarinPpc43AverageSheetXml(xml, sheetPatches, sharedStrings, patchOptions)
+        : patchInputSheetXmlWithStats(xml, sheetPatches, idRequired, sharedStrings, patchOptions);
     zip.file(location.xmlPath, patchedInput.xml);
     await patchSheetTables(zip, location.xmlPath, patchedInput.xml, patchedInput.lastDataRow);
   }
+  for (const location of sheets) {
+    const xml = await entryText(zip, location.xmlPath);
+    if (xml) {
+      const dashboardXml = location.name === "Dashboard-FAC" ? patchDashboardDcLookupRanges(xml) : xml;
+      zip.file(location.xmlPath, centerMonthlySheetRecords(
+        applyGlobalNumericNumberFormats(
+          location.name === "Dashboard-FAC"
+            ? dashboardXml
+            : applyMeasurementNumberFormats(dashboardXml, sharedStrings, numberStyles, centeredStyles),
+          sharedStrings,
+          numberStyles,
+          centeredStyles,
+          location.name
+        ),
+        sharedStrings,
+        centeredStyles
+      ));
+      zip.file(location.xmlPath, clearFormulaErrorCaches(await entryText(zip, location.xmlPath) ?? ""));
+    }
+  }
+  await validatePersistedDcInputs(zip, sheets, sharedStrings);
+  await validateSrinakarinPpc43AveragePersistence(
+    zip,
+    sheets,
+    sharedStrings,
+    patches["1.5.1 AC PPC Log_Average(43AB)"]
+  );
 
   const workbookXml = await entryText(zip, "xl/workbook.xml");
   if (workbookXml) {

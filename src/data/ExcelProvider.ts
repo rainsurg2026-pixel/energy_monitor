@@ -99,6 +99,35 @@ export class ExcelProvider implements IDataProvider {
     return toSnapshot(result);
   }
 
+  /**
+   * Read comparison workbooks without changing currentPath, migration state,
+   * recent files, or current facility device lists.
+   */
+  async loadMultipleFacilities(
+    facilities: Array<{ path: string; label: string; devices?: DeviceLists } | { spreadsheetId: string; label: string }>,
+    options?: { signal?: AbortSignal }
+  ): Promise<Map<string, DataSnapshot>> {
+    if (options?.signal?.aborted) throw new ProviderError("ABORTED", "Comparison load was cancelled.");
+    const requests = facilities.map((facility, index) => {
+      if (!("path" in facility) || !facility.path || !facility.devices) {
+        throw new ProviderError("BAD_FACILITY", `Facility ${index + 1} requires a workbook path and device configuration.`);
+      }
+      return { path: facility.path, devices: facility.devices };
+    });
+    const result = unwrap(await this.bridge.excel.openMultiple(requests));
+    if (options?.signal?.aborted) throw new ProviderError("ABORTED", "Comparison load was cancelled.");
+
+    const snapshots = new Map<string, DataSnapshot>();
+    for (const request of requests) {
+      const payload = result.workbooks[request.path] as OpenWorkbookPayload | undefined;
+      if (!payload || typeof payload !== "object" || !Array.isArray(payload.logs)) {
+        throw new ProviderError("MISSING_WORKBOOK", `Comparison result did not include ${request.path}.`);
+      }
+      snapshots.set(request.path, toSnapshot(payload));
+    }
+    return snapshots;
+  }
+
   async saveAll(logs: MonthlyLog[], currentMonth?: string): Promise<SaveOutcome> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
     const upsGroupHistory = this.upsGroupContext

@@ -52,6 +52,7 @@ async function main(): Promise<void> {
   console.log("Dashboard multi-site rendering regression checks");
 
   const dashboardSource = await fs.readFile(path.join(root, "src", "components", "DashboardSummary.tsx"), "utf8");
+  const dashboardCss = await fs.readFile(path.join(root, "src", "index.css"), "utf8");
   const filterBarSource = await fs.readFile(path.join(root, "src", "components", "UniversalFilterBar.tsx"), "utf8");
   const appSource = await fs.readFile(path.join(root, "src", "App.tsx"), "utf8");
 
@@ -59,12 +60,15 @@ async function main(): Promise<void> {
   // component (superseded by the technical-debt cleanup - see
   // test-dashboard-config-driven.ts for the full architecture-debt suite) ---
   check("DashboardSummary declares a facility prop", dashboardSource.includes("facility?: FacilityEntry | null"));
+  check("Every Building Energy Dashboard table uses the shared centered-header class",
+    (dashboardSource.match(/dashboard-table/g) ?? []).length === 6 && dashboardCss.includes(".dashboard-table > thead > tr > th") && dashboardCss.includes(".dashboard-table > tbody > tr > td") && dashboardCss.includes("text-align: center !important"));
   // Superseded (RC-3.2): UPS groups/mapping now read from the workbook
   // itself (upsMapping.summary/.mapping) rather than static config - see
   // test-dashboard-workbook-mapping.ts. Still true either way: no branch.
   check("DashboardSummary reads UPS groups/mapping from data, not a branch",
-    dashboardSource.includes("upsMapping?.summary") &&
-    dashboardSource.includes("upsMapping?.mapping"));
+    dashboardSource.includes("buildEngineeringDashboardSnapshot") &&
+    (await fs.readFile(path.join(root, "src", "utils", "engineeringDashboard.ts"), "utf8")).includes("upsMapping?.summary") &&
+    (await fs.readFile(path.join(root, "src", "utils", "engineeringDashboard.ts"), "utf8")).includes("upsMapping?.mapping"));
   check("UniversalFilterBar reads UPS filter options from facility.profile.dashboard, not a branch",
     filterBarSource.includes("facility?.profile.dashboard.upsGroups") &&
     filterBarSource.includes("facility?.profile.dashboard.upsMapping"));

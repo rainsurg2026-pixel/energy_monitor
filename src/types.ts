@@ -52,6 +52,10 @@ export interface DcRecord {
 export interface EnergyCostRecord {
   buildingEnergyKwh: number | null;
   buildingElectricityCostThb: number | null;
+  /** Stored workbook result, when present; blank historical rows use calculation fallback. */
+  floorElectricityCostThb?: number | null;
+  /** Stored workbook result, when present; blank historical rows use calculation fallback. */
+  averageElectricityRateThbPerKwh?: number | null;
 }
 
 export interface MonthlyLog {

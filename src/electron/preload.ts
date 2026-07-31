@@ -23,6 +23,7 @@ const desktopBridge = {
   },
   excel: {
     open: (path: string | null, devices?: unknown, upsGroupContext?: unknown) => invoke("excel:open", path, devices, upsGroupContext),
+    openMultiple: (requests: unknown[]) => invoke("excel:openMultiple", requests),
     reload: (path: string, devices?: unknown, upsGroupContext?: unknown) => invoke("excel:reload", path, devices, upsGroupContext),
     save: (payload: { path: string; logs: unknown[]; devices?: unknown }) => invoke("excel:save", payload),
     saveAs: (payload: { sourcePath: string; logs: unknown[]; devices?: unknown }) => invoke("excel:saveAs", payload),
@@ -55,6 +56,7 @@ const desktopBridge = {
       defaultName: string;
       workbookPath: string;
       facility: string;
+      dashboard?: unknown;
       selectedMonth: string | null;
       appVersion: string;
     }) => invoke("export:all-report", payload),

@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { readWorkbookFromFile } from "../src/excel/WorkbookReader";
-import { calculateEnergyCostForMonth } from "../src/utils/energyCost";
+import type { DeviceLists } from "../src/excel/SheetMapper";
+import { calculateEnergyCostForMonth, normalizedMonth } from "../src/utils/energyCost";
 
 const file = "DC_Srinakarin.xlsm";
 
@@ -13,33 +14,37 @@ function cached(value: unknown): number | null {
   return null;
 }
 
-const read = await readWorkbookFromFile(file);
+function dashboardMonth(value: unknown): string | null {
+  const raw = value && typeof value === "object" && "result" in value
+    ? (value as { result?: unknown }).result
+    : value;
+  if (raw instanceof Date) return `${raw.getUTCFullYear()}-${String(raw.getUTCMonth() + 1).padStart(2, "0")}`;
+  return typeof raw === "string" ? normalizedMonth(raw) : null;
+}
+
+const srinakarinDevices: DeviceLists = {
+  upsIds: ["UPS41A", "UPS41B", "PPC41A", "PPC41B", "PPC42A", "PPC42B", "PPC43A", "PPC43B", "PPC44A", "PPC44B"],
+  dcIds: ["DC PDB41A", "DC PDB41B"],
+  airFields: ["eb41a", "eb41b", "eb43a", "eb43b", "eb44a", "eb44b"]
+};
+const read = await readWorkbookFromFile(file, srinakarinDevices);
 if (!read.validation.ok) throw new Error(read.validation.errors.join("; "));
 const may = read.logs.find(log => log.month === "2026-05");
 if (!may) throw new Error("Srinakarin May-26 row was not read.");
-for (const field of ["eb41a", "eb41b", "eb43a", "eb43b", "eb44a", "eb44b"] as const) {
-  if (typeof may.air[field] !== "number") throw new Error(`Missing Air field ${field}.`);
+for (const field of srinakarinDevices.airFields ?? []) {
+  const value = may.air.meters?.[field] ?? may.air[field as keyof typeof may.air];
+  if (typeof value !== "number") throw new Error(`Missing Air field ${field}.`);
 }
 
 const workbook = new ExcelJS.Workbook();
 await workbook.xlsx.readFile(file);
 const dashboard = workbook.getWorksheet("Dashboard-FAC");
 if (!dashboard) throw new Error("Dashboard-FAC not found.");
-const calculation = calculateEnergyCostForMonth(read.logs, "2026-05");
-// Dashboard-FAC!D40 has a known, pre-existing formula bug in this workbook
-// (=H15+H30+G37; H30 is a blank row - the real Air Conditioning monthly
-// energy lives in H32, "Monthly Difference"), so D40 silently omits AC
-// energy from its own cached total. That is a workbook authoring defect,
-// not something this project's code changes - not fixed here. The floor
-// energy cross-check instead sums the same three source cells Dashboard-FAC
-// itself intends (H15 UPS+PPC, H32 AC, G37 DC), which is exactly what
-// calculateEnergyCostForMonth independently computes: H15+H32+G37 =
-// 639308.3347200028 = the app's calculation, to the last decimal.
+const selectedDashboardMonth = dashboardMonth(dashboard.getCell("H1").value);
+if (!selectedDashboardMonth) throw new Error("Dashboard-FAC selected month is missing.");
+const calculation = calculateEnergyCostForMonth(read.logs, selectedDashboardMonth);
 const expectedFloor = [cached(dashboard.getCell("H15").value), cached(dashboard.getCell("H32").value), cached(dashboard.getCell("G37").value)]
   .reduce<number | null>((sum, v) => (sum === null || v === null ? null : sum + v), 0);
-// E40 = (C40/B40)*D40 inherits D40's bug by multiplying the same
-// under-counted floor energy by the building rate - re-derive the cost
-// with the same rate against the corrected floor energy above instead.
 const buildingEnergy = cached(dashboard.getCell("B40").value);
 const buildingCost = cached(dashboard.getCell("C40").value);
 const expectedCost = buildingEnergy && buildingCost && expectedFloor !== null ? (buildingCost / buildingEnergy) * expectedFloor : null;
@@ -49,4 +54,4 @@ if (Math.abs(calculation.floorElectricityCostThb! - expectedCost) > 0.01) throw 
 
 const rangsit = await readWorkbookFromFile("DC_Rangsit.xlsm");
 if (!rangsit.validation.ok || rangsit.logs.length === 0) throw new Error("Rangsit regression read failed.");
-console.log(JSON.stringify({ srinakarinMonths: read.logs.length, rangsitMonths: rangsit.logs.length, floorEnergy: calculation.floorEnergyKwh, floorCost: calculation.floorElectricityCostThb }));
+console.log(JSON.stringify({ srinakarinMonths: read.logs.length, rangsitMonths: rangsit.logs.length, dashboardMonth: selectedDashboardMonth, floorEnergy: calculation.floorEnergyKwh, floorCost: calculation.floorElectricityCostThb }));

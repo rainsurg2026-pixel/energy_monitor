@@ -7,10 +7,13 @@ import { buildReportHtml } from "../src/reports/pdf/reportHtml";
 import { validatePdfBuffer } from "../src/electron/ipc/allReportPdf";
 
 async function main(): Promise<void> {
+  const root = process.cwd();
   const workbookPath = path.resolve(process.env.ENERGY_MONITOR_WORKBOOK ?? "DC_Rangsit.xlsm");
   const outputDir = path.resolve(process.env.ENERGY_MONITOR_TEST_EXPORT_DIR ?? path.join("dist-electron", "test-work", "all-report"));
+  const facilityId = process.env.ENERGY_MONITOR_FACILITY_ID ?? (path.basename(workbookPath).toLowerCase().includes("srinakarin") ? "srinakarin" : "rangsit");
+  const dashboard = JSON.parse(await fs.readFile(path.join(root, "config", facilityId, "profile.json"), "utf8")).dashboard;
   await app.whenReady();
-  const data = await buildReportData({ workbookPath, facility: "Test Facility", selectedMonth: null, appVersion: "test" });
+  const data = await buildReportData({ workbookPath, facility: process.env.ENERGY_MONITOR_FACILITY ?? "Test Facility", dashboard, selectedMonth: process.env.ENERGY_MONITOR_SELECTED_MONTH ?? null, appVersion: "test" });
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "monthly-power-energy-pdf-test-"));
   const htmlPath = path.join(tempDir, "report.html");
   await fs.mkdir(outputDir, { recursive: true });

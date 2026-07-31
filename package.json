@@ -3,7 +3,7 @@
   "productName": "Data Center Energy & Facility Monitor",
   "description": "Offline-first Windows desktop app for monthly data center power & energy logging, reporting and forecasting, backed by an Excel workbook.",
   "private": true,
-  "version": "2.0.1",
+  "version": "2.2.0",
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
@@ -20,11 +20,15 @@
     "portable:build": "node scripts/run-electron-builder.mjs --win portable",
     "portable:zip": "node scripts/make-portable-zip.mjs",
     "test:excel": "node node_modules/tsx/dist/cli.mjs scripts/test-excel-roundtrip.ts",
+    "test:save-formatting": "node node_modules/tsx/dist/cli.mjs scripts/test-save-formatting-regression.ts",
+    "test:energy-cost-dashboard": "node node_modules/tsx/dist/cli.mjs scripts/test-energy-cost-dashboard-fac.ts",
+    "test:air-validation": "node node_modules/tsx/dist/cli.mjs scripts/test-air-validation.ts",
     "test:srinakarin": "node node_modules/tsx/dist/cli.mjs scripts/test-srinakarin-read.ts",
     "test:srinakarin:roundtrip": "node node_modules/tsx/dist/cli.mjs scripts/test-srinakarin-roundtrip.ts",
     "test:srinakarin:aggregate": "node node_modules/tsx/dist/cli.mjs scripts/test-srinakarin-aggregate.ts",
     "test:rc3": "node node_modules/tsx/dist/cli.mjs scripts/test-rc3.ts",
     "test:facility-isolation": "node node_modules/tsx/dist/cli.mjs scripts/test-facility-isolation.ts",
+    "test:facility-comparison": "node node_modules/tsx/dist/cli.mjs scripts/test-facility-comparison.ts",
     "test:dashboard-facility-isolation": "node node_modules/tsx/dist/cli.mjs scripts/test-dashboard-facility-isolation.ts",
     "test:dashboard-config-driven": "node node_modules/tsx/dist/cli.mjs scripts/test-dashboard-config-driven.ts",
     "test:dashboard-workbook-mapping": "node node_modules/tsx/dist/cli.mjs scripts/test-dashboard-workbook-mapping.ts",
@@ -35,7 +39,7 @@
     "test:all-report": "node node_modules/tsx/dist/cli.mjs scripts/test-all-report.ts",
     "test:all-report:pdf": "node scripts/run-all-report-pdf-test.mjs",
     "test:packaged-report": "node scripts/run-packaged-report-test.mjs",
-    "test:e2e": "node scripts/e2e-cdp.mjs"
+    "test:e2e": "node node_modules/tsx/dist/cli.mjs scripts/e2e-cdp.mjs"
   },
   "devDependencies": {
     "@google/genai": "^2.4.0",
