@@ -8,6 +8,17 @@ export function formatNumber(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? groupedTwoDecimal.format(value) : "—";
 }
 
+/**
+ * Rounds to a fixed number of decimals and returns a NUMBER, not a display
+ * string - for chart data points (e.g. Recharts Y-values) that need a real
+ * number to plot, never a formatted "91.23%" string. Keeps the one
+ * `.toFixed()` call for this out of component files, matching how every
+ * other numeric-formatting concern is centralized here.
+ */
+export function roundToDecimals(value: number, digits = 2): number {
+  return Number(value.toFixed(digits));
+}
+
 export function formatDecimal(value: number | null | undefined, suffix = ""): string {
   const result = formatNumber(value);
   return result === "—" ? result : `${result}${suffix}`;

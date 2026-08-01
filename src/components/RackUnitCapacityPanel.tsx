@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import type { IDataProvider } from "../data/IDataProvider";
 import { validateImageBytes } from "../utils/imageValidation";
+import { formatRatioPercent } from "../utils/rackCapacity";
 import { notify } from "./Toast";
 import { Save, ImagePlus, Trash2, Boxes } from "lucide-react";
 
@@ -41,10 +42,6 @@ function previewAvailability(totalU: number, usedU: number): { availableU: numbe
   const availableU = totalU - usedU;
   const availabilityPct = totalU > 0 ? availableU / totalU : null;
   return { availableU, availabilityPct };
-}
-
-function formatPct(value: number | null): string {
-  return value === null ? "—" : `${(value * 100).toFixed(2)}%`;
 }
 
 export default function RackUnitCapacityPanel({ rows, provider, lang, month, onMonthChange, onSaved }: RackUnitCapacityPanelProps) {
@@ -234,7 +231,7 @@ export default function RackUnitCapacityPanel({ rows, provider, lang, month, onM
         </div>
         <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
           <p className="text-xs text-slate-500">{lang === "th" ? "% ความจุที่ว่าง" : "Availability Capacity (%)"}</p>
-          <p className="text-lg text-slate-100 mt-1">{hasAnyInput ? formatPct(preview.availabilityPct) : "—"}</p>
+          <p className="text-lg text-slate-100 mt-1">{hasAnyInput ? formatRatioPercent(preview.availabilityPct) : "—"}</p>
         </div>
       </div>
 

@@ -5,6 +5,8 @@ import os from "os";
 import { registerExcelIpc } from "./ipc/excel";
 import { registerExportIpc } from "./ipc/exportCenter";
 import { registerWindowIpc } from "./ipc/window";
+import { registerGoogleSheetsIpc } from "./ipc/googleSheets";
+import { restoreGoogleAuthOnStartup } from "./googleAuth";
 import { loadConfig, updateConfig } from "./config";
 import { ensureDir, getConfigDir, getDefaultBackupDir, getExportsDir, getLogsDir, log, rotateLogIfNeeded } from "./paths";
 
@@ -198,6 +200,8 @@ if (!gotLock) {
   startupDiagnostic("ipc-registration", "registerExcelIpc complete");
   registerExportIpc();
   startupDiagnostic("ipc-registration", "registerExportIpc complete");
+  registerGoogleSheetsIpc();
+  startupDiagnostic("ipc-registration", "registerGoogleSheetsIpc complete");
 
   app.whenReady().then(async () => {
     startupDiagnostic("electron-ready", `userData=${app.getPath("userData")} appPath=${app.getAppPath()}`);
@@ -210,6 +214,7 @@ if (!gotLock) {
     ]).catch(() => undefined);
     await rotateLogIfNeeded();
     log.info(`app started v${app.getVersion()} (portable=${Boolean(process.env.PORTABLE_EXECUTABLE_DIR)})`);
+    await restoreGoogleAuthOnStartup();
 
     mainWindow = await createMainWindow();
     startupDiagnostic("application-idle", `mainWindow=${mainWindow.id}`);

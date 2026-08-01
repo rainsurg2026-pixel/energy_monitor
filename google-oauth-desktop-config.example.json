@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy this file to google-oauth-desktop-config.json (gitignored) and fill in your own values. Create an OAuth client of type 'Desktop app' in Google Cloud Console (APIs & Services > Credentials > Create Credentials > OAuth client ID > Desktop app). Desktop-app clients are the type Google intends for this exact use case (RFC 8252 loopback redirect); they do not require the client_secret to be kept confidential, but this file is still gitignored as a precaution. Add 'http://127.0.0.1:51820/oauth/callback' to nothing - Desktop app clients accept any loopback port automatically and do not require pre-registering a redirect URI.",
+  "clientId": "YOUR_DESKTOP_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+  "clientSecret": "YOUR_DESKTOP_OAUTH_CLIENT_SECRET"
+}

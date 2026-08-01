@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import { RACK_CAPACITY_HISTORY_TOTAL_ZONE } from "../excel/RackCapacityHistoryWriter";
 import { formatRatioPercent } from "../utils/rackCapacity";
+import { roundToDecimals } from "../utils/numberFormat";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { History } from "lucide-react";
 
@@ -53,8 +54,8 @@ export default function RackCapacityHistoryPanel({ rows, lang }: RackCapacityHis
       const row = rowsByMonth.get(month);
       return {
         month: displayMonth(month, lang),
-        usage: row?.usagePct !== null && row?.usagePct !== undefined ? Number((row.usagePct * 100).toFixed(2)) : null,
-        availability: row?.availabilityPct !== null && row?.availabilityPct !== undefined ? Number((row.availabilityPct * 100).toFixed(2)) : null
+        usage: row?.usagePct !== null && row?.usagePct !== undefined ? roundToDecimals(row.usagePct * 100) : null,
+        availability: row?.availabilityPct !== null && row?.availabilityPct !== undefined ? roundToDecimals(row.availabilityPct * 100) : null
       };
     }),
     [rangeMonths, rowsByMonth, lang]

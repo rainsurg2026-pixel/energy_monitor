@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { initAuth, googleSignIn } from "./firebaseAuth";
+import { googleSignIn } from "./firebaseAuth";
+import { createGoogleSheetsDriver, GoogleSheetsDriver, GoogleConnectionState } from "./googleSheetsDriver";
 import {
   loadAllLogs,
   loadLogForMonth,
@@ -10,7 +11,7 @@ import {
   formatTimestamp,
   getPreviousMonthStr
 } from "./utils";
-import { importLogsFromGoogleSheets, DEFAULT_SPREADSHEET_ID } from "./sheetsService";
+import { DEFAULT_SPREADSHEET_ID } from "./sheetsService";
 import { MonthlyLog, SecurityConfig, UpsRecord, AirRecord, DcRecord, EnergyCostRecord, SrinakarinInputSnapshot } from "./types";
 import { DataSnapshot, ProviderError } from "./data/IDataProvider";
 import { ExcelProvider } from "./data/ExcelProvider";
@@ -267,10 +268,16 @@ export default function App() {
     isBusyRef.current = isWorkbookBusy;
   }, [isWorkbookBusy]);
   
-  // Google Sheets state shared globally
-  const [isGoogleConnected, setIsGoogleConnected] = useState(false);
-  const [googleUserEmail, setGoogleUserEmail] = useState<string | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
+  // Google Sheets state shared globally. The driver abstracts over WHICH
+  // backend actually owns OAuth (desktop: Electron main process via IPC,
+  // never a token in this renderer; browser: the pre-existing Firebase
+  // client-side flow) - see googleSheetsDriver.ts's header comment.
+  const googleDriverRef = useRef<GoogleSheetsDriver | null>(null);
+  if (!googleDriverRef.current) googleDriverRef.current = createGoogleSheetsDriver(isDesktopApp);
+  const googleDriver = googleDriverRef.current;
+  const [googleConnectionState, setGoogleConnectionState] = useState<GoogleConnectionState>(() => googleDriver.getState());
+  const isGoogleConnected = googleConnectionState.status === "connected";
+  const googleUserEmail = googleConnectionState.email;
 
   // Google Sheets synchronization states for Reporting
   const [syncedLogs, setSyncedLogs] = useState<MonthlyLog[] | null>(null);
@@ -294,14 +301,18 @@ export default function App() {
   /**
    * The single, authoritative Google Sheets import pipeline for the whole app:
    * Cancel-previous -> Single Import -> Validation -> Update syncedLogs (which
-   * reactively refreshes ReportContext and every Report view via props).
-   * This is the ONLY function that calls importLogsFromGoogleSheets, and it backs
+   * reactively refreshes ReportContext and every Report view via props). This
+   * is the ONLY function that calls the driver's importAll(), and it backs
    * every trigger (spreadsheet change, manual import, retry, auto-refresh-after-save).
    *
    * Returns the imported logs, or null if this call was superseded by a newer
-   * request before it could complete (cancelled - not an error).
+   * request before it could complete (cancelled - not an error). The desktop
+   * driver's underlying IPC call cannot itself be aborted mid-flight (unlike
+   * the browser driver's fetch, which honors the AbortController below) - the
+   * sequence-number check still guarantees a superseded response is never
+   * applied, just without saving the wasted main-process work.
    */
-  const runGoogleSheetsImport = async (token: string, sheetId: string): Promise<MonthlyLog[] | null> => {
+  const runGoogleSheetsImport = async (sheetId: string): Promise<MonthlyLog[] | null> => {
     // Requirement 1 & 2: only one import runs at a time; a new request cancels the previous one.
     importAbortControllerRef.current?.abort();
     const controller = new AbortController();
@@ -311,7 +322,7 @@ export default function App() {
     setIsSyncing(true);
     setSyncError(null);
     try {
-      const imported = await importLogsFromGoogleSheets(token, sheetId, controller.signal);
+      const imported = await googleDriver.importAll(sheetId);
 
       // Requirement 3: ignore stale responses - if a newer import has since been
       // requested, this result must never overwrite newer data.
@@ -365,10 +376,10 @@ export default function App() {
 
   // Delegate used by GoogleSheetsSync's manual actions (Import All / Export All / Sync
   // Active Month / auto-refresh-after-save) so there remains exactly one place that
-  // talks to importLogsFromGoogleSheets.
+  // talks to the Google Sheets driver's importAll().
   const handleManualImport = async (): Promise<MonthlyLog[] | null> => {
-    if (!accessToken) return [];
-    return runGoogleSheetsImport(accessToken, spreadsheetId);
+    if (googleConnectionState.status !== "connected") return [];
+    return runGoogleSheetsImport(spreadsheetId);
   };
 
   // Abort any in-flight import if the app itself unmounts.
@@ -1135,7 +1146,7 @@ export default function App() {
           {isGoogleConnected && (
             <button
               onClick={() => {
-                if (accessToken) runGoogleSheetsImport(accessToken, spreadsheetId).catch(() => {});
+                if (isGoogleConnected) runGoogleSheetsImport(spreadsheetId).catch(() => {});
               }}
               className="flex items-center justify-center gap-2 px-5 py-2.5 bg-slate-800 hover:bg-slate-750 active:bg-slate-700 text-xs text-slate-200 font-semibold rounded-xl border border-slate-700 transition-all cursor-pointer"
             >
@@ -1609,21 +1620,21 @@ export default function App() {
     reloadData();
   }, []);
 
-  // Single authentication listener - the only subscription to Firebase auth state in the app.
+  // Single authentication listener - the only subscription to the active
+  // Google connection driver's state in the app (desktop: Electron main
+  // process OAuth via IPC; browser: Firebase, unchanged).
   useEffect(() => {
-    return initAuth(
-      (currentUser, token) => {
-        setIsGoogleConnected(true);
-        setGoogleUserEmail(currentUser.email);
-        setAccessToken(token);
-      },
-      () => {
-        setIsGoogleConnected(false);
-        setGoogleUserEmail(null);
-        setAccessToken(null);
-        setSyncedLogs(null);
-      }
-    );
+    return googleDriver.onStateChange(state => {
+      setGoogleConnectionState(state);
+      // Desktop's syncedLogs comes from the local Excel workbook via
+      // openWorkbook(), entirely independent of Google - a Google
+      // connect/disconnect/error must never blank it out (a Google failure
+      // must never break Excel mode). Only the browser/iframe deployment
+      // sources syncedLogs from Google Sheets itself, where clearing stale
+      // data on disconnect is still correct.
+      if (!isDesktopApp && state.status !== "connected") setSyncedLogs(null);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Single startup / spreadsheet-change import trigger. Fires exactly once whenever
@@ -1632,10 +1643,10 @@ export default function App() {
   // Desktop: the workbook is the source of truth for reports, so the Google
   // import never runs automatically there (Sheets stays a manual, optional sync).
   useEffect(() => {
-    if (accessToken && !isDesktopApp) {
-      runGoogleSheetsImport(accessToken, spreadsheetId).catch(() => {});
+    if (isGoogleConnected && !isDesktopApp) {
+      runGoogleSheetsImport(spreadsheetId).catch(() => {});
     }
-  }, [accessToken, spreadsheetId, isDesktopApp]);
+  }, [isGoogleConnected, spreadsheetId, isDesktopApp]);
 
   // Update activeLog state when selectedMonth changes
   useEffect(() => {
@@ -2297,9 +2308,8 @@ export default function App() {
               <GoogleSheetsSync
                 activeLog={activeLog}
                 lang={lang}
-                isGoogleConnected={isGoogleConnected}
-                googleUserEmail={googleUserEmail}
-                accessToken={accessToken}
+                driver={googleDriver}
+                connectionState={googleConnectionState}
                 spreadsheetId={spreadsheetId}
                 onSpreadsheetIdChange={handleSpreadsheetIdChange}
                 lastSyncedTime={lastSyncedTime}
@@ -2385,7 +2395,7 @@ export default function App() {
         {/* --- VIEW: RACK CAPACITY MANAGEMENT (desktop) --- */}
         {currentView === "rackCapacity" && isDesktopApp && excelProvider && (
           <div className="space-y-6 animate-fadeIn">
-            <RackCapacitySummaryCard rackCapacity={workbook?.rackCapacity} lang={lang} />
+            <RackCapacitySummaryCard rackCapacity={workbook?.rackCapacity} lang={lang} rackUnitCapacity={workbook?.rackUnitCapacity ?? []} unitCapacityMonth={rackCapacityMonth} />
             <RackUnitCapacityPanel
               rows={workbook?.rackUnitCapacity ?? []}
               provider={excelProvider}
@@ -2425,6 +2435,8 @@ export default function App() {
                 googleUserEmail={googleUserEmail}
                 upsGroupHistory={workbook?.upsGroupHistory}
                 activeFacilityId={activeFacility?.id ?? null}
+                rackCapacityHistory={workbook?.rackCapacityHistory ?? []}
+                rackUnitCapacity={workbook?.rackUnitCapacity ?? []}
                 onEditMonth={(monthStr) => {
                   setEditingMonth(monthStr);
                   selectMonthContext(monthStr);

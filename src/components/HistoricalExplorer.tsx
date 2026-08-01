@@ -3,14 +3,18 @@ import { MonthlyLog } from "../types";
 import { formatMonthYear } from "../utils";
 import { calculateEnergyCostForMonth, getAirFields, getAirValue, normalizedMonth } from "../utils/energyCost";
 import { formatNumber2 } from "../utils/numberFormatBridge";
+import { formatRatioPercent } from "../utils/rackCapacity";
 import type { UpsGroupHistoryReport } from "../reports/reportTypes";
-import { 
-  Zap, 
-  Thermometer, 
-  Database, 
-  Coins, 
-  Search, 
-  FileSpreadsheet, 
+import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
+import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
+import RackCapacityHistoryPanel from "./RackCapacityHistoryPanel";
+import {
+  Zap,
+  Thermometer,
+  Database,
+  Coins,
+  Search,
+  FileSpreadsheet,
   TableProperties,
   Calendar,
   Layers,
@@ -18,7 +22,8 @@ import {
   CheckCircle,
   HelpCircle,
   Clock,
-  ArrowRight
+  ArrowRight,
+  Boxes
 } from "lucide-react";
 
 interface HistoricalExplorerProps {
@@ -31,9 +36,14 @@ interface HistoricalExplorerProps {
    *  from this instead of rebuilding summaries at runtime. */
   upsGroupHistory?: UpsGroupHistoryReport | null;
   activeFacilityId?: string | null;
+  /** Persisted Rack Capacity History (facility total + per-zone snapshots)
+   *  and Rack Unit Capacity rows, for the Rack Capacity tab - real recorded
+   *  snapshots only, never the current live Table7 masquerading as history. */
+  rackCapacityHistory?: RackCapacityHistoryRow[];
+  rackUnitCapacity?: RackUnitCapacityRow[];
 }
 
-type ExplorerTab = "ups" | "air" | "dc" | "energy";
+type ExplorerTab = "ups" | "air" | "dc" | "energy" | "rack";
 type SortOrder = "newest" | "oldest";
 type HistoryRange = "all" | "3" | "6" | "12";
 
@@ -46,7 +56,7 @@ function getDaysInMonth(monthStr: string): number {
   return new Date(year, month, 0).getDate();
 }
 
-export default function HistoricalExplorer({ logs, lang, isGoogleConnected = false, googleUserEmail = null, onEditMonth, upsGroupHistory = null, activeFacilityId = null }: HistoricalExplorerProps) {
+export default function HistoricalExplorer({ logs, lang, isGoogleConnected = false, googleUserEmail = null, onEditMonth, upsGroupHistory = null, activeFacilityId = null, rackCapacityHistory = [], rackUnitCapacity = [] }: HistoricalExplorerProps) {
   const [activeTab, setActiveTab] = useState<ExplorerTab>("ups");
   const [searchQuery, setSearchQuery] = useState("");
   const [yearFilter, setYearFilter] = useState("All");
@@ -61,6 +71,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       tabUps: "ประวัติเครื่อง UPS",
       tabAir: "ประวัติระบบปรับอากาศ",
       tabDc: "ประวัติแผงจ่ายไฟ DC",
+      tabRack: "ประวัติความจุแร็ค",
       tabEnergy: "ประวัติค่าไฟฟ้า & ภาพรวม",
       searchPlaceholder: "ค้นหาด้วยชื่อเดือน เช่น Jan-26, 2026...",
       noResults: "ไม่พบข้อมูลประวัติที่ตรงกับคำค้นหาของคุณ",
@@ -110,6 +121,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       subtitle: "Query, search, sort, and audit raw facility logs with high-fidelity status badges across subsystems.",
       tabUps: "UPS Loads History",
       tabAir: "Air Conditioning History",
+      tabRack: "Rack Capacity History",
       tabDc: "DC Power Panels History",
       tabEnergy: "Energy & Cost History",
       searchPlaceholder: "Search by month name, e.g. Jan-26, 2026...",
@@ -194,6 +206,25 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
         .filter((month): month is string => month !== null)
     )).sort((a, b) => b.localeCompare(a));
   }, [logs]);
+
+  // Quick Jump: only real, chronological months that actually exist in this
+  // (already facility-scoped, via the `logs` prop) workbook, restricted to
+  // the active reporting year - the year of the most recent real month, not
+  // the calendar's current year, since offline data can lag behind today.
+  // Recomputes automatically on facility switch because `logs` itself does.
+  const quickJumpEntries = useMemo(() => {
+    const monthToLog = new Map<string, MonthlyLog>();
+    for (const log of logs) {
+      const normalized = normalizedMonth(log.month);
+      if (normalized && !monthToLog.has(normalized)) monthToLog.set(normalized, log);
+    }
+    const activeReportingYear = latestReportingMonths[0]?.slice(0, 4);
+    if (!activeReportingYear) return [];
+    return latestReportingMonths
+      .filter(month => month.startsWith(activeReportingYear))
+      .map(month => monthToLog.get(month))
+      .filter((log): log is MonthlyLog => log !== undefined);
+  }, [logs, latestReportingMonths]);
 
   // Core processing & filtering
   const filteredAndSortedLogs = useMemo(() => {
@@ -546,9 +577,57 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
     );
   };
 
+  // Rack Capacity History: real persisted monthly snapshots (Rack Capacity
+  // History + Rack Unit Capacity worksheets), never the current live Table7
+  // recomputed and relabeled as "history".
+  const renderRackHistory = () => {
+    const sortedUnitRows = [...rackUnitCapacity].sort((a, b) => a.month.localeCompare(b.month));
+    return (
+      <div className="p-4 space-y-6">
+        <RackCapacityHistoryPanel rows={rackCapacityHistory} lang={lang} />
+        <div className="rounded-2xl border border-slate-850 bg-slate-900 p-5">
+          <div className="flex items-center gap-2 text-slate-200 mb-3">
+            <Boxes className="w-4 h-4" />
+            <h4 className="text-base">{lang === "th" ? "ประวัติความจุหน่วยแร็ค (U)" : "Rack Unit Capacity History"}</h4>
+          </div>
+          {sortedUnitRows.length === 0 ? (
+            <p className="text-sm text-slate-500">
+              {lang === "th" ? "ยังไม่มีข้อมูลความจุหน่วย U ในเวิร์กบุ๊ก" : "No Rack Unit Capacity history in this workbook yet."}
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs font-sans">
+                <thead>
+                  <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+                    <th className="py-3 px-4">{t.month}</th>
+                    <th className="py-3 px-4 text-right">Total (U)</th>
+                    <th className="py-3 px-4 text-right">Used (U)</th>
+                    <th className="py-3 px-4 text-right">Available (U)</th>
+                    <th className="py-3 px-4 text-right">Availability (%)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-850">
+                  {sortedUnitRows.map(row => (
+                    <tr key={row.month} className="hover:bg-slate-900/35 transition-colors">
+                      <td className="py-2.5 px-4 font-mono font-semibold text-slate-200">{formatMonthYear(row.month)}</td>
+                      <td className="py-2.5 px-4 text-right font-mono">{row.totalU}</td>
+                      <td className="py-2.5 px-4 text-right font-mono">{row.usedU}</td>
+                      <td className="py-2.5 px-4 text-right font-mono">{row.availableU}</td>
+                      <td className="py-2.5 px-4 text-right font-mono">{formatRatioPercent(row.availabilityPct)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-6">
-      
+
       {/* Search and Advanced Filters */}
       <div className="flex flex-col gap-4 pb-5 border-b border-slate-800">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -661,7 +740,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
           <span>{t.quickJump}</span>
         </h4>
         <div className="flex flex-wrap gap-1.5">
-          {logs.slice(0, 10).map((log) => (
+          {quickJumpEntries.map((log) => (
             <button
               key={log.month}
               onClick={() => onEditMonth?.(log.month)}
@@ -681,7 +760,8 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
             { id: "ups", label: t.tabUps, icon: Zap, color: "text-indigo-400" },
             { id: "air", label: t.tabAir, icon: Thermometer, color: "text-teal-400" },
             { id: "dc", label: t.tabDc, icon: Database, color: "text-amber-400" },
-            { id: "energy", label: t.tabEnergy, icon: Coins, color: "text-emerald-400" }
+            { id: "energy", label: t.tabEnergy, icon: Coins, color: "text-emerald-400" },
+            { id: "rack", label: t.tabRack, icon: Boxes, color: "text-purple-400" }
           ] as const
         ).map(tab => (
           <button
@@ -705,6 +785,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
         {activeTab === "air" && renderAirHistory()}
         {activeTab === "dc" && renderDcHistory()}
         {activeTab === "energy" && renderEnergyHistory()}
+        {activeTab === "rack" && renderRackHistory()}
       </div>
 
     </div>

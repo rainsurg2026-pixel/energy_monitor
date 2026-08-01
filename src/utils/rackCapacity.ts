@@ -94,3 +94,11 @@ export function formatRatioPercent(value: number | null, digits = 2): string {
   if (value === null || !Number.isFinite(value)) return "—";
   return `${(value * 100).toFixed(digits)}%`;
 }
+
+/** Clamps a ratio to the [0, 1] a progress/data bar can actually render as a
+ *  width - null/NaN/negative all become an empty (0%) bar rather than a
+ *  visual glitch, and anything above 1 is capped rather than overflowing. */
+export function clampRatio(ratio: number | null): number {
+  if (ratio === null || !Number.isFinite(ratio)) return 0;
+  return Math.max(0, Math.min(1, ratio));
+}

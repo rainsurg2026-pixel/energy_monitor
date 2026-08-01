@@ -33,9 +33,9 @@ export async function getSpreadsheetSheets(accessToken: string, spreadsheetId: s
     throw new Error(`Failed to fetch spreadsheet info: ${errText}`);
   }
 
-  const data = await res.json();
+  const data = (await res.json()) as { sheets?: Array<{ properties: { title: string } }> };
   const sheets = data.sheets || [];
-  return sheets.map((s: any) => s.properties.title);
+  return sheets.map(s => s.properties.title);
 }
 
 /**
@@ -81,7 +81,7 @@ export async function initializeSheetHeaders(accessToken: string, spreadsheetId:
   });
 
   if (checkRes.ok) {
-    const checkData = await checkRes.json();
+    const checkData = (await checkRes.json()) as { values?: unknown[][] };
     if (checkData.values && checkData.values.length > 0) {
       // Row 1 already has content, do not overwrite headers
       return;
@@ -498,7 +498,7 @@ export async function readSheetValues(accessToken: string, spreadsheetId: string
   if (!res.ok) {
     return [];
   }
-  const data = await res.json();
+  const data = (await res.json()) as { values?: any[][] };
   return data.values || [];
 }
 

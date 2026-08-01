@@ -94,7 +94,7 @@ async function main() {
     backupFolder: null,
     backupKeep: 3,
     autoSaveIntervalMinutes: 0,
-    googleSheets: { enabled: false, spreadsheetId: null },
+    googleSheets: { enabled: true, spreadsheetId: null },
     recentFiles: [rangsit],
     window: { width: 1440, height: 816, maximized: false },
     security: { pinEnabled: false, pinHash: null }
@@ -150,7 +150,36 @@ async function main() {
       await sleep(500);
     }
     check("entry: facility UPS form present", entrySectionPresent, entrySectionPresent ? "" : entryText.slice(0, 1000));
-    check("entry: no Google Sheets board (disabled on desktop)", !entryText.includes("Google Sheets Sync"));
+
+    // v2.2.4: Google Sheets sync board, enabled via config.googleSheets for
+    // this run - exercises the desktop OAuth architecture end to end short
+    // of real user consent (a genuine external blocker; no
+    // google-oauth-desktop-config.json exists in this isolated test root, so
+    // sign-in must fail gracefully with an actionable message, not crash).
+    check("entry: Google Sheets sync board is present (enabled via config)", entryText.includes("Google Sheets") || entryText.includes("Google Sheets Sync"));
+    const googleSignInClicked = await evalJs(`(() => {
+      const btn = [...document.querySelectorAll("button")].find(b => b.innerText.includes("Sign in with Google") || b.innerText.includes("เชื่อมต่อ Google Account"));
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`);
+    check("entry: Google 'Sign in with Google' button is present and clickable", googleSignInClicked === true);
+    let googleAuthText = "";
+    for (let i = 0; i < 20; i++) {
+      googleAuthText = await evalJs("document.body.innerText");
+      if (googleAuthText.includes("Connection Error") || googleAuthText.includes("การเชื่อมต่อผิดพลาด")) break;
+      await sleep(300);
+    }
+    check(
+      "entry: missing Desktop OAuth client config surfaces as a clear Connection Error, not a crash",
+      googleAuthText.includes("Connection Error") || googleAuthText.includes("การเชื่อมต่อผิดพลาด")
+    );
+    check(
+      "entry: the error message actionably names the missing config file",
+      googleAuthText.includes("google-oauth-desktop-config.json")
+    );
+    const rendererStillAlive = await evalJs(`document.querySelectorAll("nav button").length`);
+    check("entry: renderer did not crash after the failed sign-in attempt", rendererStillAlive === 6, String(rendererStillAlive));
 
     // Dashboard reports loaded workbook data after entry readiness.
     await evalJs(`document.querySelectorAll("nav button")[0].click()`);
@@ -213,11 +242,109 @@ async function main() {
     check("rack capacity: no leftover 'Rack Capacity Overview' heading", !rackCapacityText.includes("Rack Capacity Overview"));
     check("rack capacity: no leftover internal 'Table7' name in the UI", !rackCapacityText.includes("Table7"));
 
+    // v2.2.4: Rack Capacity UI redesign - canonical status order (In Use,
+    // Available, Reserved, Pending Dismantle, Other) drives the KPI cards,
+    // donut+legend and zone table alike; the donut center shows the Total
+    // Racks count; legend/table rows render real progress bars; the
+    // redundant Usage/Availability summary rows are gone; and the obsolete
+    // "unavailable in the source workbook, not inferred" U-capacity claim is
+    // replaced with an honest month-scoped second dimension. Config runs the
+    // app in Thai (config.language = "th"), so these checks read the actual
+    // rendered Thai text rather than English strings that would never appear
+    // until the later language-switch section of this script.
+    check(
+      "rack capacity: obsolete 'not inferred' U-capacity claim is gone",
+      !rackCapacityText.includes("are not inferred") && !rackCapacityText.includes("ไม่ประมาณค่า")
+    );
+    check(
+      "rack capacity: KPI cards follow the canonical order In Use -> Available -> Reserved -> Pending Dismantle",
+      rackCapacityText.indexOf("ใช้งานอยู่") >= 0 &&
+      rackCapacityText.indexOf("ใช้งานอยู่") < rackCapacityText.indexOf("ว่าง") &&
+      rackCapacityText.indexOf("ว่าง") < rackCapacityText.indexOf("จองไว้") &&
+      rackCapacityText.indexOf("จองไว้") < rackCapacityText.indexOf("รอถอดถอน")
+    );
+    check(
+      "rack capacity: Rack Unit Capacity second dimension shows an honest month-scoped empty state before any U-capacity is saved",
+      rackCapacityText.includes("ไม่มีข้อมูลความจุหน่วย U สำหรับเดือนที่เลือก")
+    );
+
+    const distributionState = await evalJs(`(() => {
+      const section = [...document.querySelectorAll("section")].find(s => s.innerText.includes("Rack Status Distribution") || s.innerText.includes("การกระจายสถานะแร็ค"));
+      if (!section) return { found: false };
+      return { found: true, barCount: section.querySelectorAll('[data-testid="rack-status-bar"]').length, text: section.innerText };
+    })()`);
+    check("rack capacity: donut+legend distribution section is present", distributionState.found === true);
+    check("rack capacity: distribution legend renders a real progress bar per visible status (not ASCII)", distributionState.found && distributionState.barCount >= 4, JSON.stringify(distributionState));
+    check("rack capacity: donut center shows the Total Racks count (358)", distributionState.found && /358/.test(distributionState.text) && distributionState.text.includes("แร็คทั้งหมด"));
+    check("rack capacity: redundant 'อัตราการใช้งาน' usage-rate row is gone", distributionState.found && !distributionState.text.includes("อัตราการใช้งาน"));
+    check("rack capacity: redundant 'อัตราว่าง' availability-rate row is gone", distributionState.found && !distributionState.text.includes("อัตราว่าง"));
+
+    const zoneTableState = await evalJs(`(() => {
+      const section = [...document.querySelectorAll("section")].find(s => s.innerText.includes("Rack Zone Capacity Table") || s.innerText.includes("ตารางความจุแร็คตามโซน"));
+      if (!section) return { found: false };
+      const headers = [...section.querySelectorAll("thead th")].map(th => th.innerText.trim());
+      const bodyRows = [...section.querySelectorAll("tbody tr")];
+      const lastRow = bodyRows.at(-1);
+      return {
+        found: true,
+        headers,
+        rowCount: bodyRows.length,
+        lastRowText: lastRow ? lastRow.innerText : "",
+        lastRowIsGrandTotal: Boolean(lastRow && (lastRow.innerText.includes("Grand Total") || lastRow.innerText.includes("รวมทั้งหมด"))),
+        lastRowClasses: lastRow ? lastRow.className : "",
+        hasEmDash: section.innerText.includes("—"),
+        barCount: section.querySelectorAll('[data-testid="rack-status-bar"]').length
+      };
+    })()`);
+    check("rack capacity: zone table section is present (renamed from Pivot Table)", zoneTableState.found === true);
+    check(
+      "rack capacity: zone table column order is Rack Zone, In Use, Available, Reserved, Pending Dismantle, Grand Total",
+      zoneTableState.found && zoneTableState.headers.join("|") === ["โซนแร็ค", "ใช้งานอยู่", "ว่าง", "จองไว้", "รอถอดถอน", "รวมทั้งหมด"].join("|"),
+      JSON.stringify(zoneTableState.headers)
+    );
+    check("rack capacity: zone table's last row is the Grand Total row", zoneTableState.lastRowIsGrandTotal === true, zoneTableState.lastRowText);
+    check("rack capacity: Grand Total row is visually distinct (stronger background + semibold)", zoneTableState.found && /bg-slate-800|font-semibold/.test(zoneTableState.lastRowClasses), zoneTableState.lastRowClasses);
+    check("rack capacity: zone table renders a real progress bar per non-zero cell", zoneTableState.found && zoneTableState.barCount > 0, String(zoneTableState.barCount));
+    check("rack capacity: zero-count cells render an em dash, not a fabricated 0 (0.0%)", zoneTableState.found && zoneTableState.hasEmDash === true);
+
+    // Drilldown must survive the redesign: clicking a non-zero zone-row cell
+    // opens the Rack details inspector, and Clear filter closes it again -
+    // the decorative progress bars must never intercept the click.
+    const drilldownState = await evalJs(`(() => {
+      const section = [...document.querySelectorAll("section")].find(s => s.innerText.includes("Rack Zone Capacity Table") || s.innerText.includes("ตารางความจุแร็คตามโซน"));
+      if (!section) return { ok: false, reason: "table section not found" };
+      const cellButtons = [...section.querySelectorAll("tbody tr:not(:last-child) td:not(:first-child) button")];
+      const target = cellButtons.find(b => /[1-9]\\d*/.test(b.innerText));
+      if (!target) return { ok: false, reason: "no non-zero cell button found" };
+      target.click();
+      return { ok: true, label: target.innerText.trim() };
+    })()`);
+    check("rack capacity: zone table cell drilldown is clickable through the progress bar", drilldownState.ok === true, JSON.stringify(drilldownState));
+    await sleep(300);
+    const detailPanelText = await evalJs("document.body.innerText");
+    check("rack capacity: drilldown opens a Rack details inspector panel", detailPanelText.includes("Rack details"));
+    const drilldownCleared = await evalJs(`(() => {
+      const btn = [...document.querySelectorAll("button")].find(b => b.innerText.includes("Clear filter"));
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`);
+    await sleep(300);
+    const afterClearText = await evalJs("document.body.innerText");
+    check("rack capacity: drilldown Clear filter closes the inspector panel", drilldownCleared === true && !afterClearText.includes("Rack details"));
+
     // Rack Unit Capacity panel: fill Total (U)/Used (U), verify the live
     // Available (U)/Availability % preview, then actually save (real IPC
     // round-trip against the copied test workbook - safe, not production).
+    // Matches on the section's OWN <h3> heading (not full innerText) - v2.2.4
+    // added a read-only Rack Unit Capacity sub-block inside the Rack Capacity
+    // summary card whose text also contains "ความจุหน่วยแร็ค", so a full-text
+    // match would ambiguously resolve to the wrong (input-less) section.
     const unitCapacityFillResult = await evalJs(`(() => {
-      const section = [...document.querySelectorAll("section")].find(s => s.innerText.includes("Rack Unit Capacity") || s.innerText.includes("ความจุหน่วยแร็ค"));
+      const section = [...document.querySelectorAll("section")].find(s => {
+        const h = s.querySelector("h3");
+        return h && (h.innerText.includes("Rack Unit Capacity") || h.innerText.includes("ความจุหน่วยแร็ค"));
+      });
       if (!section) return { ok: false, reason: "section not found" };
       const inputs = [...section.querySelectorAll('input[type="number"]')];
       if (inputs.length !== 2) return { ok: false, reason: "expected 2 number inputs, found " + inputs.length };
@@ -230,7 +357,10 @@ async function main() {
     })()`);
     check("rack unit capacity: Total (U)/Used (U) inputs found and fillable", unitCapacityFillResult.ok === true, JSON.stringify(unitCapacityFillResult));
     await sleep(300);
-    const unitCapacityPreviewText = await evalJs(`[...document.querySelectorAll("section")].find(s => s.innerText.includes("Rack Unit Capacity") || s.innerText.includes("ความจุหน่วยแร็ค"))?.innerText ?? ""`);
+    const unitCapacityPreviewText = await evalJs(`[...document.querySelectorAll("section")].find(s => {
+      const h = s.querySelector("h3");
+      return h && (h.innerText.includes("Rack Unit Capacity") || h.innerText.includes("ความจุหน่วยแร็ค"));
+    })?.innerText ?? ""`);
     check("rack unit capacity: live preview shows Available (U) = 50 (400-350)", /\b50\b/.test(unitCapacityPreviewText));
     check("rack unit capacity: live preview shows Availability % = 12.50%", unitCapacityPreviewText.includes("12.50%"));
 
@@ -255,6 +385,21 @@ async function main() {
       unitCapacitySavedText.includes("Rack Unit Capacity saved") || unitCapacitySavedText.includes("บันทึกความจุหน่วยแร็คแล้ว")
     );
 
+    // v2.2.4: the Rack Capacity summary card's own U-capacity block (keyed
+    // off the SAME shared month state as the panel just saved to) must pick
+    // up the newly-saved values without a page reload, proving the prop
+    // threading from App.tsx actually connects the two components.
+    const summaryCardUnitCapacityText = await evalJs(`[...document.querySelectorAll("section")].find(s => s.innerText.includes("ความจุหน่วยแร็ค (U)"))?.innerText ?? ""`);
+    check(
+      "rack capacity: summary card's own U-capacity block reflects the just-saved 400/350/50/12.50%",
+      /400/.test(summaryCardUnitCapacityText) && /350/.test(summaryCardUnitCapacityText) && summaryCardUnitCapacityText.includes("12.50%"),
+      summaryCardUnitCapacityText
+    );
+    check(
+      "rack capacity: summary card's U-capacity block no longer shows the month-scoped empty state after saving",
+      !summaryCardUnitCapacityText.includes("ไม่มีข้อมูลความจุหน่วย U สำหรับเดือนที่เลือก")
+    );
+
     // Editor: the shared History-snapshot Month/Year selector is present.
     const editorMonthSelectorPresent = await evalJs(`(() => {
       const section = [...document.querySelectorAll("section")].find(s => s.innerText.includes("Rack Capacity Editor") || s.innerText.includes("แก้ไขความจุแร็ค"));
@@ -262,11 +407,66 @@ async function main() {
     })()`);
     check("rack capacity editor: shared Month/Year selector is present", editorMonthSelectorPresent === true);
 
-    // History view
+    // History view. The just-completed Rack Unit Capacity save can leave the
+    // workbook briefly reloading, during which this view transiently shows
+    // the "open a workbook" fallback (which also happens to be >300 chars) -
+    // poll for the Explorer's own Quick Jump heading, a marker that only the
+    // real Historical Operations Explorer renders, instead of a flat sleep.
     await evalJs(`document.querySelectorAll("nav button")[3].click()`);
-    await sleep(1200);
-    const historyText = await evalJs("document.body.innerText");
+    let historyText = "";
+    for (let i = 0; i < 30; i++) {
+      historyText = await evalJs("document.body.innerText");
+      if (historyText.includes("กระโดดด่วน") || historyText.includes("Quick Jump")) break;
+      await sleep(500);
+    }
     check("history view renders", historyText.length > 300);
+    check("history: real Explorer (not a transient reload fallback) is showing", historyText.includes("กระโดดด่วน") || historyText.includes("Quick Jump"), historyText.slice(0, 300));
+
+    // v2.2.4: Historical Operations Explorer must surface real, persisted
+    // Rack Capacity History + Rack Unit Capacity data (never the live
+    // Table7 relabeled as "history"), and Quick Jump must offer only real,
+    // chronological months within a single active reporting year.
+    const rackTabClicked = await evalJs(`(() => {
+      const btn = [...document.querySelectorAll("button")].find(b => b.innerText.includes("ประวัติความจุแร็ค") || b.innerText.includes("Rack Capacity History"));
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`);
+    check("history: Rack Capacity tab exists and is clickable", rackTabClicked === true);
+    await sleep(500);
+    const rackHistoryText = await evalJs("document.body.innerText");
+    check(
+      "history: Rack Capacity tab renders real history content (snapshot panel or its genuine empty state)",
+      rackHistoryText.includes("ประวัติความจุแร็ครายเดือน") || rackHistoryText.includes("Rack Capacity Monthly History")
+    );
+    check(
+      "history: Rack Unit Capacity History table shows the value just saved from the Rack Capacity view (400/350/12.50%)",
+      /400/.test(rackHistoryText) && /350/.test(rackHistoryText) && rackHistoryText.includes("12.50%")
+    );
+
+    const quickJumpTexts = await evalJs(`(() => {
+      const heading = [...document.querySelectorAll("h4")].find(h => h.innerText.includes("กระโดดด่วน") || h.innerText.toLowerCase().includes("quick jump"));
+      const container = heading?.parentElement?.querySelector("div.flex-wrap");
+      return container ? [...container.querySelectorAll("button")].map(b => b.innerText.trim()) : [];
+    })()`);
+    const quickJumpMonths = quickJumpTexts.map(parseMonthYearDisplay).filter(Boolean);
+    check("history: Quick Jump shows at least one real month", quickJumpMonths.length > 0, JSON.stringify(quickJumpTexts));
+    check("history: Quick Jump never shows more than 12 months (bounded to one reporting year)", quickJumpMonths.length <= 12, String(quickJumpMonths.length));
+    const quickJumpYears = new Set(quickJumpMonths.map(m => m.slice(0, 4)));
+    check("history: every Quick Jump month is within the same single active reporting year", quickJumpYears.size === 1, JSON.stringify([...quickJumpYears]));
+    const quickJumpSortedDescending = [...quickJumpMonths].sort((a, b) => b.localeCompare(a));
+    check(
+      "history: Quick Jump months are in real chronological (newest-first) order",
+      JSON.stringify(quickJumpMonths) === JSON.stringify(quickJumpSortedDescending),
+      JSON.stringify(quickJumpMonths)
+    );
+
+    // Back to the UPS tab so later checks in this view see the default tab.
+    await evalJs(`(() => {
+      const btn = [...document.querySelectorAll("button")].find(b => b.innerText.includes("ประวัติเครื่อง UPS") || b.innerText.includes("UPS Loads History"));
+      btn?.click();
+    })()`);
+    await sleep(300);
 
     // Site comparison loads both isolated workbooks through openMultiple.
     await evalJs(`[...document.querySelectorAll("nav button")].find(b => b.innerText.includes("เปรียบเทียบ") || b.innerText.includes("Site Comparison")).click()`);

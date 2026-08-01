@@ -21,6 +21,7 @@ import type { ExcelIntegrityReport, WorkbookValidation } from "./excel/WorkbookR
 import type { DeviceLists } from "./excel/SheetMapper";
 import type { FacilityEntry, FacilityProfile, FacilityDashboardConfig } from "./electron/facilities";
 import type { UpsGroupConfig } from "./utils/upsGroupAggregation";
+import type { GoogleAuthState } from "./electron/googleAuth";
 
 export type {
   OpenWorkbookPayload,
@@ -37,6 +38,7 @@ export type {
   ExcelIntegrityReport,
   WorkbookValidation,
   DeviceLists,
+  GoogleAuthState,
   FacilityEntry,
   FacilityProfile,
   FacilityDashboardConfig
@@ -189,6 +191,24 @@ export interface DesktopBridge {
   shell: {
     showItemInFolder(path: string): Promise<boolean>;
   };
+  /** Desktop Google Sheets sync - main-process-owned OAuth (googleAuth.ts).
+   *  The renderer never receives an access/refresh token, only status. */
+  googleSheets: {
+    status(): Promise<GoogleAuthState>;
+    /** Fire-and-forget: opens the system browser and starts the loopback
+     *  OAuth flow; follow progress via events.onGoogleAuthState. */
+    signIn(): Promise<{ ok: boolean }>;
+    signOut(): Promise<{ ok: boolean }>;
+    syncMonth(payload: { spreadsheetId: string; log: unknown }): Promise<
+      { ok: true; report: unknown } | { ok: false; code: string; message: string; mismatches?: string[] }
+    >;
+    exportAll(payload: { spreadsheetId: string; logs: unknown[] }): Promise<
+      { ok: true; report: unknown } | { ok: false; code: string; message: string; mismatches?: string[] }
+    >;
+    importAll(payload: { spreadsheetId: string }): Promise<
+      { ok: true; logs: unknown[] } | { ok: false; code: string; message: string }
+    >;
+  };
   files: {
     getPathForFile(file: File): string;
   };
@@ -197,6 +217,10 @@ export interface DesktopBridge {
     onExportProgress(callback: (progress: ExportProgress) => void): () => void;
     /** Non-blocking UPS Group History migration progress (excel:open/reload). */
     onMigrationProgress(callback: (progress: { stage: string }) => void): () => void;
+    /** Broadcasts every Google OAuth state transition (connecting/connected/
+     *  authRequired/error/disconnected) - the renderer's single source of
+     *  truth for the sign-in UI, in place of Firebase's onAuthStateChanged. */
+    onGoogleAuthState(callback: (state: GoogleAuthState) => void): () => void;
   };
 }
 

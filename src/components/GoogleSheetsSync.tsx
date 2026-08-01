@@ -1,42 +1,30 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   FileSpreadsheet,
   RefreshCw,
   Link2,
   Link2Off,
-  CheckCircle,
   AlertCircle,
   Download,
   Upload,
   Clock,
-  ArrowRight,
   ExternalLink
 } from "lucide-react";
-import {
-  googleSignIn,
-  logout
-} from "../firebaseAuth";
-import {
-  writeMonthlyLogTransactional,
-  VerificationFailedError,
-  DataIntegrityReport
-} from "../sheetsService";
+import type { GoogleSheetsDriver, GoogleConnectionState } from "../googleSheetsDriver";
 import { loadAllLogs } from "../utils";
 import { MonthlyLog } from "../types";
 
 interface GoogleSheetsSyncProps {
   activeLog: MonthlyLog | null;
   lang: "th" | "en";
-  // Authentication state now owned exclusively by App.tsx's single auth listener.
-  isGoogleConnected: boolean;
-  googleUserEmail: string | null;
-  accessToken: string | null;
+  driver: GoogleSheetsDriver;
+  connectionState: GoogleConnectionState;
   // Spreadsheet Selection stage - single source of truth lives in App.tsx.
   spreadsheetId: string;
   onSpreadsheetIdChange: (id: string) => void;
   lastSyncedTime: string | null;
   // Delegates the actual import to App.tsx's single shared pipeline
-  // (the only function in the app that calls importLogsFromGoogleSheets).
+  // (the only function in the app that calls driver.importAll()).
   // Resolves to null if this particular request was superseded/cancelled by a
   // newer one before it could complete.
   onImport: () => Promise<MonthlyLog[] | null>;
@@ -45,17 +33,13 @@ interface GoogleSheetsSyncProps {
 export default function GoogleSheetsSync({
   activeLog,
   lang,
-  isGoogleConnected,
-  googleUserEmail,
-  accessToken,
+  driver,
+  connectionState,
   spreadsheetId,
   onSpreadsheetIdChange,
   lastSyncedTime,
   onImport
 }: GoogleSheetsSyncProps) {
-  const [isConnecting, setIsConnecting] = useState(false);
-  const [loginErrorMessage, setLoginErrorMessage] = useState<string | null>(null);
-
   const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "success" | "error">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -71,39 +55,18 @@ export default function GoogleSheetsSync({
   };
 
   const handleLogin = async () => {
-    setIsConnecting(true);
-    setLoginErrorMessage(null);
     try {
-      await googleSignIn();
-      // Firebase's auth-state listener (owned by App.tsx) will pick up the new
-      // session and flow isGoogleConnected/googleUserEmail/accessToken down as props.
-    } catch (err: any) {
+      await driver.signIn();
+      // The driver's own state machine (connecting -> connected/error) flows
+      // down through App.tsx's connectionState prop; nothing else to do here.
+    } catch (err) {
       console.error(err);
-      const errMsg = err?.message || String(err);
-      const isPopupClosed = errMsg.includes("popup-closed-by-user") || errMsg.includes("cancelled-popup-request") || errMsg.includes("popup_closed_by_user");
-      if (isPopupClosed) {
-        setLoginErrorMessage(
-          lang === "th"
-            ? "ป๊อปอัปถูกปิดกั้นหรือถูกปิดลงเนื่องจากข้อจำกัดความปลอดภัยของเบราว์เซอร์ในการแสดงผลผ่านหน้าต่างพรีวิว (iFrame) ของ AI Studio กรุณากดเปิดแอปในหน้าต่างใหม่ (ปุ่มสีม่วง 'เปิดแอปในแท็บใหม่' ด้านล่าง) เพื่อเข้าสู่ระบบและได้รับสิทธิการเข้าถึงอย่างสมบูรณ์"
-            : "Google Sign-In popup was blocked or closed due to AI Studio iframe sandbox restrictions. Please click 'Open App in New Tab' (the indigo button below) to sign in safely in a separate window."
-        );
-      } else {
-        setLoginErrorMessage(
-          lang === "th"
-            ? `การเชื่อมต่อ Google บัญชีล้มเหลว: ${errMsg}`
-            : `Google Authentication connection failed: ${errMsg}`
-        );
-      }
-    } finally {
-      setIsConnecting(false);
     }
   };
 
   const handleLogout = async () => {
     try {
-      await logout();
-      // Firebase's auth-state listener (owned by App.tsx) will detect the sign-out
-      // and flow isGoogleConnected=false/accessToken=null down as props.
+      await driver.signOut();
     } catch (err) {
       console.error(err);
     }
@@ -121,26 +84,68 @@ export default function GoogleSheetsSync({
     return run;
   };
 
-  // Shared error-message resolver so a failed verification is always reported
-  // as a distinct, unambiguous failure - never conflated with a generic error,
-  // and never silently treated as success.
-  const describeWriteError = (err: any): string => {
-    if (err instanceof VerificationFailedError) {
-      return lang === "th"
-        ? "ไม่สามารถตรวจสอบยืนยันข้อมูลที่อัปโหลดได้ ข้อมูลของคุณอาจไม่ถูกบันทึกอย่างสมบูรณ์ กรุณาลองซิงค์อีกครั้ง"
-        : "Upload could not be verified — your data may not have been fully saved. Please retry the sync.";
+  const dict = {
+    th: {
+      cardTitle: "ซิงโครไนซ์กับ Google Sheets",
+      cardDesc: "บันทึกข้อมูลและดึงประวัติการใช้ไฟฟ้า/เครื่องควบคุมจากสเปรดชีตโดยตรง",
+      connectBtn: "เชื่อมต่อ Google Account",
+      connectedAs: "เชื่อมต่อแล้วโดย",
+      disconnectBtn: "ยกเลิกการเชื่อมต่อ",
+      spreadsheetIdLabel: "ลิงก์หรือรหัส Google Spreadsheet ID",
+      openSheet: "เปิด Google Sheets",
+      syncActiveBtn: "ซิงค์ข้อมูลเดือนนี้ขึ้นสเปรดชีต",
+      exportAllBtn: "ส่งออกข้อมูลทุกเดือนไปสเปรดชีต",
+      importAllBtn: "นำเข้าข้อมูลทั้งหมดเข้าเครื่อง",
+      autoSyncLabel: "เปิดระบบซิงค์ข้อมูลอัตโนมัติเมื่อกดบันทึก",
+      lastSyncText: "ซิงค์ล่าสุดเวลา",
+      syncStatusIdle: "พร้อมทำงาน",
+      syncStatusSyncing: "กำลังเขียนข้อมูลสเปรดชีต...",
+      syncStatusSuccess: "ซิงโครไนซ์ข้อมูลสำเร็จแล้ว!",
+      syncStatusError: "เกิดข้อผิดพลาดในการซิงโครไนซ์",
+      helperNote: "ข้อมูลในสเปรดชีตจะถูกแยกออกเป็น 4 แผ่นงานอัตโนมัติ: UPS Loads, Air Conditioning, DC Power Panels, และ Energy & Cost ต่อท้ายจากข้อมูลเดิมของคุณเพื่อความต่อเนื่องอย่างแม่นยำ",
+      statusDisconnected: "ยังไม่ได้เชื่อมต่อ",
+      statusConnecting: "กำลังเชื่อมต่อ... กรุณาเข้าสู่ระบบในเบราว์เซอร์ที่เปิดขึ้น",
+      statusAuthRequired: "ต้องเข้าสู่ระบบใหม่",
+      statusError: "การเชื่อมต่อผิดพลาด",
+      openBrowserNote: "ระบบได้เปิดเบราว์เซอร์เริ่มต้นของคุณเพื่อเข้าสู่ระบบ Google อย่างปลอดภัย กรุณาทำตามขั้นตอนในหน้าต่างเบราว์เซอร์นั้น"
+    },
+    en: {
+      cardTitle: "Google Sheets Core Sync",
+      cardDesc: "Direct real-time synchronization with cloud spreadsheet for durable metrics archive.",
+      connectBtn: "Sign in with Google",
+      connectedAs: "Connected as",
+      disconnectBtn: "Disconnect",
+      spreadsheetIdLabel: "Target Google Spreadsheet ID",
+      openSheet: "Open Google Sheet",
+      syncActiveBtn: "Sync Active Month Data",
+      exportAllBtn: "Export Entire Database to Sheet",
+      importAllBtn: "Import Spreadsheet Data",
+      autoSyncLabel: "Enable Background Auto-Sync on Save",
+      lastSyncText: "Last Synced at",
+      syncStatusIdle: "Idle / Connected",
+      syncStatusSyncing: "Updating Google Spreadsheet values...",
+      syncStatusSuccess: "Google Sheets Sync Successful!",
+      syncStatusError: "Sync Connection Error",
+      helperNote: "Automatically segments facility metrics into 4 targeted worksheets: UPS Loads, Air Conditioning, DC Power Panels, and Energy & Cost without duplicates.",
+      statusDisconnected: "Not Connected",
+      statusConnecting: "Connecting... please complete sign-in in the browser window that just opened",
+      statusAuthRequired: "Sign-in required",
+      statusError: "Connection Error",
+      openBrowserNote: "Your default browser was opened to sign in to Google securely. Please complete the steps there."
     }
-    return err?.message || "Sync failed.";
   };
+
+  const t = dict[lang];
+  const isGoogleConnected = connectionState.status === "connected";
+  const isConnecting = connectionState.status === "connecting";
 
   // Non-fatal Data Integrity Report findings are logged for visibility (duplicate
   // keys are NOT included here - those already stop synchronization outright).
-  const logIntegrityReport = (report: DataIntegrityReport) => {
+  const logIntegrityReport = (report: { missingMonths: unknown[]; missingDevices: unknown[]; unexpectedBlankRows: unknown[]; invalidIds: unknown[] } | null) => {
+    if (!report) return;
     const { missingMonths, missingDevices, unexpectedBlankRows, invalidIds } = report;
     if (missingMonths.length || missingDevices.length || unexpectedBlankRows.length || invalidIds.length) {
-      console.warn("Google Sheets data integrity report:", {
-        missingMonths, missingDevices, unexpectedBlankRows, invalidIds
-      });
+      console.warn("Google Sheets data integrity report:", { missingMonths, missingDevices, unexpectedBlankRows, invalidIds });
     }
   };
 
@@ -200,7 +205,7 @@ export default function GoogleSheetsSync({
    * after the failure is silently attempted).
    */
   const handleExportAllToSheets = async () => {
-    if (!accessToken) return;
+    if (!isGoogleConnected) return;
     await enqueueWrite(async () => {
       setSyncStatus("syncing");
       setErrorMessage(null);
@@ -211,25 +216,15 @@ export default function GoogleSheetsSync({
           throw new Error(lang === "th" ? "ไม่พบข้อมูลสำหรับส่งออก" : "No local data to export.");
         }
 
-        for (const log of allLogs) {
-          try {
-            const { report } = await writeMonthlyLogTransactional(accessToken, spreadsheetId, log);
-            logIntegrityReport(report);
-          } catch (err: any) {
-            // Stop at the first failing month - never continue past a failed write.
-            if (err instanceof VerificationFailedError) {
-              throw new VerificationFailedError(`${log.month}: ${err.message}`, err.mismatches);
-            }
-            throw new Error(`${log.month}: ${err?.message || "Sync failed."}`);
-          }
-        }
+        const { report } = await driver.exportAll(spreadsheetId, allLogs);
+        logIntegrityReport(report);
 
         // Pull latest from Google Sheets to ensure report state is 100% correct and synced
         await performImport();
       } catch (err: any) {
         console.error(err);
         setSyncStatus("error");
-        setErrorMessage(describeWriteError(err));
+        setErrorMessage(err?.message || "Sync failed.");
       }
     });
   };
@@ -240,13 +235,13 @@ export default function GoogleSheetsSync({
    * -> Verify -> Commit). Only rows that actually changed are uploaded.
    */
   const handleSyncActiveMonth = async () => {
-    if (!accessToken || !activeLog) return;
+    if (!isGoogleConnected || !activeLog) return;
     await enqueueWrite(async () => {
       setSyncStatus("syncing");
       setErrorMessage(null);
 
       try {
-        const { report } = await writeMonthlyLogTransactional(accessToken, spreadsheetId, activeLog);
+        const { report } = await driver.syncMonth(spreadsheetId, activeLog);
         logIntegrityReport(report);
 
         // Pull latest from Google Sheets to ensure report state is 100% correct and synced
@@ -254,7 +249,7 @@ export default function GoogleSheetsSync({
       } catch (err: any) {
         console.error(err);
         setSyncStatus("error");
-        setErrorMessage(describeWriteError(err));
+        setErrorMessage(err?.message || "Sync failed.");
       }
     });
   };
@@ -263,7 +258,7 @@ export default function GoogleSheetsSync({
    * Import all rows from Google Sheets, replace local database, and refresh UI
    */
   const handleImportFromSheets = async () => {
-    if (!accessToken) return;
+    if (!isGoogleConnected) return;
     const confirmImport = window.confirm(
       lang === "th"
         ? "คุณแน่ใจหรือไม่ที่จะนำเข้าข้อมูลจาก Google Sheets? การทำงานนี้จะเขียนทับข้อมูลในเครื่องของคุณด้วยข้อมูลทั้งหมดจากสเปรดชีต"
@@ -275,12 +270,12 @@ export default function GoogleSheetsSync({
 
   // Auto-sync function whenever the activeLog is saved and autoSync is enabled
   useEffect(() => {
-    if (autoSync && accessToken && activeLog && (activeLog.lastSavedUps || activeLog.lastSavedAir || activeLog.lastSavedDc || activeLog.lastSavedEnergyCost)) {
+    if (autoSync && isGoogleConnected && activeLog && (activeLog.lastSavedUps || activeLog.lastSavedAir || activeLog.lastSavedDc || activeLog.lastSavedEnergyCost)) {
       // Run automatic background sync for the active month through the same
       // transactional pipeline, queued behind any other in-flight write.
       enqueueWrite(async () => {
         try {
-          const { report } = await writeMonthlyLogTransactional(accessToken, spreadsheetId, activeLog);
+          const { report } = await driver.syncMonth(spreadsheetId, activeLog);
           logIntegrityReport(report);
           // Auto-import to keep report state 100% accurate
           await performImport();
@@ -290,50 +285,7 @@ export default function GoogleSheetsSync({
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeLog, autoSync, accessToken]);
-
-  const dict = {
-    th: {
-      cardTitle: "ซิงโครไนซ์กับ Google Sheets",
-      cardDesc: "บันทึกข้อมูลและดึงประวัติการใช้ไฟฟ้า/เครื่องควบคุมจากสเปรดชีตโดยตรง",
-      connectBtn: "เชื่อมต่อ Google Account",
-      connectedAs: "เชื่อมต่อแล้วโดย",
-      disconnectBtn: "ยกเลิกการเชื่อมต่อ",
-      spreadsheetIdLabel: "ลิงก์หรือรหัส Google Spreadsheet ID",
-      openSheet: "เปิด Google Sheets",
-      syncActiveBtn: "ซิงค์ข้อมูลเดือนนี้ขึ้นสเปรดชีต",
-      exportAllBtn: "ส่งออกข้อมูลทุกเดือนไปสเปรดชีต",
-      importAllBtn: "นำเข้าข้อมูลทั้งหมดเข้าเครื่อง",
-      autoSyncLabel: "เปิดระบบซิงค์ข้อมูลอัตโนมัติเมื่อกดบันทึก",
-      lastSyncText: "ซิงค์ล่าสุดเวลา",
-      syncStatusIdle: "พร้อมทำงาน",
-      syncStatusSyncing: "กำลังเขียนข้อมูลสเปรดชีต...",
-      syncStatusSuccess: "ซิงโครไนซ์ข้อมูลสำเร็จแล้ว!",
-      syncStatusError: "เกิดข้อผิดพลาดในการซิงโครไนซ์",
-      helperNote: "ข้อมูลในสเปรดชีตจะถูกแยกออกเป็น 4 แผ่นงานอัตโนมัติ: UPS Loads, Air Conditioning, DC Power Panels, และ Energy & Cost ต่อท้ายจากข้อมูลเดิมของคุณเพื่อความต่อเนื่องอย่างแม่นยำ"
-    },
-    en: {
-      cardTitle: "Google Sheets Core Sync",
-      cardDesc: "Direct real-time synchronization with cloud spreadsheet for durable metrics archive.",
-      connectBtn: "Sign in with Google",
-      connectedAs: "Connected as",
-      disconnectBtn: "Disconnect",
-      spreadsheetIdLabel: "Target Google Spreadsheet ID",
-      openSheet: "Open Google Sheet",
-      syncActiveBtn: "Sync Active Month Data",
-      exportAllBtn: "Export Entire Database to Sheet",
-      importAllBtn: "Import Spreadsheet Data",
-      autoSyncLabel: "Enable Background Auto-Sync on Save",
-      lastSyncText: "Last Synced at",
-      syncStatusIdle: "Idle / Connected",
-      syncStatusSyncing: "Updating Google Spreadsheet values...",
-      syncStatusSuccess: "Google Sheets Sync Successful!",
-      syncStatusError: "Sync Connection Error",
-      helperNote: "Automatically segments facility metrics into 4 targeted worksheets: UPS Loads, Air Conditioning, DC Power Panels, and Energy & Cost without duplicates."
-    }
-  };
-
-  const t = dict[lang];
+  }, [activeLog, autoSync, isGoogleConnected]);
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
@@ -348,17 +300,13 @@ export default function GoogleSheetsSync({
           </p>
         </div>
 
-        {/* CONNECTION STATUS */}
+        {/* CONNECTION STATUS - four explicit states: disconnected, connecting,
+            connected, authRequired/error - never an ambiguous boolean alone. */}
         <div>
-          {!isGoogleConnected ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-slate-950 border border-slate-850 text-[10px] font-bold text-slate-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse"></span>
-              {lang === "th" ? "ยังไม่ได้เชื่อมต่อ" : "Not Connected"}
-            </span>
-          ) : (
+          {connectionState.status === "connected" ? (
             <div className="flex flex-wrap items-center gap-3">
               <span className="text-xs text-slate-400">
-                {t.connectedAs}: <strong className="text-emerald-400 font-medium">{googleUserEmail}</strong>
+                {t.connectedAs}: <strong className="text-emerald-400 font-medium">{connectionState.email}</strong>
               </span>
               <button
                 onClick={handleLogout}
@@ -368,26 +316,58 @@ export default function GoogleSheetsSync({
                 <span>{t.disconnectBtn}</span>
               </button>
             </div>
+          ) : connectionState.status === "connecting" ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-amber-400/10 border border-amber-400/30 text-[10px] font-bold text-amber-400">
+              <RefreshCw className="w-3 h-3 animate-spin" />
+              {t.statusConnecting}
+            </span>
+          ) : connectionState.status === "authRequired" ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-amber-400/10 border border-amber-400/30 text-[10px] font-bold text-amber-400">
+              <AlertCircle className="w-3 h-3" />
+              {t.statusAuthRequired}
+            </span>
+          ) : connectionState.status === "error" ? (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-rose-500/10 border border-rose-500/30 text-[10px] font-bold text-rose-400">
+              <AlertCircle className="w-3 h-3" />
+              {t.statusError}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-slate-950 border border-slate-850 text-[10px] font-bold text-slate-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-500 animate-pulse"></span>
+              {t.statusDisconnected}
+            </span>
           )}
         </div>
       </div>
 
-      {/* iFrame Notice and sign-in button when not connected */}
+      {/* Sign-in call to action when not connected. Desktop: opens the system
+          browser for a real loopback OAuth flow (see googleAuth.ts) - no
+          iframe/popup concerns apply to a native browser window at all.
+          Browser (e.g. an iframe-embedded preview deployment): unchanged
+          Firebase popup/redirect flow, which genuinely can hit third-party-
+          cookie/iframe restrictions there - that guidance stays relevant. */}
       {!isGoogleConnected && (
         <div className="bg-slate-950/60 border border-slate-850 p-4 rounded-xl space-y-3">
-          <div className="flex items-start gap-2.5 text-xs text-slate-300">
-            <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="font-semibold text-amber-400">
-                {lang === "th" ? "คำแนะนำสำหรับการทดสอบผ่านระบบ AI Studio (iFrame)" : "AI Studio Preview Iframe Notice"}
-              </p>
-              <p className="text-slate-400 leading-relaxed">
-                {lang === "th"
-                  ? "เนื่องจากข้อจำกัดด้านความปลอดภัยของเบราว์เซอร์ในการแสดงผลผ่านหน้าต่างย่อย (iFrame) ป๊อปอัปเข้าสู่ระบบของ Google อาจปิดตัวลงโดยอัตโนมัติ เพื่อการเชื่อมต่อที่ราบรื่น แนะนำให้กดเปิดแอปในหน้าต่างใหม่ (แท็บแยก) เพื่อล็อกอินก่อน"
-                  : "Due to browser security policies regarding embedded iframes, Google Sign-In popups might get blocked or closed automatically. We highly recommend opening the app in a new tab to authenticate securely."}
-              </p>
+          {driver.isDesktop ? (
+            <div className="flex items-start gap-2.5 text-xs text-slate-300">
+              <ExternalLink className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+              <p className="text-slate-400 leading-relaxed">{t.openBrowserNote}</p>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-start gap-2.5 text-xs text-slate-300">
+              <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold text-amber-400">
+                  {lang === "th" ? "คำแนะนำสำหรับการทดสอบผ่านระบบ AI Studio (iFrame)" : "AI Studio Preview Iframe Notice"}
+                </p>
+                <p className="text-slate-400 leading-relaxed">
+                  {lang === "th"
+                    ? "เนื่องจากข้อจำกัดด้านความปลอดภัยของเบราว์เซอร์ในการแสดงผลผ่านหน้าต่างย่อย (iFrame) ป๊อปอัปเข้าสู่ระบบของ Google อาจปิดตัวลงโดยอัตโนมัติ เพื่อการเชื่อมต่อที่ราบรื่น แนะนำให้กดเปิดแอปในหน้าต่างใหม่ (แท็บแยก) เพื่อล็อกอินก่อน"
+                    : "Due to browser security policies regarding embedded iframes, Google Sign-In popups might get blocked or closed automatically. We highly recommend opening the app in a new tab to authenticate securely."}
+                </p>
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-2.5 pt-1">
             <button
               onClick={handleLogin}
@@ -397,26 +377,28 @@ export default function GoogleSheetsSync({
               <Link2 className="w-3.5 h-3.5" />
               <span>{isConnecting ? (lang === "th" ? "กำลังเชื่อมต่อ..." : "Connecting...") : t.connectBtn}</span>
             </button>
-            <a
-              href={window.location.origin}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-2 px-4 py-2 bg-indigo-650 hover:bg-indigo-600 text-xs text-white font-bold rounded-xl transition-all border border-indigo-500/30 cursor-pointer"
-            >
-              <ExternalLink className="w-3.5 h-3.5 text-indigo-300" />
-              <span>{lang === "th" ? "เปิดแอปในแท็บใหม่" : "Open App in New Tab"}</span>
-            </a>
+            {!driver.isDesktop && (
+              <a
+                href={window.location.origin}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-650 hover:bg-indigo-600 text-xs text-white font-bold rounded-xl transition-all border border-indigo-500/30 cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-indigo-300" />
+                <span>{lang === "th" ? "เปิดแอปในแท็บใหม่" : "Open App in New Tab"}</span>
+              </a>
+            )}
           </div>
         </div>
       )}
 
-      {/* Login error display when not connected */}
-      {!isGoogleConnected && loginErrorMessage && (
+      {/* Connection error display when not connected */}
+      {!isGoogleConnected && connectionState.status === "error" && connectionState.errorMessage && (
         <div className="bg-rose-500/10 border border-rose-500/20 p-3.5 rounded-xl flex items-start gap-2.5 text-rose-300 text-xs font-sans animate-fadeIn">
           <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="font-semibold">{lang === "th" ? "การเชื่อมต่อผิดพลาด" : "Connection Error"}</p>
-            <p className="text-rose-400/90 leading-relaxed font-mono text-[11px]">{loginErrorMessage}</p>
+            <p className="text-rose-400/90 leading-relaxed font-mono text-[11px]">{connectionState.errorMessage}</p>
           </div>
         </div>
       )}

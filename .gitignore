@@ -7,6 +7,11 @@ coverage/
 .env*
 !.env.example
 
+# Desktop Google OAuth client credentials (Desktop-app-type client_id/secret
+# from Google Cloud Console) - never committed; populate from the .example
+# template locally. See docs/GOOGLE_OAUTH_SETUP.md.
+google-oauth-desktop-config.json
+
 # Excel owner/lock temp files
 ~$*
 # Electron build output

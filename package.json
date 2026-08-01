@@ -24,6 +24,7 @@
     "test:rack-capacity-image": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-capacity-image.ts",
     "test:rack-capacity-image-embed": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-capacity-image-embed.ts",
     "test:rack-capacity-history": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-capacity-history.ts",
+    "test:rack-status-config": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-status-config.ts",
     "test:excel": "node node_modules/tsx/dist/cli.mjs scripts/test-excel-roundtrip.ts",
     "test:save-formatting": "node node_modules/tsx/dist/cli.mjs scripts/test-save-formatting-regression.ts",
     "test:energy-cost-dashboard": "node node_modules/tsx/dist/cli.mjs scripts/test-energy-cost-dashboard-fac.ts",

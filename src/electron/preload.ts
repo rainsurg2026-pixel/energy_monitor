@@ -74,6 +74,14 @@ const desktopBridge = {
   shell: {
     showItemInFolder: (path: string) => invoke("shell:showItemInFolder", path)
   },
+  googleSheets: {
+    status: () => invoke("googleSheets:status"),
+    signIn: () => invoke("googleSheets:signIn"),
+    signOut: () => invoke("googleSheets:signOut"),
+    syncMonth: (payload: { spreadsheetId: string; log: unknown }) => invoke("googleSheets:syncMonth", payload),
+    exportAll: (payload: { spreadsheetId: string; logs: unknown[] }) => invoke("googleSheets:exportAll", payload),
+    importAll: (payload: { spreadsheetId: string }) => invoke("googleSheets:importAll", payload)
+  },
   files: {
     /** Resolve the real filesystem path of a dropped File (drag & drop open). */
     getPathForFile: (file: File): string => webUtils.getPathForFile(file)
@@ -94,6 +102,11 @@ const desktopBridge = {
       const listener = (_event: unknown, progress: { stage: string }) => callback(progress);
       ipcRenderer.on("migration-progress", listener);
       return () => ipcRenderer.removeListener("migration-progress", listener);
+    },
+    onGoogleAuthState: (callback: (state: { status: string; email: string | null; errorMessage: string | null }) => void) => {
+      const listener = (_event: unknown, state: { status: string; email: string | null; errorMessage: string | null }) => callback(state);
+      ipcRenderer.on("google-auth-state", listener);
+      return () => ipcRenderer.removeListener("google-auth-state", listener);
     }
   }
 };
