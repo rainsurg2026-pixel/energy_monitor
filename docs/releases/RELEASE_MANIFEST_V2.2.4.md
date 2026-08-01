@@ -86,10 +86,10 @@ green.
 
 - **Previous `v2.2.4` tag target (incomplete/incorrect)**:
   `a2fcfa2c2902d58a7be7b7e7e196589df49df950`
-- **Final corrective commit**: `<FINAL_COMMIT_SHA>` (filled in after commit)
-- **`v2.2.4` tag recreated to point at**: `<FINAL_COMMIT_SHA>` (same as
-  above — annotated tag, recreated only after every release gate below
-  passed)
+- **Final corrective commit**: `b351528f7d912edb473c040c40130dfbd6e17b59`
+- **`v2.2.4` tag recreated to point at**: `b351528f7d912edb473c040c40130dfbd6e17b59`
+  (same commit — annotated tag, recreated only after every release gate
+  above passed)
 - This tag move is LOCAL ONLY. No remote exists for this repository; no
   push, force-push, or GitHub release/tag was performed.
 
