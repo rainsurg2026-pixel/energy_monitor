@@ -67,6 +67,15 @@ if (report.rack && report.rack.records.length > 0) {
   if (!/Total Racks/.test(html)) throw new Error("Rack Capacity KPI cards are missing.");
   if (!/rack-donut-row/.test(html)) throw new Error("Rack Capacity donut chart is missing.");
   if (/Rack Capacity and Utilization<\/h2><p class="note">Rack capacity data is unavailable/.test(html)) throw new Error("Rack Capacity data exists but the PDF shows the unavailable-data fallback.");
+  // v2.2.5 round 3: Gauge, Forecast, Zone Heatmap, and Rack Capacity Site
+  // Comparison were added to close the PDF/dashboard parity gap.
+  if (!html.includes("<h2>Capacity Health and Zone Heatmap</h2>")) throw new Error("Capacity Health and Zone Heatmap page is missing.");
+  if (!html.includes("Capacity Health Gauge")) throw new Error("Capacity Health Gauge block is missing.");
+  if (!html.includes("Zone Heatmap")) throw new Error("Zone Heatmap block is missing.");
+  if (!html.includes("<h2>Capacity Trend and Forecast</h2>")) throw new Error("Capacity Trend and Forecast page is missing.");
+  if (!html.includes("<h2>Rack Capacity Site Comparison</h2>")) throw new Error("Rack Capacity Site Comparison page is missing.");
+  if (!report.rackComparison?.self) throw new Error("Rack Capacity Site Comparison data was not built even though Rack Capacity records exist.");
+  if (!report.rackComparison.other && !html.includes("the sibling facility's Rack Capacity data was unavailable")) throw new Error("Missing-sibling note is absent from Rack Capacity Site Comparison.");
 } else {
   throw new Error(`${facilityId} workbook unexpectedly has no Rack Capacity / Table7 records - cannot verify the PDF renders real data.`);
 }
@@ -91,9 +100,16 @@ for (const section of ["Monthly Energy &amp; Cost Table", "Report Information an
 for (const chart of ["Total 4th Floor Energy Trend", "UPS System Energy Trend", "Air Conditioning Energy Trend", "DC Power Panel Energy Trend", "Estimated 4th Floor Cost Trend", "Building Average Electricity Rate Trend"]) {
   if (!html.includes(chart)) throw new Error(`Required chart series is missing: ${chart}`);
 }
-const rackTotalHistoryMonths = new Set(report.rackHistory.filter(r => r.rackZone === "(Total)").map(r => r.snapshotMonth)).size;
-const expectedTrendPages = 6 + (rackTotalHistoryMonths >= 2 ? 2 : 0); // + Rack Capacity Usage%/Availability% once >=2 months of history exist
+const rackTotalHistoryAll = report.rackHistory.filter(r => r.rackZone === "(Total)");
+const rackTotalHistoryMonths = new Set(rackTotalHistoryAll.map(r => r.snapshotMonth)).size;
+// v2.2.5 round 3: Capacity Trend and Forecast reuses the shared trendPage()
+// renderer (so it counts as one more "page trend-page") once at least
+// MIN_FORECAST_HISTORY_MONTHS (6) real history months exist; below that it
+// shows "Insufficient History" as a plain page instead.
+const forecastEligible = rackTotalHistoryAll.length >= 6;
+const expectedTrendPages = 6 + (rackTotalHistoryMonths >= 2 ? 2 : 0) + (forecastEligible ? 1 : 0); // + Rack Capacity Usage%/Availability% once >=2 months of history exist, + Forecast once >=6
 if ((html.match(/class="page trend-page"/g) ?? []).length !== expectedTrendPages) throw new Error(`Each trend must occupy one full report page (expected ${expectedTrendPages}).`);
+if (!forecastEligible && !html.includes("Insufficient History")) throw new Error("Capacity Trend and Forecast should show 'Insufficient History' with fewer than 6 real history months.");
 const expectedPointLabels = [
   ...report.monthlyRows.map(row => row.floorEnergyKwh),
   ...report.monthlyRows.map(row => row.upsEnergyKwh),
@@ -106,7 +122,11 @@ const rackTrendTotalRows = report.rackHistory.filter(r => r.rackZone === "(Total
 const expectedRackPointLabels = rackTotalHistoryMonths >= 2
   ? [...rackTrendTotalRows.map(r => r.usagePct), ...rackTrendTotalRows.map(r => r.availabilityPct)].filter(value => value !== null && Number.isFinite(value)).length
   : 0;
-if ((html.match(/class="point-value"/g) ?? []).length !== expectedPointLabels + expectedRackPointLabels) throw new Error("Every valid trend point must receive a numeric label.");
+// Forecast points are always numeric (history values, or a regression
+// projection) - every one gets a point-value label, unlike the sparse
+// energy/rack trends above which can have real gaps.
+const expectedForecastPointLabels = forecastEligible ? rackTotalHistoryAll.length + 12 : 0;
+if ((html.match(/class="point-value"/g) ?? []).length !== expectedPointLabels + expectedRackPointLabels + expectedForecastPointLabels) throw new Error("Every valid trend point must receive a numeric label.");
 if (!html.includes('"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif')) throw new Error("Report font stack is missing.");
 
 const after = await fs.stat(workbookPath);

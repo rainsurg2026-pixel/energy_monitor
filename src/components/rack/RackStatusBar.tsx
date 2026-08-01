@@ -1,4 +1,4 @@
-import { clampRatio } from "../utils/rackCapacity";
+import { clampRatio } from "../../utils/rackCapacity";
 
 interface RackStatusBarProps {
   /** 0-1 fraction, or null when the denominator is zero/unknown - rendered

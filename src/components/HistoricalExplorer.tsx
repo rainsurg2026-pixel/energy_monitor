@@ -7,7 +7,8 @@ import { formatRatioPercent } from "../utils/rackCapacity";
 import type { UpsGroupHistoryReport } from "../reports/reportTypes";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
-import RackCapacityHistoryPanel from "./RackCapacityHistoryPanel";
+import RackCapacityHistoryPanel from "./rack/RackCapacityHistoryPanel";
+import { RackCapacityProvider } from "./rack/RackCapacityContext";
 import {
   Zap,
   Thermometer,
@@ -92,7 +93,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       dcPower: "กำลังไฟ DC (W)",
       acPower: "กำลังไฟ AC (W)",
       monthlyEnergy: "พลังงานรวม (kWh)",
-      
+
       // Statuses
       editStatus: "สถานะแก้ไข",
       syncStatus: "สถานะซิงค์",
@@ -103,7 +104,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       pendingUpload: "รอซิงค์บิลด์",
       original: "ต้นฉบับ",
       modified: "แก้ไขแล้ว",
-      
+
       // Filters
       allYears: "ทุกปี",
       allMonths: "ทุกเดือน",
@@ -143,7 +144,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       dcPower: "DC Power (W)",
       acPower: "AC Power (W)",
       monthlyEnergy: "Monthly Energy (kWh)",
-      
+
       // Statuses
       editStatus: "Edit Status",
       syncStatus: "Sync Status",
@@ -154,7 +155,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       pendingUpload: "Pending Upload",
       original: "Original",
       modified: "Modified",
-      
+
       // Filters
       allYears: "All Years",
       allMonths: "All Months",
@@ -584,7 +585,9 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
     const sortedUnitRows = [...rackUnitCapacity].sort((a, b) => a.month.localeCompare(b.month));
     return (
       <div className="p-4 space-y-6">
-        <RackCapacityHistoryPanel rows={rackCapacityHistory} lang={lang} />
+        <RackCapacityProvider lang={lang} rackCapacity={null} rackUnitCapacity={rackUnitCapacity} rackCapacityHistory={rackCapacityHistory}>
+          <RackCapacityHistoryPanel />
+        </RackCapacityProvider>
         <div className="rounded-2xl border border-slate-850 bg-slate-900 p-5">
           <div className="flex items-center gap-2 text-slate-200 mb-3">
             <Boxes className="w-4 h-4" />
@@ -654,7 +657,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
 
         {/* Dropdown filters block */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950 p-3 rounded-xl border border-slate-850">
-          
+
           {/* Year select */}
           <div className="space-y-1">
             <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Year Filter</label>

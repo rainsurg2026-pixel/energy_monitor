@@ -12,7 +12,9 @@ import {
   RACK_UNIT_CAPACITY_TABLE_DISPLAY_NAME
 } from "../src/excel/RackUnitCapacityWriter";
 import { saveRackUnitCapacity } from "../src/excel/RackUnitCapacitySaveWriter";
+import { saveRackUnitCapacityImageHistory, readRackUnitCapacityImageForMonth } from "../src/excel/RackUnitCapacityImageHistoryWriter";
 import { resolveRelationshipTarget } from "../src/excel/ExcelZipUtils";
+import { shiftMonth } from "../src/utils/monthUtils";
 import { buildReportData } from "../src/reports/reportDataBuilder";
 import { buildReportHtml } from "../src/reports/pdf/reportHtml";
 import zlib from "node:zlib";
@@ -225,34 +227,76 @@ async function testFullSavePipeline(label: string, sourcePath: string): Promise<
   console.log(`\n===== ${label}: FULL SAVE PIPELINE =====`);
   const backupDir = path.join(path.dirname(sourcePath), `backup-unit-capacity-${label.toLowerCase()}`);
 
-  const save1 = await saveRackUnitCapacity(sourcePath, { month: "2026-03", totalU: 500, usedU: 420 }, { backupDir, backupKeep: 3 });
-  check(`${label}: first real save produces a backup`, typeof save1.backupPath === "string" && save1.backupPath.length > 0);
-  check(`${label}: first real save reports the new row`, save1.rows.some(r => r.month === "2026-03" && r.totalU === 500 && r.usedU === 420 && r.availableU === 80));
-  const onDiskAfter1 = await readRackUnitCapacityFromBuffer(await fs.readFile(sourcePath));
-  check(`${label}: the row is genuinely persisted on disk (re-read from the real file)`, onDiskAfter1.some(r => r.month === "2026-03" && r.totalU === 500));
+  // v2.2.5 round 3: the PDF's Rack Unit Capacity block/image must strictly
+  // follow this report's own resolved Reporting Month (energy-log-driven),
+  // not "whatever was saved most recently". Discover it up front - energy
+  // logs are never touched by this test, so it stays stable throughout.
+  const discovery = await buildReportData({ workbookPath: sourcePath, facility: label, selectedMonth: null, appVersion: "test" });
+  const reportMonth = discovery.reportingMonth;
+  if (!reportMonth) throw new Error(`${label}: workbook has no resolvable energy Reporting Month - cannot verify month-aligned PDF rendering.`);
+  const priorMonth = shiftMonth(reportMonth, -1);
+  const legacySlotMonth = shiftMonth(reportMonth, -2);
 
-  const save2 = await saveRackUnitCapacity(sourcePath, { month: "2026-03", totalU: 500, usedU: 420 }, { backupDir, backupKeep: 3 });
+  const save1 = await saveRackUnitCapacity(sourcePath, { month: priorMonth, totalU: 500, usedU: 420 }, { backupDir, backupKeep: 3 });
+  check(`${label}: first real save produces a backup`, typeof save1.backupPath === "string" && save1.backupPath.length > 0);
+  check(`${label}: first real save reports the new row`, save1.rows.some(r => r.month === priorMonth && r.totalU === 500 && r.usedU === 420 && r.availableU === 80));
+  const onDiskAfter1 = await readRackUnitCapacityFromBuffer(await fs.readFile(sourcePath));
+  check(`${label}: the row is genuinely persisted on disk (re-read from the real file)`, onDiskAfter1.some(r => r.month === priorMonth && r.totalU === 500));
+
+  const save2 = await saveRackUnitCapacity(sourcePath, { month: priorMonth, totalU: 500, usedU: 420 }, { backupDir, backupKeep: 3 });
   check(`${label}: re-saving identical Total/Used is a no-op (no backup created)`, save2.backupPath === null);
 
   const png = makeValidPng(300, 150, [50, 120, 200]);
-  const save3 = await saveRackUnitCapacity(
+
+  // The pre-v2.2.5 single global image slot (SheetImageWriter.ts, still
+  // shipped and untouched by this round's changes) is exercised here
+  // directly, on its own unrelated month, to prove it still works -
+  // deliberately NOT the report's Reporting Month, so it can neither
+  // satisfy nor be confused with the new per-month history store's own
+  // coverage below (the PDF no longer reads this slot at all - see below).
+  const legacySave = await saveRackUnitCapacity(
     sourcePath,
-    { month: "2026-04", totalU: 500, usedU: 350 },
+    { month: legacySlotMonth, totalU: 500, usedU: 350 },
     { backupDir, backupKeep: 3 },
     { bytes: png, type: "png", width: 300, height: 150 }
   );
-  check(`${label}: a save combining a new month AND an image reports both`, save3.imageEmbedded === true && save3.rows.some(r => r.month === "2026-04" && r.availableU === 150));
-  check(`${label}: combined save also produces a backup`, typeof save3.backupPath === "string" && save3.backupPath.length > 0);
-  const finalRows = await readRackUnitCapacityFromBuffer(await fs.readFile(sourcePath));
-  check(`${label}: March's row survives the April+image save untouched`, finalRows.some(r => r.month === "2026-03" && r.totalU === 500 && r.usedU === 420));
-  const finalZip = await JSZip.loadAsync(await fs.readFile(sourcePath));
-  const sheetPath = await locateRackUnitCapacitySheet(finalZip);
-  const sheetFile = sheetPath!.match(/xl\/worksheets\/(sheet\d+)\.xml$/)![1];
-  const relsXml = await finalZip.file(`xl/worksheets/_rels/${sheetFile}.xml.rels`)!.async("string");
-  check(`${label}: the sheet has a drawing relationship after the combined save`, /Type="[^"]*\/drawing"/.test(relsXml));
+  check(`${label}: legacy single-slot save combining a new month AND an image reports both`, legacySave.imageEmbedded === true && legacySave.rows.some(r => r.month === legacySlotMonth && r.availableU === 150));
+  check(`${label}: legacy single-slot save also produces a backup`, typeof legacySave.backupPath === "string" && legacySave.backupPath.length > 0);
+  const finalZipLegacy = await JSZip.loadAsync(await fs.readFile(sourcePath));
+  const sheetPathLegacy = await locateRackUnitCapacitySheet(finalZipLegacy);
+  const sheetFileLegacy = sheetPathLegacy!.match(/xl\/worksheets\/(sheet\d+)\.xml$/)![1];
+  const relsXmlLegacy = await finalZipLegacy.file(`xl/worksheets/_rels/${sheetFileLegacy}.xml.rels`)!.async("string");
+  check(`${label}: the legacy sheet has a drawing relationship after the combined save`, /Type="[^"]*\/drawing"/.test(relsXmlLegacy));
+  const legacyReadBack = await readRackUnitCapacityImageFromBuffer(await fs.readFile(sourcePath));
+  check(`${label}: readRackUnitCapacityImageFromBuffer (legacy) still finds the embedded image`, legacyReadBack !== null);
+  check(`${label}: legacy read-back image bytes are byte-identical to what was uploaded`, legacyReadBack?.bytes.equals(png) === true);
+  check(`${label}: legacy read-back image mimeType is image/png`, legacyReadBack?.mimeType === "image/png");
 
-  const readBackImage = await readRackUnitCapacityImageFromBuffer(await fs.readFile(sourcePath));
-  check(`${label}: readRackUnitCapacityImageFromBuffer finds the embedded image`, readBackImage !== null);
+  // ---- The Reporting Month the report/dashboard actually cares about ----
+  const save3 = await saveRackUnitCapacity(sourcePath, { month: reportMonth, totalU: 500, usedU: 350 }, { backupDir, backupKeep: 3 });
+  check(`${label}: a save for the report's Reporting Month reports the new row`, save3.rows.some(r => r.month === reportMonth && r.availableU === 150));
+  check(`${label}: that save produces a backup`, typeof save3.backupPath === "string" && save3.backupPath.length > 0);
+
+  // v2.2.5 round 3: the image the PDF/dashboard actually display now comes
+  // from the new per-(Facility, Reporting Month) history store, not the
+  // legacy slot exercised above.
+  const imageSave = await saveRackUnitCapacityImageHistory(
+    sourcePath,
+    label,
+    reportMonth,
+    "test-user",
+    { bytes: png, type: "png", width: 300, height: 150 },
+    { backupDir, backupKeep: 3 }
+  );
+  check(`${label}: image history save produces a backup`, typeof imageSave.backupPath === "string" && imageSave.backupPath.length > 0);
+  check(`${label}: image history save reports the row for the report's Reporting Month`, imageSave.rows.some(r => r.reportingMonth === reportMonth && r.facility === label));
+
+  const finalRows = await readRackUnitCapacityFromBuffer(await fs.readFile(sourcePath));
+  check(`${label}: the prior month's row survives later saves untouched`, finalRows.some(r => r.month === priorMonth && r.totalU === 500 && r.usedU === 420));
+  check(`${label}: the legacy-slot month's row survives later saves untouched`, finalRows.some(r => r.month === legacySlotMonth && r.totalU === 500 && r.usedU === 350));
+
+  const readBackImage = await readRackUnitCapacityImageForMonth(await fs.readFile(sourcePath), label, reportMonth);
+  check(`${label}: readRackUnitCapacityImageForMonth finds the embedded image`, readBackImage !== null);
   check(`${label}: read-back image bytes are byte-identical to what was uploaded`, readBackImage?.bytes.equals(png) === true);
   check(`${label}: read-back image mimeType is image/png`, readBackImage?.mimeType === "image/png");
 
@@ -260,14 +304,17 @@ async function testFullSavePipeline(label: string, sourcePath: string): Promise<
   // covers the "not yet available" path, since production workbooks have no
   // Rack Unit Capacity data yet) ----
   const reportData = await buildReportData({ workbookPath: sourcePath, facility: label, selectedMonth: null, appVersion: "test" });
+  check(`${label}: PDF resolves the same Reporting Month as before these saves`, reportData.reportingMonth === reportMonth);
   const html = buildReportHtml(reportData);
   check(`${label}: PDF shows the renamed "Rack Capacity and Utilization" heading`, html.includes("<h2>Rack Capacity and Utilization</h2>"));
   check(`${label}: PDF Rack Unit Capacity block shows Total (U) = 500`, /Total \(U\)[\s\S]{0,80}500/.test(html));
-  check(`${label}: PDF Rack Unit Capacity block shows the latest month's Used (U) = 350`, /Used \(U\)[\s\S]{0,80}350/.test(html));
-  check(`${label}: PDF Rack Unit Capacity block shows the latest month's Available (U) = 150`, /Available \(U\)[\s\S]{0,80}150/.test(html));
-  check(`${label}: PDF embeds the Rack Unit Capacity Image as a data URI`, /<img src="data:image\/png;base64,[^"]+" alt="Rack Unit Capacity Image" class="rack-unit-capacity-image"\/>/.test(html));
-  check(`${label}: PDF Rack Unit Capacity trend page renders (2 months of data)`, /class="page trend-page"[^>]*>\s*<h2>Rack Unit Capacity Availability % Trend<\/h2>|Rack Unit Capacity Availability % Trend/.test(html));
+  check(`${label}: PDF Rack Unit Capacity block shows the Reporting Month's Used (U) = 350`, /Used \(U\)[\s\S]{0,80}350/.test(html));
+  check(`${label}: PDF Rack Unit Capacity block shows the Reporting Month's Available (U) = 150`, /Available \(U\)[\s\S]{0,80}150/.test(html));
+  check(`${label}: PDF embeds the Reporting Month's image (from the new history store) as a data URI`, /<img src="data:image\/png;base64,[^"]+" alt="Rack Unit Capacity Image" class="rack-unit-capacity-image"\/>/.test(html));
+  check(`${label}: PDF Rack Unit Capacity trend page renders (>=2 months of data)`, /class="page trend-page"[^>]*>\s*<h2>Rack Unit Capacity Availability % Trend<\/h2>|Rack Unit Capacity Availability % Trend/.test(html));
   check(`${label}: PDF does not show the "not yet available" note once data exists`, !html.includes("Rack Unit Capacity data is not yet available"));
+  check(`${label}: PDF does not show the "no data for this month" note once the Reporting Month's row exists`, !html.includes("No Rack Unit Capacity data is available for the selected reporting month"));
+  check(`${label}: PDF does not show the "no image" note once the Reporting Month's image exists`, !html.includes("No image for this reporting month."));
 
   await fs.rm(backupDir, { recursive: true, force: true });
 }

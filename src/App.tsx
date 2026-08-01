@@ -52,21 +52,29 @@ import BenchmarkDashboard from "./components/BenchmarkDashboard";
 import ForecastDashboard from "./components/ForecastDashboard";
 import SmartInsightPanel from "./components/SmartInsightPanel";
 import FacilityComparison from "./components/FacilityComparison";
-import RackCapacityEditor from "./components/RackCapacityEditor";
-import RackCapacitySummaryCard from "./components/RackCapacitySummaryCard";
-import RackCapacityHistoryPanel from "./components/RackCapacityHistoryPanel";
-import RackUnitCapacityPanel from "./components/RackUnitCapacityPanel";
-import { 
-  Shield, 
-  Lock, 
-  Unlock, 
-  Calendar, 
-  Plus, 
-  Globe, 
-  Activity, 
-  Check, 
-  BookOpen, 
-  Settings, 
+import RackCapacityEditor from "./components/rack/RackCapacityEditor";
+import RackCapacitySummaryCard from "./components/rack/RackCapacitySummaryCard";
+import RackCapacityHistoryPanel from "./components/rack/RackCapacityHistoryPanel";
+import RackUnitCapacityPanel from "./components/rack/RackUnitCapacityPanel";
+import { RackCapacityProvider } from "./components/rack/RackCapacityContext";
+import { StickyHeader as RackCapacityStickyHeader } from "./components/rack/StickyHeader";
+import { Timeline as RackCapacityTimeline } from "./components/rack/Timeline";
+import { ExecutiveKpiCards as RackCapacityExecutiveKpiCards } from "./components/rack/ExecutiveKpiCards";
+import { CapacityGauge } from "./components/rack/CapacityGauge";
+import { Forecast as RackCapacityForecast } from "./components/rack/Forecast";
+import { RackUnitCapacitySummary } from "./components/rack/RackUnitCapacitySummary";
+import { CapacityAlerts } from "./components/rack/CapacityAlerts";
+import {
+  Shield,
+  Lock,
+  Unlock,
+  Calendar,
+  Plus,
+  Globe,
+  Activity,
+  Check,
+  BookOpen,
+  Settings,
   FileSpreadsheet,
   AlertCircle,
   AlertTriangle,
@@ -173,14 +181,11 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [activeLog, setActiveLog] = useState<MonthlyLog | null>(null);
   const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "rackCapacity" | "history" | "comparison" | "settings">("dashboard");
-  // Shared Month/Year selector for the Rack Capacity page's Rack Unit
-  // Capacity panel and Rack Capacity Editor (which History snapshot a field
-  // edit's save upserts) - an explicit, user-visible choice, never a silent
-  // system-month assumption. Defaults to today's month; independent of Data
-  // Entry's own selectedMonth (that has separate historical-edit semantics).
-  const [rackCapacityMonth, setRackCapacityMonth] = useState<string>(() => new Date().toISOString().slice(0, 7));
+  // Bumped by RackUnitCapacityPanel's onImageHistorySaved so
+  // RackUnitCapacitySummary re-fetches the image for whatever Reporting
+  // Month is currently selected, even though that month didn't change.
+  const [rackUnitImageHistoryVersion, setRackUnitImageHistoryVersion] = useState(0);
 
-  // --- DESKTOP (EXCEL WORKBOOK) SESSION ---
   // In the desktop app the Excel workbook is the primary data source; the
   // Google Sheets pipeline below remains the browser fallback / optional sync.
   const desktopBridge = useMemo(() => getDesktopBridge(), []);
@@ -267,7 +272,7 @@ export default function App() {
   useEffect(() => {
     isBusyRef.current = isWorkbookBusy;
   }, [isWorkbookBusy]);
-  
+
   // Google Sheets state shared globally. The driver abstracts over WHICH
   // backend actually owns OAuth (desktop: Electron main process via IPC,
   // never a token in this renderer; browser: the pre-existing Firebase
@@ -1184,7 +1189,7 @@ export default function App() {
       </div>
     );
   };
-  
+
   // Security configuration
   const [securityConfig, setSecurityConfig] = useState<SecurityConfig>({
     pinEnabled: false,
@@ -1192,10 +1197,10 @@ export default function App() {
   });
   const [isAppLocked, setIsAppLocked] = useState(false);
   const [showSecurityConfigModal, setShowSecurityConfigModal] = useState(false);
-  
+
   // Historical editing configuration
   const [editingMonth, setEditingMonth] = useState<string | null>(null);
-  
+
   // Pending save for historical data confirmation popup
   const [pendingSave, setPendingSave] = useState<{
     type: "ups" | "air" | "dc" | "energy";
@@ -1594,7 +1599,7 @@ export default function App() {
     // Load logs
     let allLogs = loadAllLogs();
     const prevMonth = getPreviousMonthStr();
-    
+
     // Check if previous month's log already exists. If not, auto-create it!
     const hasPrevMonth = allLogs.some(l => l.month === prevMonth);
     if (!hasPrevMonth) {
@@ -1602,9 +1607,9 @@ export default function App() {
       saveLogForMonth(prevMonth, defaultLog);
       allLogs = loadAllLogs();
     }
-    
+
     setLogs(allLogs);
-    
+
     // Default selectedMonth to previous month if not set yet, or if it doesn't exist anymore
     if (!selectedMonth) {
       selectMonthContext(prevMonth);
@@ -1953,7 +1958,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans antialiased selection:bg-indigo-500/30">
-      
+
       {/* 1. SECURE PIN SCREEN OVERLAY */}
       <AnimatePresence>
         {isAppLocked && (
@@ -1967,7 +1972,7 @@ export default function App() {
 
       {/* 2. INNER APPLICATION UI */}
       <div className={`max-w-[1600px] 2xl:max-w-[1760px] mx-auto px-4 sm:px-8 lg:px-10 py-8 space-y-8 ${isDesktopApp ? "pb-16" : ""}`}>
-        
+
         {/* HEADER RAIL */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-6 border-b border-slate-850">
           <div className="space-y-1">
@@ -2203,7 +2208,7 @@ export default function App() {
                       {lang === "th" ? "กำลังแก้ไขข้อมูลย้อนหลัง" : "Historical Data Edit Mode"}
                     </span>
                     <span>
-                      {lang === "th" 
+                      {lang === "th"
                         ? `คุณกำลังแก้ไขข้อมูลของเดือน ${formatMonthYear(selectedMonth)} ซึ่งเป็นข้อมูลประวัติ ระบบจะแสดงป๊อปอัปแจ้งเตือนให้ตรวจสอบความถูกต้องก่อนกดบันทึก`
                         : `You are editing historical records for ${formatMonthYear(selectedMonth)}. A validation popup will prompt before saving.`}
                     </span>
@@ -2227,7 +2232,7 @@ export default function App() {
             {/* LOGGING TABLES */}
             {activeLog ? (
               <div className="space-y-8">
-                
+
                 {/* UPS Logging Section */}
                 <div id="entry-section-ups" className={highlightSections.has("ups") ? "highlight-missing" : ""}>
                   {activeFacility?.id === "srinakarin" ? (
@@ -2394,26 +2399,46 @@ export default function App() {
 
         {/* --- VIEW: RACK CAPACITY MANAGEMENT (desktop) --- */}
         {currentView === "rackCapacity" && isDesktopApp && excelProvider && (
-          <div className="space-y-6 animate-fadeIn">
-            <RackCapacitySummaryCard rackCapacity={workbook?.rackCapacity} lang={lang} rackUnitCapacity={workbook?.rackUnitCapacity ?? []} unitCapacityMonth={rackCapacityMonth} />
-            <RackUnitCapacityPanel
-              rows={workbook?.rackUnitCapacity ?? []}
-              provider={excelProvider}
-              lang={lang}
-              month={rackCapacityMonth}
-              onMonthChange={setRackCapacityMonth}
-              onSaved={rows => setWorkbook(prev => (prev ? { ...prev, rackUnitCapacity: rows } : prev))}
-            />
-            <RackCapacityEditor
-              rackCapacity={workbook?.rackCapacity ?? null}
-              provider={excelProvider}
-              lang={lang}
-              month={rackCapacityMonth}
-              onMonthChange={setRackCapacityMonth}
-              onSaved={(updated, history) => setWorkbook(prev => (prev ? { ...prev, rackCapacity: updated, rackCapacityHistory: history } : prev))}
-            />
-            <RackCapacityHistoryPanel rows={workbook?.rackCapacityHistory ?? []} lang={lang} />
-          </div>
+          <RackCapacityProvider
+            lang={lang}
+            facilityName={activeFacility?.name ?? null}
+            rackCapacity={workbook?.rackCapacity ?? null}
+            rackUnitCapacity={workbook?.rackUnitCapacity ?? []}
+            rackCapacityHistory={workbook?.rackCapacityHistory ?? []}
+          >
+            <div className="space-y-6 animate-fadeIn">
+              <RackCapacityStickyHeader />
+              <RackCapacityTimeline />
+              <CapacityAlerts />
+              <RackCapacityExecutiveKpiCards />
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <CapacityGauge />
+                <RackCapacityForecast />
+              </div>
+              {/* "Rack Capacity and Utilization": Donut + RackStatusDistribution +
+                  Zone Table + Zone Heatmap + detail inspector. */}
+              <RackCapacitySummaryCard />
+              {/* "Rack Unit Capacity and Utilization" - read-only executive summary,
+                  distinct from the Rack Unit Capacity Editor below. Image is fetched
+                  on demand per (facility, selected Reporting Month) from the v2.2.5
+                  image history store; refreshKey forces a re-fetch right after a new
+                  upload in the editor below saves for the same month. */}
+              <RackUnitCapacitySummary provider={excelProvider} refreshKey={rackUnitImageHistoryVersion} />
+              {/* "Historical Explorer" tier - RackCapacityHistoryPanel stands in for
+                  it pending confirmation of whether the generic HistoricalExplorer
+                  component should be embedded here instead. */}
+              <RackCapacityHistoryPanel />
+              <RackCapacityEditor
+                provider={excelProvider}
+                onSaved={(updated, history) => setWorkbook(prev => (prev ? { ...prev, rackCapacity: updated, rackCapacityHistory: history } : prev))}
+              />
+              <RackUnitCapacityPanel
+                provider={excelProvider}
+                onSaved={rows => setWorkbook(prev => (prev ? { ...prev, rackUnitCapacity: rows } : prev))}
+                onImageHistorySaved={() => setRackUnitImageHistoryVersion(v => v + 1)}
+              />
+            </div>
+          </RackCapacityProvider>
         )}
 
         {/* --- VIEW 3: MONTHLY HISTORICAL CATEGORIZED RECORDS --- */}
@@ -2422,8 +2447,8 @@ export default function App() {
             renderReportingLoading()
           ) : syncedLogs ? (
             <div className="space-y-8 animate-fadeIn">
-              <HistoricalCharts 
-                logs={syncedLogs} 
+              <HistoricalCharts
+                logs={syncedLogs}
                 isGoogleConnected={isGoogleConnected}
                 googleUserEmail={googleUserEmail}
                 lang={lang}
@@ -2615,8 +2640,8 @@ export default function App() {
 
                 <div className="space-y-2 text-xs leading-relaxed text-slate-300 bg-slate-950/50 border border-slate-850 p-4 rounded-xl">
                   <p>
-                    {lang === "th" 
-                      ? "⚠️ คุณกำลังทำการแก้ไขข้อมูลที่ระบุย้อนหลัง ซึ่งอยู่นอกเหนือจากระบบกรอกข้อมูลของเดือนปัจจุบัน" 
+                    {lang === "th"
+                      ? "⚠️ คุณกำลังทำการแก้ไขข้อมูลที่ระบุย้อนหลัง ซึ่งอยู่นอกเหนือจากระบบกรอกข้อมูลของเดือนปัจจุบัน"
                       : "⚠️ You are saving edits to historical records outside the current default logging period."}
                   </p>
                   <p className="font-medium text-amber-400">

@@ -1,4 +1,5 @@
 import type { RackRecord } from "../reports/reportTypes";
+import type { RackDisplayStatus } from "./rackStatusConfig";
 
 export const RACK_CANONICAL_STATUSES = ["In Use", "Available", "Reserved", "Pending Dismantle"] as const;
 export type RackCanonicalStatus = (typeof RACK_CANONICAL_STATUSES)[number];
@@ -101,4 +102,18 @@ export function formatRatioPercent(value: number | null, digits = 2): string {
 export function clampRatio(ratio: number | null): number {
   if (ratio === null || !Number.isFinite(ratio)) return 0;
   return Math.max(0, Math.min(1, ratio));
+}
+
+/** Selects one display status's count+ratio off an already-computed metrics
+ *  object (the 4 canonical statuses plus the aggregate "Other" bucket) - the
+ *  single selector every KPI card, donut, and status-distribution view must
+ *  use instead of re-switching on the status name locally. */
+export function statusRatio(m: RackCapacityMetrics | RackZoneMetrics, status: RackDisplayStatus): RackStatusRatio {
+  switch (status) {
+    case "In Use": return m.inUse;
+    case "Available": return m.available;
+    case "Reserved": return m.reserved;
+    case "Pending Dismantle": return m.pendingDismantle;
+    case "Other": return m.other;
+  }
 }

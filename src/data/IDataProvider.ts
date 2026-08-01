@@ -167,7 +167,12 @@ export interface IDataProvider {
   saveRackCapacity?(
     changes: RackFieldChangeRequest[],
     image?: RackCapacityImageRequest | null,
-    snapshotMonth?: string | null
+    snapshotMonth?: string | null,
+    /** Explicit "record a monthly snapshot even with zero field changes"
+     *  request - its own UI action, never a default; default false leaves
+     *  the "a no-op save never appears in the backup history" behavior
+     *  untouched. */
+    forceSnapshot?: boolean
   ): Promise<RackCapacitySaveOutcome>;
 
   /**
@@ -178,6 +183,26 @@ export interface IDataProvider {
    */
   saveRackUnitCapacity?(
     input: RackUnitCapacityInputRequest,
-    image?: RackCapacityImageRequest | null
+    image?: RackCapacityImageRequest | null,
+    forceSnapshot?: boolean
   ): Promise<RackUnitCapacitySaveOutcome>;
+
+  /**
+   * Records the Rack Unit Capacity Image for exactly one (Facility,
+   * Reporting Month) - the v2.2.5 historical replacement for the old
+   * single global image slot. "User" is never supplied by the caller; the
+   * provider's backing process records who actually ran the save.
+   */
+  saveRackUnitCapacityImageHistory?(
+    facility: string,
+    reportingMonth: string,
+    image: RackCapacityImageRequest
+  ): Promise<{ savedAt: string; backupPath: string | null }>;
+
+  /**
+   * Fetches the image for exactly one (Facility, Reporting Month), or null
+   * if none was ever recorded for that month - never a fallback to the
+   * latest/nearest month.
+   */
+  getRackUnitCapacityImageForMonth?(facility: string, reportingMonth: string): Promise<string | null>;
 }

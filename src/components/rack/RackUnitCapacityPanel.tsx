@@ -1,33 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
-import type { IDataProvider } from "../data/IDataProvider";
-import { validateImageBytes } from "../utils/imageValidation";
-import { formatRatioPercent } from "../utils/rackCapacity";
-import { notify } from "./Toast";
-import { Save, ImagePlus, Trash2, Boxes } from "lucide-react";
+import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
+import type { IDataProvider } from "../../data/IDataProvider";
+import { validateImageBytes } from "../../utils/imageValidation";
+import { formatRatioPercent } from "../../utils/rackCapacity";
+import { notify } from "../Toast";
+import { Save, ImagePlus, Trash2, Boxes, Camera } from "lucide-react";
+import { useRackCapacity } from "./RackCapacityContext";
+import { monthNames } from "../../utils/monthUtils";
 
 interface StagedImage {
   bytes: Uint8Array;
   previewUrl: string;
-  width: number;
-  height: number;
 }
 
-interface RackUnitCapacityPanelProps {
-  /** All persisted Rack Unit Capacity rows, so the panel can prefill an
-   *  already-saved month's Total (U)/Used (U) instead of assuming blank. */
-  rows: RackUnitCapacityRow[];
-  provider: IDataProvider;
-  lang: "th" | "en";
-  /** Canonical "YYYY-MM" - shared with the Rack Capacity Editor's own Month/
-   *  Year selector (same underlying concept: which month's data is active). */
-  month: string;
-  onMonthChange: (month: string) => void;
-  onSaved: (rows: RackUnitCapacityRow[]) => void;
-}
 
-const MONTH_NAMES_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const MONTH_NAMES_TH = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
+
 
 /**
  * Live UI preview only - the single AUTHORITATIVE calculation that actually
@@ -44,7 +31,21 @@ function previewAvailability(totalU: number, usedU: number): { availableU: numbe
   return { availableU, availabilityPct };
 }
 
-export default function RackUnitCapacityPanel({ rows, provider, lang, month, onMonthChange, onSaved }: RackUnitCapacityPanelProps) {
+export default function RackUnitCapacityPanel({
+  provider,
+  onSaved,
+  onImageHistorySaved
+}: {
+  provider: IDataProvider;
+  onSaved?: (rows: RackUnitCapacityRow[]) => void;
+  /** Fired after a staged image is successfully recorded to the v2.2.5
+   *  per-month image history - lets the page bump a refresh key so
+   *  RackUnitCapacitySummary re-fetches the image it may already be
+   *  showing (or not showing) for this same month. */
+  onImageHistorySaved?: () => void;
+}) {
+  const { lang, facilityName, reportingMonth: month, setReportingMonth: onMonthChange, rackUnitCapacity } = useRackCapacity();
+  const rows = rackUnitCapacity;
   const [yearStr, monthStr] = month.split("-");
   const year = Number(yearStr);
   const monthNum = Number(monthStr);
@@ -105,7 +106,7 @@ export default function RackUnitCapacityPanel({ rows, provider, lang, month, onM
       return;
     }
     if (stagedImage) URL.revokeObjectURL(stagedImage.previewUrl);
-    setStagedImage({ bytes: buffer, previewUrl: URL.createObjectURL(file), width: result.image.width, height: result.image.height });
+    setStagedImage({ bytes: buffer, previewUrl: URL.createObjectURL(file) });
   };
 
   const removeStagedImage = () => {
@@ -133,7 +134,7 @@ export default function RackUnitCapacityPanel({ rows, provider, lang, month, onM
     return list;
   }, [rows, year]);
 
-  const monthNames = lang === "th" ? MONTH_NAMES_TH : MONTH_NAMES_EN;
+  const monthNamesList = useMemo(() => monthNames(lang), [lang]);
 
   const saveChanges = async () => {
     if (!hasPendingWork || !provider.saveRackUnitCapacity) return;
@@ -147,18 +148,55 @@ export default function RackUnitCapacityPanel({ rows, provider, lang, month, onM
     }
     setSaving(true);
     try {
-      const result = await provider.saveRackUnitCapacity(
-        { month, totalU: totalNum, usedU: usedNum },
-        stagedImage ? { bytes: stagedImage.bytes } : null
-      );
+      // The Total/Used upsert never carries an image anymore - a staged
+      // image is recorded separately, below, into the per-month image
+      // history (v2.2.5), not the old single global slot.
+      const result = await provider.saveRackUnitCapacity({ month, totalU: totalNum, usedU: usedNum }, null);
       notify("success", lang === "th" ? "บันทึกความจุหน่วยแร็คแล้ว" : "Rack Unit Capacity saved.");
       setDirty(false);
+
+      if (stagedImage && provider.saveRackUnitCapacityImageHistory) {
+        try {
+          await provider.saveRackUnitCapacityImageHistory(facilityName ?? "Unknown", month, { bytes: stagedImage.bytes });
+          onImageHistorySaved?.();
+        } catch (imgErr) {
+          notify("error", imgErr instanceof Error ? imgErr.message : String(imgErr));
+        }
+      }
       removeStagedImage();
-      onSaved(result.rows);
+      onSaved?.(result.rows);
     } catch (err) {
       notify("error", err instanceof Error ? err.message : String(err));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const [snapshotting, setSnapshotting] = useState(false);
+
+  /** Records this month's Rack Unit Capacity row from the currently
+   *  displayed Total (U)/Used (U) values, even with zero unsaved edits - a
+   *  deliberate, separate action from Save (which never writes a no-op to
+   *  the backup history). */
+  const createSnapshot = async () => {
+    if (!provider.saveRackUnitCapacity) return;
+    if (totalU.trim() === "" || usedU.trim() === "") {
+      notify("error", lang === "th" ? "กรุณากรอกทั้ง Total (U) และ Used (U)" : "Enter both Total (U) and Used (U).");
+      return;
+    }
+    if (totalNum < 0 || usedNum < 0) {
+      notify("error", lang === "th" ? "ค่าต้องไม่ติดลบ" : "Values cannot be negative.");
+      return;
+    }
+    setSnapshotting(true);
+    try {
+      const result = await provider.saveRackUnitCapacity({ month, totalU: totalNum, usedU: usedNum }, null, true);
+      notify("success", lang === "th" ? "บันทึกสแนปช็อตความจุหน่วยแร็คประจำเดือนแล้ว" : "Recorded this month's Rack Unit Capacity snapshot.");
+      onSaved?.(result.rows);
+    } catch (err) {
+      notify("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      setSnapshotting(false);
     }
   };
 
@@ -189,7 +227,7 @@ export default function RackUnitCapacityPanel({ rows, provider, lang, month, onM
             onChange={e => onMonthChange(`${year}-${String(Number(e.target.value)).padStart(2, "0")}`)}
             className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200"
           >
-            {monthNames.map((name, idx) => <option key={name} value={idx + 1}>{name}</option>)}
+            {monthNamesList.map((name, idx) => <option key={name} value={idx + 1}>{name}</option>)}
           </select>
         </div>
         <div>
@@ -285,7 +323,16 @@ export default function RackUnitCapacityPanel({ rows, provider, lang, month, onM
         </div>
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={() => void createSnapshot()}
+          disabled={snapshotting || saving || totalU.trim() === "" || usedU.trim() === ""}
+          title={lang === "th" ? "บันทึกสแนปช็อตของเดือนนี้ด้วยค่าที่แสดงอยู่ แม้ไม่มีการแก้ไข" : "Record this month's snapshot from the displayed values, even with no edits"}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg border border-slate-700 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800 transition-colors"
+        >
+          <Camera className="w-3.5 h-3.5" />{snapshotting ? (lang === "th" ? "กำลังบันทึก…" : "Recording…") : (lang === "th" ? "บันทึกสแนปช็อตประจำเดือน" : "Record Monthly Snapshot")}
+        </button>
         <button
           type="button"
           onClick={() => void saveChanges()}

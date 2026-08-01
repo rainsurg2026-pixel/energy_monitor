@@ -1,26 +1,14 @@
 import { useMemo, useState } from "react";
-import type { RackCapacitySummary, RackRecord } from "../reports/reportTypes";
-import type { IDataProvider, RackFieldChangeRequest } from "../data/IDataProvider";
-import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
-import { RACK_CANONICAL_STATUSES } from "../utils/rackCapacity";
-import { notify } from "./Toast";
-import { Search, X, Save, AlertTriangle } from "lucide-react";
-
-interface RackCapacityEditorProps {
-  rackCapacity: RackCapacitySummary | null;
-  provider: IDataProvider;
-  lang: "th" | "en";
-  /** Canonical "YYYY-MM" - shared with the Rack Unit Capacity panel's own
-   *  Month/Year selector. Controls which month's Rack Capacity History
-   *  snapshot this save upserts; an explicit, user-visible choice, never a
-   *  silent system-month assumption. Table7 itself has no month dimension -
-   *  Status/Cabinet Size/Detail/Device Type are always CURRENT state. */
-  month: string;
-  onMonthChange: (month: string) => void;
-  /** Called with the freshly-saved snapshot (+ history) so the parent can
-   *  refresh its own copy without a full workbook reload. */
-  onSaved: (rackCapacity: RackCapacitySummary | null, rackCapacityHistory: RackCapacityHistoryRow[]) => void;
-}
+import type { RackCapacitySummary, RackRecord } from "../../reports/reportTypes";
+import type { IDataProvider, RackFieldChangeRequest } from "../../data/IDataProvider";
+import type { RackCapacityHistoryRow } from "../../excel/RackCapacityHistoryWriter";
+import { RACK_CANONICAL_STATUSES } from "../../utils/rackCapacity";
+import { notify } from "../Toast";
+import { Search, X, Save, AlertTriangle, Camera } from "lucide-react";
+import { useRackCapacity } from "./RackCapacityContext";
+import { rackStatusLabel } from "../../utils/rackStatusConfig";
+import { RACK_CAPACITY_EDITOR_ANCHOR_ID } from "./ZoneHeatmap";
+import { monthLabelLong } from "../../utils/monthUtils";
 
 interface StagedFieldEdit {
   expected: string | null;
@@ -41,28 +29,15 @@ interface StagedChange {
 function hasAnyStagedField(change: StagedChange): boolean {
   return Boolean(change.status || change.cabinetSize || change.detail || change.deviceType);
 }
+// duplicate imports removed
 
-const STATUS_LABEL_TH: Record<string, string> = {
-  "In Use": "ใช้งานอยู่",
-  "Available": "ว่าง",
-  "Reserved": "จองไว้",
-  "Pending Dismantle": "รอถอดถอน"
-};
-
-const MONTH_NAMES_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-const MONTH_NAMES_TH = ["มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน", "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"];
-
-export default function RackCapacityEditor({ rackCapacity, provider, lang, month, onMonthChange, onSaved }: RackCapacityEditorProps) {
-  const [zoneFilter, setZoneFilter] = useState<string>("");
+export default function RackCapacityEditor({ provider, onSaved }: { provider: IDataProvider; onSaved?: (updated: RackCapacitySummary, history: RackCapacityHistoryRow[]) => void }) {
+  const { lang, reportingMonth: month, rackCapacity, selectedZone, setSelectedZone } = useRackCapacity();
+  const zoneFilter = selectedZone ?? "";
   const [statusFilter, setStatusFilter] = useState<string>("");
   const [idQuery, setIdQuery] = useState<string>("");
   const [staged, setStaged] = useState<Map<number, StagedChange>>(new Map());
   const [saving, setSaving] = useState(false);
-
-  const [yearStr, monthStr] = month.split("-");
-  const year = Number(yearStr);
-  const monthNum = Number(monthStr);
-  const monthNames = lang === "th" ? MONTH_NAMES_TH : MONTH_NAMES_EN;
 
   const records = rackCapacity?.records ?? [];
 
@@ -83,12 +58,12 @@ export default function RackCapacityEditor({ rackCapacity, provider, lang, month
 
   const hasFilters = Boolean(zoneFilter || statusFilter || idQuery);
   const clearFilters = () => {
-    setZoneFilter("");
+    setSelectedZone(null);
     setStatusFilter("");
     setIdQuery("");
   };
 
-  const statusLabel = (status: string): string => (lang === "th" ? STATUS_LABEL_TH[status] ?? status : status);
+  const statusLabel = (status: string): string => rackStatusLabel(status, lang);
 
   const stageStatus = (record: RackRecord, newStatus: string) => {
     setStaged((prev: Map<number, StagedChange>) => {
@@ -168,7 +143,7 @@ export default function RackCapacityEditor({ rackCapacity, provider, lang, month
           ? `${conflicts.length} รายการมีการเปลี่ยนแปลงจากที่อื่นแล้ว กรุณาโหลดใหม่และลองอีกครั้ง`
           : `${conflicts.length} change${conflicts.length === 1 ? "" : "s"} conflicted with a newer value on disk - reload and retry those rows.`);
       }
-      onSaved(result.rackCapacity, result.rackCapacityHistory);
+      onSaved?.(result.rackCapacity, result.rackCapacityHistory);
     } catch (err) {
       notify("error", err instanceof Error ? err.message : String(err));
     } finally {
@@ -176,9 +151,29 @@ export default function RackCapacityEditor({ rackCapacity, provider, lang, month
     }
   };
 
+  const [snapshotting, setSnapshotting] = useState(false);
+
+  /** Records a Rack Capacity History snapshot for the Reporting Month using
+   *  the CURRENT live data, even with zero staged field changes - a
+   *  deliberate, separate action from Save Changes (which never writes a
+   *  no-op to the backup history). */
+  const createSnapshot = async () => {
+    if (!provider.saveRackCapacity) return;
+    setSnapshotting(true);
+    try {
+      const result = await provider.saveRackCapacity([], null, month, true);
+      notify("success", lang === "th" ? `บันทึกสแนปช็อตประจำเดือน ${monthLabelLong(month, lang)} แล้ว` : `Recorded a monthly snapshot for ${monthLabelLong(month, lang)}.`);
+      onSaved?.(result.rackCapacity, result.rackCapacityHistory);
+    } catch (err) {
+      notify("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      setSnapshotting(false);
+    }
+  };
+
   if (!rackCapacity) {
     return (
-      <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
+      <section id={RACK_CAPACITY_EDITOR_ANCHOR_ID} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm">
         <p className="text-sm text-slate-500">
           {lang === "th" ? "ไม่พบข้อมูลความจุแร็คในเวิร์กบุ๊กปัจจุบัน" : "Rack capacity data is unavailable in the current workbook."}
         </p>
@@ -187,7 +182,7 @@ export default function RackCapacityEditor({ rackCapacity, provider, lang, month
   }
 
   return (
-    <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+    <section id={RACK_CAPACITY_EDITOR_ANCHOR_ID} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h3 className="text-base text-slate-100">{lang === "th" ? "แก้ไขความจุแร็ค" : "Rack Capacity Editor"}</h3>
@@ -203,32 +198,10 @@ export default function RackCapacityEditor({ rackCapacity, provider, lang, month
         )}
       </div>
 
-      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3">
-        <p className="text-xs text-slate-400 mb-2">
-          {lang === "th" ? "เดือนของสแนปช็อตประวัติ (บันทึกร่วมกับความจุหน่วยแร็คด้านบน)" : "History snapshot month (shared with Rack Unit Capacity above)"}
-        </p>
-        <div className="grid grid-cols-2 gap-3 max-w-sm">
-          <select
-            value={monthNum}
-            onChange={e => onMonthChange(`${year}-${String(Number(e.target.value)).padStart(2, "0")}`)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200"
-          >
-            {monthNames.map((name, idx) => <option key={name} value={idx + 1}>{name}</option>)}
-          </select>
-          <select
-            value={year}
-            onChange={e => onMonthChange(`${e.target.value}-${String(monthNum).padStart(2, "0")}`)}
-            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200"
-          >
-            {[year - 1, year, year + 1].map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label className="block text-xs text-slate-400 mb-1">{lang === "th" ? "โซนแร็ค" : "Rack Zone"}</label>
-          <select value={zoneFilter} onChange={e => setZoneFilter(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200">
+          <select value={zoneFilter} onChange={e => setSelectedZone(e.target.value === "" ? null : e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm text-slate-200">
             <option value="">{lang === "th" ? "ทุกโซน" : "All zones"}</option>
             {zoneOptions.map(zone => <option key={zone} value={zone}>{zone}</option>)}
           </select>
@@ -281,6 +254,15 @@ export default function RackCapacityEditor({ rackCapacity, provider, lang, month
             className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg bg-indigo-600 text-white disabled:opacity-40 disabled:cursor-not-allowed hover:bg-indigo-500 transition-colors"
           >
             <Save className="w-3.5 h-3.5" />{saving ? (lang === "th" ? "กำลังบันทึก…" : "Saving…") : (lang === "th" ? "บันทึกการเปลี่ยนแปลง" : "Save Changes")}
+          </button>
+          <button
+            type="button"
+            onClick={() => void createSnapshot()}
+            disabled={snapshotting || saving}
+            title={lang === "th" ? "บันทึกสแนปช็อตประวัติของเดือนนี้ด้วยข้อมูลปัจจุบัน แม้ไม่มีการแก้ไข" : "Record this month's history snapshot from the current data, even with no edits"}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg border border-slate-700 text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-slate-800 transition-colors"
+          >
+            <Camera className="w-3.5 h-3.5" />{snapshotting ? (lang === "th" ? "กำลังบันทึก…" : "Recording…") : (lang === "th" ? "บันทึกสแนปช็อตประจำเดือน" : "Record Monthly Snapshot")}
           </button>
         </div>
       </div>

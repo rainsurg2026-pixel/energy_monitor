@@ -169,7 +169,8 @@ export class ExcelProvider implements IDataProvider {
   async saveRackCapacity(
     changes: RackFieldChangeRequest[],
     image?: RackCapacityImageRequest | null,
-    snapshotMonth?: string | null
+    snapshotMonth?: string | null,
+    forceSnapshot?: boolean
   ): Promise<RackCapacitySaveOutcome> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
     const result = unwrap(await this.bridge.excel.saveRackCapacity({
@@ -177,7 +178,8 @@ export class ExcelProvider implements IDataProvider {
       changes,
       image: image ? { bytes: image.bytes } : null,
       facilityId: this.upsGroupContext?.facilityId ?? null,
-      snapshotMonth
+      snapshotMonth,
+      forceSnapshot
     }));
     return {
       savedAt: result.savedAt,
@@ -192,13 +194,15 @@ export class ExcelProvider implements IDataProvider {
 
   async saveRackUnitCapacity(
     input: RackUnitCapacityInputRequest,
-    image?: RackCapacityImageRequest | null
+    image?: RackCapacityImageRequest | null,
+    forceSnapshot?: boolean
   ): Promise<RackUnitCapacitySaveOutcome> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
     const result = unwrap(await this.bridge.excel.saveRackUnitCapacity({
       path: this.currentPath,
       input,
-      image: image ? { bytes: image.bytes } : null
+      image: image ? { bytes: image.bytes } : null,
+      forceSnapshot
     }));
     return {
       savedAt: result.savedAt,
@@ -206,6 +210,31 @@ export class ExcelProvider implements IDataProvider {
       imageEmbedded: result.imageEmbedded,
       rows: result.rows
     };
+  }
+
+  async saveRackUnitCapacityImageHistory(
+    facility: string,
+    reportingMonth: string,
+    image: RackCapacityImageRequest
+  ): Promise<{ savedAt: string; backupPath: string | null }> {
+    if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
+    const result = unwrap(await this.bridge.excel.saveRackUnitCapacityImageHistory({
+      path: this.currentPath,
+      facility,
+      reportingMonth,
+      image: { bytes: image.bytes }
+    }));
+    return { savedAt: result.savedAt, backupPath: result.backupPath };
+  }
+
+  async getRackUnitCapacityImageForMonth(facility: string, reportingMonth: string): Promise<string | null> {
+    if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
+    const result = unwrap(await this.bridge.excel.getRackUnitCapacityImageForMonth({
+      path: this.currentPath,
+      facility,
+      reportingMonth
+    }));
+    return result.dataUri;
   }
 
   async checkLock(): Promise<{ locked: boolean; excelOwnerFilePresent: boolean }> {

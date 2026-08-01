@@ -606,7 +606,15 @@ export async function saveRackCapacityFieldChanges(
    *  the Editor's own Month/Year selector, not a silent system-month
    *  assumption. Falls back to getActiveReportingMonth (the pre-v2.2.3
    *  behavior) only when omitted, for backward compatibility. */
-  snapshotMonth?: string | null
+  snapshotMonth?: string | null,
+  /** Explicit "record a monthly snapshot for this month even with zero
+   *  field changes" request - a deliberate, user-initiated action (its own
+   *  UI button), never a default. Bypasses ONLY the no-op early return
+   *  below; every other safety check (lock, backup-before-write, atomic
+   *  rename) still runs. Default false preserves the existing "a no-op
+   *  attempt never appears in the backup history" behavior for the normal
+   *  Save button untouched. */
+  forceSnapshot?: boolean
 ): Promise<RackCapacitySaveResult> {
   let original: Buffer;
   try {
@@ -622,7 +630,7 @@ export async function saveRackCapacityFieldChanges(
 
   const { buffer: statusBuffer, outcomes, changedCount, imageEmbedded } = await applyRackCapacityFieldChanges(original, changes, image);
 
-  if (changedCount === 0 && !imageEmbedded) {
+  if (changedCount === 0 && !imageEmbedded && !forceSnapshot) {
     const rackCapacity = await readRackCapacityFromBuffer(original);
     const rackCapacityHistory = await readRackCapacityHistoryFromBuffer(original);
     return { path: filePath, backupPath: null, outcomes, changedCount: 0, imageEmbedded: false, savedAt: new Date().toISOString(), rackCapacity, rackCapacityHistory };

@@ -9,6 +9,8 @@ import type {
   SaveWorkbookPayload,
   RackCapacitySavePayload,
   RackUnitCapacitySavePayload,
+  RackUnitCapacityImageHistorySavePayload,
+  RackUnitCapacityImageForMonthPayload,
   RecoverySnapshot,
   IpcResult,
   WorkbookAccessStatus
@@ -28,6 +30,8 @@ export type {
   SaveWorkbookPayload,
   RackCapacitySavePayload,
   RackUnitCapacitySavePayload,
+  RackUnitCapacityImageHistorySavePayload,
+  RackUnitCapacityImageForMonthPayload,
   RecoverySnapshot,
   IpcResult,
   WorkbookAccessStatus,
@@ -133,6 +137,9 @@ export interface DesktopBridge {
        *  upsert - the Editor's own Month/Year selector, not a silent
        *  system-month assumption. Omit to fall back to auto-detection. */
       snapshotMonth?: string | null;
+      /** Explicit "record a monthly snapshot even with zero field changes"
+       *  request - its own UI action, never a default. */
+      forceSnapshot?: boolean;
     }): Promise<IpcResult<RackCapacitySavePayload>>;
     /** Rack Unit Capacity: Month/Total (U)/Used (U) upsert (Available (U)
      *  and Availability Capacity (%) are derived server-side) plus an
@@ -143,7 +150,27 @@ export interface DesktopBridge {
       /** Raw image bytes; re-validated by real content (magic bytes) in the
        *  main process regardless of what the renderer believes it is. */
       image?: { bytes: Uint8Array } | null;
+      /** Explicit "record a monthly snapshot even with zero changes"
+       *  request - its own UI action, never a default. */
+      forceSnapshot?: boolean;
     }): Promise<IpcResult<RackUnitCapacitySavePayload>>;
+    /** One image per (Facility, Reporting Month) - the v2.2.5 replacement
+     *  for the single-slot Rack Unit Capacity image. "User" is never sent
+     *  by the renderer; the main process records the OS account that ran
+     *  the save. */
+    saveRackUnitCapacityImageHistory(payload: {
+      path: string;
+      facility: string;
+      reportingMonth: string;
+      image: { bytes: Uint8Array };
+    }): Promise<IpcResult<RackUnitCapacityImageHistorySavePayload>>;
+    /** On-demand fetch for exactly one (facility, reportingMonth) - never
+     *  the whole image history at once. */
+    getRackUnitCapacityImageForMonth(payload: {
+      path: string;
+      facility: string;
+      reportingMonth: string;
+    }): Promise<IpcResult<RackUnitCapacityImageForMonthPayload>>;
     checkLock(path: string): Promise<IpcResult<{ locked: boolean; excelOwnerFilePresent: boolean }>>;
     access(path: string): Promise<IpcResult<WorkbookAccessStatus>>;
     validate(path: string, devices?: DeviceLists): Promise<

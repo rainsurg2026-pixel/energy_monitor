@@ -1,44 +1,24 @@
 import { useMemo, useState } from "react";
-import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
-import { RACK_CAPACITY_HISTORY_TOTAL_ZONE } from "../excel/RackCapacityHistoryWriter";
-import { formatRatioPercent } from "../utils/rackCapacity";
-import { roundToDecimals } from "../utils/numberFormat";
+import { RACK_CAPACITY_HISTORY_TOTAL_ZONE } from "../../excel/RackCapacityHistoryWriter";
+import { formatRatioPercent } from "../../utils/rackCapacity";
+import { roundToDecimals } from "../../utils/numberFormat";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { History } from "lucide-react";
-
-interface RackCapacityHistoryPanelProps {
-  rows: RackCapacityHistoryRow[];
-  lang: "th" | "en";
-}
+import { useRackCapacity } from "./RackCapacityContext";
+import { shiftMonth, monthLabelShort } from "../../utils/monthUtils";
 
 type RangeMonths = 3 | 6 | 12;
 
-function shiftMonth(month: string, delta: number): string {
-  const [y, m] = month.split("-").map(Number);
-  const total = y * 12 + (m - 1) + delta;
-  const year = Math.floor(total / 12);
-  const monthIndex = ((total % 12) + 12) % 12;
-  return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
-}
+export default function RackCapacityHistoryPanel() {
+  const { lang, reportingMonth, rackCapacityHistory: rows } = useRackCapacity();
+  const [range, setRange] = useState<RangeMonths>(3);
+  const effectiveReference = reportingMonth;
 
-function displayMonth(month: string, lang: "th" | "en"): string {
-  const [y, m] = month.split("-").map(Number);
-  const names = lang === "th"
-    ? ["ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.", "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
-    : ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  return `${names[m - 1]}-${String(y).slice(2)}`;
-}
-
-export default function RackCapacityHistoryPanel({ rows, lang }: RackCapacityHistoryPanelProps) {
   const totalRows = useMemo(
     () => rows.filter(r => r.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE).sort((a, b) => a.snapshotMonth.localeCompare(b.snapshotMonth)),
     [rows]
   );
   const availableMonths = useMemo(() => totalRows.map(r => r.snapshotMonth), [totalRows]);
-  const [referenceMonth, setReferenceMonth] = useState<string>(() => availableMonths.at(-1) ?? "");
-  const [range, setRange] = useState<RangeMonths>(3);
-
-  const effectiveReference = referenceMonth || availableMonths.at(-1) || "";
 
   const rangeMonths = useMemo(() => {
     if (!effectiveReference) return [];
@@ -53,7 +33,7 @@ export default function RackCapacityHistoryPanel({ rows, lang }: RackCapacityHis
     () => rangeMonths.map(month => {
       const row = rowsByMonth.get(month);
       return {
-        month: displayMonth(month, lang),
+        month: monthLabelShort(month, lang),
         usage: row?.usagePct !== null && row?.usagePct !== undefined ? roundToDecimals(row.usagePct * 100) : null,
         availability: row?.availabilityPct !== null && row?.availabilityPct !== undefined ? roundToDecimals(row.availabilityPct * 100) : null
       };
@@ -79,8 +59,8 @@ export default function RackCapacityHistoryPanel({ rows, lang }: RackCapacityHis
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2 text-slate-200"><History className="w-4 h-4" /><h3 className="text-base">{lang === "th" ? "ประวัติความจุแร็ครายเดือน" : "Rack Capacity Monthly History"}</h3></div>
         <div className="flex items-center gap-2">
-          <select value={effectiveReference} onChange={e => setReferenceMonth(e.target.value)} className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200">
-            {availableMonths.map(month => <option key={month} value={month}>{displayMonth(month, lang)}</option>)}
+          <select value={effectiveReference} disabled className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-400 cursor-not-allowed">
+            <option value={effectiveReference}>{monthLabelShort(effectiveReference, lang)}</option>
           </select>
           {([3, 6, 12] as RangeMonths[]).map(r => (
             <button
@@ -113,7 +93,7 @@ export default function RackCapacityHistoryPanel({ rows, lang }: RackCapacityHis
                 const row = rowsByMonth.get(month);
                 return (
                   <tr key={month} className="border-t border-slate-800">
-                    <td className="py-2 px-4">{displayMonth(month, lang)}</td>
+                    <td className="py-2 px-4">{monthLabelShort(month, lang)}</td>
                     {row ? (
                       <>
                         <td className="py-2 px-4 text-right font-mono">{row.totalRacks}</td>

@@ -157,6 +157,17 @@ export interface ReportComparisonFacility {
   floorSharePercent: number | null;
 }
 
+/** One facility's current (live, not month-keyed) Rack Capacity records,
+ *  for the Export All Report's Rack Capacity Site Comparison page. Raw
+ *  records, not pre-aggregated metrics - calculateRackCapacityMetrics (the
+ *  single authoritative Rack Capacity calculation, same one the dashboard
+ *  and the primary Rack Capacity PDF page use) is applied at render time,
+ *  never re-derived here. */
+export interface ReportRackComparisonFacility {
+  label: string;
+  records: RackRecord[];
+}
+
 export interface ReportData {
   title: string;
   thaiSubtitle: string;
@@ -183,4 +194,9 @@ export interface ReportData {
   /** This facility's own current-row KPIs plus the sibling facility's, for
    *  the Site Comparison PDF page. Null when comparison data is unavailable. */
   comparison: { self: ReportComparisonFacility; other: ReportComparisonFacility | null } | null;
+  /** This facility's own Rack Capacity records plus the sibling facility's,
+   *  for the Rack Capacity Site Comparison PDF page. Null when this
+   *  facility itself has no Rack Capacity data (mirrors rackCapacityPage's
+   *  own unavailable-data gate). */
+  rackComparison: { self: ReportRackComparisonFacility; other: ReportRackComparisonFacility | null } | null;
 }

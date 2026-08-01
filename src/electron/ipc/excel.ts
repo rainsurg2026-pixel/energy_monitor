@@ -25,6 +25,12 @@ import { saveRackCapacityFieldChanges, RackFieldChange, RackCapacityImageInput }
 import { readRackCapacityHistoryFromBuffer, RackCapacityHistoryRow } from "../../excel/RackCapacityHistoryWriter";
 import { readRackUnitCapacityFromBuffer, RackUnitCapacityInput, RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
 import { saveRackUnitCapacity } from "../../excel/RackUnitCapacitySaveWriter";
+import {
+  saveRackUnitCapacityImageHistory,
+  readRackUnitCapacityImageForMonth,
+  RackUnitCapacityImageHistoryRow
+} from "../../excel/RackUnitCapacityImageHistoryWriter";
+import os from "os";
 import { RACK_CANONICAL_STATUSES } from "../../utils/rackCapacity";
 import { validateImageBytes } from "../../utils/imageValidation";
 import { readUpsMappingFromBuffer } from "../../reports/upsMappingReader";
@@ -300,6 +306,18 @@ export interface RackUnitCapacitySavePayload {
   rows: RackUnitCapacityRow[];
 }
 
+export interface RackUnitCapacityImageHistorySavePayload {
+  path: string;
+  backupPath: string | null;
+  savedAt: string;
+  rows: RackUnitCapacityImageHistoryRow[];
+}
+
+export interface RackUnitCapacityImageForMonthPayload {
+  found: boolean;
+  dataUri: string | null;
+}
+
 export interface RecoverySnapshot {
   workbookPath: string;
   savedAt: string;
@@ -430,7 +448,6 @@ async function buildOpenPayload(
       log.warn(`Rack Unit Capacity unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-
   if (trackRecent) {
     await addRecentFile(filePath);
     app.addRecentDocument(filePath);
@@ -566,7 +583,8 @@ export function registerExcelIpc(): void {
       const filePath = ensureWorkbookPath(body.path);
       const changes: RackFieldChange[] = sanitizeRackFieldChanges(body.changes);
       const image = sanitizeRackImage(body.image);
-      if (changes.length === 0 && !image) throw new PayloadError("Save requires at least one field change or an image.");
+      const forceSnapshot = body.forceSnapshot === true;
+      if (changes.length === 0 && !image && !forceSnapshot) throw new PayloadError("Save requires at least one field change, an image, or an explicit snapshot request.");
       const facilityId = typeof body.facilityId === "string" && body.facilityId.length > 0 ? body.facilityId.slice(0, 100) : null;
       const snapshotMonth = sanitizeSnapshotMonth(body.snapshotMonth);
       const config = await loadConfig();
@@ -576,7 +594,8 @@ export function registerExcelIpc(): void {
         { backupDir: resolveBackupDir(config), backupKeep: config.backupKeep },
         image,
         facilityId,
-        snapshotMonth
+        snapshotMonth,
+        forceSnapshot
       );
       log.info(`rack capacity saved: ${filePath} (${result.changedCount} field change(s), image: ${result.imageEmbedded}, backup: ${result.backupPath ?? "none"})`);
       return {
@@ -602,12 +621,14 @@ export function registerExcelIpc(): void {
       const filePath = ensureWorkbookPath(body.path);
       const input = sanitizeRackUnitCapacityInput(body.input);
       const image = sanitizeRackImage(body.image);
+      const forceSnapshot = body.forceSnapshot === true;
       const config = await loadConfig();
       const result = await saveRackUnitCapacity(
         filePath,
         input,
         { backupDir: resolveBackupDir(config), backupKeep: config.backupKeep },
-        image
+        image,
+        forceSnapshot
       );
       log.info(`rack unit capacity saved: ${filePath} (month ${input.month}, image: ${result.imageEmbedded}, backup: ${result.backupPath ?? "none"})`);
       return {
@@ -618,6 +639,61 @@ export function registerExcelIpc(): void {
         imageEmbedded: result.imageEmbedded,
         rows: result.rows
       };
+    })
+  );
+
+  // --- Rack Unit Capacity Image History: one image per (Facility, Reporting
+  // Month), replacing the pre-v2.2.5 single-slot image. "User" is always the
+  // OS account running this process - never renderer-supplied, since this
+  // app has no separate login/auth system to draw a real identity from. ---
+  ipcMain.handle("excel:saveRackUnitCapacityImageHistory", (_event, raw: unknown) =>
+    wrap<RackUnitCapacityImageHistorySavePayload>("excel:saveRackUnitCapacityImageHistory", async () => {
+      const body = (raw ?? {}) as Record<string, unknown>;
+      const filePath = ensureWorkbookPath(body.path);
+      const facility = typeof body.facility === "string" && body.facility.length > 0 ? body.facility.slice(0, 200) : null;
+      if (!facility) throw new PayloadError("facility is required.");
+      const reportingMonth = sanitizeSnapshotMonth(body.reportingMonth);
+      if (!reportingMonth) throw new PayloadError("reportingMonth ('YYYY-MM') is required.");
+      const image = sanitizeRackImage(body.image);
+      if (!image) throw new PayloadError("image is required.");
+      const config = await loadConfig();
+      let user = "unknown";
+      try {
+        user = os.userInfo().username;
+      } catch {
+        /* platform couldn't resolve a username - keep the "unknown" fallback rather than failing the save */
+      }
+      const result = await saveRackUnitCapacityImageHistory(
+        filePath,
+        facility,
+        reportingMonth,
+        user,
+        image,
+        { backupDir: resolveBackupDir(config), backupKeep: config.backupKeep }
+      );
+      log.info(`rack unit capacity image history saved: ${filePath} (facility ${facility}, month ${reportingMonth}, user ${user}, backup: ${result.backupPath ?? "none"})`);
+      return {
+        ok: true,
+        path: result.path,
+        backupPath: result.backupPath,
+        savedAt: result.savedAt,
+        rows: result.rows
+      };
+    })
+  );
+
+  ipcMain.handle("excel:getRackUnitCapacityImageForMonth", (_event, raw: unknown) =>
+    wrap<RackUnitCapacityImageForMonthPayload>("excel:getRackUnitCapacityImageForMonth", async () => {
+      const body = (raw ?? {}) as Record<string, unknown>;
+      const filePath = ensureWorkbookPath(body.path);
+      const facility = typeof body.facility === "string" && body.facility.length > 0 ? body.facility.slice(0, 200) : null;
+      if (!facility) throw new PayloadError("facility is required.");
+      const reportingMonth = sanitizeSnapshotMonth(body.reportingMonth);
+      if (!reportingMonth) throw new PayloadError("reportingMonth ('YYYY-MM') is required.");
+      const buffer = await fs.readFile(filePath);
+      const image = await readRackUnitCapacityImageForMonth(buffer, facility, reportingMonth);
+      if (!image) return { ok: true, found: false, dataUri: null };
+      return { ok: true, found: true, dataUri: `data:${image.mimeType};base64,${image.bytes.toString("base64")}` };
     })
   );
 

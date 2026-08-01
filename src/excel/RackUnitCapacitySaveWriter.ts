@@ -77,7 +77,11 @@ export async function saveRackUnitCapacity(
   filePath: string,
   input: RackUnitCapacityInput,
   options: { backupDir: string; backupKeep: number },
-  image?: RackCapacityImageInput | null
+  image?: RackCapacityImageInput | null,
+  /** Same "record a monthly snapshot even with zero changes" opt-in as
+   *  saveRackCapacityFieldChanges - default false, existing no-op-skip
+   *  behavior for the normal Save button is untouched. */
+  forceSnapshot?: boolean
 ): Promise<RackUnitCapacitySaveResult> {
   let original: Buffer;
   try {
@@ -93,7 +97,7 @@ export async function saveRackUnitCapacity(
 
   const { buffer, changed, imageEmbedded } = await applyRackUnitCapacityChange(original, input, image);
 
-  if (!changed && !imageEmbedded) {
+  if (!changed && !imageEmbedded && !forceSnapshot) {
     const rows = await readRackUnitCapacityFromBuffer(original);
     return { path: filePath, backupPath: null, savedAt: new Date().toISOString(), imageEmbedded: false, rows };
   }
