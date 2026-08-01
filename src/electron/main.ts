@@ -6,6 +6,7 @@ import { registerExcelIpc } from "./ipc/excel";
 import { registerExportIpc } from "./ipc/exportCenter";
 import { registerWindowIpc } from "./ipc/window";
 import { registerGoogleSheetsIpc } from "./ipc/googleSheets";
+import { registerImageIpc } from "./ipc/images";
 import { restoreGoogleAuthOnStartup } from "./googleAuth";
 import { loadConfig, updateConfig } from "./config";
 import { ensureDir, getConfigDir, getDefaultBackupDir, getExportsDir, getLogsDir, log, rotateLogIfNeeded } from "./paths";
@@ -198,6 +199,8 @@ if (!gotLock) {
   startupDiagnostic("ipc-registration", "registerWindowIpc complete");
   registerExcelIpc();
   startupDiagnostic("ipc-registration", "registerExcelIpc complete");
+  registerImageIpc();
+  startupDiagnostic("ipc-registration", "registerImageIpc complete");
   registerExportIpc();
   startupDiagnostic("ipc-registration", "registerExportIpc complete");
   registerGoogleSheetsIpc();

@@ -5,16 +5,15 @@ import JSZip from "jszip";
 import {
   patchRackUnitCapacityBuffer,
   readRackUnitCapacityFromBuffer,
-  readRackUnitCapacityImageFromBuffer,
   locateRackUnitCapacitySheet,
   deriveRackUnitCapacityRow,
   RACK_UNIT_CAPACITY_SHEET_NAME,
   RACK_UNIT_CAPACITY_TABLE_DISPLAY_NAME
 } from "../src/excel/RackUnitCapacityWriter";
 import { saveRackUnitCapacity } from "../src/excel/RackUnitCapacitySaveWriter";
-import { saveRackUnitCapacityImageHistory, readRackUnitCapacityImageForMonth } from "../src/excel/RackUnitCapacityImageHistoryWriter";
+import * as ImageStorageProvider from "../src/storage/ImageStorageProvider";
 import { resolveRelationshipTarget } from "../src/excel/ExcelZipUtils";
-import { shiftMonth } from "../src/utils/monthUtils";
+import { shiftMonth, monthLabelShort } from "../src/utils/monthUtils";
 import { buildReportData } from "../src/reports/reportDataBuilder";
 import { buildReportHtml } from "../src/reports/pdf/reportHtml";
 import zlib from "node:zlib";
@@ -223,19 +222,18 @@ function makeValidPng(width: number, height: number, rgb: [number, number, numbe
 /** End-to-end: the full lock-check -> backup -> atomic-write -> re-read
  *  pipeline against a real file on disk, mirroring saveRackCapacityFieldChanges's
  *  own end-to-end coverage in test-rack-capacity-history.ts. */
-async function testFullSavePipeline(label: string, sourcePath: string): Promise<void> {
+async function testFullSavePipeline(label: string, sourcePath: string, imagesRootDir: string): Promise<void> {
   console.log(`\n===== ${label}: FULL SAVE PIPELINE =====`);
   const backupDir = path.join(path.dirname(sourcePath), `backup-unit-capacity-${label.toLowerCase()}`);
 
-  // v2.2.5 round 3: the PDF's Rack Unit Capacity block/image must strictly
-  // follow this report's own resolved Reporting Month (energy-log-driven),
-  // not "whatever was saved most recently". Discover it up front - energy
-  // logs are never touched by this test, so it stays stable throughout.
+  // The PDF's Rack Unit Capacity block/image must strictly follow this
+  // report's own resolved Reporting Month (energy-log-driven), not
+  // "whatever was saved most recently". Discover it up front - energy logs
+  // are never touched by this test, so it stays stable throughout.
   const discovery = await buildReportData({ workbookPath: sourcePath, facility: label, selectedMonth: null, appVersion: "test" });
   const reportMonth = discovery.reportingMonth;
   if (!reportMonth) throw new Error(`${label}: workbook has no resolvable energy Reporting Month - cannot verify month-aligned PDF rendering.`);
   const priorMonth = shiftMonth(reportMonth, -1);
-  const legacySlotMonth = shiftMonth(reportMonth, -2);
 
   const save1 = await saveRackUnitCapacity(sourcePath, { month: priorMonth, totalU: 500, usedU: 420 }, { backupDir, backupKeep: 3 });
   check(`${label}: first real save produces a backup`, typeof save1.backupPath === "string" && save1.backupPath.length > 0);
@@ -246,75 +244,51 @@ async function testFullSavePipeline(label: string, sourcePath: string): Promise<
   const save2 = await saveRackUnitCapacity(sourcePath, { month: priorMonth, totalU: 500, usedU: 420 }, { backupDir, backupKeep: 3 });
   check(`${label}: re-saving identical Total/Used is a no-op (no backup created)`, save2.backupPath === null);
 
-  const png = makeValidPng(300, 150, [50, 120, 200]);
-
-  // The pre-v2.2.5 single global image slot (SheetImageWriter.ts, still
-  // shipped and untouched by this round's changes) is exercised here
-  // directly, on its own unrelated month, to prove it still works -
-  // deliberately NOT the report's Reporting Month, so it can neither
-  // satisfy nor be confused with the new per-month history store's own
-  // coverage below (the PDF no longer reads this slot at all - see below).
-  const legacySave = await saveRackUnitCapacity(
-    sourcePath,
-    { month: legacySlotMonth, totalU: 500, usedU: 350 },
-    { backupDir, backupKeep: 3 },
-    { bytes: png, type: "png", width: 300, height: 150 }
-  );
-  check(`${label}: legacy single-slot save combining a new month AND an image reports both`, legacySave.imageEmbedded === true && legacySave.rows.some(r => r.month === legacySlotMonth && r.availableU === 150));
-  check(`${label}: legacy single-slot save also produces a backup`, typeof legacySave.backupPath === "string" && legacySave.backupPath.length > 0);
-  const finalZipLegacy = await JSZip.loadAsync(await fs.readFile(sourcePath));
-  const sheetPathLegacy = await locateRackUnitCapacitySheet(finalZipLegacy);
-  const sheetFileLegacy = sheetPathLegacy!.match(/xl\/worksheets\/(sheet\d+)\.xml$/)![1];
-  const relsXmlLegacy = await finalZipLegacy.file(`xl/worksheets/_rels/${sheetFileLegacy}.xml.rels`)!.async("string");
-  check(`${label}: the legacy sheet has a drawing relationship after the combined save`, /Type="[^"]*\/drawing"/.test(relsXmlLegacy));
-  const legacyReadBack = await readRackUnitCapacityImageFromBuffer(await fs.readFile(sourcePath));
-  check(`${label}: readRackUnitCapacityImageFromBuffer (legacy) still finds the embedded image`, legacyReadBack !== null);
-  check(`${label}: legacy read-back image bytes are byte-identical to what was uploaded`, legacyReadBack?.bytes.equals(png) === true);
-  check(`${label}: legacy read-back image mimeType is image/png`, legacyReadBack?.mimeType === "image/png");
-
   // ---- The Reporting Month the report/dashboard actually cares about ----
   const save3 = await saveRackUnitCapacity(sourcePath, { month: reportMonth, totalU: 500, usedU: 350 }, { backupDir, backupKeep: 3 });
   check(`${label}: a save for the report's Reporting Month reports the new row`, save3.rows.some(r => r.month === reportMonth && r.availableU === 150));
   check(`${label}: that save produces a backup`, typeof save3.backupPath === "string" && save3.backupPath.length > 0);
 
-  // v2.2.5 round 3: the image the PDF/dashboard actually display now comes
-  // from the new per-(Facility, Reporting Month) history store, not the
-  // legacy slot exercised above.
-  const imageSave = await saveRackUnitCapacityImageHistory(
-    sourcePath,
-    label,
-    reportMonth,
-    "test-user",
-    { bytes: png, type: "png", width: 300, height: 150 },
-    { backupDir, backupKeep: 3 }
-  );
-  check(`${label}: image history save produces a backup`, typeof imageSave.backupPath === "string" && imageSave.backupPath.length > 0);
-  check(`${label}: image history save reports the row for the report's Reporting Month`, imageSave.rows.some(r => r.reportingMonth === reportMonth && r.facility === label));
+  // v2.2.6: the monthly image is never embedded into the workbook - it is
+  // saved through the filesystem ImageStorageProvider, keyed by (facility,
+  // reportingMonth), the same store the dashboard/PDF read from.
+  const png = makeValidPng(300, 150, [50, 120, 200]);
+  const savedMeta = await ImageStorageProvider.saveImage(imagesRootDir, label, reportMonth, { bytes: png, type: "png", width: 300, height: 150 }, "test-user");
+  check(`${label}: image save reports the correct RUC-<Mon>-<YY> filename`, savedMeta.fileName === `RUC-${monthLabelShort(reportMonth, "en")}.png`);
+  check(`${label}: image save records a real sha256 checksum`, /^[0-9a-f]{64}$/.test(savedMeta.checksum));
 
   const finalRows = await readRackUnitCapacityFromBuffer(await fs.readFile(sourcePath));
   check(`${label}: the prior month's row survives later saves untouched`, finalRows.some(r => r.month === priorMonth && r.totalU === 500 && r.usedU === 420));
-  check(`${label}: the legacy-slot month's row survives later saves untouched`, finalRows.some(r => r.month === legacySlotMonth && r.totalU === 500 && r.usedU === 350));
 
-  const readBackImage = await readRackUnitCapacityImageForMonth(await fs.readFile(sourcePath), label, reportMonth);
-  check(`${label}: readRackUnitCapacityImageForMonth finds the embedded image`, readBackImage !== null);
-  check(`${label}: read-back image bytes are byte-identical to what was uploaded`, readBackImage?.bytes.equals(png) === true);
+  const readBackImage = await ImageStorageProvider.loadImage(imagesRootDir, label, reportMonth);
+  check(`${label}: loadImage finds the saved image`, readBackImage !== null);
+  check(`${label}: read-back image bytes are byte-identical to what was saved`, readBackImage?.bytes.equals(png) === true);
   check(`${label}: read-back image mimeType is image/png`, readBackImage?.mimeType === "image/png");
+  check(`${label}: exists() reports true for this (facility, month)`, (await ImageStorageProvider.exists(imagesRootDir, label, reportMonth)) === true);
+  check(`${label}: exists() reports false for an unsaved month`, (await ImageStorageProvider.exists(imagesRootDir, label, shiftMonth(reportMonth, -6))) === false);
+
+  // ---- Nothing about this feature ever touches the workbook - the xlsm
+  // hash before/after the image save must be byte-identical. ----
+  const workbookHashBefore = crypto.createHash("sha256").update(await fs.readFile(sourcePath)).digest("hex");
+  await ImageStorageProvider.saveImage(imagesRootDir, label, reportMonth, { bytes: png, type: "png", width: 300, height: 150 }, "test-user");
+  const workbookHashAfter = crypto.createHash("sha256").update(await fs.readFile(sourcePath)).digest("hex");
+  check(`${label}: saving an image never modifies the workbook file at all`, workbookHashBefore === workbookHashAfter);
 
   // ---- PDF rendering: the "data present" path (test-all-report.ts only
   // covers the "not yet available" path, since production workbooks have no
   // Rack Unit Capacity data yet) ----
-  const reportData = await buildReportData({ workbookPath: sourcePath, facility: label, selectedMonth: null, appVersion: "test" });
+  const reportData = await buildReportData({ workbookPath: sourcePath, facility: label, selectedMonth: null, appVersion: "test", imagesRootDir });
   check(`${label}: PDF resolves the same Reporting Month as before these saves`, reportData.reportingMonth === reportMonth);
   const html = buildReportHtml(reportData);
   check(`${label}: PDF shows the renamed "Rack Capacity and Utilization" heading`, html.includes("<h2>Rack Capacity and Utilization</h2>"));
   check(`${label}: PDF Rack Unit Capacity block shows Total (U) = 500`, /Total \(U\)[\s\S]{0,80}500/.test(html));
   check(`${label}: PDF Rack Unit Capacity block shows the Reporting Month's Used (U) = 350`, /Used \(U\)[\s\S]{0,80}350/.test(html));
   check(`${label}: PDF Rack Unit Capacity block shows the Reporting Month's Available (U) = 150`, /Available \(U\)[\s\S]{0,80}150/.test(html));
-  check(`${label}: PDF embeds the Reporting Month's image (from the new history store) as a data URI`, /<img src="data:image\/png;base64,[^"]+" alt="Rack Unit Capacity Image" class="rack-unit-capacity-image"\/>/.test(html));
-  check(`${label}: PDF Rack Unit Capacity trend page renders (>=2 months of data)`, /class="page trend-page"[^>]*>\s*<h2>Rack Unit Capacity Availability % Trend<\/h2>|Rack Unit Capacity Availability % Trend/.test(html));
+  check(`${label}: PDF embeds the Reporting Month's image (from the filesystem provider) as a data URI`, /<img src="data:image\/png;base64,[^"]+" alt="Rack Unit Capacity Image" class="rack-unit-capacity-image"\/>/.test(html));
+  check(`${label}: PDF shows the image caption's Reporting Month/Resolution/Captured By`, html.includes("Resolution: 300×150px") && html.includes("Captured By: test-user"));
   check(`${label}: PDF does not show the "not yet available" note once data exists`, !html.includes("Rack Unit Capacity data is not yet available"));
   check(`${label}: PDF does not show the "no data for this month" note once the Reporting Month's row exists`, !html.includes("No Rack Unit Capacity data is available for the selected reporting month"));
-  check(`${label}: PDF does not show the "no image" note once the Reporting Month's image exists`, !html.includes("No image for this reporting month."));
+  check(`${label}: PDF does not show the placeholder once the Reporting Month's image exists`, !html.includes("Rack Unit Capacity image not yet captured"));
 
   await fs.rm(backupDir, { recursive: true, force: true });
 }
@@ -330,6 +304,7 @@ const rangsitPipelineCopy = path.join(workDir, "DC_Rangsit_pipeline.xlsm");
 const srinakarinPipelineCopy = path.join(workDir, "DC_Srinakarin_pipeline.xlsm");
 await fs.copyFile(path.resolve("DC_Rangsit.xlsm"), rangsitPipelineCopy);
 await fs.copyFile(path.resolve("DC_Srinakarin.xlsm"), srinakarinPipelineCopy);
+const imagesRootDir = path.join(workDir, "rack-unit-images");
 
 const prodHashBefore = {
   rangsit: crypto.createHash("sha256").update(await fs.readFile(path.resolve("DC_Rangsit.xlsm"))).digest("hex"),
@@ -338,8 +313,8 @@ const prodHashBefore = {
 
 await testFacility("RANGSIT", rangsitCopy);
 await testFacility("SRINAKARIN", srinakarinCopy);
-await testFullSavePipeline("RANGSIT", rangsitPipelineCopy);
-await testFullSavePipeline("SRINAKARIN", srinakarinPipelineCopy);
+await testFullSavePipeline("RANGSIT", rangsitPipelineCopy, imagesRootDir);
+await testFullSavePipeline("SRINAKARIN", srinakarinPipelineCopy, imagesRootDir);
 
 const prodHashAfter = {
   rangsit: crypto.createHash("sha256").update(await fs.readFile(path.resolve("DC_Rangsit.xlsm"))).digest("hex"),

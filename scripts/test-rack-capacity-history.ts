@@ -143,7 +143,6 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
     sourcePath,
     [{ rowNumber: target.rowNumber, rackId: target.rackId!, status: { expected: target.status, next: otherStatus } }],
     { backupDir, backupKeep: 3 },
-    null,
     label.toLowerCase()
   );
   check(`${label}: real Save produces a non-empty history snapshot end-to-end`, saveResult.rackCapacityHistory.length > 0);
@@ -162,7 +161,6 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
     sourcePath,
     [{ rowNumber: target2.rowNumber, rackId: target2.rackId!, status: { expected: target2.status, next: otherStatus2 } }],
     { backupDir, backupKeep: 3 },
-    null,
     label.toLowerCase(),
     explicitMonth
   );

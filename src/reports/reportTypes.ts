@@ -189,11 +189,26 @@ export interface ReportData {
   /** Persisted Rack Unit Capacity rows (Month/Total(U)/Used(U)/Available(U)/
    *  Availability %), if any. */
   rackUnitCapacity: import("../excel/RackUnitCapacityWriter").RackUnitCapacityRow[];
-  /** The "Rack Unit Capacity Image", as a ready-to-embed data URI, if one is present. */
+  /** The "Rack Unit Capacity Image", as a ready-to-embed data URI, if one is
+   *  present - read from the filesystem ImageStorageProvider, never
+   *  embedded in the workbook. */
   rackUnitCapacityImageDataUri: string | null;
+  /** Caption metadata for the image above (Reporting Month/Last Updated/
+   *  Resolution/Captured By) - null exactly when the image itself is null. */
+  rackUnitCapacityImageMeta: { savedAt: string; savedBy: string; width: number; height: number } | null;
   /** This facility's own current-row KPIs plus the sibling facility's, for
-   *  the Site Comparison PDF page. Null when comparison data is unavailable. */
-  comparison: { self: ReportComparisonFacility; other: ReportComparisonFacility | null } | null;
+   *  the Site Comparison PDF page. Null when comparison data is unavailable.
+   *  `selfTrend`/`otherTrend` are each facility's own multi-month history
+   *  (up to 12 months, ending at the same reference month as `self.month`)
+   *  for the "Monthly Energy Consumption Trend" / "Floor 4 Electricity Cost
+   *  Trend" charts shown above the comparison table - `otherTrend` is empty
+   *  when the sibling workbook is unavailable. */
+  comparison: {
+    self: ReportComparisonFacility;
+    other: ReportComparisonFacility | null;
+    selfTrend: ReportMonthlyRow[];
+    otherTrend: ReportMonthlyRow[];
+  } | null;
   /** This facility's own Rack Capacity records plus the sibling facility's,
    *  for the Rack Capacity Site Comparison PDF page. Null when this
    *  facility itself has no Rack Capacity data (mirrors rackCapacityPage's

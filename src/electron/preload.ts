@@ -26,14 +26,19 @@ const desktopBridge = {
     openMultiple: (requests: unknown[]) => invoke("excel:openMultiple", requests),
     reload: (path: string, devices?: unknown, upsGroupContext?: unknown) => invoke("excel:reload", path, devices, upsGroupContext),
     save: (payload: { path: string; logs: unknown[]; devices?: unknown }) => invoke("excel:save", payload),
-    saveRackCapacity: (payload: { path: string; changes: unknown[]; image?: { bytes: Uint8Array } | null; facilityId?: string | null; snapshotMonth?: string | null; forceSnapshot?: boolean }) => invoke("excel:saveRackCapacity", payload),
-    saveRackUnitCapacity: (payload: { path: string; input: { month: string; totalU: number; usedU: number }; image?: { bytes: Uint8Array } | null; forceSnapshot?: boolean }) => invoke("excel:saveRackUnitCapacity", payload),
-    saveRackUnitCapacityImageHistory: (payload: { path: string; facility: string; reportingMonth: string; image: { bytes: Uint8Array } }) => invoke("excel:saveRackUnitCapacityImageHistory", payload),
-    getRackUnitCapacityImageForMonth: (payload: { path: string; facility: string; reportingMonth: string }) => invoke("excel:getRackUnitCapacityImageForMonth", payload),
+    saveRackCapacity: (payload: { path: string; changes: unknown[]; facilityId?: string | null; snapshotMonth?: string | null; forceSnapshot?: boolean }) => invoke("excel:saveRackCapacity", payload),
+    saveRackUnitCapacity: (payload: { path: string; input: { month: string; totalU: number; usedU: number }; forceSnapshot?: boolean }) => invoke("excel:saveRackUnitCapacity", payload),
     saveAs: (payload: { sourcePath: string; logs: unknown[]; devices?: unknown }) => invoke("excel:saveAs", payload),
     checkLock: (path: string) => invoke("excel:checkLock", path),
     access: (path: string) => invoke("excel:access", path),
     validate: (path: string, devices?: unknown) => invoke("excel:validate", path, devices)
+  },
+  images: {
+    save: (payload: { facility: string; reportingMonth: string; image: { bytes: Uint8Array } }) => invoke("images:save", payload),
+    load: (payload: { facility: string; reportingMonth: string }) => invoke("images:load", payload),
+    delete: (payload: { facility: string; reportingMonth: string }) => invoke("images:delete", payload),
+    exists: (payload: { facility: string; reportingMonth: string }) => invoke("images:exists", payload),
+    list: (payload: { facility: string }) => invoke("images:list", payload)
   },
   backups: {
     list: (workbookPath: string) => invoke("backup:list", workbookPath),

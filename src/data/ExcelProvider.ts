@@ -5,7 +5,7 @@
  */
 
 import { MonthlyLog } from "../types";
-import type { DesktopBridge, DeviceLists, IpcResult, OpenWorkbookPayload } from "../desktop";
+import type { DesktopBridge, DeviceLists, IpcResult, OpenWorkbookPayload, StoredImageMeta } from "../desktop";
 import type { UpsGroupConfig } from "../utils/upsGroupAggregation";
 import {
   DataSnapshot,
@@ -168,7 +168,6 @@ export class ExcelProvider implements IDataProvider {
 
   async saveRackCapacity(
     changes: RackFieldChangeRequest[],
-    image?: RackCapacityImageRequest | null,
     snapshotMonth?: string | null,
     forceSnapshot?: boolean
   ): Promise<RackCapacitySaveOutcome> {
@@ -176,7 +175,6 @@ export class ExcelProvider implements IDataProvider {
     const result = unwrap(await this.bridge.excel.saveRackCapacity({
       path: this.currentPath,
       changes,
-      image: image ? { bytes: image.bytes } : null,
       facilityId: this.upsGroupContext?.facilityId ?? null,
       snapshotMonth,
       forceSnapshot
@@ -186,7 +184,6 @@ export class ExcelProvider implements IDataProvider {
       backupPath: result.backupPath,
       outcomes: result.outcomes,
       changedCount: result.changedCount,
-      imageEmbedded: result.imageEmbedded,
       rackCapacity: result.rackCapacity,
       rackCapacityHistory: result.rackCapacityHistory
     };
@@ -194,47 +191,35 @@ export class ExcelProvider implements IDataProvider {
 
   async saveRackUnitCapacity(
     input: RackUnitCapacityInputRequest,
-    image?: RackCapacityImageRequest | null,
     forceSnapshot?: boolean
   ): Promise<RackUnitCapacitySaveOutcome> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
     const result = unwrap(await this.bridge.excel.saveRackUnitCapacity({
       path: this.currentPath,
       input,
-      image: image ? { bytes: image.bytes } : null,
       forceSnapshot
     }));
     return {
       savedAt: result.savedAt,
       backupPath: result.backupPath,
-      imageEmbedded: result.imageEmbedded,
       rows: result.rows
     };
   }
 
-  async saveRackUnitCapacityImageHistory(
-    facility: string,
-    reportingMonth: string,
-    image: RackCapacityImageRequest
-  ): Promise<{ savedAt: string; backupPath: string | null }> {
-    if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
-    const result = unwrap(await this.bridge.excel.saveRackUnitCapacityImageHistory({
-      path: this.currentPath,
-      facility,
-      reportingMonth,
-      image: { bytes: image.bytes }
-    }));
-    return { savedAt: result.savedAt, backupPath: result.backupPath };
+  async saveRackUnitCapacityImage(facility: string, reportingMonth: string, image: RackCapacityImageRequest): Promise<StoredImageMeta> {
+    const result = unwrap(await this.bridge.images.save({ facility, reportingMonth, image: { bytes: image.bytes } }));
+    return result.meta;
   }
 
-  async getRackUnitCapacityImageForMonth(facility: string, reportingMonth: string): Promise<string | null> {
-    if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
-    const result = unwrap(await this.bridge.excel.getRackUnitCapacityImageForMonth({
-      path: this.currentPath,
-      facility,
-      reportingMonth
-    }));
-    return result.dataUri;
+  async getRackUnitCapacityImage(facility: string, reportingMonth: string): Promise<{ dataUri: string; meta: StoredImageMeta } | null> {
+    const result = unwrap(await this.bridge.images.load({ facility, reportingMonth }));
+    if (!result.found || !result.dataUri || !result.meta) return null;
+    return { dataUri: result.dataUri, meta: result.meta };
+  }
+
+  async listRackUnitCapacityImages(facility: string): Promise<StoredImageMeta[]> {
+    const result = unwrap(await this.bridge.images.list({ facility }));
+    return result.images;
   }
 
   async checkLock(): Promise<{ locked: boolean; excelOwnerFilePresent: boolean }> {

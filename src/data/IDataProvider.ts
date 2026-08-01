@@ -13,6 +13,7 @@ import type { DeviceLists, ExcelIntegrityReport, WorkbookHealth, WorkbookValidat
 import type { DashboardUpsMappingReport, RackCapacitySummary, UpsGroupHistoryReport } from "../reports/reportTypes";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
+import type { StoredImageMeta } from "../storage/ImageStorageProvider";
 
 export interface RackFieldEditRequest {
   expected: string | null;
@@ -43,7 +44,6 @@ export interface RackCapacitySaveOutcome {
   backupPath?: string | null;
   outcomes: RackFieldChangeOutcome[];
   changedCount: number;
-  imageEmbedded: boolean;
   rackCapacity: RackCapacitySummary | null;
   rackCapacityHistory: RackCapacityHistoryRow[];
 }
@@ -62,7 +62,6 @@ export interface RackUnitCapacityInputRequest {
 export interface RackUnitCapacitySaveOutcome {
   savedAt: string;
   backupPath?: string | null;
-  imageEmbedded: boolean;
   rows: RackUnitCapacityRow[];
 }
 
@@ -166,7 +165,6 @@ export interface IDataProvider {
    */
   saveRackCapacity?(
     changes: RackFieldChangeRequest[],
-    image?: RackCapacityImageRequest | null,
     snapshotMonth?: string | null,
     /** Explicit "record a monthly snapshot even with zero field changes"
      *  request - its own UI action, never a default; default false leaves
@@ -178,31 +176,35 @@ export interface IDataProvider {
   /**
    * Rack Unit Capacity: Month/Total (U)/Used (U) upsert (Available (U) and
    * Availability Capacity (%) are derived server-side, never entered
-   * directly) plus an optional "Rack Unit Capacity Image" upload, in one
-   * atomic save. Same optionality convention as saveRackCapacity.
+   * directly). The monthly image is a separate save
+   * (saveRackUnitCapacityImage below) through the filesystem
+   * ImageStorageProvider, never embedded into the workbook.
    */
   saveRackUnitCapacity?(
     input: RackUnitCapacityInputRequest,
-    image?: RackCapacityImageRequest | null,
     forceSnapshot?: boolean
   ): Promise<RackUnitCapacitySaveOutcome>;
 
   /**
-   * Records the Rack Unit Capacity Image for exactly one (Facility,
-   * Reporting Month) - the v2.2.5 historical replacement for the old
-   * single global image slot. "User" is never supplied by the caller; the
-   * provider's backing process records who actually ran the save.
+   * Saves the Rack Unit Capacity Image for exactly one (Facility, Reporting
+   * Month) via the filesystem ImageStorageProvider. "User" is never
+   * supplied by the caller; the provider's backing process records who
+   * actually ran the save.
    */
-  saveRackUnitCapacityImageHistory?(
+  saveRackUnitCapacityImage?(
     facility: string,
     reportingMonth: string,
     image: RackCapacityImageRequest
-  ): Promise<{ savedAt: string; backupPath: string | null }>;
+  ): Promise<StoredImageMeta>;
 
   /**
    * Fetches the image for exactly one (Facility, Reporting Month), or null
    * if none was ever recorded for that month - never a fallback to the
    * latest/nearest month.
    */
-  getRackUnitCapacityImageForMonth?(facility: string, reportingMonth: string): Promise<string | null>;
+  getRackUnitCapacityImage?(facility: string, reportingMonth: string): Promise<{ dataUri: string; meta: StoredImageMeta } | null>;
+
+  /** All recorded images' metadata for a facility, sorted by month - never
+   *  the image bytes themselves. */
+  listRackUnitCapacityImages?(facility: string): Promise<StoredImageMeta[]>;
 }

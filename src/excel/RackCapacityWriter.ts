@@ -23,11 +23,7 @@ import { checkWorkbookLock, createBackup, WorkbookError } from "./WorkbookWriter
 import { readRackCapacityFromBuffer } from "../reports/rackCapacityReader";
 import { calculateRackCapacityMetrics } from "../utils/rackCapacity";
 import { patchRackCapacityHistoryBuffer, readRackCapacityHistoryFromBuffer, RackCapacityHistoryRow } from "./RackCapacityHistoryWriter";
-import { ensureRackUnitCapacitySheet } from "./RackUnitCapacityWriter";
-import { resolveRelationshipTarget } from "./ExcelZipUtils";
-import { EMU_PER_PX, embedRackCapacityImage, RackCapacityImageInput } from "./SheetImageWriter";
-
-export type { RackCapacityImageInput };
+import { locateSheetXmlPathByName } from "./ExcelZipUtils";
 
 export const RACK_CAPACITY_SHEET_NAME = "Rack Capacity";
 export const RACK_CAPACITY_TABLE_NAME = "Table7";
@@ -73,7 +69,6 @@ export interface RackCapacityWriteResult {
   buffer: Buffer;
   outcomes: RackFieldChangeOutcome[];
   changedCount: number;
-  imageEmbedded: boolean;
 }
 
 function xmlEscape(text: string): string {
@@ -102,50 +97,6 @@ function getAttr(tagAttrs: string, name: string): string | null {
 async function entryText(zip: JSZip, name: string): Promise<string | null> {
   const file = zip.file(name);
   return file ? file.async("string") : null;
-}
-
-/** Resolves the "Rack Capacity" worksheet's zip path via workbook.xml + rels
- *  (same technique used throughout this codebase's writer modules). */
-async function locateRackCapacitySheetXmlPath(zip: JSZip): Promise<string | null> {
-  const workbookXml = await entryText(zip, "xl/workbook.xml");
-  const relsXml = await entryText(zip, "xl/_rels/workbook.xml.rels");
-  if (!workbookXml || !relsXml) return null;
-  const relMap = new Map<string, string>();
-  for (const m of relsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
-    const id = getAttr(m[1], "Id");
-    const target = getAttr(m[1], "Target");
-    if (id && target) relMap.set(id, target);
-  }
-  for (const m of workbookXml.matchAll(/<sheet\b([^>]*)\/>/g)) {
-    const name = getAttr(m[1], "name");
-    const rid = getAttr(m[1], "r:id");
-    if (name && xmlUnescape(name) === RACK_CAPACITY_SHEET_NAME && rid) {
-      const target = relMap.get(rid);
-      if (target) return target.startsWith("/") ? target.slice(1) : `xl/${target}`;
-    }
-  }
-  return null;
-}
-
-async function locateSheetXmlPathByName(zip: JSZip, sheetName: string): Promise<string | null> {
-  const workbookXml = await entryText(zip, "xl/workbook.xml");
-  const relsXml = await entryText(zip, "xl/_rels/workbook.xml.rels");
-  if (!workbookXml || !relsXml) return null;
-  const relMap = new Map<string, string>();
-  for (const m of relsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
-    const id = getAttr(m[1], "Id");
-    const target = getAttr(m[1], "Target");
-    if (id && target) relMap.set(id, target);
-  }
-  for (const m of workbookXml.matchAll(/<sheet\b([^>]*)\/>/g)) {
-    const name = getAttr(m[1], "name");
-    const rid = getAttr(m[1], "r:id");
-    if (name && xmlUnescape(name) === sheetName && rid) {
-      const target = relMap.get(rid);
-      if (target) return target.startsWith("/") ? target.slice(1) : `xl/${target}`;
-    }
-  }
-  return null;
 }
 
 function excelSerialToYearMonth(serial: number): string | null {
@@ -298,100 +249,6 @@ function findOrAddSharedString(sharedStringsXml: string, text: string): { index:
   return { index: newIndex, xml };
 }
 
-/**
- * One-time, idempotent migration: relocates the single designated image
- * from the old "Rack Capacity" K9 anchor to the new "Rack Unit Capacity"
- * sheet (same K9 anchor - confirmed clear of the new sheet's 5-column A:E
- * table on both real production workbooks). Preserves the exact binary
- * bytes and display size (EMU/px round-trip is exact here since cx/cy were
- * originally produced as Math.round(px) * EMU_PER_PX). The old drawing's
- * part/rels/media/Content_Types entries are removed only after the new
- * embed has fully succeeded (or is confirmed already done), so a mid-way
- * failure can never leave the image orphaned on neither sheet. A true no-op
- * once the old sheet's drawing relationship has been removed (i.e. every
- * call after the first).
- */
-export async function migrateRackCapacityImageToUnitCapacity(zip: JSZip): Promise<boolean> {
-  const oldSheetXmlPath = await locateRackCapacitySheetXmlPath(zip);
-  if (!oldSheetXmlPath) return false;
-  const oldSheetFile = oldSheetXmlPath.replace(/^xl\/worksheets\//, "");
-  const oldRelsPath = `xl/worksheets/_rels/${oldSheetFile}.rels`;
-  const oldRelsXml = await entryText(zip, oldRelsPath);
-  if (!oldRelsXml) return false;
-
-  let oldDrawingRid: string | null = null;
-  let oldDrawingTarget: string | null = null;
-  for (const m of oldRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
-    if (getAttr(m[1], "Type")?.endsWith("/drawing")) {
-      oldDrawingRid = getAttr(m[1], "Id");
-      oldDrawingTarget = getAttr(m[1], "Target");
-      break;
-    }
-  }
-  if (!oldDrawingRid || !oldDrawingTarget) return false; // nothing to migrate - already done, or never had one
-
-  const oldDrawingPath = resolveRelationshipTarget("xl/worksheets", oldDrawingTarget);
-  const oldDrawingFile = oldDrawingPath.replace(/^xl\/drawings\//, "");
-  const oldDrawingRelsPath = `xl/drawings/_rels/${oldDrawingFile}.rels`;
-  const oldDrawingXml = await entryText(zip, oldDrawingPath);
-  const oldDrawingRelsXml = await entryText(zip, oldDrawingRelsPath);
-  if (!oldDrawingXml || !oldDrawingRelsXml) return false;
-
-  let oldMediaTarget: string | null = null;
-  for (const m of oldDrawingRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
-    if (getAttr(m[1], "Type")?.endsWith("/image")) {
-      oldMediaTarget = getAttr(m[1], "Target");
-      break;
-    }
-  }
-  const extMatch = oldMediaTarget?.match(/\.(png|jpe?g)$/i);
-  const extentMatch = oldDrawingXml.match(/<xdr:ext cx="(\d+)" cy="(\d+)"\/>/);
-  if (!oldMediaTarget || !extMatch || !extentMatch) return false;
-
-  const oldMediaPath = resolveRelationshipTarget("xl/drawings", oldMediaTarget);
-  const mediaFile = zip.file(oldMediaPath);
-  if (!mediaFile) return false;
-
-  const type: "png" | "jpeg" = extMatch[1].toLowerCase() === "png" ? "png" : "jpeg";
-  const cx = Number(extentMatch[1]);
-  const cy = Number(extentMatch[2]);
-
-  const { xmlPath: newSheetXmlPath } = await ensureRackUnitCapacitySheet(zip);
-  const newSheetFile = newSheetXmlPath.replace(/^xl\/worksheets\//, "");
-  const newRelsPath = `xl/worksheets/_rels/${newSheetFile}.rels`;
-  const newRelsXml = await entryText(zip, newRelsPath);
-  const newAlreadyHasImage = newRelsXml
-    ? [...newRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)].some(m => getAttr(m[1], "Type")?.endsWith("/drawing"))
-    : false;
-
-  if (!newAlreadyHasImage) {
-    const bytes = await mediaFile.async("nodebuffer");
-    const dispWidth = Math.round(cx / EMU_PER_PX);
-    const dispHeight = Math.round(cy / EMU_PER_PX);
-    await embedRackCapacityImage(zip, newSheetXmlPath, { bytes, type, width: dispWidth, height: dispHeight });
-  }
-
-  // Only now remove the old drawing/media/rels/Content_Types entries - the
-  // new embed above has either just succeeded or was already in place.
-  zip.remove(oldDrawingPath);
-  zip.remove(oldDrawingRelsPath);
-  zip.remove(oldMediaPath);
-  zip.file(oldRelsPath, oldRelsXml.replace(new RegExp(`<Relationship\\b[^>]*\\bId="${oldDrawingRid}"[^>]*\\/>`), ""));
-  const oldSheetXml = await entryText(zip, oldSheetXmlPath);
-  if (oldSheetXml) {
-    const strippedSheet = oldSheetXml.replace(new RegExp(`<drawing r:id="${oldDrawingRid}"\\/>`), "");
-    if (strippedSheet !== oldSheetXml) zip.file(oldSheetXmlPath, strippedSheet);
-  }
-  const contentTypesXml = await entryText(zip, "[Content_Types].xml");
-  if (contentTypesXml) {
-    const escapedPath = oldDrawingPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const strippedContentTypes = contentTypesXml.replace(new RegExp(`<Override PartName="/${escapedPath}"[^>]*\\/>`), "");
-    if (strippedContentTypes !== contentTypesXml) zip.file("[Content_Types].xml", strippedContentTypes);
-  }
-
-  return true;
-}
-
 function normalizeFieldValue(value: string | null | undefined): string | null {
   return value && value.trim() !== "" ? value.trim() : null;
 }
@@ -430,11 +287,10 @@ function readFieldCellValue(cellMatch: RegExpMatchArray | null, sharedStrings: s
  */
 export async function applyRackCapacityFieldChanges(
   original: Buffer,
-  changes: RackFieldChange[],
-  image?: RackCapacityImageInput | null
+  changes: RackFieldChange[]
 ): Promise<RackCapacityWriteResult> {
   const zip = await JSZip.loadAsync(original);
-  const sheetXmlPath = await locateRackCapacitySheetXmlPath(zip);
+  const sheetXmlPath = await locateSheetXmlPathByName(zip, RACK_CAPACITY_SHEET_NAME);
   if (!sheetXmlPath) throw new Error(`Workbook is missing the "${RACK_CAPACITY_SHEET_NAME}" sheet.`);
   const table = await locateTable7(zip, sheetXmlPath);
   if (!table) throw new Error(`"${RACK_CAPACITY_SHEET_NAME}" sheet is missing the required "${RACK_CAPACITY_TABLE_NAME}" table headers.`);
@@ -552,25 +408,12 @@ export async function applyRackCapacityFieldChanges(
     }
   }
 
-  // One-time, idempotent relocation of any pre-v2.2.3 image still sitting on
-  // the old "Rack Capacity" K9 anchor - runs on every save (cheap no-op once
-  // done) so a plain field-only edit still completes the migration, not only
-  // a save that happens to include a fresh image upload.
-  await migrateRackCapacityImageToUnitCapacity(zip);
-
-  let imageEmbedded = false;
-  if (image) {
-    const { xmlPath: rackUnitCapacitySheetPath } = await ensureRackUnitCapacitySheet(zip);
-    await embedRackCapacityImage(zip, rackUnitCapacitySheetPath, image);
-    imageEmbedded = true;
-  }
-
   const buffer = (await zip.generateAsync({
     type: "nodebuffer",
     compression: "DEFLATE",
     compressionOptions: { level: 6 }
   })) as Buffer;
-  return { buffer, outcomes, changedCount, imageEmbedded };
+  return { buffer, outcomes, changedCount };
 }
 
 export interface RackCapacitySaveResult {
@@ -578,7 +421,6 @@ export interface RackCapacitySaveResult {
   backupPath: string | null;
   outcomes: RackFieldChangeOutcome[];
   changedCount: number;
-  imageEmbedded: boolean;
   savedAt: string;
   /** Freshly re-read totals so the caller can refresh its UI without a
    *  second round trip. Null only if the sheet vanished mid-save. */
@@ -600,7 +442,6 @@ export async function saveRackCapacityFieldChanges(
   filePath: string,
   changes: RackFieldChange[],
   options: { backupDir: string; backupKeep: number },
-  image?: RackCapacityImageInput | null,
   facilityId?: string | null,
   /** Explicit "YYYY-MM" for the History snapshot this save should upsert -
    *  the Editor's own Month/Year selector, not a silent system-month
@@ -628,12 +469,12 @@ export async function saveRackCapacityFieldChanges(
     throw new WorkbookError("LOCKED", "The workbook is currently open in Excel (or another program). Close it and retry.", "lock");
   }
 
-  const { buffer: statusBuffer, outcomes, changedCount, imageEmbedded } = await applyRackCapacityFieldChanges(original, changes, image);
+  const { buffer: statusBuffer, outcomes, changedCount } = await applyRackCapacityFieldChanges(original, changes);
 
-  if (changedCount === 0 && !imageEmbedded && !forceSnapshot) {
+  if (changedCount === 0 && !forceSnapshot) {
     const rackCapacity = await readRackCapacityFromBuffer(original);
     const rackCapacityHistory = await readRackCapacityHistoryFromBuffer(original);
-    return { path: filePath, backupPath: null, outcomes, changedCount: 0, imageEmbedded: false, savedAt: new Date().toISOString(), rackCapacity, rackCapacityHistory };
+    return { path: filePath, backupPath: null, outcomes, changedCount: 0, savedAt: new Date().toISOString(), rackCapacity, rackCapacityHistory };
   }
 
   // Step 4 of the save transaction (per spec): only after the primary save
@@ -641,8 +482,8 @@ export async function saveRackCapacityFieldChanges(
   // History snapshot into the SAME buffer that gets written to disk - one
   // atomic write, not a separate second save. A history-snapshot failure
   // (e.g. Dashboard-FAC's H1 unreadable) must never abort an otherwise-valid
-  // Table7/image save, so it is best-effort and logged via the thrown
-  // outcome rather than blocking.
+  // Table7 save, so it is best-effort and logged via the thrown outcome
+  // rather than blocking.
   let buffer = statusBuffer;
   if (facilityId) {
     try {
@@ -686,5 +527,5 @@ export async function saveRackCapacityFieldChanges(
 
   const rackCapacity = await readRackCapacityFromBuffer(buffer);
   const rackCapacityHistory = await readRackCapacityHistoryFromBuffer(buffer);
-  return { path: filePath, backupPath, outcomes, changedCount, imageEmbedded, savedAt: new Date().toISOString(), rackCapacity, rackCapacityHistory };
+  return { path: filePath, backupPath, outcomes, changedCount, savedAt: new Date().toISOString(), rackCapacity, rackCapacityHistory };
 }

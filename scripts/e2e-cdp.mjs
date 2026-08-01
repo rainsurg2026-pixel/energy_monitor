@@ -156,7 +156,18 @@ async function main() {
     // of real user consent (a genuine external blocker; no
     // google-oauth-desktop-config.json exists in this isolated test root, so
     // sign-in must fail gracefully with an actionable message, not crash).
-    check("entry: Google Sheets sync board is present (enabled via config)", entryText.includes("Google Sheets") || entryText.includes("Google Sheets Sync"));
+    // The board is gated on `appConfig?.googleSheets.enabled`, loaded
+    // asynchronously via its own IPC round-trip independent of the
+    // workbook-bar/UPS-form polls above, so it can still be missing the
+    // instant those resolve - poll for it on its own instead of reusing a
+    // stale entryText snapshot.
+    let googleSheetsBoardPresent = entryText.includes("Google Sheets") || entryText.includes("Google Sheets Sync");
+    for (let i = 0; i < 20 && !googleSheetsBoardPresent; i++) {
+      await sleep(300);
+      entryText = await evalJs("document.body.innerText");
+      googleSheetsBoardPresent = entryText.includes("Google Sheets") || entryText.includes("Google Sheets Sync");
+    }
+    check("entry: Google Sheets sync board is present (enabled via config)", googleSheetsBoardPresent);
     const googleSignInClicked = await evalJs(`(() => {
       const btn = [...document.querySelectorAll("button")].find(b => b.innerText.includes("Sign in with Google") || b.innerText.includes("เชื่อมต่อ Google Account"));
       if (!btn) return false;
@@ -265,7 +276,7 @@ async function main() {
     );
     check(
       "rack capacity: Rack Unit Capacity second dimension shows an honest month-scoped empty state before any U-capacity is saved",
-      rackCapacityText.includes("ไม่มีข้อมูลความจุหน่วย U สำหรับเดือนที่เลือก")
+      rackCapacityText.includes("ไม่มีข้อมูลความจุหน่วยแร็ค (U) สำหรับเดือนที่เลือก")
     );
 
     const distributionState = await evalJs(`(() => {
@@ -275,7 +286,7 @@ async function main() {
     })()`);
     check("rack capacity: donut+legend distribution section is present", distributionState.found === true);
     check("rack capacity: distribution legend renders a real progress bar per visible status (not ASCII)", distributionState.found && distributionState.barCount >= 4, JSON.stringify(distributionState));
-    check("rack capacity: donut center shows the Total Racks count (358)", distributionState.found && /358/.test(distributionState.text) && distributionState.text.includes("แร็คทั้งหมด"));
+    check("rack capacity: donut center shows the Total Racks count (358)", distributionState.found && /358/.test(distributionState.text) && distributionState.text.includes("ใช้แล้ว / ทั้งหมด"));
     check("rack capacity: redundant 'อัตราการใช้งาน' usage-rate row is gone", distributionState.found && !distributionState.text.includes("อัตราการใช้งาน"));
     check("rack capacity: redundant 'อัตราว่าง' availability-rate row is gone", distributionState.found && !distributionState.text.includes("อัตราว่าง"));
 
@@ -336,18 +347,21 @@ async function main() {
     // Rack Unit Capacity panel: fill Total (U)/Used (U), verify the live
     // Available (U)/Availability % preview, then actually save (real IPC
     // round-trip against the copied test workbook - safe, not production).
-    // Matches on the section's OWN <h3> heading (not full innerText) - v2.2.4
-    // added a read-only Rack Unit Capacity sub-block inside the Rack Capacity
-    // summary card whose text also contains "ความจุหน่วยแร็ค", so a full-text
-    // match would ambiguously resolve to the wrong (input-less) section.
+    // Both RackUnitCapacitySummary (read-only) and RackUnitCapacityPanel
+    // (the actual editor) have their own top-level <section> with an <h3>
+    // matching "Rack Unit Capacity"/"ความจุหน่วยแร็ค" (the Summary's is
+    // "...และการใช้งาน", a superstring), and Summary is mounted first in DOM
+    // order - so matching on h3 text ALONE resolves to the wrong,
+    // input-less section. Disambiguate by the actual signal this step
+    // needs: the section that has the 2 real number inputs.
     const unitCapacityFillResult = await evalJs(`(() => {
-      const section = [...document.querySelectorAll("section")].find(s => {
+      const candidates = [...document.querySelectorAll("section")].filter(s => {
         const h = s.querySelector("h3");
         return h && (h.innerText.includes("Rack Unit Capacity") || h.innerText.includes("ความจุหน่วยแร็ค"));
       });
-      if (!section) return { ok: false, reason: "section not found" };
+      const section = candidates.find(s => s.querySelectorAll('input[type="number"]').length === 2);
+      if (!section) return { ok: false, reason: "expected 2 number inputs, found " + (candidates[0]?.querySelectorAll('input[type="number"]').length ?? 0) };
       const inputs = [...section.querySelectorAll('input[type="number"]')];
-      if (inputs.length !== 2) return { ok: false, reason: "expected 2 number inputs, found " + inputs.length };
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
       setter.call(inputs[0], "400");
       inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
@@ -359,7 +373,7 @@ async function main() {
     await sleep(300);
     const unitCapacityPreviewText = await evalJs(`[...document.querySelectorAll("section")].find(s => {
       const h = s.querySelector("h3");
-      return h && (h.innerText.includes("Rack Unit Capacity") || h.innerText.includes("ความจุหน่วยแร็ค"));
+      return h && (h.innerText.includes("Rack Unit Capacity") || h.innerText.includes("ความจุหน่วยแร็ค")) && s.querySelectorAll('input[type="number"]').length === 2;
     })?.innerText ?? ""`);
     check("rack unit capacity: live preview shows Available (U) = 50 (400-350)", /\b50\b/.test(unitCapacityPreviewText));
     check("rack unit capacity: live preview shows Availability % = 12.50%", unitCapacityPreviewText.includes("12.50%"));
@@ -397,12 +411,19 @@ async function main() {
     );
     check(
       "rack capacity: summary card's U-capacity block no longer shows the month-scoped empty state after saving",
-      !summaryCardUnitCapacityText.includes("ไม่มีข้อมูลความจุหน่วย U สำหรับเดือนที่เลือก")
+      !summaryCardUnitCapacityText.includes("ไม่มีข้อมูลความจุหน่วยแร็ค (U) สำหรับเดือนที่เลือก")
     );
 
     // Editor: the shared History-snapshot Month/Year selector is present.
+    // Matches on the section's OWN <h3> (not full innerText) - ZoneHeatmap's
+    // own hint text ("...ตัวแก้ไขความจุแร็คด้านล่าง") contains "แก้ไขความจุแร็ค"
+    // as a substring, and ZoneHeatmap is nested inside an earlier section in
+    // DOM order, so a full-text match resolves to the wrong section.
     const editorMonthSelectorPresent = await evalJs(`(() => {
-      const section = [...document.querySelectorAll("section")].find(s => s.innerText.includes("Rack Capacity Editor") || s.innerText.includes("แก้ไขความจุแร็ค"));
+      const section = [...document.querySelectorAll("section")].find(s => {
+        const h = s.querySelector("h3");
+        return h && (h.innerText.includes("Rack Capacity Editor") || h.innerText.includes("แก้ไขความจุแร็ค"));
+      });
       return section ? section.querySelectorAll("select").length >= 2 : false;
     })()`);
     check("rack capacity editor: shared Month/Year selector is present", editorMonthSelectorPresent === true);

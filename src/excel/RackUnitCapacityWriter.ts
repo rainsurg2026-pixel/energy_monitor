@@ -28,6 +28,7 @@ import {
   entryText,
   ensureExactCellFormatStyles,
   getAttr,
+  locateSheetXmlPathByName,
   resolveRelationshipTarget,
   workbookMonthSerial,
   workbookUsesDate1904
@@ -219,24 +220,7 @@ function emptyWorksheetXml(tableRid: string): string {
 }
 
 export async function locateRackUnitCapacitySheet(zip: JSZip): Promise<string | null> {
-  const workbookXml = await entryText(zip, "xl/workbook.xml");
-  const relsXml = await entryText(zip, "xl/_rels/workbook.xml.rels");
-  if (!workbookXml || !relsXml) return null;
-  const relMap = new Map<string, string>();
-  for (const m of relsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
-    const id = getAttr(m[1], "Id");
-    const target = getAttr(m[1], "Target");
-    if (id && target) relMap.set(id, target);
-  }
-  for (const m of workbookXml.matchAll(/<sheet\b([^>]*)\/>/g)) {
-    const name = getAttr(m[1], "name");
-    const rid = getAttr(m[1], "r:id");
-    if (name && xmlUnescape(name) === RACK_UNIT_CAPACITY_SHEET_NAME && rid) {
-      const target = relMap.get(rid);
-      if (target) return target.startsWith("/") ? target.slice(1) : `xl/${target}`;
-    }
-  }
-  return null;
+  return locateSheetXmlPathByName(zip, RACK_UNIT_CAPACITY_SHEET_NAME);
 }
 
 async function locateTableXmlPath(zip: JSZip, sheetXmlPath: string): Promise<string | null> {
@@ -428,54 +412,8 @@ export async function readRackUnitCapacityFromBuffer(buffer: Buffer): Promise<Ra
     .filter((row): row is RackUnitCapacityRow => row !== null);
 }
 
-export interface RackUnitCapacityImage {
-  bytes: Buffer;
-  mimeType: "image/png" | "image/jpeg";
-}
-
-/**
- * Reads the embedded "Rack Unit Capacity Image" (if any) - for report/PDF
- * purposes. Browser-safe: only the read path (locate the sheet's drawing
- * relationship, resolve the media part), no image-writing logic needed here.
- */
-export async function readRackUnitCapacityImageFromBuffer(buffer: Buffer): Promise<RackUnitCapacityImage | null> {
-  const zip = await JSZip.loadAsync(buffer);
-  const sheetXmlPath = await locateRackUnitCapacitySheet(zip);
-  if (!sheetXmlPath) return null;
-  const sheetFile = sheetXmlPath.replace(/^xl\/worksheets\//, "");
-  const relsXml = await entryText(zip, `xl/worksheets/_rels/${sheetFile}.rels`);
-  if (!relsXml) return null;
-
-  let drawingTarget: string | null = null;
-  for (const m of relsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
-    if (getAttr(m[1], "Type")?.endsWith("/drawing")) {
-      drawingTarget = getAttr(m[1], "Target");
-      break;
-    }
-  }
-  if (!drawingTarget) return null;
-
-  const drawingPath = resolveRelationshipTarget("xl/worksheets", drawingTarget);
-  const drawingFile = drawingPath.replace(/^xl\/drawings\//, "");
-  const drawingRelsXml = await entryText(zip, `xl/drawings/_rels/${drawingFile}.rels`);
-  if (!drawingRelsXml) return null;
-
-  let mediaTarget: string | null = null;
-  for (const m of drawingRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
-    if (getAttr(m[1], "Type")?.endsWith("/image")) {
-      mediaTarget = getAttr(m[1], "Target");
-      break;
-    }
-  }
-  if (!mediaTarget) return null;
-
-  const mediaPath = resolveRelationshipTarget("xl/drawings", mediaTarget);
-  const mediaFile = zip.file(mediaPath);
-  if (!mediaFile) return null;
-  const ext = mediaPath.match(/\.(png|jpe?g)$/i)?.[1]?.toLowerCase();
-  if (!ext) return null;
-  const mimeType = ext === "png" ? "image/png" : "image/jpeg";
-  const bytes = await mediaFile.async("nodebuffer");
-  return { bytes, mimeType };
-}
+// Reading this sheet's legacy K9-anchored image (pre-v2.2.5 single global
+// slot) is now handled generically by RackUnitCapacityImageMigration.ts's
+// readK9Image (shared with the pre-v2.2.3 "Rack Capacity" sheet's identical
+// legacy slot), not duplicated here.
 

@@ -164,3 +164,42 @@ export function workbookMonthSerial(value: unknown, date1904 = false): number | 
 export function workbookUsesDate1904(workbookXml: string): boolean {
   return /<workbookPr\b[^>]*\bdate1904="(?:1|true)"/i.test(workbookXml);
 }
+
+function xmlUnescapeSheetName(text: string): string {
+  return text
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10)))
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * Resolves a worksheet's zip path by its display name via workbook.xml +
+ * workbook.xml.rels - the single shared implementation of a lookup every
+ * writer module in this codebase previously duplicated by hand
+ * (RackCapacityWriter.ts, RackUnitCapacityWriter.ts, the old
+ * RackUnitCapacityImageHistoryWriter.ts). Returns null if no sheet with that
+ * exact name exists.
+ */
+export async function locateSheetXmlPathByName(zip: JSZip, sheetName: string): Promise<string | null> {
+  const workbookXml = await entryText(zip, "xl/workbook.xml");
+  const relsXml = await entryText(zip, "xl/_rels/workbook.xml.rels");
+  if (!workbookXml || !relsXml) return null;
+  const relMap = new Map<string, string>();
+  for (const m of relsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
+    const id = getAttr(m[1], "Id");
+    const target = getAttr(m[1], "Target");
+    if (id && target) relMap.set(id, target);
+  }
+  for (const m of workbookXml.matchAll(/<sheet\b([^>]*)\/>/g)) {
+    const name = getAttr(m[1], "name");
+    const rid = getAttr(m[1], "r:id");
+    if (name && xmlUnescapeSheetName(name) === sheetName && rid) {
+      const target = relMap.get(rid);
+      if (target) return target.startsWith("/") ? target.slice(1) : `xl/${target}`;
+    }
+  }
+  return null;
+}

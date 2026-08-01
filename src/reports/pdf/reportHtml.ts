@@ -1,14 +1,12 @@
 import type { EngineeringDashboardSnapshot, ReportComparisonFacility, ReportData, ReportMonthlyRow } from "../reportTypes";
 import { formatNumber } from "../../utils/numberFormatBridge";
+import { formatTimestamp } from "../../utils";
 import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics } from "../../utils/rackCapacity";
 import { rackStatusColorForRatio } from "../../utils/rackStatusConfig";
-import { RACK_CAPACITY_HISTORY_TOTAL_ZONE } from "../../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
 import { calculateCapacityHealthScore, utilizationColorHex } from "../../utils/capacityHealth";
-import { getCapacityHealth, linearRegression, extendWithForecast, MIN_FORECAST_HISTORY_MONTHS, TimeSeriesPoint } from "../../utils/capacityForecast";
+import { getCapacityHealth } from "../../utils/capacityForecast";
 import { getAccessibleTextColor } from "../../utils/colorContrast";
-import { getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
-import { monthLabelLong } from "../../utils/monthUtils";
 
 const FONT_STACK = '"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif';
 
@@ -37,28 +35,17 @@ function compactNumber(value: number, values: Array<number | null>): string {
   return formatNumber(value);
 }
 
-function trendPage(title: string, unit: string, color: string, rows: ReportMonthlyRow[], values: Array<number | null>, explanation: string): string {
+interface TrendSeries {
+  name: string;
+  color: string;
+  values: Array<number | null>;
+}
+
+/** Single-series narrative (first/last/min/max/direction) - unchanged
+ *  behavior from before this function supported multiple series, so every
+ *  existing single-series page's text stays byte-identical. */
+function trendSeriesDetails(unit: string, values: Array<number | null>, rows: ReportMonthlyRow[]): string {
   const defined = values.filter((value): value is number => value !== null && Number.isFinite(value));
-  if (!defined.length) return `<section class="page trend-page"><h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)}</p><p>No valid values are available for this selected reporting window.</p></section>`;
-  const width = 1600, height = 810, left = 140, right = 80, top = 82, bottom = 110;
-  const actualMin = Math.min(...defined), actualMax = Math.max(...defined), rawRange = actualMax - actualMin || Math.max(Math.abs(actualMax) * 0.2, 1);
-  const domainMin = Math.min(0, actualMin - rawRange * 0.16), domainMax = actualMax + rawRange * 0.18;
-  const range = domainMax - domainMin || 1;
-  const x = (index: number) => left + (rows.length < 2 ? (width - left - right) / 2 : index * (width - left - right) / (rows.length - 1));
-  const y = (value: number) => top + (domainMax - value) / range * (height - top - bottom);
-  const grid = [0, 1, 2, 3, 4].map(step => {
-    const value = domainMax - range * step / 4;
-    return `<line x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}" class="grid"/><text x="${left - 14}" y="${y(value) + 6}" text-anchor="end" class="axis-tick">${escapeHtml(compactNumber(value, values))}</text>`;
-  }).join("");
-  let path = "";
-  values.forEach((value, index) => { if (value !== null && Number.isFinite(value)) path += `${path ? " L" : "M"}${x(index)},${y(value)}`; });
-  const points = values.map((value, index) => {
-    if (value === null || !Number.isFinite(value)) return "";
-    const pointY = y(value);
-    const labelY = Math.max(top + 20, Math.min(height - bottom - 10, pointY + (index % 2 === 0 ? -22 : 30)));
-    return `<circle cx="${x(index)}" cy="${pointY}" r="6" fill="${color}"/><text x="${x(index)}" y="${labelY}" text-anchor="middle" class="point-value">${escapeHtml(compactNumber(value, values))}</text>`;
-  }).join("");
-  const labels = rows.map((row, index) => `<text x="${x(index)}" y="${height - 48}" text-anchor="middle" class="month-label">${escapeHtml(formatMonth(row.month))}</text>`).join("");
   const firstIndex = values.findIndex(value => value !== null && Number.isFinite(value));
   let lastIndex = -1;
   for (let index = values.length - 1; index >= 0; index--) if (values[index] !== null && Number.isFinite(values[index])) { lastIndex = index; break; }
@@ -70,8 +57,54 @@ function trendPage(title: string, unit: string, color: string, rows: ReportMonth
   const minimum = Math.min(...defined), maximum = Math.max(...defined);
   const direction = first === null || last === null || last === first ? "unchanged from the first valid month" : last > first ? "increased from the first valid month" : "decreased from the first valid month";
   const comparison = previous === null || last === null ? "No prior valid month is available for comparison." : `${last >= previous ? "Increase" : "Decrease"} of ${format2(Math.abs(last - previous))} ${unit} from ${formatMonth(rows[previousIndex].month)}.`;
-  const details = `Selected month ${formatMonth(rows.at(-1)?.month ?? null)}: ${last === null ? "—" : `${format2(last)} ${unit}`}. ${comparison} Minimum ${format2(minimum)} ${unit}; maximum ${format2(maximum)} ${unit}. The selected value ${direction}.`;
-  return `<section class="page trend-page"><h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)} · latest ${rows.length}-month window ending at ${escapeHtml(formatMonth(rows.at(-1)?.month ?? null))}</p><svg class="trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}">${grid}<path d="${path}" fill="none" stroke="${color}" stroke-width="5"/>${points}${labels}</svg><p class="chart-explanation">${escapeHtml(explanation)} ${escapeHtml(details)}</p></section>`;
+  return `Selected month ${formatMonth(rows.at(-1)?.month ?? null)}: ${last === null ? "—" : `${format2(last)} ${unit}`}. ${comparison} Minimum ${format2(minimum)} ${unit}; maximum ${format2(maximum)} ${unit}. The selected value ${direction}.`;
+}
+
+/** `sectionLabel`, when given, prints a small eyebrow line above the page
+ *  title (reusing the dashboard-page's existing `.eyebrow` style) - used to
+ *  group the facility energy/cost trend pages under "Facility Trend
+ *  Analytics" (matching HistoricalCharts.tsx's exact dashboard naming).
+ *  Supports 1..N series on one chart (single facility trend, or a
+ *  self-vs-sibling comparison) - single-series rendering (path/point/label
+ *  markup and count) is byte-identical to before multi-series support was
+ *  added, so existing single-series pages/tests are unaffected. */
+function trendPage(title: string, unit: string, series: TrendSeries[], rows: ReportMonthlyRow[], explanation: string, sectionLabel?: string): string {
+  const eyebrow = sectionLabel ? `<p class="eyebrow">${escapeHtml(sectionLabel)}</p>` : "";
+  const allValues = series.flatMap(s => s.values);
+  const defined = allValues.filter((value): value is number => value !== null && Number.isFinite(value));
+  if (!defined.length) return `<section class="page trend-page">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)}</p><p>No valid values are available for this selected reporting window.</p></section>`;
+  const width = 1600, height = 810, left = 140, right = 80, top = 82, bottom = 110;
+  const actualMin = Math.min(...defined), actualMax = Math.max(...defined), rawRange = actualMax - actualMin || Math.max(Math.abs(actualMax) * 0.2, 1);
+  const domainMin = Math.min(0, actualMin - rawRange * 0.16), domainMax = actualMax + rawRange * 0.18;
+  const range = domainMax - domainMin || 1;
+  const x = (index: number) => left + (rows.length < 2 ? (width - left - right) / 2 : index * (width - left - right) / (rows.length - 1));
+  const y = (value: number) => top + (domainMax - value) / range * (height - top - bottom);
+  const grid = [0, 1, 2, 3, 4].map(step => {
+    const value = domainMax - range * step / 4;
+    return `<line x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}" class="grid"/><text x="${left - 14}" y="${y(value) + 6}" text-anchor="end" class="axis-tick">${escapeHtml(compactNumber(value, allValues))}</text>`;
+  }).join("");
+  const multi = series.length > 1;
+  const seriesSvg = series.map((s, seriesIndex) => {
+    let path = "";
+    s.values.forEach((value, index) => { if (value !== null && Number.isFinite(value)) path += `${path ? " L" : "M"}${x(index)},${y(value)}`; });
+    const points = s.values.map((value, index) => {
+      if (value === null || !Number.isFinite(value)) return "";
+      const pointY = y(value);
+      const labelOffset = multi ? (seriesIndex % 2 === 0 ? -22 : 30) : (index % 2 === 0 ? -22 : 30);
+      const labelY = Math.max(top + 20, Math.min(height - bottom - 10, pointY + labelOffset));
+      const fillAttr = multi ? ` fill="${s.color}"` : "";
+      return `<circle cx="${x(index)}" cy="${pointY}" r="6" fill="${s.color}"/><text x="${x(index)}" y="${labelY}" text-anchor="middle" class="point-value"${fillAttr}>${escapeHtml(compactNumber(value, allValues))}</text>`;
+    }).join("");
+    return `<path d="${path}" fill="none" stroke="${s.color}" stroke-width="5"/>${points}`;
+  }).join("");
+  const labels = rows.map((row, index) => `<text x="${x(index)}" y="${height - 48}" text-anchor="middle" class="month-label">${escapeHtml(formatMonth(row.month))}</text>`).join("");
+  const legend = multi
+    ? `<div class="trend-legend">${series.map(s => `<span><i style="background:${s.color}"></i>${escapeHtml(s.name)}</span>`).join("")}</div>`
+    : "";
+  const details = multi
+    ? series.map(s => `${escapeHtml(s.name)} — ${escapeHtml(trendSeriesDetails(unit, s.values, rows))}`).join(" ")
+    : escapeHtml(trendSeriesDetails(unit, series[0]?.values ?? [], rows));
+  return `<section class="page trend-page">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)} · latest ${rows.length}-month window ending at ${escapeHtml(formatMonth(rows.at(-1)?.month ?? null))}</p>${legend}<svg class="trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}">${grid}${seriesSvg}${labels}</svg><p class="chart-explanation">${escapeHtml(explanation)} ${details}</p></section>`;
 }
 
 function monthlyTable(rows: ReportMonthlyRow[]): string {
@@ -143,9 +176,16 @@ function rackUnitCapacityBlock(data: ReportData): string {
     return `<p class="note">No Rack Unit Capacity data is available for the selected reporting month (${escapeHtml(formatMonth(data.reportingMonth))}).</p>`;
   }
   const availabilityText = row.availabilityPct === null ? "—" : `${(row.availabilityPct * 100).toFixed(2)}%`;
-  const image = data.rackUnitCapacityImageDataUri
-    ? `<img src="${data.rackUnitCapacityImageDataUri}" alt="Rack Unit Capacity Image" class="rack-unit-capacity-image"/>`
-    : `<p class="note">No image for this reporting month.</p>`;
+  const image = data.rackUnitCapacityImageDataUri && data.rackUnitCapacityImageMeta
+    ? `<figure class="rack-unit-capacity-image-figure">` +
+      `<img src="${data.rackUnitCapacityImageDataUri}" alt="Rack Unit Capacity Image" class="rack-unit-capacity-image"/>` +
+      `<figcaption class="rack-unit-capacity-image-caption">` +
+      `<span>Reporting Month: ${escapeHtml(formatMonth(row.month))}</span>` +
+      `<span>Last Updated: ${escapeHtml(formatTimestamp(new Date(data.rackUnitCapacityImageMeta.savedAt)))}</span>` +
+      `<span>Resolution: ${data.rackUnitCapacityImageMeta.width}×${data.rackUnitCapacityImageMeta.height}px</span>` +
+      `<span>Captured By: ${escapeHtml(data.rackUnitCapacityImageMeta.savedBy)}</span>` +
+      `</figcaption></figure>`
+    : `<div class="rack-unit-capacity-image-placeholder"><span>Rack Unit Capacity image not yet captured for this reporting month.</span></div>`;
   return `<article class="block"><h3>Rack Unit Capacity — ${escapeHtml(formatMonth(row.month))}</h3><div class="kpis">${kpi("Total (U)", String(row.totalU), "U", "")}${kpi("Used (U)", String(row.usedU), "U", "")}${kpi("Available (U)", String(row.availableU), "U", "")}${kpi("Availability Capacity", availabilityText, "", "")}</div>${image}</article>`;
 }
 
@@ -211,50 +251,6 @@ function capacityHealthPage(data: ReportData): string {
   return `<section class="page"><h2>Capacity Health and Zone Heatmap</h2>${gauge}${heatmap}</section>`;
 }
 
-/** Same TOTAL-zone history selection `RackCapacityContext.usageHistory`
- *  uses (row.usagePct*100, 0 when null) - the only "business logic" this
- *  PDF adds is picking which rows feed the shared regression, never the
- *  regression math itself. */
-function forecastUsageHistory(data: ReportData): TimeSeriesPoint[] {
-  return data.rackHistory
-    .filter(r => r.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE)
-    .sort((a, b) => a.snapshotMonth.localeCompare(b.snapshotMonth))
-    .map(r => ({ month: r.snapshotMonth, value: r.usagePct !== null ? r.usagePct * 100 : 0 }));
-}
-
-/** Capacity Trend and Forecast - regression/crossing math comes exclusively
- *  from capacityForecast.ts (linearRegression/extendWithForecast), the same
- *  functions the dashboard's Forecast.tsx uses; below
- *  MIN_FORECAST_HISTORY_MONTHS this shows "Insufficient History" rather
- *  than ever fabricating a projection, matching the dashboard exactly.
- *  Reuses the existing trendPage() chart renderer rather than a second
- *  chart implementation. */
-function capacityForecastPage(data: ReportData): string {
-  const usageHistory = forecastUsageHistory(data);
-  if (usageHistory.length < MIN_FORECAST_HISTORY_MONTHS) {
-    return `<section class="page"><h2>Capacity Trend and Forecast</h2><p class="note">Insufficient History — requires at least ${MIN_FORECAST_HISTORY_MONTHS} months of persisted Rack Capacity History to forecast (currently ${usageHistory.length}).</p></section>`;
-  }
-  const regression = linearRegression(usageHistory);
-  const usageForecast = extendWithForecast(usageHistory, 12);
-  const syntheticRows: ReportMonthlyRow[] = usageForecast.map(p => ({ month: p.month } as ReportMonthlyRow));
-  const values = usageForecast.map(p => p.value);
-  const chart = trendPage(
-    "Capacity Trend and Forecast",
-    "%",
-    "#a78bfa",
-    syntheticRows,
-    values,
-    `Usage % history (${usageHistory.length} persisted month(s)) plus a 12-month linear-regression forecast; later points are projected, not historical.`
-  );
-  const exhaustionMonth = regression ? regression.crosses(100) : null;
-  const latestUsage = usageHistory[usageHistory.length - 1].value;
-  const remainingCapacityPct = Math.max(0, Math.min(100, 100 - latestUsage));
-  const trendDirection = regression ? getTrendDirection(regression.slope, 0.05) : "Unknown";
-  const confidencePct = regression ? regression.rSquared * 100 : null;
-  const summary = `<div class="kpis">${kpi("Forecast Exhaustion Month", exhaustionMonth ? monthLabelLong(exhaustionMonth, "en") : "Not projected", "", "")}${kpi("Remaining Capacity", `${remainingCapacityPct.toFixed(1)}%`, "", "")}${kpi("Trend", getTrendLabel(trendDirection, "en"), "", "")}${kpi("Confidence", confidencePct === null ? "—" : `${confidencePct.toFixed(0)}%`, "", "")}</div>`;
-  return chart.replace("</section>", `${summary}</section>`);
-}
-
 function rackComparisonRow(label: string, m: RackCapacityMetrics): string[] {
   return [
     escapeHtml(label),
@@ -266,17 +262,45 @@ function rackComparisonRow(label: string, m: RackCapacityMetrics): string[] {
   ];
 }
 
+/** One facility's pie + legend for the Rack Capacity Site Comparison page.
+ *  Reuses donutSvg() (the same renderer rackCapacityPage() uses) and
+ *  rackStatusColorForRatio() for every swatch - "In Use" gets the dynamic
+ *  utilization color, every other status its fixed rackStatusConfig.ts
+ *  color, exactly matching the single-facility Rack Capacity page. No
+ *  second palette or a second pie implementation. */
+function rackComparisonDonutBlock(label: string, metrics: RackCapacityMetrics): string {
+  const segments = [
+    { name: "In Use", count: metrics.inUse.count, ratio: metrics.inUse.ratio },
+    { name: "Available", count: metrics.available.count, ratio: metrics.available.ratio },
+    { name: "Reserved", count: metrics.reserved.count, ratio: metrics.reserved.ratio },
+    { name: "Pending Dismantle", count: metrics.pendingDismantle.count, ratio: metrics.pendingDismantle.ratio },
+    { name: "Other", count: metrics.other.count, ratio: metrics.other.ratio }
+  ];
+  const legend = segments
+    .filter(s => s.count > 0)
+    .map(s => `<div class="legend-row"><i style="background:${rackStatusColorForRatio(s.name, s.ratio)}"></i><span>${escapeHtml(s.name)}</span><strong>${s.count} (${formatRatioPercent(s.ratio, 1)})</strong></div>`)
+    .join("");
+  return `<div class="rack-comparison-donut"><h3>${escapeHtml(label)}</h3>${donutSvg(segments, metrics.total)}<div class="rack-comparison-legend">${legend}</div></div>`;
+}
+
 /** Rack Capacity Site Comparison - self vs sibling facility, current (live)
  *  Rack Capacity state. Deliberately named distinctly from the existing
  *  energy "Site Comparison" page (comparisonPage below) - the two compare
- *  different business dimensions and must not be conflated into one page. */
+ *  different business dimensions and must not be conflated into one page.
+ *  Top: one pie per facility; bottom: the comparison table. */
 function rackComparisonPage(data: ReportData): string {
   if (!data.rackComparison) return "";
   const { self, other } = data.rackComparison;
-  const rows: string[][] = [rackComparisonRow(self.label, calculateRackCapacityMetrics(self.records))];
-  if (other) rows.push(rackComparisonRow(other.label, calculateRackCapacityMetrics(other.records)));
+  const selfMetrics = calculateRackCapacityMetrics(self.records);
+  const rows: string[][] = [rackComparisonRow(self.label, selfMetrics)];
+  const donuts = [rackComparisonDonutBlock(self.label, selfMetrics)];
+  if (other) {
+    const otherMetrics = calculateRackCapacityMetrics(other.records);
+    rows.push(rackComparisonRow(other.label, otherMetrics));
+    donuts.push(rackComparisonDonutBlock(other.label, otherMetrics));
+  }
   const note = other ? "" : `<p class="note">Only ${escapeHtml(self.label)} is shown — the sibling facility's Rack Capacity data was unavailable for this export.</p>`;
-  return `<section class="page"><h2>Rack Capacity Site Comparison</h2>${table(["Facility", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle"], rows)}${note}</section>`;
+  return `<section class="page"><h2>Rack Capacity Site Comparison</h2><div class="rack-comparison-donuts">${donuts.join("")}</div>${table(["Facility", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle"], rows)}${note}</section>`;
 }
 
 function rackCapacityPage(data: ReportData): string {
@@ -321,31 +345,51 @@ function rackCapacityPage(data: ReportData): string {
   return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">${escapeHtml(data.facility)} · Usage ${formatRatioPercent(metrics.inUse.ratio)} · Availability ${formatRatioPercent(metrics.available.ratio)}</p><div class="kpis">${kpis}</div><div class="rack-donut-row"><div>${donut}</div><div class="table-wrap" style="flex:1"><table><thead><tr><th class="left">Rack Zone</th><th>In Use</th><th>Available</th><th>Reserved</th><th>Pending Dismantle</th><th>Total</th></tr></thead><tbody>${zoneRows.map(row => `<tr>${row.map((cell, i) => `<td${i === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div>${rackUnitCapacityBlock(data)}</section>`;
 }
 
-function rackCapacityTrendPage(data: ReportData): string {
-  const totalRows = data.rackHistory
-    .filter(r => r.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE)
-    .sort((a, b) => a.snapshotMonth.localeCompare(b.snapshotMonth))
-    .slice(-12);
-  if (totalRows.length < 2) {
-    return `<section class="page"><h2>Rack Capacity Monthly Trend</h2><p class="note">${totalRows.length === 0 ? "No Rack Capacity History snapshots exist yet." : "Only one month of history exists — a trend needs at least two months to be meaningful."}</p></section>`;
-  }
-  const syntheticRows: ReportMonthlyRow[] = totalRows.map(r => ({ month: r.snapshotMonth } as ReportMonthlyRow));
-  const usageValues = totalRows.map(r => (r.usagePct === null ? null : r.usagePct * 100));
-  const availabilityValues = totalRows.map(r => (r.availabilityPct === null ? null : r.availabilityPct * 100));
-  return (
-    trendPage("Rack Capacity Usage % Trend", "%", "#10b981", syntheticRows, usageValues, "Percentage of racks In Use, from persisted monthly snapshots (never fabricated for missing months).") +
-    trendPage("Rack Capacity Availability % Trend", "%", "#0ea5e9", syntheticRows, availabilityValues, "Percentage of racks Available, from persisted monthly snapshots (never fabricated for missing months).")
-  );
+/** Same per-facility accent colors as the dashboard's FacilityComparison.tsx
+ *  siteColour() - one shared color rule, never a second palette. */
+function siteColour(label: string): string {
+  return label.trim().toLowerCase() === "rangsit" ? "#e87959" : "#5b8db8";
 }
 
-function rackUnitCapacityTrendPage(data: ReportData): string {
-  const sortedRows = [...data.rackUnitCapacity].sort((a, b) => a.month.localeCompare(b.month)).slice(-12);
-  if (sortedRows.length < 2) {
-    return `<section class="page"><h2>Rack Unit Capacity Monthly Trend</h2><p class="note">${sortedRows.length === 0 ? "No Rack Unit Capacity records exist yet." : "Only one month of data exists — a trend needs at least two months to be meaningful."}</p></section>`;
-  }
-  const syntheticRows: ReportMonthlyRow[] = sortedRows.map(r => ({ month: r.month } as ReportMonthlyRow));
-  const availabilityValues = sortedRows.map(r => (r.availabilityPct === null ? null : r.availabilityPct * 100));
-  return trendPage("Rack Unit Capacity Availability % Trend", "%", "#22c55e", syntheticRows, availabilityValues, "Percentage of rack-unit (U) space Available, from persisted monthly Rack Unit Capacity records (never fabricated for missing months).");
+/** Monthly Energy Consumption Trend + Floor 4 Electricity Cost Trend -
+ *  reuses the exact data (buildingEnergyKwh/floorCostThb, the same fields
+ *  FacilityComparison.tsx's chartData plots) and the shared trendPage()
+ *  multi-series renderer, never a second chart implementation. Self and
+ *  sibling share one x-axis (`selfTrend`'s own month window); sibling
+ *  values are looked up per month and left null where the sibling has no
+ *  record, never fabricated. Omitted entirely when the sibling is
+ *  unavailable AND self has fewer than 2 months (nothing meaningful to
+ *  plot) - a single-facility trend still renders otherwise. */
+function comparisonTrendPages(data: ReportData): string {
+  if (!data.comparison) return "";
+  const { self, other, selfTrend, otherTrend } = data.comparison;
+  if (selfTrend.length < 2) return "";
+  const otherByMonth = new Map(otherTrend.map(row => [row.month, row] as const));
+  const buildSeries = (metric: "buildingEnergyKwh" | "floorCostThb"): TrendSeries[] => {
+    const series: TrendSeries[] = [{ name: self.label, color: siteColour(self.label), values: selfTrend.map(row => row[metric]) }];
+    if (other) {
+      series.push({ name: other.label, color: siteColour(other.label), values: selfTrend.map(row => otherByMonth.get(row.month)?.[metric] ?? null) });
+    }
+    return series;
+  };
+  return (
+    trendPage(
+      "Monthly Energy Consumption Trend",
+      "kWh",
+      buildSeries("buildingEnergyKwh"),
+      selfTrend,
+      "Whole-building monthly energy for the selected reporting window, self vs. sibling facility.",
+      "SITE COMPARISON"
+    ) +
+    trendPage(
+      "Floor 4 Electricity Cost Trend",
+      "THB",
+      buildSeries("floorCostThb"),
+      selfTrend,
+      "Estimated 4th Floor electricity cost for the selected reporting window, self vs. sibling facility.",
+      "SITE COMPARISON"
+    )
+  );
 }
 
 function comparisonPage(data: ReportData): string {
@@ -356,7 +400,7 @@ function comparisonPage(data: ReportData): string {
   const note = other
     ? ""
     : `<p class="note">Only ${escapeHtml(self.label)} is shown — the sibling facility's workbook was unavailable for this export.</p>`;
-  return `<section class="page"><h2>Site Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(self.month))}</p>${table(["Facility", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], rows)}${note}</section>`;
+  return `${comparisonTrendPages(data)}<section class="page"><h2>Site Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(self.month))}</p>${table(["Facility", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], rows)}${note}</section>`;
 }
 function comparisonRow(facility: ReportComparisonFacility): string[] {
   return [
@@ -373,15 +417,15 @@ function comparisonRow(facility: ReportComparisonFacility): string[] {
 export function buildReportHtml(data: ReportData): string {
   const range = `${formatMonth(data.historicalStart)} – ${formatMonth(data.historicalEnd)}`;
   const dashboard = data.engineeringDashboard ? engineeringDashboard(data, data.engineeringDashboard) : "";
-  const trendPages = [
+  const trendPages: Array<[string, string, string, Array<number | null>, string]> = [
     ["Total 4th Floor Energy Trend", "kWh", "#6366f1", data.monthlyRows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy for the selected reporting window."],
     ["UPS System Energy Trend", "kWh", "#3b82f6", data.monthlyRows.map(row => row.upsEnergyKwh), "Monthly UPS system energy utilization."],
     ["Air Conditioning Energy Trend", "kWh", "#14b8a6", data.monthlyRows.map(row => row.airEnergyKwh), "Meter-difference energy; gaps indicate an unavailable prior reading."],
     ["DC Power Panel Energy Trend", "kWh", "#f59e0b", data.monthlyRows.map(row => row.dcEnergyKwh), "Monthly DC panel energy estimate."],
     ["Estimated 4th Floor Cost Trend", "THB", "#10b981", data.monthlyRows.map(row => row.floorCostThb), "Estimated cost at the building average electricity rate."],
     ["Building Average Electricity Rate Trend", "THB/kWh", "#f97316", data.monthlyRows.map(row => row.averageRateThbPerKwh), "Building electricity cost divided by building energy."],
-  ] as const;
+  ];
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(data.title)}</title><style>
-@page{size:A4 landscape;margin:8mm 9mm 12mm}*{box-sizing:border-box}html,body{margin:0;color:#243247;background:#fff;font:12px/1.3 ${FONT_STACK}}.cover{height:180mm;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:34px;margin:0;color:#29415d}.cover h2{font-size:20px;font-weight:400;color:#7c6a68}.meta{margin-top:16px;border-top:1px solid #e6d9d2;padding-top:12px;color:#5f6f82}.page{page-break-before:always;padding-top:1mm}.page h2{font-size:23px;margin:0 0 7px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:5px}.page h3{font-size:16px;color:#3e5874;margin:0 0 6px}.dashboard-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #e8d7d0;padding-bottom:8px}.dashboard-head h2{border:0;padding:0;margin:0}.dashboard-head p{margin:3px 0;color:#5f6f82}.eyebrow{font-size:9px!important;font-weight:bold;letter-spacing:1px;color:#a25e4c!important}.dashboard-tag{font-size:10px;text-align:right;color:#52687f;border-left:1px solid #e7d9d2;padding-left:12px}.continuation{font-size:10px;font-weight:bold;color:#68798a;border-bottom:1px solid #e7d9d2;padding-bottom:4px;margin-bottom:7px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:9px 0}.kpi{min-height:74px;padding:9px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:6px;break-inside:avoid}.kpi-label{font-size:10px;color:#67788b;text-transform:uppercase;font-weight:bold}.kpi-value{font-size:21px;font-weight:700;margin-top:5px;color:#29415d}.kpi-unit,.kpi-note,.note{font-size:10px;color:#64758a}.kpi-note{margin-top:3px}.block{margin:9px 0;padding:9px;border:1px solid #e7dcd6;border-radius:6px;break-inside:avoid}.note{margin:6px 0 0}.table-wrap{margin:4px 0;overflow:hidden}table{border-collapse:collapse;width:100%;font-size:10px}th,td{padding:4px;border:1px solid #eadfda;text-align:right;vertical-align:top}td.left,th:first-child{text-align:left}th{background:#eee3dd;color:#40566e;font-weight:bold}.dense table{font-size:8.5px}.dense th,.dense td{padding:3px}.ups-comparison{display:grid;gap:7px;margin-top:8px}.ups-bar-row{display:grid;grid-template-columns:90px 1fr 52px;gap:8px;align-items:center;font-size:11px}.ups-bar-row strong{text-align:right}.ups-track{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden}.ups-track i{display:block;height:100%;border-radius:99px;background:#10b981}.ups-track i.medium{background:#f59e0b}.ups-track i.high{background:#e05b4c}.trend-page{height:183mm;display:flex;flex-direction:column}.trend-page h2{font-size:26px;margin-bottom:2px}.chart-unit{margin:0 0 5px;color:#657488;font-size:12px}.trend-svg{width:100%;height:142mm;flex:1;overflow:visible}.grid{stroke:#dce4ea;stroke-width:1}.axis-tick,.month-label,.point-value{fill:#44566b;font-family:${FONT_STACK}}.axis-tick{font-size:20px}.month-label{font-size:19px}.point-value{font-size:19px;font-weight:bold}.chart-explanation{margin:2px 5mm 0;font-size:12px;color:#52687f;text-align:center}.report-info{font-size:13px;line-height:1.55}.rack-donut-row{display:flex;gap:16px;align-items:flex-start;margin-top:8px}.rack-unit-capacity-image{display:block;max-width:220px;max-height:120px;object-fit:contain;margin-top:8px;border:1px solid #e7dcd6;border-radius:6px}.gauge-row{display:flex;align-items:center;gap:20px;margin-top:6px}.gauge-caption{flex:1}.gauge-health-label{font-size:20px;font-weight:700;margin:0 0 4px}.heatmap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}.heatmap-tile{border-radius:8px;padding:8px}.heatmap-zone{font-size:12px;font-weight:700;margin:0}.heatmap-pct{font-size:18px;font-weight:700;margin:2px 0}.heatmap-detail{font-size:9px;margin:0;opacity:.9}
-</style></head><body><main class="cover"><h1>${escapeHtml(data.title)}</h1><h2>${escapeHtml(data.thaiSubtitle)}</h2><div class="meta">Facility: ${escapeHtml(data.facility)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}<br>Source workbook: ${escapeHtml(data.sourceWorkbook)}<br>Application version: ${escapeHtml(data.appVersion)}</div></main>${dashboard}${trendPages.map(([title, unit, color, values, explanation]) => trendPage(title, unit, color, data.monthlyRows, values, explanation)).join("")}<section class="page"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section>${comparisonPage(data)}${rackCapacityPage(data)}${capacityHealthPage(data)}${capacityForecastPage(data)}${rackCapacityTrendPage(data)}${rackUnitCapacityTrendPage(data)}${rackComparisonPage(data)}<section class="page report-info"><h2>Report Information and Data Source</h2><p>Source workbook: ${escapeHtml(data.sourceWorkbook)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}<br>Data status: ${escapeHtml(data.status)}</p></section><script>document.body.dataset.reportReady="true";</script></body></html>`;
+@page{size:A4 landscape;margin:8mm 9mm 12mm}*{box-sizing:border-box}html,body{margin:0;color:#243247;background:#fff;font:12px/1.3 ${FONT_STACK}}.cover{height:180mm;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:34px;margin:0;color:#29415d}.cover h2{font-size:20px;font-weight:400;color:#7c6a68}.meta{margin-top:16px;border-top:1px solid #e6d9d2;padding-top:12px;color:#5f6f82}.page{page-break-before:always;padding-top:1mm}.page h2{font-size:23px;margin:0 0 7px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:5px}.page h3{font-size:16px;color:#3e5874;margin:0 0 6px}.dashboard-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #e8d7d0;padding-bottom:8px}.dashboard-head h2{border:0;padding:0;margin:0}.dashboard-head p{margin:3px 0;color:#5f6f82}.eyebrow{font-size:9px!important;font-weight:bold;letter-spacing:1px;color:#a25e4c!important}.dashboard-tag{font-size:10px;text-align:right;color:#52687f;border-left:1px solid #e7d9d2;padding-left:12px}.continuation{font-size:10px;font-weight:bold;color:#68798a;border-bottom:1px solid #e7d9d2;padding-bottom:4px;margin-bottom:7px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:9px 0}.kpi{min-height:74px;padding:9px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:6px;break-inside:avoid}.kpi-label{font-size:10px;color:#67788b;text-transform:uppercase;font-weight:bold}.kpi-value{font-size:21px;font-weight:700;margin-top:5px;color:#29415d}.kpi-unit,.kpi-note,.note{font-size:10px;color:#64758a}.kpi-note{margin-top:3px}.block{margin:9px 0;padding:9px;border:1px solid #e7dcd6;border-radius:6px;break-inside:avoid}.note{margin:6px 0 0}.table-wrap{margin:4px 0;overflow:hidden}table{border-collapse:collapse;width:100%;font-size:10px}th,td{padding:4px;border:1px solid #eadfda;text-align:right;vertical-align:top}td.left,th:first-child{text-align:left}th{background:#eee3dd;color:#40566e;font-weight:bold}.dense table{font-size:8.5px}.dense th,.dense td{padding:3px}.ups-comparison{display:grid;gap:7px;margin-top:8px}.ups-bar-row{display:grid;grid-template-columns:90px 1fr 52px;gap:8px;align-items:center;font-size:11px}.ups-bar-row strong{text-align:right}.ups-track{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden}.ups-track i{display:block;height:100%;border-radius:99px;background:#10b981}.ups-track i.medium{background:#f59e0b}.ups-track i.high{background:#e05b4c}.trend-page{height:183mm;display:flex;flex-direction:column}.trend-page h2{font-size:26px;margin-bottom:2px}.chart-unit{margin:0 0 5px;color:#657488;font-size:12px}.trend-svg{width:100%;height:142mm;flex:1;overflow:visible}.grid{stroke:#dce4ea;stroke-width:1}.axis-tick,.month-label,.point-value{fill:#44566b;font-family:${FONT_STACK}}.axis-tick{font-size:20px}.month-label{font-size:19px}.point-value{font-size:19px;font-weight:bold}.chart-explanation{margin:2px 5mm 0;font-size:12px;color:#52687f;text-align:center}.trend-legend{display:flex;gap:18px;margin:0 0 4px}.trend-legend span{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#3e5874;font-weight:600}.trend-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}.rack-donut-row{display:flex;gap:16px;align-items:flex-start;margin-top:8px}.rack-comparison-donuts{display:flex;gap:32px;justify-content:center;margin:10px 0 16px}.rack-comparison-donut{text-align:center}.rack-comparison-donut h3{margin-bottom:4px}.rack-comparison-legend{display:flex;flex-direction:column;gap:3px;margin-top:8px;text-align:left}.legend-row{display:flex;align-items:center;gap:6px;font-size:10px;color:#3e5874}.legend-row i{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}.legend-row strong{margin-left:auto;font-weight:700}.rack-unit-capacity-image-figure{margin:8px 0 0;display:inline-block}.rack-unit-capacity-image{display:block;max-width:260px;max-height:150px;object-fit:contain;border:1px solid #e7dcd6;border-radius:8px;box-shadow:0 1px 3px rgba(41,65,93,.12)}.rack-unit-capacity-image-caption{display:flex;flex-direction:column;gap:1px;margin-top:5px;font-size:9px;color:#657488}.rack-unit-capacity-image-placeholder{margin-top:8px;width:260px;height:150px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;border:1px dashed #cfc0b8;border-radius:8px;background:#f8f3f0;color:#8a7d78;font-size:10px}.gauge-row{display:flex;align-items:center;gap:20px;margin-top:6px}.gauge-caption{flex:1}.gauge-health-label{font-size:20px;font-weight:700;margin:0 0 4px}.heatmap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}.heatmap-tile{border-radius:8px;padding:8px}.heatmap-zone{font-size:12px;font-weight:700;margin:0}.heatmap-pct{font-size:18px;font-weight:700;margin:2px 0}.heatmap-detail{font-size:9px;margin:0;opacity:.9}
+</style></head><body><main class="cover"><h1>${escapeHtml(data.title)}</h1><h2>${escapeHtml(data.thaiSubtitle)}</h2><div class="meta">Facility: ${escapeHtml(data.facility)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}<br>Source workbook: ${escapeHtml(data.sourceWorkbook)}<br>Application version: ${escapeHtml(data.appVersion)}</div></main>${dashboard}${trendPages.map(([title, unit, color, values, explanation]) => trendPage(title, unit, [{ name: title, color, values }], data.monthlyRows, explanation, "FACILITY TREND ANALYTICS")).join("")}<section class="page"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section>${comparisonPage(data)}${rackCapacityPage(data)}${capacityHealthPage(data)}${rackComparisonPage(data)}<script>document.body.dataset.reportReady="true";</script></body></html>`;
 }

@@ -21,18 +21,14 @@ import { listBackups, restoreBackup } from "../sync/BackupManager";
 import { addRecentFile, loadConfig, resolveBackupDir } from "../config";
 import { ensureDir, getExportsDir, getRecoveryPath, log } from "../paths";
 import { readRackCapacityFromBuffer } from "../../reports/rackCapacityReader";
-import { saveRackCapacityFieldChanges, RackFieldChange, RackCapacityImageInput } from "../../excel/RackCapacityWriter";
+import { saveRackCapacityFieldChanges, RackFieldChange } from "../../excel/RackCapacityWriter";
 import { readRackCapacityHistoryFromBuffer, RackCapacityHistoryRow } from "../../excel/RackCapacityHistoryWriter";
 import { readRackUnitCapacityFromBuffer, RackUnitCapacityInput, RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
 import { saveRackUnitCapacity } from "../../excel/RackUnitCapacitySaveWriter";
-import {
-  saveRackUnitCapacityImageHistory,
-  readRackUnitCapacityImageForMonth,
-  RackUnitCapacityImageHistoryRow
-} from "../../excel/RackUnitCapacityImageHistoryWriter";
-import os from "os";
+import { migrateRackUnitCapacityImagesToFilesystem } from "../../excel/RackUnitCapacityImageMigration";
+import { getRackUnitImagesRootDir } from "../paths";
+import { getFacility } from "../facilities";
 import { RACK_CANONICAL_STATUSES } from "../../utils/rackCapacity";
-import { validateImageBytes } from "../../utils/imageValidation";
 import { readUpsMappingFromBuffer } from "../../reports/upsMappingReader";
 import { readUpsGroupHistoryFromBuffer } from "../../reports/upsGroupHistoryReader";
 import type { DashboardUpsMappingReport, RackCapacitySummary, UpsGroupHistoryReport } from "../../reports/reportTypes";
@@ -47,11 +43,11 @@ export type IpcResult<T> =
   | ({ ok: true } & T)
   | { ok: false; code: string; message: string; stage?: SaveFailureStage };
 
-function fail(code: string, message: string, stage?: SaveFailureStage): { ok: false; code: string; message: string; stage?: SaveFailureStage } {
+export function fail(code: string, message: string, stage?: SaveFailureStage): { ok: false; code: string; message: string; stage?: SaveFailureStage } {
   return { ok: false, code, message, stage };
 }
 
-async function wrap<T>(operation: string, fn: () => Promise<({ ok: true } & T) | { ok: false; code: string; message: string }>): Promise<IpcResult<T>> {
+export async function wrap<T>(operation: string, fn: () => Promise<({ ok: true } & T) | { ok: false; code: string; message: string }>): Promise<IpcResult<T>> {
   try {
     return await fn();
   } catch (err) {
@@ -231,23 +227,6 @@ function sanitizeRackUnitCapacityInput(raw: unknown): RackUnitCapacityInput {
   return { month, totalU, usedU };
 }
 
-/** Trust boundary for the Rack Capacity K9 image: the renderer's own
- *  validation is never trusted alone - bytes are re-validated by real magic
- *  numbers/dimension parsing here, in the main process, before anything is
- *  written to the workbook. A crafted "type"/"width"/"height" that doesn't
- *  match the actual bytes is rejected, not merely relabeled. */
-function sanitizeRackImage(raw: unknown): RackCapacityImageInput | null {
-  if (raw === null || typeof raw === "undefined") return null;
-  if (typeof raw !== "object") throw new PayloadError("image must be an object or null.");
-  const o = raw as Record<string, unknown>;
-  const bytesInput = o.bytes;
-  if (!(bytesInput instanceof Uint8Array)) throw new PayloadError("image.bytes must be raw byte data.");
-  const bytes = Buffer.from(bytesInput);
-  const validated = validateImageBytes(bytes);
-  if (validated.ok === false) throw new PayloadError(`Uploaded file is not a valid PNG/JPEG image (${validated.reason}).`);
-  return { bytes, type: validated.image.type, width: validated.image.width, height: validated.image.height };
-}
-
 // ---------------------------------------------------------------------------
 // Payload shapes shared with the renderer (via `import type`)
 // ---------------------------------------------------------------------------
@@ -293,7 +272,6 @@ export interface RackCapacitySavePayload {
     conflictReason?: "row_not_found" | "rack_id_mismatch" | "field_mismatch";
   }>;
   changedCount: number;
-  imageEmbedded: boolean;
   rackCapacity: RackCapacitySummary | null;
   rackCapacityHistory: RackCapacityHistoryRow[];
 }
@@ -302,20 +280,7 @@ export interface RackUnitCapacitySavePayload {
   path: string;
   backupPath: string | null;
   savedAt: string;
-  imageEmbedded: boolean;
   rows: RackUnitCapacityRow[];
-}
-
-export interface RackUnitCapacityImageHistorySavePayload {
-  path: string;
-  backupPath: string | null;
-  savedAt: string;
-  rows: RackUnitCapacityImageHistoryRow[];
-}
-
-export interface RackUnitCapacityImageForMonthPayload {
-  found: boolean;
-  dataUri: string | null;
 }
 
 export interface RecoverySnapshot {
@@ -382,6 +347,38 @@ async function buildOpenPayload(
       // still read/work with it; History simply stays unmigrated until the
       // next successful open.
       log.warn(`UPS Group History migration failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  // One-time, idempotent migration of every legacy Excel-embedded Rack Unit
+  // Capacity image mechanism onto the filesystem ImageStorageProvider (see
+  // RackUnitCapacityImageMigration.ts). Runs only on open/reload, matching
+  // the UPS Group History migration above; a workbook with none of the
+  // legacy mechanisms present is a true no-op.
+  if (allowMigration && upsGroupContext) {
+    try {
+      const facility = await getFacility(upsGroupContext.facilityId);
+      if (facility) {
+        const config = await loadConfig();
+        const migration = await migrateRackUnitCapacityImagesToFilesystem(filePath, facility.name, getRackUnitImagesRootDir(), {
+          backupDir: resolveBackupDir(config),
+          backupKeep: config.backupKeep
+        });
+        if (migration.migrated) {
+          log.info(
+            `Rack Unit Capacity image migration: ${filePath} (history rows: ${migration.historyRowsMigrated}, orphans recovered: ${migration.orphansRecovered}, backup: ${migration.backupPath ?? "none"})` +
+              (migration.orphanFilePaths.length > 0 ? ` orphan files: ${migration.orphanFilePaths.join("; ")}` : "")
+          );
+          read = await readWorkbookFromFile(filePath, devices);
+        }
+      } else {
+        log.warn(`Rack Unit Capacity image migration skipped: facility "${upsGroupContext.facilityId}" did not resolve.`);
+      }
+    } catch (error) {
+      // Migration failure never blocks opening the workbook itself - the
+      // Rack Unit Capacity image simply shows as unavailable (same as "no
+      // image for this month") until the next open successfully migrates it.
+      log.warn(`Rack Unit Capacity image migration failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -582,9 +579,8 @@ export function registerExcelIpc(): void {
       const body = (raw ?? {}) as Record<string, unknown>;
       const filePath = ensureWorkbookPath(body.path);
       const changes: RackFieldChange[] = sanitizeRackFieldChanges(body.changes);
-      const image = sanitizeRackImage(body.image);
       const forceSnapshot = body.forceSnapshot === true;
-      if (changes.length === 0 && !image && !forceSnapshot) throw new PayloadError("Save requires at least one field change, an image, or an explicit snapshot request.");
+      if (changes.length === 0 && !forceSnapshot) throw new PayloadError("Save requires at least one field change or an explicit snapshot request.");
       const facilityId = typeof body.facilityId === "string" && body.facilityId.length > 0 ? body.facilityId.slice(0, 100) : null;
       const snapshotMonth = sanitizeSnapshotMonth(body.snapshotMonth);
       const config = await loadConfig();
@@ -592,12 +588,11 @@ export function registerExcelIpc(): void {
         filePath,
         changes,
         { backupDir: resolveBackupDir(config), backupKeep: config.backupKeep },
-        image,
         facilityId,
         snapshotMonth,
         forceSnapshot
       );
-      log.info(`rack capacity saved: ${filePath} (${result.changedCount} field change(s), image: ${result.imageEmbedded}, backup: ${result.backupPath ?? "none"})`);
+      log.info(`rack capacity saved: ${filePath} (${result.changedCount} field change(s), backup: ${result.backupPath ?? "none"})`);
       return {
         ok: true,
         path: result.path,
@@ -605,7 +600,6 @@ export function registerExcelIpc(): void {
         savedAt: result.savedAt,
         outcomes: result.outcomes,
         changedCount: result.changedCount,
-        imageEmbedded: result.imageEmbedded,
         rackCapacity: result.rackCapacity
           ? { totalRacks: result.rackCapacity.records.length, records: result.rackCapacity.records, byStatus: result.rackCapacity.byStatus, byZone: result.rackCapacity.byZone }
           : null,
@@ -614,64 +608,23 @@ export function registerExcelIpc(): void {
     })
   );
 
-  // --- Rack Unit Capacity: Month/Total(U)/Used(U) upsert + optional image ---
+  // --- Rack Unit Capacity: Month/Total(U)/Used(U) upsert. The monthly image
+  // is a separate save (excel:images:* in ipc/images.ts) through the
+  // filesystem ImageStorageProvider - never embedded into the workbook. ---
   ipcMain.handle("excel:saveRackUnitCapacity", (_event, raw: unknown) =>
     wrap<RackUnitCapacitySavePayload>("excel:saveRackUnitCapacity", async () => {
       const body = (raw ?? {}) as Record<string, unknown>;
       const filePath = ensureWorkbookPath(body.path);
       const input = sanitizeRackUnitCapacityInput(body.input);
-      const image = sanitizeRackImage(body.image);
       const forceSnapshot = body.forceSnapshot === true;
       const config = await loadConfig();
       const result = await saveRackUnitCapacity(
         filePath,
         input,
         { backupDir: resolveBackupDir(config), backupKeep: config.backupKeep },
-        image,
         forceSnapshot
       );
-      log.info(`rack unit capacity saved: ${filePath} (month ${input.month}, image: ${result.imageEmbedded}, backup: ${result.backupPath ?? "none"})`);
-      return {
-        ok: true,
-        path: result.path,
-        backupPath: result.backupPath,
-        savedAt: result.savedAt,
-        imageEmbedded: result.imageEmbedded,
-        rows: result.rows
-      };
-    })
-  );
-
-  // --- Rack Unit Capacity Image History: one image per (Facility, Reporting
-  // Month), replacing the pre-v2.2.5 single-slot image. "User" is always the
-  // OS account running this process - never renderer-supplied, since this
-  // app has no separate login/auth system to draw a real identity from. ---
-  ipcMain.handle("excel:saveRackUnitCapacityImageHistory", (_event, raw: unknown) =>
-    wrap<RackUnitCapacityImageHistorySavePayload>("excel:saveRackUnitCapacityImageHistory", async () => {
-      const body = (raw ?? {}) as Record<string, unknown>;
-      const filePath = ensureWorkbookPath(body.path);
-      const facility = typeof body.facility === "string" && body.facility.length > 0 ? body.facility.slice(0, 200) : null;
-      if (!facility) throw new PayloadError("facility is required.");
-      const reportingMonth = sanitizeSnapshotMonth(body.reportingMonth);
-      if (!reportingMonth) throw new PayloadError("reportingMonth ('YYYY-MM') is required.");
-      const image = sanitizeRackImage(body.image);
-      if (!image) throw new PayloadError("image is required.");
-      const config = await loadConfig();
-      let user = "unknown";
-      try {
-        user = os.userInfo().username;
-      } catch {
-        /* platform couldn't resolve a username - keep the "unknown" fallback rather than failing the save */
-      }
-      const result = await saveRackUnitCapacityImageHistory(
-        filePath,
-        facility,
-        reportingMonth,
-        user,
-        image,
-        { backupDir: resolveBackupDir(config), backupKeep: config.backupKeep }
-      );
-      log.info(`rack unit capacity image history saved: ${filePath} (facility ${facility}, month ${reportingMonth}, user ${user}, backup: ${result.backupPath ?? "none"})`);
+      log.info(`rack unit capacity saved: ${filePath} (month ${input.month}, backup: ${result.backupPath ?? "none"})`);
       return {
         ok: true,
         path: result.path,
@@ -679,21 +632,6 @@ export function registerExcelIpc(): void {
         savedAt: result.savedAt,
         rows: result.rows
       };
-    })
-  );
-
-  ipcMain.handle("excel:getRackUnitCapacityImageForMonth", (_event, raw: unknown) =>
-    wrap<RackUnitCapacityImageForMonthPayload>("excel:getRackUnitCapacityImageForMonth", async () => {
-      const body = (raw ?? {}) as Record<string, unknown>;
-      const filePath = ensureWorkbookPath(body.path);
-      const facility = typeof body.facility === "string" && body.facility.length > 0 ? body.facility.slice(0, 200) : null;
-      if (!facility) throw new PayloadError("facility is required.");
-      const reportingMonth = sanitizeSnapshotMonth(body.reportingMonth);
-      if (!reportingMonth) throw new PayloadError("reportingMonth ('YYYY-MM') is required.");
-      const buffer = await fs.readFile(filePath);
-      const image = await readRackUnitCapacityImageForMonth(buffer, facility, reportingMonth);
-      if (!image) return { ok: true, found: false, dataUri: null };
-      return { ok: true, found: true, dataUri: `data:${image.mimeType};base64,${image.bytes.toString("base64")}` };
     })
   );
 

@@ -11,7 +11,7 @@ import { readUpsMappingFromBuffer } from "./upsMappingReader";
 import { readRackCapacityFromBuffer } from "./rackCapacityReader";
 import { readRackCapacityHistoryFromBuffer } from "../excel/RackCapacityHistoryWriter";
 import { readRackUnitCapacityFromBuffer } from "../excel/RackUnitCapacityWriter";
-import { readRackUnitCapacityImageForMonth } from "../excel/RackUnitCapacityImageHistoryWriter";
+import * as ImageStorageProvider from "../storage/ImageStorageProvider";
 import type { ReportComparisonFacility, ReportData, ReportMonthlyRow, ReportRackComparisonFacility, ReportStatus } from "./reportTypes";
 
 export interface BuildReportOptions {
@@ -26,6 +26,13 @@ export interface BuildReportOptions {
    *  Report's Site Comparison page. Best-effort: read failures here never
    *  block the primary report. */
   siblingFacility?: { label: string; workbookPath: string; devices?: DeviceLists };
+  /** Root of the filesystem ImageStorageProvider (main-process only -
+   *  resolved by the caller via src/electron/paths.ts's
+   *  getRackUnitImagesRootDir(), never inside this module, so this module
+   *  stays Electron-agnostic and runnable from standalone test scripts).
+   *  Omit to skip the Rack Unit Capacity image entirely (dataUri stays
+   *  null), matching every existing script that never supplied one. */
+  imagesRootDir?: string;
 }
 
 function rowStatus(row: ReportMonthlyRow): "Complete" | "Partial" {
@@ -95,19 +102,23 @@ export async function buildReportData(options: BuildReportOptions): Promise<Repo
   } catch {
     /* Rack Unit Capacity sheet not yet created for this workbook */
   }
-  // v2.2.5 round 3: the PDF's Rack Unit Capacity Image now reads from the
-  // same (Facility, Reporting Month) history store the dashboard reads
-  // (RackUnitCapacityImageHistoryWriter), replacing the old single global
-  // slot entirely - the PDF and the dashboard must show the same image for
-  // the same month. "Reporting Month" here is this report's own single
-  // Reporting Month (currentRow.month, already the source of truth for
-  // every other section of this PDF) - never "latest", matching the
-  // dashboard's Option B rule of never silently substituting today's date.
+  // v2.2.6: the PDF's Rack Unit Capacity Image reads from the same
+  // filesystem ImageStorageProvider the dashboard reads (never an
+  // Excel-embedded image) - the PDF and the dashboard must show the same
+  // image for the same (facility, month). "Reporting Month" here is this
+  // report's own single Reporting Month (currentRow.month, already the
+  // source of truth for every other section of this PDF) - never "latest",
+  // matching the dashboard's Option B rule of never silently substituting
+  // today's date.
   let rackUnitCapacityImageDataUri: string | null = null;
-  if (currentRow) {
+  let rackUnitCapacityImageMeta: ReportData["rackUnitCapacityImageMeta"] = null;
+  if (currentRow && options.imagesRootDir) {
     try {
-      const image = await readRackUnitCapacityImageForMonth(buffer, options.facility, currentRow.month);
-      if (image) rackUnitCapacityImageDataUri = `data:${image.mimeType};base64,${image.bytes.toString("base64")}`;
+      const image = await ImageStorageProvider.loadImage(options.imagesRootDir, options.facility, currentRow.month);
+      if (image) {
+        rackUnitCapacityImageDataUri = `data:${image.mimeType};base64,${image.bytes.toString("base64")}`;
+        rackUnitCapacityImageMeta = { savedAt: image.savedAt, savedBy: image.savedBy, width: image.width, height: image.height };
+      }
     } catch {
       /* no Rack Unit Capacity Image saved for this reporting month, or unreadable - PDF just omits it */
     }
@@ -136,6 +147,7 @@ export async function buildReportData(options: BuildReportOptions): Promise<Repo
       floorSharePercent: selfCalc.energySharePercent
     };
     let other: ReportComparisonFacility | null = null;
+    let otherTrend: ReportMonthlyRow[] = [];
     if (siblingBuffer && options.siblingFacility) {
       try {
         const siblingRead = await readWorkbookFromBuffer(siblingBuffer, options.siblingFacility.devices);
@@ -155,11 +167,19 @@ export async function buildReportData(options: BuildReportOptions): Promise<Repo
         }
         // Sibling has no record for this exact month - a missing comparison
         // metric, never a fabricated zero (same contract as FacilityComparison.tsx).
+        // Trend window mirrors `monthlyRows` exactly (same 12-month cap,
+        // ending at the SAME reference month as `self`) - reuses
+        // createMonthlyRow/calculateEnergyCostForMonth, never a second
+        // calculation implementation, so self and sibling trends are
+        // always computed identically.
+        const siblingLogsSorted = [...siblingRead.logs].sort((a, b) => a.month.localeCompare(b.month));
+        const siblingAllRows = siblingLogsSorted.map(log => createMonthlyRow(siblingLogsSorted, log));
+        otherTrend = siblingAllRows.filter(row => row.month <= currentRow.month).slice(-12);
       } catch {
         /* sibling workbook unavailable - comparison page shows this facility only */
       }
     }
-    comparison = { self, other };
+    comparison = { self, other, selfTrend: monthlyRows, otherTrend };
   }
   if (rack && rack.records.length > 0) {
     let other: ReportRackComparisonFacility | null = null;
@@ -195,6 +215,7 @@ export async function buildReportData(options: BuildReportOptions): Promise<Repo
     rackHistory,
     rackUnitCapacity,
     rackUnitCapacityImageDataUri,
+    rackUnitCapacityImageMeta,
     comparison,
     rackComparison
   };

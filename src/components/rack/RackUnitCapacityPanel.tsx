@@ -148,16 +148,16 @@ export default function RackUnitCapacityPanel({
     }
     setSaving(true);
     try {
-      // The Total/Used upsert never carries an image anymore - a staged
-      // image is recorded separately, below, into the per-month image
-      // history (v2.2.5), not the old single global slot.
-      const result = await provider.saveRackUnitCapacity({ month, totalU: totalNum, usedU: usedNum }, null);
+      // The Total/Used upsert never carries an image - a staged image is
+      // saved separately, below, through the filesystem
+      // ImageStorageProvider, never embedded into the workbook.
+      const result = await provider.saveRackUnitCapacity({ month, totalU: totalNum, usedU: usedNum });
       notify("success", lang === "th" ? "บันทึกความจุหน่วยแร็คแล้ว" : "Rack Unit Capacity saved.");
       setDirty(false);
 
-      if (stagedImage && provider.saveRackUnitCapacityImageHistory) {
+      if (stagedImage && provider.saveRackUnitCapacityImage) {
         try {
-          await provider.saveRackUnitCapacityImageHistory(facilityName ?? "Unknown", month, { bytes: stagedImage.bytes });
+          await provider.saveRackUnitCapacityImage(facilityName ?? "Unknown", month, { bytes: stagedImage.bytes });
           onImageHistorySaved?.();
         } catch (imgErr) {
           notify("error", imgErr instanceof Error ? imgErr.message : String(imgErr));
@@ -190,7 +190,7 @@ export default function RackUnitCapacityPanel({
     }
     setSnapshotting(true);
     try {
-      const result = await provider.saveRackUnitCapacity({ month, totalU: totalNum, usedU: usedNum }, null, true);
+      const result = await provider.saveRackUnitCapacity({ month, totalU: totalNum, usedU: usedNum }, true);
       notify("success", lang === "th" ? "บันทึกสแนปช็อตความจุหน่วยแร็คประจำเดือนแล้ว" : "Recorded this month's Rack Unit Capacity snapshot.");
       onSaved?.(result.rows);
     } catch (err) {

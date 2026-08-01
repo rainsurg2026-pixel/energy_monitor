@@ -40,6 +40,15 @@ export function getExportsDir(): string {
   return path.join(getAppRoot(), "exports");
 }
 
+/** Root of the filesystem ImageStorageProvider (src/storage/ImageStorageProvider.ts)
+ *  - `data/rack-unit-images/<Facility>/RUC-<Mon>-<YY>.png`, beside the
+ *  executable like every other portable-app directory. Never inside the
+ *  Excel workbook - see RackUnitCapacityImageMigration.ts for the one-time
+ *  migration off every prior Excel-embedded image mechanism. */
+export function getRackUnitImagesRootDir(): string {
+  return path.join(getAppRoot(), "data", "rack-unit-images");
+}
+
 export function getRecoveryPath(): string {
   return path.join(getConfigDir(), "recovery.json");
 }

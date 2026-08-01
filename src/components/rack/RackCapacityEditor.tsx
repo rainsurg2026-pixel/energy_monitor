@@ -125,7 +125,7 @@ export default function RackCapacityEditor({ provider, onSaved }: { provider: ID
         if (change.deviceType) request.deviceType = change.deviceType;
         return request;
       });
-      const result = await provider.saveRackCapacity(changes, null, month);
+      const result = await provider.saveRackCapacity(changes, month);
       const conflicts = result.outcomes.filter(o => !o.applied);
       if (conflicts.length === 0) {
         notify("success", result.changedCount > 0
@@ -161,7 +161,7 @@ export default function RackCapacityEditor({ provider, onSaved }: { provider: ID
     if (!provider.saveRackCapacity) return;
     setSnapshotting(true);
     try {
-      const result = await provider.saveRackCapacity([], null, month, true);
+      const result = await provider.saveRackCapacity([], month, true);
       notify("success", lang === "th" ? `บันทึกสแนปช็อตประจำเดือน ${monthLabelLong(month, lang)} แล้ว` : `Recorded a monthly snapshot for ${monthLabelLong(month, lang)}.`);
       onSaved?.(result.rackCapacity, result.rackCapacityHistory);
     } catch (err) {

@@ -19,7 +19,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { MonthlyLog } from "../../types";
 import { PayloadError, validateLogsPayload } from "../../excel/WorkbookValidator";
-import { ensureDir, getExportsDir, log } from "../paths";
+import { ensureDir, getExportsDir, getRackUnitImagesRootDir, log } from "../paths";
 import { calculateEnergyCostForMonth } from "../../utils/energyCost";
 import type { DashboardUpsTopology } from "../../utils/engineeringDashboard";
 import { loadFacilities } from "../facilities";
@@ -328,7 +328,7 @@ export function registerExportIpc(): void {
         ]);
         sendAllReportProgress(event, requestId, "preparing", "Re-reading active workbook");
         const siblingFacility = await resolveSiblingFacility(workbookPath);
-        const data = await buildReportData({ workbookPath, facility, dashboard, selectedMonth, appVersion, siblingFacility });
+        const data = await buildReportData({ workbookPath, facility, dashboard, selectedMonth, appVersion, siblingFacility, imagesRootDir: getRackUnitImagesRootDir() });
         if (job.canceled) throw new ExportCancelledError();
         sendAllReportProgress(event, requestId, "validating", `${data.monthlyRows.length} historical month(s), ${data.rack?.records.length ?? 0} rack row(s)`);
         const rendered = await renderAllReportPdf(data, (stage, detail) => sendAllReportProgress(event, requestId, stage, detail), () => job.canceled);

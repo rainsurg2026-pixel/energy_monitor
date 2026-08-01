@@ -14,7 +14,6 @@ import JSZip from "jszip";
 import { promises as fs } from "fs";
 import path from "path";
 import { checkWorkbookLock, createBackup, WorkbookError } from "./WorkbookWriter";
-import { embedRackCapacityImage, RackCapacityImageInput } from "./SheetImageWriter";
 import {
   ensureRackUnitCapacitySheet,
   upsertRackUnitCapacityRow,
@@ -26,58 +25,42 @@ import {
 export interface RackUnitCapacityWriteResult {
   buffer: Buffer;
   changed: boolean;
-  imageEmbedded: boolean;
 }
 
-/**
- * Same as patchRackUnitCapacityBuffer, but also optionally embeds the "Rack
- * Unit Capacity Image" in the same atomic zip pass - the single-write
- * transaction shape saveRackUnitCapacity needs (Total/Used upsert and an
- * image upload, when both happen together, must land in one save, not two).
- */
 export async function applyRackUnitCapacityChange(
   original: Buffer,
-  input: RackUnitCapacityInput,
-  image?: RackCapacityImageInput | null
+  input: RackUnitCapacityInput
 ): Promise<RackUnitCapacityWriteResult> {
   const zip = await JSZip.loadAsync(original);
   const { xmlPath, tablePath, created } = await ensureRackUnitCapacitySheet(zip);
   const changed = await upsertRackUnitCapacityRow(zip, xmlPath, tablePath, input);
 
-  let imageEmbedded = false;
-  if (image) {
-    await embedRackCapacityImage(zip, xmlPath, image);
-    imageEmbedded = true;
-  }
-
-  if (!created && !changed && !imageEmbedded) {
-    return { buffer: original, changed: false, imageEmbedded: false };
+  if (!created && !changed) {
+    return { buffer: original, changed: false };
   }
   const buffer = (await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } })) as Buffer;
-  return { buffer, changed: true, imageEmbedded };
+  return { buffer, changed: true };
 }
 
 export interface RackUnitCapacitySaveResult {
   path: string;
   backupPath: string | null;
   savedAt: string;
-  imageEmbedded: boolean;
   rows: RackUnitCapacityRow[];
 }
 
 /**
- * Full controlled save: lock check -> apply Total (U)/Used (U) upsert (+
- * optional image) -> backup -> atomic write -> re-read for verification.
- * Mirrors saveRackCapacityFieldChanges's lock/backup/atomic-write shape. If
- * the save produces zero actual change (identical month/values, no image),
- * the file on disk is never touched and backupPath is null - a read-only/
- * no-op attempt must never appear as a save in the backup history.
+ * Full controlled save: lock check -> apply Total (U)/Used (U) upsert ->
+ * backup -> atomic write -> re-read for verification. Mirrors
+ * saveRackCapacityFieldChanges's lock/backup/atomic-write shape. If the
+ * save produces zero actual change (identical month/values), the file on
+ * disk is never touched and backupPath is null - a read-only/no-op attempt
+ * must never appear as a save in the backup history.
  */
 export async function saveRackUnitCapacity(
   filePath: string,
   input: RackUnitCapacityInput,
   options: { backupDir: string; backupKeep: number },
-  image?: RackCapacityImageInput | null,
   /** Same "record a monthly snapshot even with zero changes" opt-in as
    *  saveRackCapacityFieldChanges - default false, existing no-op-skip
    *  behavior for the normal Save button is untouched. */
@@ -95,11 +78,11 @@ export async function saveRackUnitCapacity(
     throw new WorkbookError("LOCKED", "The workbook is currently open in Excel (or another program). Close it and retry.", "lock");
   }
 
-  const { buffer, changed, imageEmbedded } = await applyRackUnitCapacityChange(original, input, image);
+  const { buffer, changed } = await applyRackUnitCapacityChange(original, input);
 
-  if (!changed && !imageEmbedded && !forceSnapshot) {
+  if (!changed && !forceSnapshot) {
     const rows = await readRackUnitCapacityFromBuffer(original);
-    return { path: filePath, backupPath: null, savedAt: new Date().toISOString(), imageEmbedded: false, rows };
+    return { path: filePath, backupPath: null, savedAt: new Date().toISOString(), rows };
   }
 
   let backupPath: string | null = null;
@@ -127,5 +110,5 @@ export async function saveRackUnitCapacity(
   }
 
   const rows = await readRackUnitCapacityFromBuffer(buffer);
-  return { path: filePath, backupPath, savedAt: new Date().toISOString(), imageEmbedded, rows };
+  return { path: filePath, backupPath, savedAt: new Date().toISOString(), rows };
 }
