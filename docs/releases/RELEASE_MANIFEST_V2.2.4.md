@@ -86,8 +86,12 @@ green.
 
 - **Previous `v2.2.4` tag target (incomplete/incorrect)**:
   `a2fcfa2c2902d58a7be7b7e7e196589df49df950`
-- **Final corrective commit**: `b351528f7d912edb473c040c40130dfbd6e17b59`
-- **`v2.2.4` tag recreated to point at**: `b351528f7d912edb473c040c40130dfbd6e17b59`
+- **Final corrective commit**: `55f456e498a28f6ac3471b92139068b430703033`
+  ("docs: record final commit hash in v2.2.4 release manifest" — a small
+  follow-up to the main corrective commit `b351528f7d912edb473c040c40130dfbd6e17b59`,
+  needed only to record that commit's own hash here; no application code
+  changed between the two)
+- **`v2.2.4` tag recreated to point at**: `55f456e498a28f6ac3471b92139068b430703033`
   (same commit — annotated tag, recreated only after every release gate
   above passed)
 - This tag move is LOCAL ONLY. No remote exists for this repository; no
