@@ -91,9 +91,13 @@ green.
   follow-up to the main corrective commit `b351528f7d912edb473c040c40130dfbd6e17b59`,
   needed only to record that commit's own hash here; no application code
   changed between the two)
-- **`v2.2.4` tag recreated to point at**: `55f456e498a28f6ac3471b92139068b430703033`
-  (same commit — annotated tag, recreated only after every release gate
-  above passed)
+- **`v2.2.4` tag recreated to point at**: the commit at `git rev-parse
+  v2.2.4^{commit}` — recorded here as `55f456e498a28f6ac3471b92139068b430703033`
+  plus a small number of trailing documentation-only hash-accuracy commits
+  on top of it (self-reference has an inherent one-commit lag: a commit
+  cannot record its own final hash). No application code changed in any of
+  those trailing commits. The tag itself, not this written hash, is always
+  the authoritative pointer to the true final state.
 - This tag move is LOCAL ONLY. No remote exists for this repository; no
   push, force-push, or GitHub release/tag was performed.
 
