@@ -271,6 +271,102 @@ Following business review of round 2, the Product Owner classified the portable-
 - **Live desktop verification, real production data, real click path** (not just the test harness): launched the app against isolated copies of `DC_Rangsit.xlsm`/`DC_Srinakarin.xlsm` (`ENERGY_MONITOR_APP_ROOT`), drove it via CDP to the Data Entry tab, clicked the real Export Center button, clicked the real "Export All Report" button, and read the resulting PDF page-by-page. Confirmed, in the actual generated 18-page PDF: Capacity Health Gauge (82.1% / Healthy / 75/100, correct fallback-source note), Zone Heatmap (4 zones, correct utilization-band colors), Capacity Trend and Forecast ("Insufficient History — currently 0" — Rangsit has no persisted Rack Capacity History snapshots yet, correctly not fabricated), and Rack Capacity Site Comparison (Rangsit 358 racks vs. Srinakarin 237 racks, both real, no fabricated sibling row) — all reachable from the real Export Center UI, zero console exceptions throughout.
 - Portable packaging (`npm run portable:build`) — reproduced the identical `EPERM` on the `win-unpacked` directory rename a 6th time, across a 3rd review round, same stack trace as rounds 1–2. Per explicit Product Owner decision this round, classified as an **environment limitation**, not a code defect, and is **not** a blocker for a local commit. Packaged-runtime verification remains blocked transitively by the same issue.
 
+## I. Round 4 — Packaging
+
+Round 3 left packaging blocked by a reproducible `EPERM` on the post-
+extraction `win-unpacked.tmp` -> `win-unpacked` rename (6 attempts across 3
+rounds). This round re-attempted packaging from the committed `d97b3d8`
+source tree.
+
+### The EPERM was transient, not permanent
+
+A manual `Rename-Item` retry of the exact same directory that had just
+failed inside electron-builder **succeeded** on the first try this round —
+the first time that has ever happened across 4 rounds. This means the
+earlier diagnosis ("a persistent restriction on this sandboxed session")
+was incomplete: the lock is real but **transient** (most likely a brief
+handle held by electron-builder's own extraction process, or Windows
+Search/indexing momentarily touching the freshly-written directory - Windows
+Defender was confirmed OFF in this environment, ruling out AV scanning).
+A clean retry succeeded outright with no workaround needed. Packaging is
+**not** unconditionally broken in this environment; it is flaky around the
+extraction-to-staging rename and a retry resolves it.
+
+### A second, real, previously-unexercised bug found and fixed: stale hardcoded artifact version
+
+`electron-builder.yml` had:
+
+```yaml
+extraMetadata:
+  version: 2.2.4
+```
+
+This **hardcodes** the version electron-builder uses for artifact naming,
+completely overriding `package.json`'s real version (`2.2.5`). It was never
+caught in rounds 1-3 because packaging always failed with `EPERM` before
+ever reaching the artifact-naming/writing step - this round is the first
+time packaging has ever completed far enough to expose it. Left
+uncorrected, the build would keep producing an artifact literally named
+`Energy Monitor-v2.2.4.exe` while the actual binary inside was v2.2.5 code.
+Fixed by updating the hardcoded value to `2.2.5`. This is a release/build
+configuration fix, not an application source change, and was required to
+produce a correctly-named v2.2.5 artifact at all.
+
+### Real incident: the original v2.2.4.exe was briefly overwritten, then fully recovered
+
+Because of the bug above, the **first** successful packaging run this round
+(before the fix was applied) wrote its output to `release\Energy
+Monitor-v2.2.4.exe` — overwriting the real, previously-released v2.2.4
+artifact with v2.2.5 binary content. This was caught immediately (file size
+changed: 82,575,906 -> 82,479,061 bytes) before any further step (zip
+creation) could compound it.
+
+**Recovery**: a leftover extraction folder at `release\Energy
+Monitor-v2.2.4\Energy Monitor-v2.2.4.exe` (created during a prior manual
+test-run of the portable exe, untouched by this incident) held a
+byte-identical copy of the original file. Verified via SHA-256 against the
+hash already recorded in `RELEASE_MANIFEST_V2.2.4.md`
+(`c83e3509f40d6608db6cdae5c191baa7c3f774ee64032694334117379200f616`) —
+**exact match** — then copied back over the overwritten file. Re-verified
+post-recovery: hash matches exactly; `release\Energy Monitor-v2.2.4.zip`
+was never touched by the incident at all (confirmed via its own hash match
+against the v2.2.4 manifest). The `extraMetadata.version` bug was then
+fixed and packaging re-run cleanly, producing correctly-named v2.2.5
+artifacts without touching any v2.2.4 file a second time.
+
+This is disclosed in full rather than silently corrected, per this
+project's standing practice (see the round-1 `startupBehavior` near-miss
+above) - a near-miss involving real released artifacts is exactly the kind
+of thing this document exists to record, whether or not it was fully
+recoverable.
+
+### Verification
+
+- `npm run lint` / `npm run build` — clean, from the committed `d97b3d8`
+  tree, no source changes.
+- `npm run portable:build` — succeeded, producing `release\Energy
+  Monitor-v2.2.5.exe`.
+- `node scripts/make-portable-zip.mjs` — succeeded, producing `release\Energy
+  Monitor-v2.2.5.zip` (staged folder + workbooks + README, matching the
+  v2.2.4 package layout exactly).
+- `npm run test:packaged-report` — **PACKAGED PORTABLE RUNTIME PASSED**
+  against the new `Energy Monitor-v2.2.5.exe` (the script auto-resolves the
+  exe path from `package.json`'s version): facility isolation (Rangsit
+  358/294, Srinakarin 237/218 rack counts), Site Comparison (rows,
+  reference month, chart data/tooltips, range buttons, Thai language
+  switch), current-page PDF export, and Export All Report PDF (18 pages,
+  138,098 bytes - matching round 3's dev-mode page count exactly), source
+  workbook byte-integrity, all passed.
+- Supplementary targeted CDP check against the packaged exe directly (the
+  official script above doesn't assert these two items by name): confirmed
+  "Rack Unit Capacity" panel text renders, and confirmed the Reporting
+  Month (Timeline) control actually changes the active month on click
+  (Aug-26 -> Feb-26, verified via `aria-pressed` state), zero console
+  exceptions.
+- Both `Energy Monitor-v2.2.4.exe` and `Energy Monitor-v2.2.4.zip`
+  re-verified byte-identical to their `RELEASE_MANIFEST_V2.2.4.md`-recorded
+  hashes after all of the above.
+
 ## Testing
 
 - `npm run lint` (renderer + Electron strict TypeScript) — clean.

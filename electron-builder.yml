@@ -7,7 +7,7 @@
 appId: com.internal.energymonitor
 productName: Energy Monitor
 extraMetadata:
-  version: 2.2.4
+  version: 2.2.5
 copyright: Internal enterprise tool - not for commercial distribution
 
 directories:
