@@ -115,6 +115,7 @@ export interface DesktopBridge {
       logs: unknown[];
       devices?: DeviceLists;
       upsGroupHistory?: { facilityId: string; upsGroups: UpsGroupConfig[]; onlyMonths?: string[] };
+      scope?: "all" | "air";
     }): Promise<IpcResult<SaveWorkbookPayload>>;
     saveAs(payload: {
       sourcePath: string;
@@ -123,7 +124,7 @@ export interface DesktopBridge {
       upsGroupHistory?: { facilityId: string; upsGroups: UpsGroupConfig[]; onlyMonths?: string[] };
     }): Promise<IpcResult<SaveWorkbookPayload | { canceled: true }>>;
     /** Staged Rack Capacity field edits (Status/Cabinet Size/Detail/Device
-     *  Type). Only rows whose current on-disk value for every edited field
+     *  Type/Remarks). Only rows whose current on-disk value for every edited field
      *  matches its `expected` are applied; the rest come back as conflicts
      *  in the same result rather than throwing. */
     saveRackCapacity(payload: {
@@ -135,6 +136,7 @@ export interface DesktopBridge {
         cabinetSize?: { expected: string | null; next: string | null };
         detail?: { expected: string | null; next: string | null };
         deviceType?: { expected: string | null; next: string | null };
+        remarks?: { expected: string | null; next: string | null };
       }>;
       /** Drives the Rack Capacity History snapshot's Facility + reporting
        *  month lookup; omit to skip history entirely (status save still
@@ -213,6 +215,7 @@ export interface DesktopBridge {
       logs: unknown[];
     }): Promise<IpcResult<{ path: string } | { canceled: true }>>;
     allReport(payload: AllReportExportPayload): Promise<IpcResult<{ path: string } | { canceled: true }>>;
+    preview(payload: Omit<AllReportExportPayload, "requestId" | "defaultName">): Promise<IpcResult<{ html: string }>>;
     cancel(requestId: string): Promise<{ ok: boolean }>;
     zip(payload: {
       defaultName: string;

@@ -21,9 +21,12 @@ interface SmartInsightPanelProps {
 }
 
 export default function SmartInsightPanel({ logs, lang }: SmartInsightPanelProps) {
+  const { selectedYear } = useReport();
   const allMetrics = useMemo(() => {
-    return computeAllMetrics(logs).sort((a, b) => a.month.localeCompare(b.month));
-  }, [logs]);
+    return computeAllMetrics(logs)
+      .filter(metric => metric.month.startsWith(`${selectedYear}-`))
+      .sort((a, b) => a.month.localeCompare(b.month));
+  }, [logs, selectedYear]);
 
   // Find anomalies or cost spikes
   const insights = useMemo(() => {

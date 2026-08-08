@@ -26,6 +26,7 @@ import { monthLabelLong, monthLabelShort, shiftMonth } from "../../utils/monthUt
 import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
 import { utilizationColorHex } from "../../utils/capacityHealth";
 import { formatTimestamp } from "../../utils";
+import { findPreviousRackUnitCapacityRow } from "../../utils/rackUnitCapacity";
 
 const TREND_MONTHS = 12;
 
@@ -70,10 +71,10 @@ export const RackUnitCapacitySummary: React.FC<{ provider: IDataProvider; refres
 
   const sortedRows = React.useMemo(() => [...rackUnitCapacity].sort((a, b) => a.month.localeCompare(b.month)), [rackUnitCapacity]);
 
-  const previousRow = React.useMemo(() => {
-    const priorRows = sortedRows.filter(r => r.month < reportingMonth);
-    return priorRows.length > 0 ? priorRows[priorRows.length - 1] : null;
-  }, [sortedRows, reportingMonth]);
+  const previousRow = React.useMemo(
+    () => findPreviousRackUnitCapacityRow(rackUnitCapacity, reportingMonth),
+    [rackUnitCapacity, reportingMonth]
+  );
 
   const usagePctNow = unitCapacityRow && unitCapacityRow.totalU > 0 ? (unitCapacityRow.usedU / unitCapacityRow.totalU) * 100 : null;
   const usagePctPrev = previousRow && previousRow.totalU > 0 ? (previousRow.usedU / previousRow.totalU) * 100 : null;

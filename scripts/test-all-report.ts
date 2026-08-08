@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { buildReportData } from "../src/reports/reportDataBuilder";
 import { buildReportHtml } from "../src/reports/pdf/reportHtml";
+import { validateReportHtml } from "../src/reports/pdf/reportSafety";
 
 const workbookPath = path.resolve(process.env.ENERGY_MONITOR_WORKBOOK ?? "DC_Rangsit.xlsm");
 const before = await fs.stat(workbookPath);
@@ -22,13 +23,14 @@ const earlyReport = await buildReportData({
   dashboard
 });
 const html = buildReportHtml(report);
+validateReportHtml(html);
 
 if (!html.includes("Export All Report") && !html.includes("Monthly Power")) throw new Error("Combined report title is missing.");
 if ((html.match(/<h2>Monthly Energy &amp; Cost Table<\/h2>/g) ?? []).length !== 1) throw new Error("Monthly table was duplicated or omitted.");
 // v2.2.3: the Rack Unit Capacity Image is a deliberate, expected <img> - any
 // OTHER <img> tag remains forbidden.
 const htmlWithoutRackUnitCapacityImage = html.replace(/<img[^>]*class="rack-unit-capacity-image"[^>]*\/>/g, "");
-if (/\bPUE\b|\bCO2\b|<img\b/i.test(htmlWithoutRackUnitCapacityImage)) throw new Error("Forbidden report content was found.");
+validateReportHtml(htmlWithoutRackUnitCapacityImage);
 if (report.monthlyRows.length > 0 && !html.includes("Building Energy")) throw new Error("Energy report data is missing.");
 if (report.monthlyRows.length > 12) throw new Error("Report trends are not limited to the latest 12 months.");
 if (report.currentRow && report.monthlyRows.at(-1)?.month !== report.currentRow.month) throw new Error("Selected reporting month is not the final report month.");
@@ -93,15 +95,36 @@ if (report.rack && report.rack.records.length > 0) {
 } else {
   throw new Error(`${facilityId} workbook unexpectedly has no Rack Capacity / Table7 records - cannot verify the PDF renders real data.`);
 }
-// v2.2.3: Rack Unit Capacity block + trend page. The real production
-// workbook has no Rack Unit Capacity data yet (only ever created by an
-// actual app Save), so this asserts the "not yet available" path renders
-// correctly; scripts/test-rack-unit-capacity.ts covers the "data present"
-// rendering path against a saved copy.
+// v2.2.3: Rack Unit Capacity block + trend page. Real production workbooks
+// may or may not have Rack Unit Capacity data (only ever created by an
+// actual app Save), and if they do, it may or may not cover the current
+// Reporting Month - this asserts whichever of the three states is actually
+// true renders the correct message/content; scripts/test-rack-unit-capacity.ts
+// separately covers the "data present, matches Reporting Month" rendering
+// path in full (KPIs/donut/image) against seeded synthetic data.
+const rowForReportingMonth = report.rackUnitCapacity.find(row => row.month === report.reportingMonth);
 if (report.rackUnitCapacity.length === 0) {
   if (!html.includes("Rack Unit Capacity data is not yet available in this workbook.")) throw new Error("Rack Unit Capacity 'not yet available' note is missing.");
+} else if (!rowForReportingMonth) {
+  if (!html.includes("No Rack Unit Capacity data is available for the selected reporting month")) throw new Error("Rack Unit Capacity 'no data for this month' note is missing.");
 } else {
-  throw new Error(`${facilityId} workbook unexpectedly already has Rack Unit Capacity data - update this test to verify the real-data rendering path instead.`);
+  if (!new RegExp(`Total \\(U\\)[\\s\\S]{0,80}${rowForReportingMonth.totalU}`).test(html)) throw new Error("Rack Unit Capacity Total (U) does not match the Reporting Month's real data.");
+  if (!new RegExp(`Used \\(U\\)[\\s\\S]{0,80}${rowForReportingMonth.usedU}`).test(html)) throw new Error("Rack Unit Capacity Used (U) does not match the Reporting Month's real data.");
+}
+// v2.2.6 hotfix: the Rack Unit Capacity executive page is now a full
+// standalone page (was previously only a stripped-down block on the Rack
+// Capacity page) - scripts/test-rack-unit-capacity.ts covers its "data
+// present" content (KPIs/donut/image); this asserts its existence, page
+// order, and facility/reporting-month subtitle against the real workbook.
+if (!html.includes("<h2>Rack Unit Capacity and Utilization</h2>")) throw new Error("Rack Unit Capacity and Utilization page is missing from Export All Report.");
+{
+  const rackHeadingIndex = html.indexOf("<h2>Rack Capacity and Utilization</h2>");
+  const unitHeadingIndex = html.indexOf("<h2>Rack Unit Capacity and Utilization</h2>");
+  const healthHeadingIndex = html.indexOf("<h2>Capacity Health and Zone Heatmap</h2>");
+  if (rackHeadingIndex === -1 || unitHeadingIndex <= rackHeadingIndex) throw new Error("Rack Unit Capacity and Utilization page must appear after Rack Capacity and Utilization.");
+  if (healthHeadingIndex !== -1 && unitHeadingIndex >= healthHeadingIndex) throw new Error("Rack Unit Capacity and Utilization page must appear before Capacity Health and Zone Heatmap.");
+  const subtitlePattern = new RegExp(`<h2>Rack Unit Capacity and Utilization</h2><p class="note">${report.facility.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+  if (!subtitlePattern.test(html)) throw new Error("Rack Unit Capacity and Utilization page subtitle does not show the correct Facility.");
 }
 if (!html.includes("<h2>Site Comparison</h2>")) throw new Error("Site Comparison page is missing from Export All Report.");
 if (report.comparison?.self && !html.includes("Whole Building Energy (kWh)")) throw new Error("Site Comparison table headers are missing.");
@@ -161,4 +184,5 @@ if (!html.includes('"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif')) th
 
 const after = await fs.stat(workbookPath);
 if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error("The source workbook changed during the report test.");
-console.log(`All-report data test passed: ${report.monthlyRows.length} selected-range month(s).`);
+const totalPageCount = (html.match(/<section class="page/g) ?? []).length;
+console.log(`All-report data test passed: ${report.monthlyRows.length} selected-range month(s). Total report pages: ${totalPageCount}.`);

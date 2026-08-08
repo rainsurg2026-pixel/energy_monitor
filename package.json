@@ -3,7 +3,7 @@
   "productName": "Data Center Energy & Facility Monitor",
   "description": "Offline-first Windows desktop app for monthly data center power & energy logging, reporting and forecasting, backed by an Excel workbook.",
   "private": true,
-  "version": "2.2.6",
+  "version": "2.3.1",
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
@@ -33,6 +33,7 @@
     "test:air-validation": "node node_modules/tsx/dist/cli.mjs scripts/test-air-validation.ts",
     "test:srinakarin": "node node_modules/tsx/dist/cli.mjs scripts/test-srinakarin-read.ts",
     "test:srinakarin:roundtrip": "node node_modules/tsx/dist/cli.mjs scripts/test-srinakarin-roundtrip.ts",
+    "test:srinakarin-air-save": "node node_modules/tsx/dist/cli.mjs scripts/test-srinakarin-air-save.ts",
     "test:srinakarin:aggregate": "node node_modules/tsx/dist/cli.mjs scripts/test-srinakarin-aggregate.ts",
     "test:rc3": "node node_modules/tsx/dist/cli.mjs scripts/test-rc3.ts",
     "test:facility-isolation": "node node_modules/tsx/dist/cli.mjs scripts/test-facility-isolation.ts",
@@ -45,6 +46,7 @@
     "test:production-stress-fault": "node node_modules/tsx/dist/cli.mjs scripts/test-production-stress-fault.ts",
     "test:batch-save-merge": "node node_modules/tsx/dist/cli.mjs scripts/test-batch-save-merge.ts",
     "test:all-report": "node node_modules/tsx/dist/cli.mjs scripts/test-all-report.ts",
+    "test:report-image-pipeline": "node node_modules/tsx/dist/cli.mjs scripts/test-report-image-pipeline.ts",
     "test:all-report:pdf": "node scripts/run-all-report-pdf-test.mjs",
     "test:packaged-report": "node scripts/run-packaged-report-test.mjs",
     "test:e2e": "node node_modules/tsx/dist/cli.mjs scripts/e2e-cdp.mjs"

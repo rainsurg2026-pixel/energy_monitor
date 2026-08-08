@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { BarChart4, RefreshCw, TrendingUp, Coins } from "lucide-react";
+import { BarChart4, RefreshCw, TrendingUp, Coins, Server, Gauge } from "lucide-react";
 import type { FacilityEntry } from "../desktop";
 import type { ExcelProvider } from "../data/ExcelProvider";
 import type { DataSnapshot } from "../data/IDataProvider";
@@ -12,6 +12,9 @@ import {
 } from "../utils/facilityComparison";
 import { formatNumber2, formatCompactLabel } from "../utils/numberFormatBridge";
 import { formatMonthYear } from "../utils";
+import { calculateRackCapacityMetrics, formatRatioPercent, type RackCapacityMetrics } from "../utils/rackCapacity";
+import { usagePercent } from "../utils/rackUnitCapacity";
+import { isMonthInDisplayPeriod } from "../utils/displayPeriod";
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend, LabelList
@@ -25,6 +28,7 @@ interface FacilityComparisonProps {
   facilities: FacilityEntry[];
   provider: ExcelProvider;
   lang: "th" | "en";
+  displayPeriod?: string;
 }
 
 interface TableRow {
@@ -36,6 +40,12 @@ interface TableRow {
   floorCost: number | null;
   avgRate: number | null;
   floorShare: number | null;
+}
+
+interface CapacityRow {
+  facility: FacilityEntry;
+  rackMetrics: RackCapacityMetrics | null;
+  rackUnitRow: NonNullable<DataSnapshot["rackUnitCapacity"]>[number] | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,7 +91,7 @@ function ChartTooltip({ active, payload, label, unit }: { active?: boolean; payl
 // Main Component
 // ---------------------------------------------------------------------------
 
-export default function FacilityComparison({ facilities, provider, lang }: FacilityComparisonProps) {
+export default function FacilityComparison({ facilities, provider, lang, displayPeriod = "2026" }: FacilityComparisonProps) {
   const th = lang === "th";
 
   // --- state ---
@@ -125,7 +135,10 @@ export default function FacilityComparison({ facilities, provider, lang }: Facil
     logs: snapshots?.get(facility.workbook)?.logs ?? [],
   })), [facilities, snapshots]);
 
-  const availableMonths = useMemo(() => getComparisonMonths(histories), [histories]);
+  const availableMonths = useMemo(
+    () => getComparisonMonths(histories).filter(month => isMonthInDisplayPeriod(month, displayPeriod)),
+    [histories, displayPeriod]
+  );
 
   useEffect(() => {
     if (!snapshots) return;
@@ -134,7 +147,10 @@ export default function FacilityComparison({ facilities, provider, lang }: Facil
       return;
     }
     if (!referenceMonth || !availableMonths.includes(referenceMonth)) {
-      setReferenceMonth(getDefaultComparisonReferenceMonth(histories));
+      const defaultMonth = getDefaultComparisonReferenceMonth(histories);
+      setReferenceMonth(
+        availableMonths.includes(defaultMonth) ? defaultMonth : availableMonths[availableMonths.length - 1] ?? null
+      );
     }
   }, [snapshots, availableMonths, histories, referenceMonth]);
 
@@ -181,6 +197,17 @@ export default function FacilityComparison({ facilities, provider, lang }: Facil
       return base;
     });
   }, [visibleMonths, metricsCache, facilities]);
+
+  const capacityRows = useMemo<CapacityRow[]>(() => facilities.map(facility => {
+    const snapshot = snapshots?.get(facility.workbook);
+    const rackRecords = snapshot?.rackCapacity?.records;
+    const rackMetrics = rackRecords ? calculateRackCapacityMetrics(rackRecords) : null;
+    const unitRows = [...(snapshot?.rackUnitCapacity ?? [])].sort((a, b) => a.month.localeCompare(b.month));
+    const rackUnitRow = referenceMonth
+      ? unitRows.filter(row => row.month <= referenceMonth).at(-1) ?? null
+      : unitRows.at(-1) ?? null;
+    return { facility, rackMetrics, rackUnitRow };
+  }), [facilities, referenceMonth, snapshots]);
 
   // --- site colours ---
   const siteColour = useCallback((id: string) => id === "rangsit" ? "#e87959" : "#5b8db8", []);
@@ -331,15 +358,15 @@ export default function FacilityComparison({ facilities, provider, lang }: Facil
         <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl text-center text-sm text-slate-400">{t.noData}</div>
       )}
       {hasChartData && (
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="space-y-6">
           {/* Energy trend chart */}
           <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl" data-testid="comparison-energy-chart" data-month-count={visibleMonths.length} data-reference-month={referenceMonth ?? ""}>
             <h3 className="text-sm font-bold text-slate-200 mb-3 flex items-center gap-2">
               <TrendingUp className="w-4 h-4 text-indigo-400" />
               {t.energyTrend}
             </h3>
-            <div className="h-72 overflow-x-auto">
-              <div className="h-full" style={{ minWidth: chartMinWidth }}>
+            <div className="h-72 overflow-x-auto overflow-y-hidden overscroll-x-contain">
+              <div className="h-full" style={{ width: chartMinWidth, minWidth: "100%" }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData} margin={{ top: 28, right: 8, left: 4, bottom: 24 }}>
                   <title>Monthly energy comparison</title>
@@ -382,8 +409,8 @@ export default function FacilityComparison({ facilities, provider, lang }: Facil
               <Coins className="w-4 h-4 text-emerald-400" />
               {t.costTrend}
             </h3>
-            <div className="h-72 overflow-x-auto">
-              <div className="h-full" style={{ minWidth: chartMinWidth }}>
+            <div className="h-72 overflow-x-auto overflow-y-hidden overscroll-x-contain">
+              <div className="h-full" style={{ width: chartMinWidth, minWidth: "100%" }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData} margin={{ top: 28, right: 8, left: 4, bottom: 24 }}>
                   <title>Floor 4 electricity cost comparison</title>
@@ -421,6 +448,76 @@ export default function FacilityComparison({ facilities, provider, lang }: Facil
         </div>
         </div>
       )}
+
+      {/* ---- real rack capacity data ---- */}
+      <div className="space-y-6">
+        <section className="bg-slate-900 border border-slate-800 p-5 rounded-2xl" data-testid="comparison-rack-capacity">
+          <div className="flex items-center gap-2 mb-4">
+            <Server className="w-4 h-4 text-indigo-400" />
+            <div>
+              <h3 className="text-sm font-bold text-slate-200">{th ? "เปรียบเทียบความจุและการใช้งาน Rack" : "Site Comparison Rack Capacity and Utilization"}</h3>
+              <p className="text-[11px] text-slate-400 mt-1">{th ? "ข้อมูลจริงจาก Rack Capacity ของแต่ละ workbook" : "Live Rack Capacity records from each facility workbook."}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {capacityRows.map(row => {
+              const metrics = row.rackMetrics;
+              return (
+                <article key={row.facility.id} className="bg-slate-950/60 border border-slate-800 rounded-xl p-4" data-testid={`comparison-rack-capacity-${row.facility.id}`}>
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <h4 className="font-bold text-slate-100">{row.facility.name}</h4>
+                    {metrics && <span className="text-xs font-mono text-slate-400">{metrics.total} racks</span>}
+                  </div>
+                  {!metrics ? (
+                    <p className="text-xs text-slate-500">{t.noData}</p>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex justify-between text-xs text-slate-300"><span>Utilization</span><strong className="font-mono text-indigo-300">{formatRatioPercent(metrics.inUse.ratio)}</strong></div>
+                      <div className="h-2 rounded-full bg-slate-800 overflow-hidden"><div className="h-full bg-indigo-500" style={{ width: `${Math.max(0, Math.min(100, (metrics.inUse.ratio ?? 0) * 100))}%` }} /></div>
+                      <div className="grid grid-cols-4 gap-2 text-[10px] font-mono">
+                        <div><span className="block text-slate-500">In Use</span><strong className="text-indigo-300">{metrics.inUse.count}</strong></div>
+                        <div><span className="block text-slate-500">Available</span><strong className="text-emerald-300">{metrics.available.count}</strong></div>
+                        <div><span className="block text-slate-500">Reserved</span><strong className="text-amber-300">{metrics.reserved.count}</strong></div>
+                        <div><span className="block text-slate-500">Other</span><strong className="text-slate-300">{metrics.other.count}</strong></div>
+                      </div>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="bg-slate-900 border border-slate-800 p-5 rounded-2xl" data-testid="comparison-rack-unit-capacity">
+          <div className="flex items-center gap-2 mb-4">
+            <Gauge className="w-4 h-4 text-teal-400" />
+            <div>
+              <h3 className="text-sm font-bold text-slate-200">{th ? "เปรียบเทียบความจุและการใช้งาน Rack Unit" : "Site Comparison Rack Unit Capacity and Utilization"}</h3>
+              <p className="text-[11px] text-slate-400 mt-1">{th ? "ข้อมูลจริงจาก Rack Unit Capacity ของแต่ละ workbook" : "Live Rack Unit Capacity rows; no values are inferred from rack count."}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {capacityRows.map(row => (
+              <article key={row.facility.id} className="bg-slate-950/60 border border-slate-800 rounded-xl p-4" data-testid={`comparison-rack-unit-capacity-${row.facility.id}`}>
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <h4 className="font-bold text-slate-100">{row.facility.name}</h4>
+                  {row.rackUnitRow && <span className="text-[10px] font-mono text-slate-500">{formatMonthYear(row.rackUnitRow.month)}</span>}
+                </div>
+                {!row.rackUnitRow ? (
+                  <p className="text-xs text-slate-500">{t.noData}</p>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                    <div><span className="block text-slate-500">Total U</span><strong className="font-mono text-slate-100">{formatNumber2(row.rackUnitRow.totalU)}</strong></div>
+                    <div><span className="block text-slate-500">Used U</span><strong className="font-mono text-indigo-300">{formatNumber2(row.rackUnitRow.usedU)}</strong></div>
+                    <div><span className="block text-slate-500">Available U</span><strong className="font-mono text-emerald-300">{formatNumber2(row.rackUnitRow.availableU)}</strong></div>
+                    <div><span className="block text-slate-500">Utilization</span><strong className="font-mono text-teal-300">{usagePercent(row.rackUnitRow) === null ? "—" : `${formatNumber2(usagePercent(row.rackUnitRow))}%`}</strong></div>
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
     </section>
   );
 }

@@ -8,6 +8,7 @@ interface IntegrityCenterProps {
   lang: "th" | "en";
   isBusy: boolean;
   onValidate: () => void;
+  displayPeriod?: string;
 }
 
 const TAB_LABELS: Record<string, string> = {
@@ -22,7 +23,7 @@ const TAB_LABELS: Record<string, string> = {
  * (duplicates, missing months, missing devices, invalid IDs, blank rows),
  * mirroring the Google Sheets sync's verification engine for the workbook.
  */
-export default function IntegrityCenter({ workbook, lang, isBusy, onValidate }: IntegrityCenterProps) {
+export default function IntegrityCenter({ workbook, lang, isBusy, onValidate, displayPeriod = "2026" }: IntegrityCenterProps) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const health = workbook.health;
   const integrity = workbook.integrity;
@@ -112,6 +113,11 @@ export default function IntegrityCenter({ workbook, lang, isBusy, onValidate }: 
           <RefreshCw className={`w-3.5 h-3.5 text-teal-400 ${isBusy ? "animate-spin" : ""}`} />
           <span>{lang === "th" ? "ตรวจสอบใหม่" : "Validate now"}</span>
         </button>
+      </div>
+
+      <div className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20" data-testid="integrity-display-period">
+        <span className="text-[11px] text-slate-300 font-semibold">Global Data Display Period</span>
+        <span className="text-xs font-mono font-bold text-amber-400">{displayPeriod}</span>
       </div>
 
       {/* Health summary strip */}

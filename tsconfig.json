@@ -28,6 +28,7 @@
     "dist",
     "dist-electron",
     "release",
+    "work",
     "src/electron",
     "src/excel",
     "skills",

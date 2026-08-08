@@ -3,6 +3,7 @@ import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
 import { buildReportHtml } from "../../reports/pdf/reportHtml";
+import { validateReportHtml } from "../../reports/pdf/reportSafety";
 import type { ReportData } from "../../reports/reportTypes";
 
 export type AllReportProgressStage = "preparing" | "validating" | "rendering" | "building" | "saving" | "completed";
@@ -30,9 +31,7 @@ export async function renderAllReportPdf(
 ): Promise<{ buffer: Buffer; pageCount: number; fileSize: number }> {
   if (isCanceled()) throw new ExportCancelledError();
   const html = buildReportHtml(data);
-  if (/\bPUE\b|\bCO2\b|<img\b/i.test(html)) {
-    throw new Error("Report validation failed: forbidden content was included.");
-  }
+  validateReportHtml(html);
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "monthly-power-energy-report-"));
   const htmlPath = path.join(tempDir, "report.html");
@@ -57,10 +56,11 @@ export async function renderAllReportPdf(
       "document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true",
       true
     );
-    await reportWindow.webContents.executeJavaScript(
-      "document.body && document.body.dataset.reportReady === 'true'",
+    const ready = await reportWindow.webContents.executeJavaScript(
+      "Promise.all(Array.from(document.images).map(image => image.complete ? Promise.resolve() : new Promise(resolve => { image.addEventListener('load', resolve, { once: true }); image.addEventListener('error', resolve, { once: true }); }))).then(() => document.body && document.body.dataset.reportReady === 'true')",
       true
     );
+    if (!ready) throw new Error("Report rendering did not reach its ready state.");
     onProgress("building", "Rendering A4 landscape PDF");
     const buffer = await reportWindow.webContents.printToPDF({
       printBackground: true,

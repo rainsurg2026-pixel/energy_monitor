@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { MonthlyLog } from "../types";
+import { useReport } from "../ReportContext";
 import { computeAllMetrics, generateForecast } from "../utils/analytics";
 import { formatMonthYear } from "../utils";
 import { formatNumber2, formatCompactNumber } from "../utils/numberFormatBridge";
@@ -26,6 +27,7 @@ type ForecastMetric = "totalEnergyKwh" | "actualCostThb" | "carbonEmissionKg" | 
 type ForecastHorizon = 3 | 6 | 12;
 
 export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps) {
+  const { selectedYear } = useReport();
   const [metric, setMetric] = useState<ForecastMetric>("totalEnergyKwh");
   const [horizon, setHorizon] = useState<ForecastHorizon>(3);
 
@@ -93,13 +95,17 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
   }
 
   // Rounding variables for cleaner charts
-  const chartData = forecastResult.forecast.map(p => ({
+  // The model may read the full retained history, but the visible chart is
+  // constrained to the global display year.
+  const chartData = forecastResult.forecast
+    .filter(p => p.monthStr.startsWith(`${selectedYear}-`))
+    .map(p => ({
     ...p,
     "Historical Actual": p.actual,
     "Trend Forecast": p.forecast,
     "Confidence Lower": p.confidenceLower,
     "Confidence Upper": p.confidenceUpper
-  }));
+    }));
 
   const metricsOptions = [
     { value: "totalEnergyKwh", label: t.totalEnergyKwh, icon: Zap, color: "text-indigo-400" },
@@ -189,10 +195,10 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
       </div>
 
       {/* FILTERS ZONE */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+      <div className="space-y-6" data-testid="forecast-layout">
         
         {/* Metric Selector Rail */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl md:col-span-4 flex flex-col gap-2.5">
+        <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl w-full flex flex-col gap-2.5" data-testid="forecast-filters">
           <h4 className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">{t.metricLabel}</h4>
           {metricsOptions.map((opt) => {
             const Icon = opt.icon;
@@ -237,12 +243,12 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
         </div>
 
         {/* Forecast Visualization Chart */}
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl md:col-span-8 flex flex-col justify-between">
+        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl w-full min-w-0 flex flex-col justify-between" data-testid="forecast-confidence-band">
           <div>
             <h3 className="font-display font-bold text-sm text-slate-200 uppercase tracking-wider">{t.chartTitle}</h3>
           </div>
 
-          <div className="h-72 mt-4 w-full">
+          <div className="h-[380px] mt-4 w-full min-w-0 overflow-hidden">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ left: -15, right: 10, top: 10, bottom: 5 }}>
                 <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />

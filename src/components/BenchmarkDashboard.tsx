@@ -16,7 +16,7 @@ import {
   TrendingDown, 
   TrendingUp 
 } from "lucide-react";
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from "recharts";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, LineChart, Line, CartesianGrid, Legend } from "recharts";
 
 interface BenchmarkDashboardProps {
   logs: MonthlyLog[];
@@ -31,21 +31,41 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
     return computeAllMetrics(logs).sort((a, b) => a.month.localeCompare(b.month));
   }, [logs]);
 
+  // Keep the visible benchmark series inside the global reporting year. The
+  // raw log set is still used to calculate each metric, including any
+  // month-over-month dependency required by the calculation chain.
+  const displayMetrics = useMemo(
+    () => allMetrics.filter(metric => metric.month.startsWith(`${selectedYear}-`)),
+    [allMetrics, selectedYear]
+  );
+
   // Current selected month metric
   const currentMonthMetric = useMemo(() => {
-    const target = `${selectedYear}-${selectedPeriod === "Entire Year" || selectedPeriod === "YTD" ? "06" : selectedPeriod}`; // fallbacks
-    // Try to find exact selected month or the latest available log
-    const match = allMetrics.find(m => m.month === `${selectedYear}-${selectedPeriod}`) || 
-                  allMetrics.find(m => m.month.startsWith(selectedYear)) || 
-                  allMetrics[allMetrics.length - 1];
-    return match || null;
-  }, [allMetrics, selectedYear, selectedPeriod]);
+    const exactMonth = /^(0[1-9]|1[0-2])$/.test(selectedPeriod)
+      ? `${selectedYear}-${selectedPeriod}`
+      : null;
+    const exact = exactMonth ? displayMetrics.find(metric => metric.month === exactMonth) : null;
+    return exact ?? displayMetrics[displayMetrics.length - 1] ?? null;
+  }, [displayMetrics, selectedYear, selectedPeriod]);
+
+  // Keep the selected reporting month as the right edge and show at most the
+  // preceding 11 valid months. Values come from the same computeAllMetrics
+  // result used by the benchmark matrix, so the line cannot drift from it.
+  const pueTrendData = useMemo(() => {
+    if (!currentMonthMetric) return [];
+    const currentIndex = displayMetrics.findIndex(metric => metric.month === currentMonthMetric.month);
+    if (currentIndex < 0) return [];
+    return displayMetrics
+      .slice(Math.max(0, currentIndex - 11), currentIndex + 1)
+      .filter(metric => metric.pue !== null)
+      .map(metric => ({ month: formatMonthYear(metric.month), pue: metric.pue, sourceMonth: metric.month }));
+  }, [displayMetrics, currentMonthMetric]);
 
   // Benchmark metrics
   const benchmarks = useMemo(() => {
     if (!currentMonthMetric || allMetrics.length === 0) return null;
 
-    const usableMetrics = allMetrics.filter(m => m.pue !== null && m.totalEnergyKwh !== null);
+    const usableMetrics = displayMetrics.filter(m => m.pue !== null && m.totalEnergyKwh !== null);
     if (usableMetrics.length === 0 || currentMonthMetric.pue === null || currentMonthMetric.totalEnergyKwh === null) return null;
 
     const curVal = currentMonthMetric;
@@ -105,7 +125,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
         energy: rollingAvgEnergy * 0.90 // assume 10% saving target
       }
     };
-  }, [allMetrics, currentMonthMetric]);
+  }, [displayMetrics, currentMonthMetric]);
 
   const dict = {
     th: {
@@ -123,6 +143,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
       companyGoal: "เป้าหมายองค์กร (Company Goal)",
       better: "ดีกว่าเกณฑ์",
       worse: "ต่ำกว่าเกณฑ์",
+      matchesWorst: "Matches Worst Month",
       suggestionTitle: "ข้อแนะนำทางวิศวกรรมเพื่อความยั่งยืน",
       pueTitle: "กราฟเปรียบเทียบ PUE เทียบกับเป้าหมาย",
       pueLegend: "ประสิทธิภาพ PUE"
@@ -142,6 +163,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
       companyGoal: "Company Efficiency Goal",
       better: "Better / Within Target",
       worse: "Exceeds Threshold / Worse",
+      matchesWorst: "Matches Worst Month",
       suggestionTitle: "Engineering Actionable Insights",
       pueTitle: "PUE Performance Benchmarking",
       pueLegend: "PUE Rating"
@@ -296,6 +318,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
               {benchmarkRows.map((row) => {
                 const diffPue = row.currentPue - row.targetPue;
                 const isPueBetter = diffPue <= 0; // lower PUE is better
+                const matchesWorstMonth = row.id === "worst" && Math.abs(diffPue) < 0.0001;
                 const diffPct = (diffPue / row.targetPue) * 100;
 
                 return (
@@ -327,9 +350,9 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
                           ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/15" 
                           : "bg-rose-500/10 text-rose-400 border-rose-500/15"
                       } flex items-center gap-1 min-w-[110px] justify-center`}>
-                        {isPueBetter ? <TrendingDown className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
+                        {matchesWorstMonth ? <Scale className="w-3.5 h-3.5" /> : isPueBetter ? <TrendingDown className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
                         <span>
-                          {isPueBetter ? t.better : t.worse} ({formatNumber2(Math.abs(diffPct))} %)
+                          {matchesWorstMonth ? t.matchesWorst : isPueBetter ? t.better : t.worse} ({formatNumber2(Math.abs(diffPct))} %)
                         </span>
                       </div>
                     </div>
@@ -378,6 +401,37 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
         </div>
 
       </div>
+
+      {/* PUE HISTORY TREND */}
+      <section className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl" data-testid="benchmark-pue-trend">
+        <div className="flex items-start justify-between gap-4 mb-3">
+          <div>
+            <h3 className="font-display font-bold text-sm text-slate-200 uppercase tracking-wider">PUE Trend Line (Previous 12 Months)</h3>
+            <p className="text-[11px] text-slate-400 mt-1">Selected reporting period at the right edge; up to 12 valid months shown.</p>
+          </div>
+          <span className="text-[10px] font-mono text-slate-500 whitespace-nowrap">{pueTrendData.length} months</span>
+        </div>
+        {pueTrendData.length === 0 ? (
+          <div className="h-48 flex items-center justify-center text-xs text-slate-500">No valid PUE history is available.</div>
+        ) : (
+          <div className="h-72 min-w-0">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={pueTrendData} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis dataKey="month" stroke="#94a3b8" tick={{ fontSize: 10 }} />
+                <YAxis domain={[1, "auto"]} tickFormatter={value => formatNumber2(value)} stroke="#94a3b8" tick={{ fontSize: 10 }} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: "#020617", borderColor: "#334155", borderRadius: 12 }}
+                  labelStyle={{ color: "#cbd5e1", fontWeight: "bold" }}
+                  formatter={(value: number) => [formatNumber2(value), "PUE"]}
+                />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Line type="monotone" dataKey="pue" name="PUE" stroke="#b91c1c" strokeWidth={3} dot={{ r: 3, fill: "#b91c1c" }} activeDot={{ r: 5 }} connectNulls={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </section>
 
       {/* ACTIONABLE ADVICE BAR */}
       <div className="bg-indigo-950/20 border border-indigo-900/30 rounded-2xl p-5 shadow-sm">

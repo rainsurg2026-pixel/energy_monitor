@@ -1,4 +1,4 @@
-import { initializeApp } from "firebase/app";
+import { initializeApp, type FirebaseOptions } from "firebase/app";
 import {
   getAuth,
   signInWithRedirect,
@@ -9,7 +9,30 @@ import {
   signOut,
   getRedirectResult
 } from "firebase/auth";
-import firebaseConfig from "../firebase-applet-config.json";
+
+// Firebase's browser configuration is build-time environment configuration,
+// not application source. The old tracked JSON contained provider-specific
+// values and was removed from version control during the v2.3.1 baseline
+// preparation. Vite exposes only VITE_* variables to this renderer bundle.
+const buildEnv = (import.meta as ImportMeta & { env: Record<string, string | undefined> }).env;
+
+function requiredFirebaseEnv(name: string): string {
+  const value = buildEnv[name]?.trim();
+  if (!value || value.startsWith("replace-with-")) {
+    throw new Error(`Missing Firebase configuration: ${name}. Set it in .env.local or the build environment.`);
+  }
+  return value;
+}
+
+const firebaseConfig: FirebaseOptions = {
+  apiKey: requiredFirebaseEnv("VITE_FIREBASE_API_KEY"),
+  authDomain: requiredFirebaseEnv("VITE_FIREBASE_AUTH_DOMAIN"),
+  projectId: requiredFirebaseEnv("VITE_FIREBASE_PROJECT_ID"),
+  storageBucket: requiredFirebaseEnv("VITE_FIREBASE_STORAGE_BUCKET"),
+  messagingSenderId: requiredFirebaseEnv("VITE_FIREBASE_MESSAGING_SENDER_ID"),
+  appId: requiredFirebaseEnv("VITE_FIREBASE_APP_ID"),
+  measurementId: buildEnv.VITE_FIREBASE_MEASUREMENT_ID?.trim() || undefined
+};
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);

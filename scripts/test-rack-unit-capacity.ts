@@ -53,9 +53,15 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
   const beforeHashes = await unrelatedPartHashes(original);
   const beforeTables = await existingTableFilesAndIds(original);
 
-  check(`${label}: no Rack Unit Capacity sheet before first save`, (await readRackUnitCapacityFromBuffer(original)).length === 0);
+  // The real workbook may already carry genuine Rack Unit Capacity rows
+  // (a real app Save, independent of this test) - every count/table-ref
+  // assertion below is relative to this starting count, not hardcoded to
+  // an assumed-empty sheet, so this test stays correct regardless of
+  // whatever real data already exists.
+  const startingRows = (await readRackUnitCapacityFromBuffer(original)).length;
+  const startingSheetExists = startingRows > 0;
   const zipBefore = await JSZip.loadAsync(original);
-  check(`${label}: locateRackUnitCapacitySheet returns null before creation`, (await locateRackUnitCapacitySheet(zipBefore)) === null);
+  check(`${label}: locateRackUnitCapacitySheet ${startingSheetExists ? "finds the existing sheet" : "returns null before creation"}`, ((await locateRackUnitCapacitySheet(zipBefore)) === null) === !startingSheetExists);
 
   // ---- First save: Dec 2025, Total 400 / Used 350 ----
   const result1 = await patchRackUnitCapacityBuffer(original, { month: "2025-12", totalU: 400, usedU: 350 });
@@ -85,18 +91,24 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
   check(`${label}: no misspelled "Avaliable" anywhere in the table`, !tableXmlText.includes("Avaliable"));
   check(`${label}: column header "Availability Capacity (%)" spelled correctly (not "Avability")`, tableXmlText.includes('name="Availability Capacity (%)"'));
   check(`${label}: no misspelled "Avability" anywhere in the table`, !tableXmlText.includes("Avability"));
-  check(`${label}: table ref matches the actual single-row data extent (A1:E2)`, /ref="A1:E2"/.test(tableXmlText));
-  check(`${label}: table id is new, not colliding with an existing table`, !beforeTables.ids.has(tableXmlText.match(/<table\b[^>]*\bid="([^"]*)"/)?.[1] ?? "__none__"));
+  const dataRowEndAfterFirstSave = startingRows + 2; // header (row 1) + starting rows + this 1 new row
+  check(`${label}: table ref matches the actual data extent (A1:E${dataRowEndAfterFirstSave})`, new RegExp(`ref="A1:E${dataRowEndAfterFirstSave}"`).test(tableXmlText));
+  if (!startingSheetExists) {
+    check(`${label}: table id is new, not colliding with an existing table`, !beforeTables.ids.has(tableXmlText.match(/<table\b[^>]*\bid="([^"]*)"/)?.[1] ?? "__none__"));
+  }
 
-  // ---- Sheet header row + data row content ----
+  // ---- Sheet header row + new data row content (2025-12 is always a fresh,
+  // non-colliding month appended after whatever real rows already exist,
+  // so it always lands as the LAST row - r="${startingRows + 2}") ----
+  const newRowRef = startingRows + 2;
   const headerRow = sheetXml1.match(/<row r="1">([\s\S]*?)<\/row>/)?.[1] ?? "";
   check(`${label}: header row has exactly the 5 expected labels in order`, (() => {
     const texts = [...headerRow.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map(m => m[1]);
     return JSON.stringify(texts) === JSON.stringify(["Month", "Total (U)", "Used (U)", "Available (U)", "Availability Capacity (%)"]);
   })());
 
-  const monthCell = sheetXml1.match(/<c r="A2"([^>]*)><v>([^<]*)<\/v><\/c>/);
-  check(`${label}: Month (A2) is a numeric Excel date, not inlineStr text`, Boolean(monthCell) && !sheetXml1.includes('<c r="A2" t="inlineStr"'));
+  const monthCell = sheetXml1.match(new RegExp(`<c r="A${newRowRef}"([^>]*)><v>([^<]*)</v></c>`));
+  check(`${label}: Month (A${newRowRef}) is a numeric Excel date, not inlineStr text`, Boolean(monthCell) && !sheetXml1.includes(`<c r="A${newRowRef}" t="inlineStr"`));
   const monthStyleId = monthCell?.[1].match(/s="([^"]*)"/)?.[1];
   const stylesXml1 = await zip1.file("xl/styles.xml")!.async("string");
   const monthNumFmtId = stylesXml1.match(new RegExp(`<xf[^>]*numFmtId="(\\d+)"[^>]*/>(?=)`))?.[1]; // fallback, real check below
@@ -111,10 +123,10 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
   })());
   void monthNumFmtId;
 
-  const totalCell = sheetXml1.match(/<c r="B2"[^>]*><v>([^<]*)<\/v><\/c>/);
-  const usedCell = sheetXml1.match(/<c r="C2"[^>]*><v>([^<]*)<\/v><\/c>/);
-  const availCell = sheetXml1.match(/<c r="D2"[^>]*><v>([^<]*)<\/v><\/c>/);
-  const pctCell = sheetXml1.match(/<c r="E2"([^>]*)><v>([^<]*)<\/v><\/c>/);
+  const totalCell = sheetXml1.match(new RegExp(`<c r="B${newRowRef}"[^>]*><v>([^<]*)</v></c>`));
+  const usedCell = sheetXml1.match(new RegExp(`<c r="C${newRowRef}"[^>]*><v>([^<]*)</v></c>`));
+  const availCell = sheetXml1.match(new RegExp(`<c r="D${newRowRef}"[^>]*><v>([^<]*)</v></c>`));
+  const pctCell = sheetXml1.match(new RegExp(`<c r="E${newRowRef}"([^>]*)><v>([^<]*)</v></c>`));
   check(`${label}: Total (U) = 400`, totalCell?.[1] === "400");
   check(`${label}: Used (U) = 350`, usedCell?.[1] === "350");
   check(`${label}: Available (U) = Total - Used = 50`, availCell?.[1] === "50");
@@ -130,11 +142,13 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
     return numFmts.includes(`numFmtId="${numFmtId}" formatCode="0.00%"`);
   })());
 
-  // ---- Read-back API returns exactly what was written ----
+  // ---- Read-back API returns exactly what was written, alongside whatever
+  // real rows already existed ----
   const rows1 = await readRackUnitCapacityFromBuffer(result1);
-  check(`${label}: read-back has exactly 1 row`, rows1.length === 1);
-  check(`${label}: read-back month is "2025-12"`, rows1[0]?.month === "2025-12");
-  check(`${label}: read-back totalU/usedU/availableU/availabilityPct match`, rows1[0]?.totalU === 400 && rows1[0]?.usedU === 350 && rows1[0]?.availableU === 50 && Math.abs((rows1[0]?.availabilityPct ?? 0) - 0.125) < 1e-9);
+  check(`${label}: read-back has exactly ${startingRows + 1} row(s)`, rows1.length === startingRows + 1);
+  const dec2025Row1 = rows1.find(r => r.month === "2025-12");
+  check(`${label}: read-back includes the new "2025-12" row`, dec2025Row1?.month === "2025-12");
+  check(`${label}: read-back totalU/usedU/availableU/availabilityPct match`, dec2025Row1?.totalU === 400 && dec2025Row1?.usedU === 350 && dec2025Row1?.availableU === 50 && Math.abs((dec2025Row1?.availabilityPct ?? 0) - 0.125) < 1e-9);
 
   const afterHashes1 = await unrelatedPartHashes(result1);
   const changedParts1 = Object.keys(beforeHashes).filter(name => beforeHashes[name] !== afterHashes1[name]);
@@ -152,25 +166,38 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
   // ---- Editing the SAME month (upsert) updates in place, no duplicate row ----
   const result3 = await patchRackUnitCapacityBuffer(result1, { month: "2025-12", totalU: 420, usedU: 300 });
   const rows3 = await readRackUnitCapacityFromBuffer(result3);
-  check(`${label}: upserting the same month still has exactly 1 row (no duplicate)`, rows3.length === 1);
-  check(`${label}: upserted Dec-2025 row reflects the new Total/Used`, rows3[0]?.totalU === 420 && rows3[0]?.usedU === 300);
-  check(`${label}: upserted Dec-2025 Available (U) recalculated (120)`, rows3[0]?.availableU === 120);
+  check(`${label}: upserting the same month still has exactly ${startingRows + 1} row(s) (no duplicate)`, rows3.length === startingRows + 1);
+  const dec2025Row3 = rows3.find(r => r.month === "2025-12");
+  check(`${label}: upserted Dec-2025 row reflects the new Total/Used`, dec2025Row3?.totalU === 420 && dec2025Row3?.usedU === 300);
+  check(`${label}: upserted Dec-2025 Available (U) recalculated (120)`, dec2025Row3?.availableU === 120);
   const zip3 = await JSZip.loadAsync(result3);
   const tableXml3 = await zip3.file(tablePath)!.async("string");
-  check(`${label}: table ref still matches the single-row extent after upsert (A1:E2)`, /ref="A1:E2"/.test(tableXml3));
+  check(`${label}: table ref still matches the extent after upsert (A1:E${dataRowEndAfterFirstSave})`, new RegExp(`ref="A1:E${dataRowEndAfterFirstSave}"`).test(tableXml3));
 
-  // ---- A new month appends without disturbing the prior month ----
-  const result4 = await patchRackUnitCapacityBuffer(result3, { month: "2026-01", totalU: 420, usedU: 310 });
+  // ---- A new month appends without disturbing the prior month or the
+  // real pre-existing rows. Pick a month that is not already in the real
+  // workbook so this regression remains valid as production history grows. ----
+  const existingMonths = new Set((await readRackUnitCapacityFromBuffer(result3)).map(row => row.month));
+  let appendYear = 2026;
+  let appendMonth = 1;
+  let appendedMonth = `${appendYear}-${String(appendMonth).padStart(2, "0")}`;
+  while (existingMonths.has(appendedMonth)) {
+    appendMonth += 1;
+    if (appendMonth > 12) { appendMonth = 1; appendYear += 1; }
+    appendedMonth = `${appendYear}-${String(appendMonth).padStart(2, "0")}`;
+  }
+  const result4 = await patchRackUnitCapacityBuffer(result3, { month: appendedMonth, totalU: 420, usedU: 310 });
   const rows4 = await readRackUnitCapacityFromBuffer(result4);
-  check(`${label}: new month appends - now 2 rows`, rows4.length === 2);
+  check(`${label}: new month appends - now ${startingRows + 2} row(s)`, rows4.length === startingRows + 2);
   const dec4 = rows4.find(r => r.month === "2025-12");
-  const jan4 = rows4.find(r => r.month === "2026-01");
+  const appended4 = rows4.find(r => r.month === appendedMonth);
   check(`${label}: December's row survives the January save untouched`, dec4?.totalU === 420 && dec4?.usedU === 300 && dec4?.availableU === 120);
-  check(`${label}: January's new row is present with its own data`, jan4?.totalU === 420 && jan4?.usedU === 310 && jan4?.availableU === 110);
+  check(`${label}: ${appendedMonth}'s new row is present with its own data`, appended4?.totalU === 420 && appended4?.usedU === 310 && appended4?.availableU === 110);
   const zip4 = await JSZip.loadAsync(result4);
   const tableXml4 = await zip4.file(tablePath)!.async("string");
-  check(`${label}: table ref extends to A1:E3 after the second month is added`, /ref="A1:E3"/.test(tableXml4));
-  check(`${label}: autoFilter ref also extends to A1:E3`, /<autoFilter ref="A1:E3"\/>/.test(tableXml4));
+  const dataRowEndAfterSecondSave = startingRows + 3;
+  check(`${label}: table ref extends to A1:E${dataRowEndAfterSecondSave} after the second month is added`, new RegExp(`ref="A1:E${dataRowEndAfterSecondSave}"`).test(tableXml4));
+  check(`${label}: autoFilter ref also extends to A1:E${dataRowEndAfterSecondSave}`, new RegExp(`<autoFilter ref="A1:E${dataRowEndAfterSecondSave}"[^>]*/>`).test(tableXml4));
 
   const afterHashes4 = await unrelatedPartHashes(result4);
   const changedParts4 = Object.keys(beforeHashes).filter(name => beforeHashes[name] !== afterHashes4[name]);
@@ -289,6 +316,28 @@ async function testFullSavePipeline(label: string, sourcePath: string, imagesRoo
   check(`${label}: PDF does not show the "not yet available" note once data exists`, !html.includes("Rack Unit Capacity data is not yet available"));
   check(`${label}: PDF does not show the "no data for this month" note once the Reporting Month's row exists`, !html.includes("No Rack Unit Capacity data is available for the selected reporting month"));
   check(`${label}: PDF does not show the placeholder once the Reporting Month's image exists`, !html.includes("Rack Unit Capacity image not yet captured"));
+
+  // ---- v2.2.6 hotfix: full executive page (KPIs + donut + image), not just
+  // the old stripped-down block - restores Dashboard/PDF parity. ----
+  check(`${label}: PDF shows the "Rack Unit Capacity and Utilization" page heading`, html.includes("<h2>Rack Unit Capacity and Utilization</h2>"));
+  check(`${label}: PDF shows Availability % (30.00%, i.e. 150/500)`, /Availability %[\s\S]{0,80}30\.00%/.test(html));
+  check(`${label}: PDF shows Usage % (70.0%, i.e. 350/500)`, /Usage %[\s\S]{0,80}70\.0%/.test(html));
+  check(`${label}: PDF shows a Trend vs Previous Month card with a real value (both months have data)`, /Trend vs Previous Month[\s\S]{0,40}(▲|▼|◆)/.test(html));
+  check(`${label}: PDF Rack Unit Capacity donut legend shows Used (U)/Available (U)/Total (U) rows`, html.includes(">Used (U)<") && html.includes(">Available (U)<") && html.includes(">Total (U)<"));
+  check(`${label}: PDF Rack Unit Capacity donut center label reads "350 / 500"`, html.includes(">350 / 500<"));
+  const rackHeadingIndex = html.indexOf("<h2>Rack Capacity and Utilization</h2>");
+  const unitHeadingIndex = html.indexOf("<h2>Rack Unit Capacity and Utilization</h2>");
+  const healthHeadingIndex = html.indexOf("<h2>Capacity Health and Zone Heatmap</h2>");
+  check(`${label}: Rack Unit Capacity and Utilization page appears immediately after Rack Capacity and Utilization`, rackHeadingIndex !== -1 && unitHeadingIndex > rackHeadingIndex);
+  check(`${label}: Rack Unit Capacity and Utilization page appears before Capacity Health and Zone Heatmap`, healthHeadingIndex === -1 || unitHeadingIndex < healthHeadingIndex);
+
+  // ---- Placeholder path: priorMonth has Rack Unit Capacity data but no
+  // saved image - confirms "data present, image missing" still renders the
+  // same placeholder as an empty-data month, never a crash or blank gap. ----
+  const priorMonthReport = await buildReportData({ workbookPath: sourcePath, facility: label, selectedMonth: priorMonth, appVersion: "test", imagesRootDir });
+  const priorMonthHtml = buildReportHtml(priorMonthReport);
+  check(`${label}: placeholder renders for a month with Rack Unit Capacity data but no saved image`, priorMonthHtml.includes("Rack Unit Capacity image not yet captured for this reporting month."));
+  check(`${label}: KPIs still render correctly alongside the placeholder`, /Used \(U\)[\s\S]{0,80}420/.test(priorMonthHtml) && /Total \(U\)[\s\S]{0,80}500/.test(priorMonthHtml));
 
   await fs.rm(backupDir, { recursive: true, force: true });
 }

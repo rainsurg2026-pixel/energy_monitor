@@ -17,7 +17,8 @@ import {
   RackFieldChangeRequest,
   RackUnitCapacityInputRequest,
   RackUnitCapacitySaveOutcome,
-  SaveOutcome
+  SaveOutcome,
+  WorkbookSaveScope
 } from "./IDataProvider";
 
 /**
@@ -141,12 +142,12 @@ export class ExcelProvider implements IDataProvider {
     return snapshots;
   }
 
-  async saveAll(logs: MonthlyLog[], currentMonth?: string): Promise<SaveOutcome> {
+  async saveAll(logs: MonthlyLog[], currentMonth?: string, scope: WorkbookSaveScope = "all"): Promise<SaveOutcome> {
     if (!this.currentPath) throw new ProviderError("NO_WORKBOOK", "No workbook is open.");
     const upsGroupHistory = this.upsGroupContext
       ? { ...this.upsGroupContext, onlyMonths: currentMonth ? [currentMonth] : undefined }
       : undefined;
-    const result = unwrap(await this.bridge.excel.save({ path: this.currentPath, logs, devices: this.devices, upsGroupHistory }));
+    const result = unwrap(await this.bridge.excel.save({ path: this.currentPath, logs, devices: this.devices, upsGroupHistory, scope }));
     return { savedAt: result.savedAt, backupPath: result.backupPath, path: result.path };
   }
 

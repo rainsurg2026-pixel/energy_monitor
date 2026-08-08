@@ -2,9 +2,16 @@ import React, { createContext, useContext, useState, useEffect, useMemo } from "
 import { MonthlyLog } from "./types";
 import { getPreviousMonthStr } from "./utils";
 
+/** Reporting Center v2.3.1 is intentionally scoped to the 2026 operating year.
+ * Historical logs remain available to the data providers and report history;
+ * this constant only controls the active reporting selector. */
+export const REPORTING_YEAR = "2026";
+
 export interface ReportContextType {
   // Filters
   selectedYear: string; // e.g. "2026", "All", "Current Year"
+  /** Same value as the persisted app-level display-period setting. */
+  displayPeriod: string;
   selectedPeriod: string; // e.g. "Entire Year", "01", "02", ..., "12", "YTD", "Last Month"
   selectedTrend: string; // e.g. "Last 3 Months", "Last 6 Months", "Last 12 Months", "Rolling Window"
   compareMode: "none" | "prev_month" | "prev_year" | "rolling_avg" | "best_worst";
@@ -52,9 +59,12 @@ interface ReportProviderProps {
   // Google Sheets is the only source of truth for reports: this must always be syncedLogs,
   // never the local in-memory entry-draft store.
   syncedLogs: MonthlyLog[];
+  /** Persisted app-level visible reporting year/range. */
+  displayPeriod?: string;
 }
 
-export const ReportProvider: React.FC<ReportProviderProps> = ({ children, syncedLogs }) => {
+export const ReportProvider: React.FC<ReportProviderProps> = ({ children, syncedLogs, displayPeriod }) => {
+  const activeDisplayPeriod = displayPeriod?.trim() || REPORTING_YEAR;
   // Dynamic Options derived exclusively from syncedLogs (Google Sheets)
   const availableYears = useMemo(() => {
     const years = new Set<string>();
@@ -65,16 +75,9 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     return Array.from(years).sort((a, b) => b.localeCompare(a));
   }, [syncedLogs]);
 
-  // Default Year to Current Local Year or latest year in logs
-  const defaultYear = useMemo(() => {
-    const currentYearStr = new Date().getFullYear().toString();
-    if (availableYears.includes(currentYearStr)) return currentYearStr;
-    return availableYears[0] || "All";
-  }, [availableYears]);
-
   // Load persistent user preferences or defaults
   const [selectedYear, setSelectedYearState] = useState<string>(() => {
-    return localStorage.getItem("report_pref_year") || "Current Year";
+    return activeDisplayPeriod;
   });
   const [selectedPeriod, setSelectedPeriodState] = useState<string>(() => {
     return localStorage.getItem("report_pref_period") || "Entire Year";
@@ -106,9 +109,9 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
   const [refreshCounter, setRefreshCounter] = useState<number>(0);
 
   // Helper setters that also persist to LocalStorage
-  const setSelectedYear = (val: string) => {
-    setSelectedYearState(val);
-    localStorage.setItem("report_pref_year", val);
+  const setSelectedYear = (_val: string) => {
+    setSelectedYearState(activeDisplayPeriod);
+    localStorage.setItem("report_pref_year", activeDisplayPeriod);
   };
   const setSelectedPeriod = (val: string) => {
     setSelectedPeriodState(val);
@@ -150,18 +153,22 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     setRefreshCounter(prev => prev + 1);
   };
 
-  // When years change, ensure selection is updated if it is no longer valid
+  // Keep the dashboard selector bound to the persisted global display period.
+  // This does not mutate availableYears or syncedLogs, so historical data is
+  // retained for calculations and source-data operations.
   useEffect(() => {
-    if (selectedYear !== "All" && selectedYear !== "Current Year" && availableYears.length > 0) {
-      if (!availableYears.includes(selectedYear)) {
-        setSelectedYear("Current Year");
-      }
+    if (selectedYear !== activeDisplayPeriod) {
+      setSelectedYearState(activeDisplayPeriod);
     }
-  }, [availableYears, selectedYear]);
+    if (localStorage.getItem("report_pref_year") !== activeDisplayPeriod) {
+      localStorage.setItem("report_pref_year", activeDisplayPeriod);
+    }
+  }, [activeDisplayPeriod, selectedYear]);
 
   // Derived calculations and configurations
   const contextValue = useMemo<ReportContextType>(() => ({
-    selectedYear: selectedYear === "Current Year" ? defaultYear : selectedYear,
+    selectedYear,
+    displayPeriod: activeDisplayPeriod,
     selectedPeriod,
     selectedTrend,
     compareMode,
@@ -189,7 +196,7 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     refreshCounter
   }), [
     selectedYear,
-    defaultYear,
+    activeDisplayPeriod,
     selectedPeriod,
     selectedTrend,
     compareMode,

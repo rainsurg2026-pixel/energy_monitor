@@ -38,7 +38,6 @@ export default function UniversalFilterBar({ onExport, lang, facility = null }: 
     setSelectedUPSGroup,
     setSelectedReportView,
     
-    availableYears,
     triggerRefresh
   } = useReport();
 
@@ -157,11 +156,7 @@ export default function UniversalFilterBar({ onExport, lang, facility = null }: 
               onChange={(e) => setSelectedYear(e.target.value)}
               className="w-full bg-slate-950 text-slate-100 font-semibold text-xs border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 cursor-pointer appearance-none transition-all"
             >
-              <option value="Current Year">{t.currentYear}</option>
-              <option value="All">{t.allYears}</option>
-              {availableYears.map(y => (
-                <option key={y} value={y}>{y}</option>
-              ))}
+              <option value={selectedYear}>{selectedYear}</option>
             </select>
             <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>

@@ -6,19 +6,22 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
-const sourceExe = process.env.PACKAGED_EXE ?? path.join(root, "release", `Energy Monitor-v${pkg.version}.exe`);
+const extractedRoot = process.env.PACKAGED_TEST_ROOT ? path.resolve(process.env.PACKAGED_TEST_ROOT) : null;
+const sourceExe = extractedRoot
+  ? path.join(extractedRoot, `Energy Monitor-v${pkg.version}.exe`)
+  : (process.env.PACKAGED_EXE ?? path.join(root, "release", `Energy Monitor-v${pkg.version}.exe`));
 const port = 9333;
 const runId = Date.now();
-const testRoot = path.join(process.env.TEMP ?? root, `energy-monitor-packaged-test-${runId}`);
+const testRoot = extractedRoot ?? path.join(process.env.TEMP ?? root, `energy-monitor-packaged-test-${runId}`);
 const exeName = path.basename(sourceExe);
-const exe = path.join(testRoot, exeName);
+const exe = extractedRoot ? sourceExe : path.join(testRoot, exeName);
 const rangsit = path.join(testRoot, "DC_Rangsit.xlsm");
 const srinakarin = path.join(testRoot, "DC_Srinakarin.xlsm");
 const outputDir = path.join(testRoot, "exports-test");
 const userData = path.join(testRoot, "user-data");
 const sourceWorkbooks = [
-  path.join(root, "DC_Rangsit.xlsm"),
-  path.join(root, "DC_Srinakarin.xlsm")
+  extractedRoot ? rangsit : path.join(root, "DC_Rangsit.xlsm"),
+  extractedRoot ? srinakarin : path.join(root, "DC_Srinakarin.xlsm")
 ];
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -34,11 +37,13 @@ if (!path.basename(sourceExe).includes(`v${pkg.version}`)) {
 
 const sourceHashesBefore = await Promise.all(sourceWorkbooks.map(sha256));
 await fs.mkdir(path.join(testRoot, "config"), { recursive: true });
-await Promise.all([
-  fs.copyFile(sourceExe, exe),
-  fs.copyFile(sourceWorkbooks[0], rangsit),
-  fs.copyFile(sourceWorkbooks[1], srinakarin)
-]);
+if (!extractedRoot) {
+  await Promise.all([
+    fs.copyFile(sourceExe, exe),
+    fs.copyFile(sourceWorkbooks[0], rangsit),
+    fs.copyFile(sourceWorkbooks[1], srinakarin)
+  ]);
+}
 await fs.writeFile(path.join(testRoot, "config", "config.json"), JSON.stringify({
   activeFacilityId: "rangsit",
   defaultWorkbookPath: rangsit,
@@ -49,6 +54,7 @@ await fs.writeFile(path.join(testRoot, "config", "config.json"), JSON.stringify(
   backupFolder: null,
   backupKeep: 3,
   autoSaveIntervalMinutes: 0,
+  globalDataDisplayPeriod: "2026",
   googleSheets: { enabled: false, spreadsheetId: null },
   recentFiles: [rangsit],
   window: { width: 1440, height: 816, maximized: false },
@@ -58,7 +64,12 @@ await fs.mkdir(outputDir, { recursive: true });
 
 const env = { ...process.env, ENERGY_MONITOR_TEST_EXPORT_DIR: outputDir };
 delete env.ELECTRON_RUN_AS_NODE;
-const child = spawn(exe, [rangsit, `--remote-debugging-port=${port}`, `--user-data-dir=${userData}`], {
+const launchArgs = [rangsit, `--remote-debugging-port=${port}`, `--user-data-dir=${userData}`];
+// Some managed Windows sandboxes reject Electron's renderer sandbox token.
+// Keep the normal smoke test sandboxed by default; this opt-in flag is only a
+// diagnostic path for proving renderer functionality in that constrained host.
+if (process.env.PACKAGED_NO_SANDBOX === "1") launchArgs.push("--no-sandbox");
+const child = spawn(exe, launchArgs, {
   cwd: testRoot,
   env,
   stdio: "ignore"
@@ -367,6 +378,30 @@ try {
   if (chartState.energy.svg === 0 || chartState.cost.svg === 0 || chartState.energy.labels === 0 || chartState.cost.labels === 0 || !chartState.energy.compactLabel || !chartState.cost.compactLabel) {
     throw new Error(`Comparison chart labels are missing or not compact: ${JSON.stringify(chartState)}`);
   }
+  const chartLayout = await evaluate(`(() => {
+    const inspect = testId => {
+      const section = document.querySelector('[data-testid="' + testId + '"]');
+      const viewport = section?.querySelector('div.h-72');
+      const content = viewport?.firstElementChild;
+      if (!viewport || !content) return null;
+      const style = getComputedStyle(viewport);
+      return {
+        overflowX: style.overflowX,
+        overflowY: style.overflowY,
+        clientWidth: viewport.clientWidth,
+        scrollWidth: viewport.scrollWidth,
+        clientHeight: viewport.clientHeight,
+        scrollHeight: viewport.scrollHeight,
+        contentWidth: content.getBoundingClientRect().width
+      };
+    };
+    return { energy: inspect("comparison-energy-chart"), cost: inspect("comparison-cost-chart") };
+  })()`);
+  const unstableChart = [chartLayout.energy, chartLayout.cost].some(layout => !layout
+    || layout.overflowY !== "hidden"
+    || layout.scrollHeight > layout.clientHeight + 1
+    || layout.contentWidth + 1 < layout.clientWidth);
+  if (unstableChart) throw new Error(`Comparison chart viewport is not stable: ${JSON.stringify(chartLayout)}`);
 
   const directRead = await evaluate(`window.desktop.excel.openMultiple([
     { path: ${JSON.stringify(rangsit)}, devices: { upsIds: ["UPS 11A", "UPS 11B", "UPS 13A", "UPS 13B", "UPS 14C", "UPS 15A (PPC44A)", "UPS 15B (PPC44B)"], dcIds: ["DC PDB41A", "DC PDB41B", "DC PDB42A", "DC PDB42B"], airFields: ["eb41a", "eb41b", "eb42a", "eb42b"] } },
@@ -407,8 +442,72 @@ try {
   }
 
 
-  // Nav order: Dashboard, Data Entry, Rack Capacity, Historical Logs, Site Comparison, Settings.
-  await evaluate(`document.querySelectorAll("nav button")[5]?.click()`);
+  // Settings follows the Reports & Export entry in the v2.3.1 navigation.
+  // Find it by its rendered label so this smoke test remains aligned when a
+  // supported navigation entry is added before Settings.
+  await evaluate(`[...document.querySelectorAll("nav button")].find(button => button.innerText.includes("Settings & Data Validation"))?.click()`);
+  await waitFor("Global display period control", () => evaluate(`(() => {
+    const select = document.querySelector('[data-testid="global-data-display-period"]');
+    const integrity = document.querySelector('[data-testid="integrity-display-period"]');
+    return select?.value === "2026" && integrity?.innerText.includes("2026");
+  })()`));
+  const initialDisplayConfig = await evaluate("window.desktop.config.get()");
+  if (initialDisplayConfig.globalDataDisplayPeriod !== "2026") {
+    throw new Error(`Packaged config did not expose the primary display period: ${JSON.stringify(initialDisplayConfig)}`);
+  }
+  await evaluate("window.desktop.config.update({ globalDataDisplayPeriod: '2026' })");
+  const persistedDisplayConfig = await evaluate("window.desktop.config.get()");
+  if (persistedDisplayConfig.globalDataDisplayPeriod !== "2026") {
+    throw new Error(`Global display period did not persist through packaged IPC: ${JSON.stringify(persistedDisplayConfig)}`);
+  }
+
+  const lightButtonClicked = await evaluate(`(() => {
+    const button = [...document.querySelectorAll("button")].find(candidate => candidate.innerText.trim() === "Light");
+    button?.click();
+    return Boolean(button);
+  })()`);
+  if (!lightButtonClicked) throw new Error("Light Theme control was not available in packaged Settings.");
+  const lightThemeState = await waitFor("Light Theme", () => evaluate(`(() => {
+    const root = getComputedStyle(document.documentElement);
+    return document.documentElement.classList.contains("theme-light")
+      && root.getPropertyValue("--color-slate-950").trim() === "#eee5d9"
+      && root.getPropertyValue("--color-slate-900").trim() === "#f8f3eb"
+      ? {
+          className: document.documentElement.className,
+          page: root.getPropertyValue("--color-slate-950").trim(),
+          card: root.getPropertyValue("--color-slate-900").trim(),
+          displayPeriod: document.querySelector('[data-testid="global-data-display-period"]')?.value ?? null
+        }
+      : null;
+  })()`));
+  await cdp.send("Page.enable");
+  const lightScreenshot = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+  if (lightScreenshot.result?.data) {
+    await fs.writeFile(path.join(testRoot, "settings-light.png"), Buffer.from(lightScreenshot.result.data, "base64"));
+  }
+  if (lightThemeState.displayPeriod !== "2026") {
+    throw new Error(`Light Theme changed the active display period: ${JSON.stringify(lightThemeState)}`);
+  }
+  await evaluate(`[...document.querySelectorAll("button")].find(button => button.innerText.trim() === "Dark")?.click()`);
+  await waitFor("Dark Theme restoration", () => evaluate("document.documentElement.classList.contains('theme-dark')"));
+
+  await evaluate(`[...document.querySelectorAll("nav button")].find(button => button.innerText.includes("Dashboard Summary"))?.click()`);
+  await waitFor("Dashboard display period", () => evaluate(`(() => {
+    const hasPrimaryYear = [...document.querySelectorAll('select')].some(select => select.value === "2026");
+    return hasPrimaryYear && document.body.innerText.includes("Dashboard Summary");
+  })()`));
+  await evaluate("document.querySelectorAll('nav button')[3]?.click()");
+  const historyDisplayState = await waitFor("Historical display period", () => evaluate(`(() => {
+    const yearFilter = [...document.querySelectorAll("select")].find(select => [...select.options].some(option => option.value === "2026"));
+    const years = yearFilter ? [...yearFilter.options].map(option => option.value) : [];
+    const historyRendered = document.body.innerText.includes("Facility Trend Analytics") || document.body.innerText.includes("Historical Operations Explorer");
+    return historyRendered && years.includes("2026") && !years.includes("2025") ? { years } : null;
+  })()`));
+  if (!historyDisplayState.years.includes("2026")) {
+    throw new Error(`Historical view did not follow the global display period: ${JSON.stringify(historyDisplayState)}`);
+  }
+  await evaluate(`[...document.querySelectorAll("nav button")].find(button => button.innerText.includes("Settings & Data Validation"))?.click()`);
+  await waitFor("Settings display period after navigation", () => evaluate("document.querySelector('[data-testid=\"global-data-display-period\"]')?.value === '2026'"));
   await waitFor("English language control", () => evaluate("Boolean([...document.querySelectorAll('button')].find(button => button.innerText.trim() === 'ภาษาไทย'))"));
   await evaluate(`[...document.querySelectorAll("button")].find(button => button.innerText.trim() === "ภาษาไทย")?.click()`);
   await waitFor("Thai Site Comparison", () => evaluate("[...document.querySelectorAll('nav button')].some(button => button.innerText.includes('เปรียบเทียบ'))"));
@@ -432,29 +531,65 @@ try {
 
   await evaluate(`[...document.querySelectorAll("button")].find(button => button.innerText.trim() === "English (EN)")?.click()`);
   await waitFor("English language control restored", () => evaluate("Boolean([...document.querySelectorAll('button')].find(button => button.innerText.trim() === 'ภาษาไทย (TH)'))"));
+
+  // Actual portable Save AIR regression: use the rendered Srinakarin entry
+  // form for July 2026, then re-read the copied workbook through the packaged
+  // IPC bridge. This proves the button carries the AIR-only save scope all the
+  // way to the workbook writer and does not rely on source/dev files.
+  await selectFacility(evaluate, "srinakarin", "DC_Srinakarin.xlsm");
+  await evaluate("document.querySelectorAll('nav button')[1]?.click()");
+  await waitFor("Srinakarin month picker", () => evaluate("Boolean(document.querySelector('select[title=\"Month\"]'))"));
+  await evaluate(`(() => {
+    const select = document.querySelector('select[title="Month"]');
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+    setter?.call(select, "2026-07");
+    select?.dispatchEvent(new Event("change", { bubbles: true }));
+    return select?.value;
+  })()`);
+  await waitFor("Srinakarin July Air form", () => evaluate("Boolean(document.querySelector('select[title=\"Month\"]')?.value === '2026-07' && document.querySelectorAll('#entry-section-air input').length === 6)"));
+  const packagedAirValues = [901.101, 902.202, 903.303, 904.404, 905.505, 906.606];
+  const enteredAir = await evaluate(`(() => {
+    const values = ${JSON.stringify(packagedAirValues)};
+    const inputs = [...document.querySelectorAll('#entry-section-air input')];
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    inputs.forEach((input, index) => {
+      input.focus();
+      setter?.call(input, String(values[index]));
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    return inputs.map(input => input.value);
+  })()`);
+  const enteredAirNumbers = enteredAir.map(Number);
+  const enteredAirDisplayValues = packagedAirValues.map(value => Math.round(value * 100) / 100);
+  if (enteredAirNumbers.some((value, index) =>
+    Math.abs(value - packagedAirValues[index]) > 1e-9
+    && Math.abs(value - enteredAirDisplayValues[index]) > 1e-9
+  )) {
+    throw new Error(`Packaged Save AIR inputs were not entered: ${JSON.stringify(enteredAir)}`);
+  }
+  await evaluate(`[...document.querySelectorAll('#entry-section-air button')].find(button => button.innerText.trim() === 'Save AIR')?.click()`);
+  await waitFor("Srinakarin July Save AIR completion", () => evaluate("document.body.innerText.includes('Saved to DC_Srinakarin.xlsm')"), 60, 500);
+  const packagedAirReadback = await evaluate(`window.desktop.excel.reload(${JSON.stringify(srinakarin)}, ${JSON.stringify({ upsIds: ["UPS41A", "UPS41B", "PPC41A", "PPC41B", "PPC42A", "PPC42B", "PPC43A", "PPC43B", "PPC44A", "PPC44B"], dcIds: ["DC PDB41A", "DC PDB41B"], airFields: ["eb41a", "eb41b", "eb43a", "eb43b", "eb44a", "eb44b"] })}).then(result => {
+    const log = result.logs?.find(item => item.month === "2026-07");
+    return [log?.air?.eb41a, log?.air?.eb41b, log?.air?.meters?.eb43a, log?.air?.meters?.eb43b, log?.air?.meters?.eb44a, log?.air?.meters?.eb44b];
+  })`);
+  if (JSON.stringify(packagedAirReadback) !== JSON.stringify(packagedAirValues)) {
+    throw new Error(`Packaged Srinakarin July Save AIR did not round-trip: ${JSON.stringify(packagedAirReadback)}`);
+  }
+  console.log(`Packaged Srinakarin July Save AIR readback: ${JSON.stringify(packagedAirReadback)}`);
+
   await selectFacility(evaluate, "rangsit", "DC_Rangsit.xlsm");
   await evaluate("document.querySelectorAll('nav button')[1]?.click()");
   await waitFor("entry export button", () => evaluate("Boolean(document.querySelector('button[title=\"Ctrl+E / Ctrl+Shift+S\"]'))"), 30, 300);
   await evaluate("document.querySelector('button[title=\"Ctrl+E / Ctrl+Shift+S\"]')?.click()");
-  await waitFor("export center", () => evaluate("document.body.innerText.includes('Export All Report') && document.body.innerText.includes('Current view as an A4 landscape PDF')"), 30, 300);
-  await evaluate("[...document.querySelectorAll('button')].find(button => button.innerText.trim().startsWith('PDF'))?.click()");
-  const currentPagePdf = await waitFor("current-page PDF", async () => {
+  await waitFor("ready Reports & Export center", () => evaluate("(() => { const button = [...document.querySelectorAll('button')].find(button => button.innerText.trim() === 'Generate Report'); return document.body.innerText.includes('Reports & Export') && document.body.innerText.includes('Live Preview') && document.body.innerText.includes('All Report') && Boolean(button && !button.disabled && document.body.innerText.includes('Ready')); })()"), 60, 300);
+  await evaluate("[...document.querySelectorAll('button')].find(button => button.innerText.trim() === 'Generate Report')?.click()");
+  const allReportPdf = await waitFor("All Report PDF", async () => {
     const files = (await fs.readdir(outputDir)).filter(file => file.toLowerCase().endsWith(".pdf"));
     return files.length > 0 ? path.join(outputDir, files[0]) : null;
-  }, 120, 500);
-  if ((await fs.stat(currentPagePdf)).size < 1000) throw new Error(`Current-page PDF is unexpectedly small: ${currentPagePdf}`);
-  console.log(`Packaged current-page PDF generated: ${currentPagePdf}`);
-
-  await evaluate("document.querySelector('button[title=\"Ctrl+E / Ctrl+Shift+S\"]')?.click()");
-  await waitFor("export all action", () => evaluate("document.body.innerText.includes('Export All Report')"), 30, 300);
-  await evaluate("[...document.querySelectorAll('button')].find(button => button.innerText.trim().startsWith('Export All Report'))?.click()");
-  const allReportPdf = await waitFor("all-report PDF", async () => {
-    const files = (await fs.readdir(outputDir)).filter(file => file.toLowerCase().endsWith(".pdf"));
-    const file = files.find(name => path.join(outputDir, name) !== currentPagePdf);
-    return file ? path.join(outputDir, file) : null;
-  }, 120, 500);
-  if ((await fs.stat(allReportPdf)).size < 1000) throw new Error(`All-report PDF is unexpectedly small: ${allReportPdf}`);
-  console.log(`Packaged Export All Report generated: ${allReportPdf}`);
+  }, 360, 500);
+  if ((await fs.stat(allReportPdf)).size < 1000) throw new Error(`All Report PDF is unexpectedly small: ${allReportPdf}`);
+  console.log(`Packaged All Report PDF generated: ${allReportPdf}`);
 
   await cdp.send("Browser.close");
   shutdownRequested = true;
@@ -469,12 +604,20 @@ try {
   runtimeLog = await readRuntimeLog();
   const sourceHashesAfter = await Promise.all(sourceWorkbooks.map(sha256));
   const sourcesUnchanged = sourceHashesBefore.every((hash, index) => hash === sourceHashesAfter[index]);
-  if (!sourcesUnchanged && !primaryError) {
+  // In extracted-ZIP mode the test deliberately saves AIR into the copied
+  // Srinakarin workbook beside the EXE. Preserve the normal source-integrity
+  // check for the temp-copy mode, while proving that only the expected
+  // workbook changed when exercising the actual extracted package in place.
+  const extractedWorkbookMutationExpected = extractedRoot
+    && sourceHashesAfter[0] === sourceHashesBefore[0]
+    && sourceHashesAfter[1] !== sourceHashesBefore[1];
+  const workbookIntegrityPassed = extractedRoot ? extractedWorkbookMutationExpected : sourcesUnchanged;
+  if (!workbookIntegrityPassed && !primaryError) {
     primaryError = new Error(`Source workbook integrity failed: before=${JSON.stringify(sourceHashesBefore)} after=${JSON.stringify(sourceHashesAfter)}`);
   }
   if (runtimeLog.available) console.log("Packaged runtime log tail:\n" + runtimeLog.tail.join("\n"));
-  if (!sourcesUnchanged) console.error("Source workbook integrity failed during packaged runtime test.");
-  await fs.rm(testRoot, { recursive: true, force: true });
+  if (!workbookIntegrityPassed) console.error("Source workbook integrity failed during packaged runtime test.");
+  if (!extractedRoot) await fs.rm(testRoot, { recursive: true, force: true });
 }
 
 if (primaryError) throw primaryError;

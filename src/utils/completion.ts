@@ -43,7 +43,7 @@ function section(filled: number, total: number): SectionCompletion {
   return { filled, total, percent: total === 0 ? 100 : Math.round((filled / total) * 100) };
 }
 
-export function computeCompletion(log: MonthlyLog | null): CompletionSummary {
+export function computeCompletion(log: MonthlyLog | null, configuredAirFields?: readonly string[]): CompletionSummary {
   if (!log) {
     const empty = section(0, 0);
     return { ups: empty, air: empty, dc: empty, energy: empty, overall: section(0, 1) };
@@ -58,7 +58,7 @@ export function computeCompletion(log: MonthlyLog | null): CompletionSummary {
   }
   const ups = section(upsFilled, log.ups.length * 4);
 
-  const airFields = getAirFields(log);
+  const airFields = getAirFields(log, configuredAirFields);
   const airValues = airFields.map(field => getAirValue(log, field));
   const air = section(airValues.filter(isFilled).length, airValues.length);
 
@@ -80,7 +80,7 @@ export function computeCompletion(log: MonthlyLog | null): CompletionSummary {
 }
 
 /** Field-level list of everything still empty (RC4 validation popup). */
-export function listMissingFields(log: MonthlyLog): MissingField[] {
+export function listMissingFields(log: MonthlyLog, configuredAirFields?: readonly string[]): MissingField[] {
   const missing: MissingField[] = [];
   for (const u of log.ups) {
     if (!isFilled(u.voltage)) missing.push({ section: "ups", label: `${u.upsId} · Voltage (V)` });
@@ -88,7 +88,7 @@ export function listMissingFields(log: MonthlyLog): MissingField[] {
     if (!isFilled(u.loadKw)) missing.push({ section: "ups", label: `${u.upsId} · Load (kW)` });
     if (!isFilled(u.loadKva)) missing.push({ section: "ups", label: `${u.upsId} · Load (kVA)` });
   }
-  for (const field of getAirFields(log)) {
+  for (const field of getAirFields(log, configuredAirFields)) {
     if (!isFilled(getAirValue(log, field))) missing.push({ section: "air", label: `${field.toUpperCase()} (GWh)` });
   }
   for (const d of log.dc) {

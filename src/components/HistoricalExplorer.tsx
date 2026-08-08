@@ -9,6 +9,7 @@ import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter"
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import RackCapacityHistoryPanel from "./rack/RackCapacityHistoryPanel";
 import { RackCapacityProvider } from "./rack/RackCapacityContext";
+import { filterLogsForDisplay } from "../utils/displayPeriod";
 import {
   Zap,
   Thermometer,
@@ -42,6 +43,7 @@ interface HistoricalExplorerProps {
    *  snapshots only, never the current live Table7 masquerading as history. */
   rackCapacityHistory?: RackCapacityHistoryRow[];
   rackUnitCapacity?: RackUnitCapacityRow[];
+  displayPeriod?: string;
 }
 
 type ExplorerTab = "ups" | "air" | "dc" | "energy" | "rack";
@@ -57,7 +59,8 @@ function getDaysInMonth(monthStr: string): number {
   return new Date(year, month, 0).getDate();
 }
 
-export default function HistoricalExplorer({ logs, lang, isGoogleConnected = false, googleUserEmail = null, onEditMonth, upsGroupHistory = null, activeFacilityId = null, rackCapacityHistory = [], rackUnitCapacity = [] }: HistoricalExplorerProps) {
+export default function HistoricalExplorer({ logs, lang, isGoogleConnected = false, googleUserEmail = null, onEditMonth, upsGroupHistory = null, activeFacilityId = null, rackCapacityHistory = [], rackUnitCapacity = [], displayPeriod = "2026" }: HistoricalExplorerProps) {
+  const displayLogs = useMemo(() => filterLogsForDisplay(logs, displayPeriod), [logs, displayPeriod]);
   const [activeTab, setActiveTab] = useState<ExplorerTab>("ups");
   const [searchQuery, setSearchQuery] = useState("");
   const [yearFilter, setYearFilter] = useState("All");
@@ -175,12 +178,12 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
   // Dynamically extract years for filter
   const availableYears = useMemo(() => {
     const years = new Set<string>();
-    logs.forEach(l => {
+    displayLogs.forEach(l => {
       const y = l.month.split("-")[0];
       if (y) years.add(y);
     });
     return Array.from(years).sort();
-  }, [logs]);
+  }, [displayLogs]);
 
   // Months array for filtering
   const monthsArray = [
@@ -200,13 +203,13 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
 
   // The range selector is based on the latest reporting months present in the
   // workbook, rather than the current calendar date or array position.
-  const latestReportingMonths = useMemo(() => {
-    return Array.from(new Set(
-      logs
-        .map(log => normalizedMonth(log.month))
-        .filter((month): month is string => month !== null)
-    )).sort((a, b) => b.localeCompare(a));
-  }, [logs]);
+  const latestReportingMonths = useMemo<string[]>(() => {
+    const months: string[] = displayLogs
+      .map(log => normalizedMonth(log.month))
+      .filter((month): month is string => month !== null);
+    return Array.from(new Set<string>(months))
+      .sort((a, b) => b.localeCompare(a));
+  }, [displayLogs]);
 
   // Quick Jump: only real, chronological months that actually exist in this
   // (already facility-scoped, via the `logs` prop) workbook, restricted to
@@ -215,7 +218,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
   // Recomputes automatically on facility switch because `logs` itself does.
   const quickJumpEntries = useMemo(() => {
     const monthToLog = new Map<string, MonthlyLog>();
-    for (const log of logs) {
+    for (const log of displayLogs) {
       const normalized = normalizedMonth(log.month);
       if (normalized && !monthToLog.has(normalized)) monthToLog.set(normalized, log);
     }
@@ -225,11 +228,11 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       .filter(month => month.startsWith(activeReportingYear))
       .map(month => monthToLog.get(month))
       .filter((log): log is MonthlyLog => log !== undefined);
-  }, [logs, latestReportingMonths]);
+  }, [displayLogs, latestReportingMonths]);
 
   // Core processing & filtering
   const filteredAndSortedLogs = useMemo(() => {
-    let result = [...logs];
+    let result = [...displayLogs];
 
     if (historyRange !== "all") {
       const limit = Number(historyRange);
@@ -269,7 +272,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
     });
 
     return result;
-  }, [logs, historyRange, latestReportingMonths, yearFilter, monthFilter, searchQuery, sortOrder]);
+  }, [displayLogs, historyRange, latestReportingMonths, yearFilter, monthFilter, searchQuery, sortOrder]);
 
   // Row status resolvers
   const resolveStatuses = (log: MonthlyLog): {
@@ -341,7 +344,9 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
   // wrote it, so this table and Dashboard Summary can never disagree.
   const renderUpsHistory = () => {
     const visibleMonths = new Set(filteredAndSortedLogs.map(log => log.month));
-    const statusesByMonth = new Map(logs.map(log => [log.month, resolveStatuses(log)]));
+    const statusesByMonth = new Map<string, ReturnType<typeof resolveStatuses>>(
+      displayLogs.map(log => [log.month, resolveStatuses(log)])
+    );
     const historyRows = (upsGroupHistory?.rows ?? [])
       .filter(row => visibleMonths.has(row.month))
       .filter(row => !activeFacilityId || row.facility.toLowerCase() === activeFacilityId.toLowerCase())
@@ -408,7 +413,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
   };
 
   const renderAirHistory = () => {
-    const airFields = Array.from(new Set(logs.flatMap(log => getAirFields(log))));
+    const airFields: string[] = Array.from(new Set<string>(displayLogs.flatMap(log => getAirFields(log))));
     return (
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs font-sans">

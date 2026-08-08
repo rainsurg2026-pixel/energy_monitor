@@ -20,6 +20,9 @@ export interface AppConfig {
   startupBehavior: "last" | "default" | "ask";
   theme: "dark" | "light";
   language: "th" | "en";
+  /** Visible reporting year/range. This filters presentation only; workbook
+   * history remains fully retained and available to calculations. */
+  globalDataDisplayPeriod: string;
   /** null = "<app root>/backup". */
   backupFolder: string | null;
   backupKeep: number;
@@ -44,6 +47,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   startupBehavior: "last",
   theme: "light",
   language: "th",
+  globalDataDisplayPeriod: "2026",
   backupFolder: null,
   backupKeep: 20,
   autoSaveIntervalMinutes: 5,
@@ -62,13 +66,20 @@ function configFilePath(): string {
 let cached: AppConfig | null = null;
 
 function mergeWithDefaults(raw: Partial<AppConfig>): AppConfig {
-  return {
+  const merged = {
     ...DEFAULT_CONFIG,
     ...raw,
     googleSheets: { ...DEFAULT_CONFIG.googleSheets, ...(raw.googleSheets ?? {}) },
     window: { ...DEFAULT_CONFIG.window, ...(raw.window ?? {}) },
     security: { ...DEFAULT_CONFIG.security, ...(raw.security ?? {}) },
     recentFiles: Array.isArray(raw.recentFiles) ? raw.recentFiles.filter(f => typeof f === "string").slice(0, MAX_RECENT) : []
+  };
+  return {
+    ...merged,
+    globalDataDisplayPeriod:
+      typeof raw.globalDataDisplayPeriod === "string" && raw.globalDataDisplayPeriod.trim().length > 0
+        ? raw.globalDataDisplayPeriod.trim()
+        : DEFAULT_CONFIG.globalDataDisplayPeriod
   };
 }
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { googleSignIn } from "./firebaseAuth";
 import { createGoogleSheetsDriver, GoogleSheetsDriver, GoogleConnectionState } from "./googleSheetsDriver";
 import {
@@ -13,7 +13,7 @@ import {
 } from "./utils";
 import { DEFAULT_SPREADSHEET_ID } from "./sheetsService";
 import { MonthlyLog, SecurityConfig, UpsRecord, AirRecord, DcRecord, EnergyCostRecord, SrinakarinInputSnapshot } from "./types";
-import { DataSnapshot, ProviderError } from "./data/IDataProvider";
+import { DataSnapshot, ProviderError, type WorkbookSaveScope } from "./data/IDataProvider";
 import { ExcelProvider } from "./data/ExcelProvider";
 import { getDesktopBridge } from "./data/ProviderFactory";
 import type { AppConfig, DeviceLists, ExportProgress, FacilityEntry, WorkbookAccessStatus } from "./desktop";
@@ -23,10 +23,11 @@ import SaveProgress, { SaveProgressState } from "./components/SaveProgress";
 import FacilitySelector from "./components/FacilitySelector";
 import EntryWorkflowHeader from "./components/EntryWorkflowHeader";
 import StickyEntryToolbar from "./components/StickyEntryToolbar";
-import ExportCenterModal, { ExportKind } from "./components/ExportCenterModal";
+import ReportingCenter, { type ReportRequest } from "./reporting/ReportingCenter";
 import { buildCombinedCsv, buildIntegrityText, buildSectionCsvs } from "./utils/exportData";
 import { EntrySectionApi, MissingField, computeCompletion, listMissingFields } from "./utils/completion";
 import { beginSaveOnce, clearEntryUndoHistory, endSaveOnce } from "./utils/entrySession";
+import { getAirValue } from "./utils/energyCost";
 import ToastHost, { notify } from "./components/Toast";
 import WorkbookBar from "./components/WorkbookBar";
 import WelcomePanel from "./components/WelcomePanel";
@@ -45,7 +46,7 @@ import PinLockModal from "./components/PinLockModal";
 import GoogleSheetsSync from "./components/GoogleSheetsSync";
 import DashboardSummary from "./components/DashboardSummary";
 import HistoricalExplorer from "./components/HistoricalExplorer";
-import { ReportProvider, useReport } from "./ReportContext";
+import { ReportProvider, REPORTING_YEAR, useReport } from "./ReportContext";
 import UniversalFilterBar from "./components/UniversalFilterBar";
 import ExecutiveDashboard from "./components/ExecutiveDashboard";
 import BenchmarkDashboard from "./components/BenchmarkDashboard";
@@ -76,6 +77,7 @@ import {
   BookOpen,
   Settings,
   FileSpreadsheet,
+  FileText,
   AlertCircle,
   AlertTriangle,
   BarChart4,
@@ -84,6 +86,28 @@ import {
   Server
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { filterLogsForDisplay } from "./utils/displayPeriod";
+
+const LEGACY_AIR_FIELD_IDS = new Set(["eb41a", "eb41b", "eb42a", "eb42b"]);
+
+/** Keep an Air draft aligned with the active facility profile before it enters
+ * the in-memory store. A component can retain hidden fields across a facility
+ * switch, but those fields must never become part of another site's record. */
+function projectAirRecordToProfile(record: AirRecord, configuredFields?: readonly string[]): AirRecord {
+  if (!configuredFields || configuredFields.length === 0) return record;
+  const next: AirRecord = { eb41a: null, eb41b: null, eb42a: null, eb42b: null };
+  const meters: Record<string, number | null> = {};
+  const source = { air: record } as MonthlyLog;
+  for (const field of configuredFields) {
+    const value = getAirValue(source, field);
+    if (LEGACY_AIR_FIELD_IDS.has(field)) {
+      next[field as "eb41a" | "eb41b" | "eb42a" | "eb42b"] = value;
+    } else {
+      meters[field] = value;
+    }
+  }
+  return Object.keys(meters).length > 0 ? { ...next, meters } : next;
+}
 
 function DashboardViewContainer({
   logs,
@@ -180,7 +204,7 @@ export default function App() {
   const [logs, setLogs] = useState<MonthlyLog[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [activeLog, setActiveLog] = useState<MonthlyLog | null>(null);
-  const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "rackCapacity" | "history" | "comparison" | "settings">("dashboard");
+  const [currentView, setCurrentView] = useState<"dashboard" | "entry" | "rackCapacity" | "history" | "comparison" | "reports" | "settings">("dashboard");
   // Bumped by RackUnitCapacityPanel's onImageHistorySaved so
   // RackUnitCapacitySummary re-fetches the image for whatever Reporting
   // Month is currently selected, even though that month didn't change.
@@ -244,6 +268,7 @@ export default function App() {
     () => facilities.find(f => f.id === activeFacilityId) ?? null,
     [facilities, activeFacilityId]
   );
+  const activeAirFields = activeFacility?.profile.air.fields;
   // Ref mirror so one-time effects/closures always see the current lists.
   const deviceListsRef = useRef<DeviceLists | null>(null);
   useEffect(() => {
@@ -260,9 +285,32 @@ export default function App() {
     );
   }, [activeFacility, excelProvider]);
 
-  /** createEmptyLog honoring the active facility's device profile. */
-  const emptyLogForMonth = (month: string) =>
-    createEmptyLog(month, deviceListsRef.current?.upsIds, deviceListsRef.current?.dcIds);
+  /** Create a blank month with the active facility's complete calculation profile. */
+  const emptyLogForMonth = (month: string) => {
+    const profile = activeFacility?.profile;
+    const devices = profile
+      ? { upsIds: profile.devices.ups, dcIds: profile.devices.dc }
+      : deviceListsRef.current;
+    const log = createEmptyLog(month, devices?.upsIds, devices?.dcIds);
+    if (!profile) return log;
+
+    const airFields = [...profile.air.fields];
+    const extraAirFields = airFields.filter(field => !(field in log.air));
+    return {
+      ...log,
+      air: extraAirFields.length > 0
+        ? {
+            ...log.air,
+            meters: Object.fromEntries(extraAirFields.map(field => [field, null]))
+          }
+        : log.air,
+      energyCalculation: {
+        upsGroups: profile.dashboard.upsGroups.map(group => [...group.ids]),
+        dcIds: [...profile.devices.dc],
+        airFields
+      }
+    };
+  };
   // Live mirrors for timers (auto-save) so intervals never see stale state.
   const isDirtyRef = useRef(false);
   const isBusyRef = useRef(false);
@@ -288,6 +336,11 @@ export default function App() {
   const [syncedLogs, setSyncedLogs] = useState<MonthlyLog[] | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const globalDataDisplayPeriod = appConfig?.globalDataDisplayPeriod ?? REPORTING_YEAR;
+  const visibleReportLogs = useMemo(
+    () => filterLogsForDisplay(syncedLogs ?? logs, globalDataDisplayPeriod),
+    [syncedLogs, logs, globalDataDisplayPeriod]
+  );
 
   // Spreadsheet Selection stage: single source of truth for which sheet to sync with.
   const [spreadsheetId, setSpreadsheetId] = useState<string>(() => {
@@ -494,7 +547,7 @@ export default function App() {
    * write happen in the main process). Returns true on success.
    * `silent` (auto-save): failures become toasts instead of the lock modal.
    */
-  const persistWorkbook = async (silent = false): Promise<boolean> => {
+  const persistWorkbook = async (silent = false, scope: WorkbookSaveScope = "all"): Promise<boolean> => {
     if (!excelProvider || !workbook) return false;
     // Re-entrancy guard: a second save (double Ctrl+S, double-click on the
     // historical-save confirm button, or auto-save firing mid-save) must
@@ -529,7 +582,7 @@ export default function App() {
     stage("validate");
     try {
       stage("lock");
-      const outcome = await excelProvider.saveAll(loadAllLogs(), editingMonth ?? selectedMonth ?? undefined);
+      const outcome = await excelProvider.saveAll(loadAllLogs(), editingMonth ?? selectedMonth ?? undefined, scope);
       stage("refresh");
       const snap = await excelProvider.reload();
       applyWorkbookSnapshot(snap);
@@ -944,13 +997,13 @@ export default function App() {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.shiftKey && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
-        setExportCenterOpen(true);
+        setCurrentView("reports");
       } else if (e.ctrlKey && !e.shiftKey && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
         if (currentViewRef.current === "entry") handleToolbarSaveRef.current();
       } else if (e.ctrlKey && (e.key === "e" || e.key === "E")) {
         e.preventDefault();
-        setExportCenterOpen(true);
+        setCurrentView("reports");
       } else if (e.ctrlKey && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
         // App-level undo of the last field edit; falls back to native undo
         // (normal text editing) when there is nothing to undo.
@@ -1252,7 +1305,10 @@ export default function App() {
   }, [activeLog, draftTick]);
 
   /** Live entry completion for the active month (drafts included). */
-  const entryCompletion = useMemo(() => computeCompletion(draftActiveLog), [draftActiveLog]);
+  const entryCompletion = useMemo(
+    () => computeCompletion(draftActiveLog, activeAirFields),
+    [draftActiveLog, activeAirFields]
+  );
 
   const hasDraftChanges = useMemo(
     () => Object.values(sectionApisRef.current).some((api: EntrySectionApi | null) => api?.hasChanges()),
@@ -1273,7 +1329,7 @@ export default function App() {
     if (!rules || !rules.requireAllFields) return [];
     const target = sections.filter(sec => rules.requiredSections.includes(sec));
     if (target.length === 0) return [];
-    return listMissingFields(log).filter(m => target.includes(m.section));
+    return listMissingFields(log, activeAirFields).filter(m => target.includes(m.section));
   };
 
   const raiseValidation = (fields: MissingField[]) => {
@@ -1438,15 +1494,17 @@ export default function App() {
     resetAllDrafts();
   };
 
-  /** Toolbar Export opens the Export Center (RC6). */
+  /** Toolbar Export routes to the Reporting Center; it is the only report entry point. */
   const handleToolbarExport = () => {
-    setExportCenterOpen(true);
+    setCurrentView("reports");
   };
 
-  // --- EXPORT CENTER (RC6) ---
-  const [exportCenterOpen, setExportCenterOpen] = useState(false);
+  // --- REPORTING CENTER ---
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [exportRequestId, setExportRequestId] = useState<string | null>(null);
+  const [reportPreviewHtml, setReportPreviewHtml] = useState<string | null>(null);
+  const [reportPreviewStatus, setReportPreviewStatus] = useState<"ready" | "generating" | "error">("ready");
+  const [reportPreviewError, setReportPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!desktopBridge) return;
@@ -1479,8 +1537,9 @@ export default function App() {
 
   const exportBaseName = useMemo(() => {
     const facility = (activeFacility?.name ?? "Facility").replace(/\s+/g, "");
-    return `${facility}_${selectedMonth || new Date().toISOString().slice(0, 7)}_Report`;
-  }, [activeFacility, selectedMonth]);
+    const reportingMonth = visibleReportLogs.at(-1)?.month ?? selectedMonth;
+    return `${facility}_${reportingMonth || new Date().toISOString().slice(0, 7)}_Report`;
+  }, [activeFacility, selectedMonth, visibleReportLogs]);
 
   /** Lets React remove export UI before Chromium captures the current page. */
   const waitForCleanExportCapture = async () => {
@@ -1494,12 +1553,15 @@ export default function App() {
   };
 
   /** One entry point for every export format (toolbar, filter bar, Ctrl+E). */
-  const runExport = async (kind: ExportKind) => {
+  const runExport = async (kind: "all-report" | "pdf" | "excel" | "csv" | "png" | "zip", options?: { month?: string; filename?: string; html?: string }): Promise<{ filename: string; path?: string } | null> => {
     if (!desktopBridge) {
       notify("info", lang === "th" ? "การส่งออกใช้ได้ในเวอร์ชันเดสก์ท็อป" : "Exports are available in the desktop app.");
-      return;
+      return null;
     }
-    const logsForExport = syncedLogs ?? loadAllLogs();
+    // Exports follow the global visible period; workbook/source history is
+    // still retained and remains available to calculations in the report
+    // pipeline.
+    const logsForExport = visibleReportLogs;
     const facility = activeFacility?.name ?? "Facility";
     try {
       let result: { ok: boolean } & Record<string, unknown>;
@@ -1510,21 +1572,21 @@ export default function App() {
         setExportProgress({ requestId, stage: "preparing", detail: "Starting export" });
         result = await desktopBridge.exportCenter.allReport({
           requestId,
-          defaultName: `${facility.replace(/\s+/g, "")}_All_Report`,
+          defaultName: options?.filename ?? `${facility.replace(/\s+/g, "")}_All_Report`,
           workbookPath: workbook.path,
           facility,
           dashboard: activeFacility?.profile.dashboard,
-          selectedMonth: selectedMonth || null,
+          selectedMonth: (options?.month ?? visibleReportLogs.at(-1)?.month ?? selectedMonth) || null,
           appVersion: appVersion ?? "Unknown"
         });
       } else if (kind === "pdf") {
-        result = await desktopBridge.exportCenter.pdf({ defaultName: exportBaseName });
+        result = await desktopBridge.exportCenter.pdf({ defaultName: options?.filename ?? exportBaseName });
       } else if (kind === "png") {
-        result = await desktopBridge.exportCenter.png({ defaultName: exportBaseName });
+        result = await desktopBridge.exportCenter.png({ defaultName: options?.filename ?? exportBaseName });
       } else if (kind === "excel") {
-        result = await desktopBridge.exportCenter.excel({ defaultName: exportBaseName, facility, logs: logsForExport });
+        result = await desktopBridge.exportCenter.excel({ defaultName: options?.filename ?? exportBaseName, facility, logs: logsForExport });
       } else if (kind === "csv") {
-        result = await desktopBridge.exportFile({ defaultName: `${exportBaseName}.csv`, content: buildCombinedCsv(logsForExport) });
+        result = await desktopBridge.exportFile({ defaultName: options?.html !== undefined ? (options.filename ?? `${exportBaseName}.html`) : `${options?.filename ?? exportBaseName}.csv`, content: options?.html ?? buildCombinedCsv(logsForExport) });
       } else {
         result = await desktopBridge.exportCenter.zip({
           defaultName: exportBaseName,
@@ -1537,16 +1599,48 @@ export default function App() {
       if (!result.ok) {
         notify("error", String((result as { message?: string }).message ?? "Export failed"));
       } else if (!("canceled" in result)) {
-        notify("success", lang === "th" ? `ส่งออกแล้ว: ${result.path}` : `Exported: ${result.path}`);
+        const pathValue = String(result.path ?? "");
+        const safeFilename = pathValue.split(/[\\/]/).at(-1) ?? (options?.filename ?? exportBaseName);
+        notify("success", lang === "th" ? `ส่งออกแล้ว: ${safeFilename}` : `Exported: ${safeFilename}`);
+        return { filename: safeFilename, path: pathValue || undefined };
       }
     } catch (err) {
       notify("error", err instanceof Error ? err.message : String(err));
+      return null;
     } finally {
       if (kind === "all-report") {
         setExportRequestId(null);
         setExportProgress(null);
       }
     }
+    return null;
+  };
+
+  const loadReportPreview = useCallback(async (month: string) => {
+    if (!desktopBridge || !workbook?.path) {
+      setReportPreviewHtml(null);
+      setReportPreviewStatus("error");
+      setReportPreviewError("Open a workbook to prepare a report preview.");
+      return;
+    }
+    setReportPreviewStatus("generating");
+    setReportPreviewError(null);
+    try {
+      const result = await desktopBridge.exportCenter.preview({ workbookPath: workbook.path, facility: activeFacility?.name ?? "Facility", dashboard: activeFacility?.profile.dashboard, selectedMonth: month || null, appVersion: appVersion ?? "Unknown" });
+      if (!result.ok) throw new Error(result.message);
+      setReportPreviewHtml(result.html);
+      setReportPreviewStatus("ready");
+    } catch (error) {
+      setReportPreviewStatus("error");
+      setReportPreviewError(error instanceof Error ? error.message : "Preview failed.");
+    }
+  }, [desktopBridge, workbook?.path, activeFacility?.name, activeFacility?.profile.dashboard, appVersion]);
+
+  const generateReportingRequest = async (request: ReportRequest) => {
+    if (request.format === "pdf") return runExport("all-report", { month: request.month, filename: request.filename });
+    if (request.format === "excel") return runExport("excel", { month: request.month, filename: request.filename });
+    if (request.format === "html") return runExport("csv", { filename: request.filename.replace(/\.html$/i, "") + ".html", html: reportPreviewHtml ?? "" });
+    return null;
   };
 
   const confirmCreateMonth = () => {
@@ -1603,7 +1697,7 @@ export default function App() {
     // Check if previous month's log already exists. If not, auto-create it!
     const hasPrevMonth = allLogs.some(l => l.month === prevMonth);
     if (!hasPrevMonth) {
-      const defaultLog = createEmptyLog(prevMonth);
+      const defaultLog = emptyLogForMonth(prevMonth);
       saveLogForMonth(prevMonth, defaultLog);
       allLogs = loadAllLogs();
     }
@@ -1672,12 +1766,12 @@ export default function App() {
   // After the in-memory store is updated, desktop persists straight into the
   // workbook (with backup + lock handling); the browser build keeps the
   // original in-memory + Google Sheets behavior.
-  const commitEntrySave = () => {
+  const commitEntrySave = (scope: WorkbookSaveScope = "all") => {
     // During a toolbar batch save, sections only update the in-memory store;
     // the toolbar persists the workbook once at the end.
     if (batchSaveRef.current) return;
     if (isDesktopApp && workbook) {
-      void persistWorkbook();
+      void persistWorkbook(false, scope);
     } else {
       reloadData();
     }
@@ -1745,8 +1839,9 @@ export default function App() {
   const handleSaveAir = (record: AirRecord) => {
     if (!activeLog) return;
     if (readOnly) return notifyReadOnly();
+    const configuredRecord = projectAirRecordToProfile(record, activeAirFields);
     if (!batchSaveRef.current) {
-      const missing = validateSections({ ...activeLog, air: record }, ["air"]);
+      const missing = validateSections({ ...activeLog, air: configuredRecord }, ["air"]);
       if (missing.length > 0) return raiseValidation(missing);
     }
     const isHistorical = selectedMonth !== maxMonth;
@@ -1754,11 +1849,11 @@ export default function App() {
       const timestamp = formatTimestamp(new Date());
       const updatedLog: MonthlyLog = {
         ...loadLogForMonth(selectedMonth, deviceListsRef.current?.upsIds, deviceListsRef.current?.dcIds),
-        air: record,
+        air: configuredRecord,
         lastSavedAir: timestamp
       };
       saveLogForMonth(selectedMonth, updatedLog);
-      commitEntrySave();
+      commitEntrySave("air");
     };
 
     if ((isHistorical || editingMonth) && !batchSaveRef.current) {
@@ -2036,7 +2131,7 @@ export default function App() {
         {/* SEGMENTED NAVIGATION BAR */}
         <nav
           className={`grid grid-cols-1 ${
-            isDesktopApp ? "sm:grid-cols-2 lg:grid-cols-6" : "sm:grid-cols-3"
+            isDesktopApp ? "sm:grid-cols-2 lg:grid-cols-7" : "sm:grid-cols-3"
           } gap-2 bg-slate-900 border border-slate-850 p-1.5 rounded-2xl shadow-md`}
         >
           <button
@@ -2102,6 +2197,19 @@ export default function App() {
               <span>{lang === "th" ? "เปรียบเทียบไซต์" : "Site Comparison"}</span>
             </button>
           )}
+
+          <button
+            onClick={() => setCurrentView("reports")}
+            aria-current={currentView === "reports" ? "page" : undefined}
+            className={`px-4 py-3.5 text-xs font-bold rounded-xl flex items-center justify-center gap-2.5 transition-all cursor-pointer ${
+              currentView === "reports"
+                ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/15"
+                : "text-slate-400 hover:text-slate-200 hover:bg-slate-850/50"
+            }`}
+          >
+            <FileText className="w-4 h-4 text-rose-400" />
+            <span>{lang === "th" ? "รายงานและส่งออก" : "Reports & Export"}</span>
+          </button>
 
           {isDesktopApp && (
             <button
@@ -2372,7 +2480,7 @@ export default function App() {
           isSyncing || (isWorkbookBusy && !syncedLogs) ? (
             renderReportingLoading()
           ) : syncedLogs ? (
-            <ReportProvider syncedLogs={syncedLogs}>
+            <ReportProvider syncedLogs={syncedLogs} displayPeriod={globalDataDisplayPeriod}>
               <DashboardViewContainer
                 logs={syncedLogs}
                 lang={lang}
@@ -2452,6 +2560,7 @@ export default function App() {
                 isGoogleConnected={isGoogleConnected}
                 googleUserEmail={googleUserEmail}
                 lang={lang}
+                displayPeriod={globalDataDisplayPeriod}
               />
               <HistoricalExplorer
                 logs={syncedLogs}
@@ -2462,6 +2571,7 @@ export default function App() {
                 activeFacilityId={activeFacility?.id ?? null}
                 rackCapacityHistory={workbook?.rackCapacityHistory ?? []}
                 rackUnitCapacity={workbook?.rackUnitCapacity ?? []}
+                displayPeriod={globalDataDisplayPeriod}
                 onEditMonth={(monthStr) => {
                   setEditingMonth(monthStr);
                   selectMonthContext(monthStr);
@@ -2485,7 +2595,20 @@ export default function App() {
 
         {/* --- VIEW 4: SITE COMPARISON (desktop, read-only) --- */}
         {currentView === "comparison" && isDesktopApp && excelProvider && facilities.length > 0 && (
-          <FacilityComparison facilities={facilities} provider={excelProvider} lang={lang} />
+          <FacilityComparison facilities={facilities} provider={excelProvider} lang={lang} displayPeriod={globalDataDisplayPeriod} />
+        )}
+
+        {currentView === "reports" && (
+          <ReportingCenter
+            facility={activeFacility?.name ?? "Facility"}
+            availableMonths={visibleReportLogs.map(log => log.month).sort()}
+            previewHtml={reportPreviewHtml}
+            previewStatus={reportPreviewStatus}
+            previewError={reportPreviewError}
+            onPreview={loadReportPreview}
+            onGenerate={generateReportingRequest}
+            onReveal={path => { if (desktopBridge) void desktopBridge.shell.showItemInFolder(path); }}
+          />
         )}
 
         {/* --- VIEW 5: SETTINGS & INTEGRITY CENTER (desktop) --- */}
@@ -2512,6 +2635,7 @@ export default function App() {
                 workbook={workbook}
                 lang={lang}
                 isBusy={isWorkbookBusy}
+                displayPeriod={globalDataDisplayPeriod}
                 onValidate={() => {
                   if (workbook.path) void openWorkbook(workbook.path);
                 }}
@@ -2917,22 +3041,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* --- EXPORT CENTER (RC6) --- */}
-      <ExportCenterModal
-        open={exportCenterOpen}
-        lang={lang}
-        baseName={exportBaseName}
-        onClose={() => setExportCenterOpen(false)}
-        exportProgress={exportProgress}
-        onCancelExport={() => {
-          if (exportRequestId && desktopBridge) void desktopBridge.exportCenter.cancel(exportRequestId);
-        }}
-        onExport={async kind => {
-          setExportCenterOpen(false);
-          await waitForCleanExportCapture();
-          await runExport(kind);
-        }}
-      />
 
       {/* --- UNSAVED CHANGES PROTECTION (RC2): Save / Discard / Cancel --- */}
       <AnimatePresence>

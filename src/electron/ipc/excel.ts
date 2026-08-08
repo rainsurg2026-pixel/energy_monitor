@@ -131,7 +131,11 @@ function sanitizeDevices(raw: unknown): DeviceLists | undefined {
   return { upsIds, dcIds, ...(airFields && airFields.length > 0 ? { airFields } : {}) };
 }
 
-const RACK_FREE_TEXT_FIELDS = ["cabinetSize", "detail", "deviceType"] as const;
+function sanitizeSaveScope(raw: unknown): "all" | "air" {
+  return raw === "air" ? "air" : "all";
+}
+
+const RACK_FREE_TEXT_FIELDS = ["cabinetSize", "detail", "deviceType", "remarks"] as const;
 
 /** A field value of `null`/`undefined` means "no edit to this field"; an
  *  explicit `{ expected, next }` object (next may itself be null - clearing
@@ -153,7 +157,7 @@ function sanitizeOptionalStringEdit(raw: unknown, label: string): { expected: st
 
 /** Trust boundary for staged Rack Capacity field edits: Status may only
  *  ever be one of the four canonical values (never an arbitrary UI-supplied
- *  string); Cabinet Size/Detail/Device Type are free text (no controlled
+ *  string); Cabinet Size/Detail/Device Type/Remarks are free text (no controlled
  *  value list exists in the real workbook data) but still length-capped.
  *  Every change carries the row identity + each edited field's
  *  previously-read value, which the writer re-verifies server-side before
@@ -188,10 +192,10 @@ function sanitizeRackFieldChanges(raw: unknown): RackFieldChange[] {
       fieldEdits[field] = sanitizeOptionalStringEdit(o[field], `changes[${index}].${field}`);
     }
 
-    if (!status && !fieldEdits.cabinetSize && !fieldEdits.detail && !fieldEdits.deviceType) {
+    if (!status && !fieldEdits.cabinetSize && !fieldEdits.detail && !fieldEdits.deviceType && !fieldEdits.remarks) {
       throw new PayloadError(`changes[${index}] must edit at least one field.`);
     }
-    return { rowNumber, rackId, status, cabinetSize: fieldEdits.cabinetSize, detail: fieldEdits.detail, deviceType: fieldEdits.deviceType };
+    return { rowNumber, rackId, status, cabinetSize: fieldEdits.cabinetSize, detail: fieldEdits.detail, deviceType: fieldEdits.deviceType, remarks: fieldEdits.remarks };
   });
 }
 
@@ -267,7 +271,7 @@ export interface RackCapacitySavePayload {
     rowNumber: number;
     rackId: string;
     applied: boolean;
-    conflictField?: "status" | "cabinetSize" | "detail" | "deviceType";
+    conflictField?: "status" | "cabinetSize" | "detail" | "deviceType" | "remarks";
     conflictActualValue?: string | null;
     conflictReason?: "row_not_found" | "rack_id_mismatch" | "field_mismatch";
   }>;
@@ -566,7 +570,8 @@ export function registerExcelIpc(): void {
         backupDir: resolveBackupDir(config),
         backupKeep: config.backupKeep,
         devices: sanitizeDevices(body.devices),
-        upsGroupHistory: sanitizeUpsGroupHistoryOptions(body.upsGroupHistory)
+        upsGroupHistory: sanitizeUpsGroupHistoryOptions(body.upsGroupHistory),
+        scope: sanitizeSaveScope(body.scope)
       });
 	      log.info(`workbook saved: ${filePath} (${result.months} months, backup: ${result.backupPath ?? "none"})`);
 	      return { ok: true, path: result.path, backupPath: result.backupPath, savedAt: new Date().toISOString() };

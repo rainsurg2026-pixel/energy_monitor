@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 import {
   Archive,
+  Calendar,
   Clock,
   FileSpreadsheet,
   FolderOpen,
@@ -267,6 +268,32 @@ export default function SettingsPanel({
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* GLOBAL DATA DISPLAY PERIOD */}
+      <div className={card} data-testid="global-data-display-period-settings">
+        <h3 className={heading}>
+          <Calendar className="w-4 h-4 text-amber-400" />
+          <span>Global Data Display Period</span>
+        </h3>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+          <div className="space-y-1.5">
+            <p className={label}>{th ? "ช่วงข้อมูลที่แสดงทั่วทั้งระบบ" : "Visible year / data range"}</p>
+            <select
+              data-testid="global-data-display-period"
+              value={appConfig.globalDataDisplayPeriod}
+              onChange={e => update({ globalDataDisplayPeriod: e.target.value })}
+              className={select + " w-full max-w-xs"}
+            >
+              <option value="2026">2026</option>
+            </select>
+          </div>
+          <p className="text-[11px] text-slate-400 leading-relaxed max-w-lg">
+            {th
+              ? "ใช้กำหนดปีที่แสดงใน Dashboard, ประวัติ, การเปรียบเทียบ และรายงาน โดยไม่ลบหรือแก้ไขข้อมูลเก่าใน Workbook"
+              : "Controls the visible reporting year across dashboards, history, comparison and exports. It never deletes or changes older workbook records."}
+          </p>
         </div>
       </div>
 

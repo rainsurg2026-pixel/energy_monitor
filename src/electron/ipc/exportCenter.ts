@@ -24,6 +24,7 @@ import { calculateEnergyCostForMonth } from "../../utils/energyCost";
 import type { DashboardUpsTopology } from "../../utils/engineeringDashboard";
 import { loadFacilities } from "../facilities";
 import type { DeviceLists } from "../../excel/SheetMapper";
+import { buildReportHtml } from "../../reports/pdf/reportHtml";
 
 type AllReportProgressStage = "preparing" | "validating" | "rendering" | "building" | "saving" | "completed";
 
@@ -59,7 +60,11 @@ async function askSavePath(
   return result.canceled || !result.filePath ? null : result.filePath;
 }
 
-type Result = { ok: true; path: string } | { ok: true; canceled: true } | { ok: false; code: string; message: string };
+type Result =
+  | { ok: true; path: string }
+  | { ok: true; canceled: true }
+  | { ok: true; html: string }
+  | { ok: false; code: string; message: string };
 
 const allReportJobs = new Map<string, { canceled: boolean }>();
 
@@ -309,6 +314,21 @@ function buildExportManifest(meta: { facility: string; base: string; csvNames: s
 // ---------------------------------------------------------------------------
 
 export function registerExportIpc(): void {
+  ipcMain.handle("export:all-report:preview", (_event, raw: unknown) =>
+    wrap("all-report-preview", async () => {
+      const body = (raw ?? {}) as Record<string, unknown>;
+      const workbookPath = requireText(body, "workbookPath");
+      const facility = requireText(body, "facility", "Facility").slice(0, 100);
+      const selectedMonth = typeof body.selectedMonth === "string" && body.selectedMonth.trim() !== "" ? body.selectedMonth.trim() : null;
+      const appVersion = requireText(body, "appVersion", "Unknown").slice(0, 80);
+      const { buildReportData } = await import("../../reports/reportDataBuilder");
+      const siblingFacility = await resolveSiblingFacility(workbookPath);
+      const data = await buildReportData({ workbookPath, facility, dashboard: body.dashboard as DashboardUpsTopology | undefined, selectedMonth, appVersion, siblingFacility, imagesRootDir: getRackUnitImagesRootDir() });
+      const html = buildReportHtml(data);
+      return { ok: true, html };
+    })
+  );
+
   ipcMain.handle("export:all-report", (event, raw: unknown) =>
     wrap("all-report", async () => {
       const body = (raw ?? {}) as Record<string, unknown>;

@@ -25,7 +25,7 @@ const desktopBridge = {
     open: (path: string | null, devices?: unknown, upsGroupContext?: unknown) => invoke("excel:open", path, devices, upsGroupContext),
     openMultiple: (requests: unknown[]) => invoke("excel:openMultiple", requests),
     reload: (path: string, devices?: unknown, upsGroupContext?: unknown) => invoke("excel:reload", path, devices, upsGroupContext),
-    save: (payload: { path: string; logs: unknown[]; devices?: unknown }) => invoke("excel:save", payload),
+    save: (payload: { path: string; logs: unknown[]; devices?: unknown; upsGroupHistory?: unknown; scope?: "all" | "air" }) => invoke("excel:save", payload),
     saveRackCapacity: (payload: { path: string; changes: unknown[]; facilityId?: string | null; snapshotMonth?: string | null; forceSnapshot?: boolean }) => invoke("excel:saveRackCapacity", payload),
     saveRackUnitCapacity: (payload: { path: string; input: { month: string; totalU: number; usedU: number }; forceSnapshot?: boolean }) => invoke("excel:saveRackUnitCapacity", payload),
     saveAs: (payload: { sourcePath: string; logs: unknown[]; devices?: unknown }) => invoke("excel:saveAs", payload),
@@ -69,6 +69,13 @@ const desktopBridge = {
       selectedMonth: string | null;
       appVersion: string;
     }) => invoke("export:all-report", payload),
+    preview: (payload: {
+      workbookPath: string;
+      facility: string;
+      dashboard?: unknown;
+      selectedMonth: string | null;
+      appVersion: string;
+    }) => invoke("export:all-report:preview", payload),
     cancel: (requestId: string) => invoke("export:all-report:cancel", requestId),
     zip: (payload: {
       defaultName: string;

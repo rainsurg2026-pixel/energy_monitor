@@ -1,12 +1,12 @@
-import React, { useState, useMemo } from "react";
+import React, { useMemo } from "react";
 import { MonthlyLog, UpsRecord, AirRecord, DcRecord } from "../types";
+import { useReport } from "../ReportContext";
 import type { DashboardUpsMappingReport, RackCapacitySummary } from "../reports/reportTypes";
 import type { FacilityEntry } from "../desktop";
 import { formatMonthYear } from "../utils";
 import { calculateEnergyCostForMonth, getAirValue } from "../utils/energyCost";
 import { buildEngineeringDashboardSnapshot, getDaysInMonth, getPreviousMonth } from "../utils/engineeringDashboard";
 import { formatNumber2 } from "../utils/numberFormatBridge";
-import TrendLineChart from "./TrendLineChart";
 import { 
   TrendingUp, 
   Zap, 
@@ -35,16 +35,96 @@ interface DashboardSummaryProps {
   facility?: FacilityEntry | null;
 }
 
-type TrendPeriod = "last3" | "last6" | "last12";
-
 function getUpsLoadTone(loadPct: number | null): { bar: string; text: string } {
   if (!Number.isFinite(loadPct) || loadPct < 50) return { bar: "bg-emerald-500", text: "text-emerald-500" };
   if (loadPct < 80) return { bar: "bg-amber-400", text: "text-amber-500" };
   return { bar: "bg-rose-500", text: "text-rose-500" };
 }
 
+interface DashboardComparisonReference {
+  label: string;
+  buildingEnergyKwh: number | null;
+  buildingCostThb: number | null;
+  floorEnergyKwh: number | null;
+  floorCostThb: number | null;
+  averageRateThbPerKwh: number | null;
+  floorSharePercent: number | null;
+}
+
+function buildDashboardComparisonReference(
+  logs: MonthlyLog[],
+  selectedMonth: string,
+  mode: "none" | "prev_month" | "prev_year" | "rolling_avg" | "best_worst"
+): DashboardComparisonReference | null {
+  if (mode === "none") return null;
+
+  const metricFor = (month: string): DashboardComparisonReference | null => {
+    const result = calculateEnergyCostForMonth(logs, month);
+    if (!logs.some(log => log.month === month)) return null;
+    return {
+      label: month,
+      buildingEnergyKwh: result.buildingEnergyKwh,
+      buildingCostThb: result.buildingElectricityCostThb,
+      floorEnergyKwh: result.floorEnergyKwh,
+      floorCostThb: result.floorElectricityCostThb,
+      averageRateThbPerKwh: result.averageElectricityRateThbPerKwh,
+      floorSharePercent: result.energySharePercent,
+    };
+  };
+
+  const average = (rows: DashboardComparisonReference[], key: keyof Omit<DashboardComparisonReference, "label">): number | null => {
+    const values = rows.map(row => row[key]).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+    return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  };
+
+  if (mode === "prev_month") {
+    const previousMonth = getPreviousMonth(selectedMonth);
+    const previous = metricFor(previousMonth);
+    return previous ? { ...previous, label: `Previous Month · ${previousMonth}` } : null;
+  }
+
+  if (mode === "prev_year") {
+    const [year, month] = selectedMonth.split("-");
+    const previousYearMonth = `${Number(year) - 1}-${month}`;
+    const previous = metricFor(previousYearMonth);
+    return previous ? { ...previous, label: `Previous Year · ${previousYearMonth}` } : null;
+  }
+
+  const chronological = [...logs].sort((a, b) => a.month.localeCompare(b.month));
+  if (mode === "rolling_avg") {
+    const previousRows = chronological
+      .filter(log => log.month < selectedMonth)
+      .slice(-3)
+      .map(log => metricFor(log.month))
+      .filter((row): row is DashboardComparisonReference => row !== null);
+    if (previousRows.length === 0) return null;
+    return {
+      label: `Rolling Average · ${previousRows.length} months`,
+      buildingEnergyKwh: average(previousRows, "buildingEnergyKwh"),
+      buildingCostThb: average(previousRows, "buildingCostThb"),
+      floorEnergyKwh: average(previousRows, "floorEnergyKwh"),
+      floorCostThb: average(previousRows, "floorCostThb"),
+      averageRateThbPerKwh: average(previousRows, "averageRateThbPerKwh"),
+      floorSharePercent: average(previousRows, "floorSharePercent"),
+    };
+  }
+
+  const historyRows = chronological
+    .map(log => metricFor(log.month))
+    .filter((row): row is DashboardComparisonReference => row !== null && row.floorEnergyKwh !== null);
+  if (historyRows.length === 0) return null;
+  const best = historyRows.reduce((row, candidate) => (candidate.floorEnergyKwh! < row.floorEnergyKwh! ? candidate : row));
+  const worst = historyRows.reduce((row, candidate) => (candidate.floorEnergyKwh! > row.floorEnergyKwh! ? candidate : row));
+  return { ...worst, label: `Best / Worst · ${best.label} / ${worst.label}` };
+}
+
 export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleConnected = false, googleUserEmail = null, rackCapacity = null, upsMapping = null, facility = null }: DashboardSummaryProps) {
-  const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>("last12");
+  const {
+    selectedTrend,
+    selectedCategory,
+    selectedUPSGroup,
+    compareMode,
+  } = useReport();
   // RC3: sections are always expanded (no hidden accordion).
 
   const dict = {
@@ -222,61 +302,6 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
     };
   }, [logs, selectedMonth, upsMapping, facility]);
 
-  // Historical trend data is calculated once per month and reused by each
-  // parameter chart. Null values remain null so incomplete records are not
-  // silently rendered as zero.
-  const trendDataByMetric = useMemo(() => {
-    // Sort chronological
-    const sortedLogs = [...logs].sort((a, b) => a.month.localeCompare(b.month));
-
-    // Calculate full metrics for each month
-    const processedMonths = sortedLogs.map((log) => {
-      const energyCost = calculateEnergyCostForMonth(logs, log.month);
-      const upsKwh = energyCost.upsEnergyKwh;
-      const airKwh = energyCost.airEnergyKwh;
-      const dcKwh = energyCost.dcEnergyKwh;
-      const totalEnergy = energyCost.floorEnergyKwh;
-      const bEnergy = energyCost.buildingEnergyKwh;
-      const bCost = energyCost.buildingElectricityCostThb;
-      const rate = energyCost.averageElectricityRateThbPerKwh;
-      const floorCost = energyCost.floorElectricityCostThb;
-
-      // Parse quarter & year
-      const [yearStr, monthStr] = log.month.split("-");
-      const year = parseInt(yearStr, 10);
-      const monthNum = parseInt(monthStr, 10);
-      const quarter = Math.ceil(monthNum / 3); // 1, 2, 3, 4
-
-      return {
-        monthStr: log.month,
-        monthLabel: formatMonthYear(log.month),
-        year,
-        quarter: `${year}-Q${quarter}`,
-        upsKwh,
-        airKwh,
-        dcKwh,
-        totalEnergy,
-        bEnergy,
-        bCost,
-        rate,
-        floorCost
-      };
-    });
-
-    // Rolling windows only (RC5): the last 3/6/12 months, monthly points.
-    const windowSize = trendPeriod === "last3" ? 3 : trendPeriod === "last6" ? 6 : 12;
-    const window = processedMonths.slice(-windowSize).map(d => ({
-      label: d.monthLabel,
-      total_energy: d.totalEnergy,
-      ups_energy: d.upsKwh,
-      air_energy: d.airKwh,
-      dc_energy: d.dcKwh,
-      floor_cost: d.floorCost,
-      electricity_rate: d.rate
-    }));
-    return window;
-  }, [logs, trendPeriod]);
-
   if (!activeLog || !summaryCalculations) {
     return (
       <div className="bg-slate-900 border border-slate-800 p-12 rounded-2xl text-center space-y-4 max-w-4xl mx-auto">
@@ -287,9 +312,43 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
     );
   }
 
-  const calcs = summaryCalculations;
+  const baseCalcs = summaryCalculations;
+
+  // The UPS Group selector accepts both configured group names and individual
+  // UPS IDs. Resolve an individual ID back to its configured group so every
+  // related summary table, total, and load bar uses the same filter.
+  const normalizeUpsId = (value: string) => value.replace(/\s+/g, "").toLowerCase();
+  const selectedUpsConfig = (facility?.profile.dashboard.upsGroups ?? []).find(group =>
+    group.name === selectedUPSGroup || group.ids.some(id => normalizeUpsId(id) === normalizeUpsId(selectedUPSGroup))
+  );
+  const selectedGroupName = selectedUpsConfig?.name ?? selectedUPSGroup;
+  const matchesGroup = (name: string) => selectedUPSGroup === "All" || name === selectedGroupName;
+  const visibleComputedUpsGroups = baseCalcs.computedUpsGroups.filter(group => matchesGroup(group.name));
+  const visibleUpsOverallGroups = baseCalcs.upsOverallGroups.filter(group => matchesGroup(group.name));
+  const visibleUpsDetails = baseCalcs.upsDetailsMap.filter(row => {
+    if (selectedUPSGroup === "All") return true;
+    if (selectedUpsConfig) {
+      return selectedUpsConfig.ids.some(id => normalizeUpsId(id) === normalizeUpsId(row.upsId));
+    }
+    return normalizeUpsId(row.upsId) === normalizeUpsId(selectedUPSGroup);
+  });
+  const calcs = {
+    ...baseCalcs,
+    computedUpsGroups: visibleComputedUpsGroups,
+    upsOverallGroups: visibleUpsOverallGroups,
+    upsDetailsMap: visibleUpsDetails,
+    totalUpsKw: visibleComputedUpsGroups.reduce((sum, group) => sum + group.totalKw, 0),
+    totalUpsKva: visibleComputedUpsGroups.reduce((sum, group) => sum + group.totalKva, 0),
+    totalUpsEnergyKwh: visibleComputedUpsGroups.reduce((sum, group) => sum + group.monthlyEnergyKwh, 0),
+  };
   const showAcPowerPanel = calcs.upsDetailsMap.some(row => row.acPowerPanel !== "—" && row.acPowerPanel !== "-");
   const hasOverallUps = calcs.upsOverallGroups.length > 0;
+  const showUpsSection = selectedCategory === "All" || selectedCategory === "UPS";
+  const showAirSection = selectedCategory === "All" || selectedCategory === "Air Conditioning";
+  const showDcSection = selectedCategory === "All" || selectedCategory === "DC";
+  const showOverallSection = selectedCategory === "All" || selectedCategory === "Energy Cost" || selectedCategory === "PUE" || selectedCategory === "Carbon";
+
+  const comparisonReference = buildDashboardComparisonReference(logs, selectedMonth, compareMode);
 
   return (
     <div className="space-y-10">
@@ -319,6 +378,9 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
           </h2>
           <p className="text-xs text-slate-400 mt-1">
             {t.subtitle}
+          </p>
+          <p data-testid="dashboard-filter-state" className="text-[10px] text-slate-500 mt-2 font-mono">
+            Trend: {selectedTrend} · Category: {selectedCategory} · UPS Group: {selectedUPSGroup} · Compare: {compareMode}
           </p>
         </div>
 
@@ -397,6 +459,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
       <div className="space-y-4">
         
         {/* SECTION 1: UPS LOAD STATUS */}
+        {showUpsSection && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
             type="button"
@@ -568,8 +631,10 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
             </div>
           )}
         </div>
+        )}
 
         {/* SECTION 2: AIR CONDITIONING */}
+        {showAirSection && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
             type="button"
@@ -630,8 +695,10 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
             </div>
           )}
         </div>
+        )}
 
         {/* SECTION 3: DC POWER PANELS */}
+        {showDcSection && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
             type="button"
@@ -689,8 +756,10 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
             </div>
           )}
         </div>
+        )}
 
         {/* SECTION 4: OVERALL ENERGY & COST */}
+        {showOverallSection && (
         <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
             type="button"
@@ -728,89 +797,23 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                       <td className="py-4 px-3 text-right font-mono text-amber-400 font-medium">{formatNumber2(calcs.avgElectricityRate)}</td>
                       <td className="py-4 px-3 text-right font-mono text-teal-400 font-bold">{calcs.floorSharePercent === null ? "—" : `${formatNumber2(calcs.floorSharePercent)}%`}</td>
                     </tr>
+                    {comparisonReference && (
+                      <tr data-testid="dashboard-comparison-row" className="border-t border-slate-800 bg-slate-900/30 text-slate-400">
+                        <td className="py-4 px-3 font-semibold text-amber-300">{comparisonReference.label}</td>
+                        <td className="py-4 px-3 text-right font-mono">{formatNumber2(comparisonReference.buildingEnergyKwh)}</td>
+                        <td className="py-4 px-3 text-right font-mono">{comparisonReference.buildingCostThb === null ? "—" : `฿${formatNumber2(comparisonReference.buildingCostThb)}`}</td>
+                        <td className="py-4 px-3 text-right font-mono">{formatNumber2(comparisonReference.floorEnergyKwh)}</td>
+                        <td className="py-4 px-3 text-right font-mono">{comparisonReference.floorCostThb === null ? "—" : `฿${formatNumber2(comparisonReference.floorCostThb)}`}</td>
+                        <td className="py-4 px-3 text-right font-mono">{formatNumber2(comparisonReference.averageRateThbPerKwh)}</td>
+                        <td className="py-4 px-3 text-right font-mono">{comparisonReference.floorSharePercent === null ? "—" : `${formatNumber2(comparisonReference.floorSharePercent)}%`}</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
         </div>
-
-      </div>
-
-      {/* TREND INTERACTIVE SECTION */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-sm space-y-6">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-slate-800">
-          <div>
-            <h3 className="font-display font-semibold text-slate-100 text-sm flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-emerald-400" />
-              <span>{t.trendTitle}</span>
-            </h3>
-            <p className="text-xs text-slate-400 mt-1">
-              {t.trendDesc}
-            </p>
-          </div>
-
-          {/* Toggle buttons for period */}
-          <div className="flex p-1 bg-slate-950 rounded-xl border border-slate-850">
-            {(
-              [
-                { id: "last3", label: t.last3 },
-                { id: "last6", label: t.last6 },
-                { id: "last12", label: t.last12 }
-              ] as const
-            ).map((p) => (
-              <button
-                key={p.id}
-                onClick={() => setTrendPeriod(p.id)}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                  trendPeriod === p.id 
-                    ? "bg-indigo-600 text-white shadow"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* One trend-line chart per parameter. Values are labelled on every
-            valid month and null values remain gaps in the line. */}
-        {trendDataByMetric.length === 0 ? (
-          <div className="h-[220px] flex items-center justify-center text-xs text-slate-500 italic">
-            {lang === "th" ? "กรุณาบันทึกข้อมูลอย่างน้อยหนึ่งเดือนเพื่อแสดงกราฟแนวโน้ม" : "No logs available to generate trend charts."}
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-6">
-            {([
-              { id: "total_energy", label: t.total_energy, unit: "kWh", color: "#6366f1" },
-              { id: "ups_energy", label: t.ups_energy, unit: "kWh", color: "#3b82f6" },
-              { id: "air_energy", label: t.air_energy, unit: "kWh", color: "#14b8a6" },
-              { id: "dc_energy", label: t.dc_energy, unit: "kWh", color: "#f59e0b" },
-              { id: "floor_cost", label: t.floor_cost, unit: "THB", color: "#10b981" },
-              { id: "electricity_rate", label: t.electricity_rate, unit: "THB/kWh", color: "#f97316" }
-            ] as const).map(parameter => (
-              <section key={parameter.id} className="trend-chart-card w-full bg-slate-950 border border-slate-850 p-6 rounded-2xl space-y-4 min-w-0 shadow-sm">
-                <div className="flex justify-between items-center gap-3">
-                  <div>
-                    <h4 className="text-sm uppercase tracking-wide">
-                      {parameter.label} Trend ({parameter.unit})
-                    </h4>
-                    <p className="text-xs mt-1 text-slate-400">
-                      Monthly {parameter.unit === "kWh" ? "energy utilization" : "cost and rate"} pattern.
-                    </p>
-                  </div>
-                  <span className="text-sm text-slate-400">{trendDataByMetric.length} months</span>
-                </div>
-                <TrendLineChart
-                  labels={trendDataByMetric.map(point => point.label)}
-                  unit={parameter.unit}
-                  height={320}
-                  series={[{ name: parameter.label, color: parameter.color, values: trendDataByMetric.map(point => point[parameter.id]) }]}
-                />
-              </section>
-            ))}
-          </div>
         )}
 
       </div>

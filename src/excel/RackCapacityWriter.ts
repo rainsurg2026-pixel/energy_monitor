@@ -28,21 +28,21 @@ import { locateSheetXmlPathByName } from "./ExcelZipUtils";
 export const RACK_CAPACITY_SHEET_NAME = "Rack Capacity";
 export const RACK_CAPACITY_TABLE_NAME = "Table7";
 
-export type RackEditableField = "status" | "cabinetSize" | "detail" | "deviceType";
+export type RackEditableField = "status" | "cabinetSize" | "detail" | "deviceType" | "remarks";
 
 /** One field's staged edit: what the UI believes is on disk right now
  *  (`expected`, for the optimistic-concurrency check) and what to write
  *  (`next`). Status's `next` is always one of the four canonical values
  *  (enforced at the IPC boundary); the other three are free text (validated
  *  real Table7 data - Cabinet Size is a "WxD cm" dimension string, Detail/
- *  Device Type are free-form, including bare numeric codes in real data -
- *  no controlled value list exists for any of them). */
+ *  Device Type and Remarks are free-form, including bare numeric codes in
+ *  real data - no controlled value list exists for any of them). */
 export interface RackFieldEdit {
   expected: string | null;
   next: string | null;
 }
 
-/** One rack's staged modification - any subset of its four editable fields.
+/** One rack's staged modification - any subset of its five editable fields.
  *  Multiple field edits on the same rack are ONE change, applied atomically
  *  per-row (matching the Editor's "one staged rack modification" UI model). */
 export interface RackFieldChange {
@@ -53,6 +53,7 @@ export interface RackFieldChange {
   cabinetSize?: RackFieldEdit;
   detail?: RackFieldEdit;
   deviceType?: RackFieldEdit;
+  remarks?: RackFieldEdit;
 }
 
 export interface RackFieldChangeOutcome {
@@ -308,7 +309,7 @@ export async function applyRackCapacityFieldChanges(
 
   const outcomes: RackFieldChangeOutcome[] = [];
   let changedCount = 0;
-  const FIELDS: RackEditableField[] = ["status", "cabinetSize", "detail", "deviceType"];
+  const FIELDS: RackEditableField[] = ["status", "cabinetSize", "detail", "deviceType", "remarks"];
 
   for (const change of changes) {
     if (change.rowNumber < table.firstDataRow || change.rowNumber > table.lastDataRow) {

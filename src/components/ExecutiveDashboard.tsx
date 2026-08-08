@@ -1,19 +1,17 @@
-import React, { useMemo, useRef, useState, useEffect } from "react";
+import React, { useMemo } from "react";
 import { useReport } from "../ReportContext";
 import { MonthlyLog } from "../types";
 import {
   computeAllMetrics,
   ComputedMonthMetrics
 } from "../utils/analytics";
-import { formatMonthYear } from "../utils";
-import { normalizedMonth } from "../utils/energyCost";
-import { formatNumber2, formatCompactNumber } from "../utils/numberFormatBridge";
+import { formatNumber2 } from "../utils/numberFormatBridge";
 import {
   Zap,
   Coins,
   Activity
 } from "lucide-react";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, LabelList, PieChart, Pie, Cell } from "recharts";
+import EngineeringTrendCharts from "./EngineeringTrendCharts";
 
 interface ExecutiveDashboardProps {
   logs: MonthlyLog[];
@@ -21,7 +19,7 @@ interface ExecutiveDashboardProps {
 }
 
 export default function ExecutiveDashboard({ logs, lang }: ExecutiveDashboardProps) {
-  const { selectedYear, selectedPeriod, selectedTrend } = useReport();
+  const { selectedYear, selectedPeriod } = useReport();
 
   // Compute metrics for all months
   const allMonthlyMetrics = useMemo(() => {
@@ -46,67 +44,10 @@ export default function ExecutiveDashboard({ logs, lang }: ExecutiveDashboardPro
     }
   }, [allMonthlyMetrics, selectedYear, selectedPeriod]);
 
-  // The trend selector controls the chart window independently from the
-  // selected KPI period. When a specific reporting month is selected, anchor
-  // the window on that month; otherwise use the latest month in the selected
-  // year (or the latest available month when no year is selected).
-  const trendMetrics = useMemo(() => {
-    const windowSize = selectedTrend === "Last 6 Months" ? 6 : selectedTrend === "Last 12 Months" ? 12 : 3;
-    if (allMonthlyMetrics.length === 0) return [];
-
-    const normalizedSelectedMonth = /^(0[1-9]|1[0-2])$/.test(selectedPeriod)
-      ? `${selectedYear}-${selectedPeriod}`
-      : null;
-    const selectedMonthIndex = normalizedSelectedMonth
-      ? allMonthlyMetrics.findIndex(metric => normalizedMonth(metric.month) === normalizedSelectedMonth)
-      : -1;
-
-    const selectedYearMetrics = selectedYear === "All"
-      ? allMonthlyMetrics
-      : allMonthlyMetrics.filter(metric => normalizedMonth(metric.month)?.startsWith(`${selectedYear}-`));
-    const anchorIndex = selectedMonthIndex >= 0
-      ? selectedMonthIndex
-      : selectedYearMetrics.length > 0
-        ? allMonthlyMetrics.indexOf(selectedYearMetrics[selectedYearMetrics.length - 1])
-        : allMonthlyMetrics.length - 1;
-
-    return allMonthlyMetrics.slice(Math.max(0, anchorIndex - windowSize + 1), anchorIndex + 1);
-  }, [allMonthlyMetrics, selectedTrend, selectedYear, selectedPeriod]);
-
-  // The trend line uses a Recharts category axis (dataKey="month"). Recharts
-  // only derives its "gap" padding from the smallest numeric distance between
-  // points for type="number" axes (see recharts axisSelectors:
-  // selectSmallestDistanceBetweenValues returns undefined when
-  // axis.type !== "number"), so the string padding="gap" resolves to 0 on a
-  // category axis and the first/last points sit on the chart edges. Recharts
-  // does honour an OBJECT padding for category axes, so we inset both ends by
-  // one category slot — matching the hand-rolled TrendLineChart's
-  // (index + 1) / (count + 1) spacing — by measuring the plot width and
-  // deriving the pixel padding from the category count.
-  const trendChartRef = useRef<HTMLDivElement>(null);
-  const [trendChartWidth, setTrendChartWidth] = useState(0);
-  useEffect(() => {
-    const el = trendChartRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(entries => {
-      const width = entries[0]?.contentRect.width ?? el.clientWidth;
-      setTrendChartWidth(prev => (Math.abs(prev - width) > 0.5 ? width : prev));
-    });
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
-
-  const trendCategoryPadding = useMemo(() => {
-    const count = trendMetrics.length;
-    if (count <= 1 || trendChartWidth <= 0) return 0;
     // Approximate horizontal plot width available to the point scale: measured
     // wrapper width minus the Y-axis allowance. One category slot is
     // plotWidth / (count + 1), which places points at (index + 1) / (count + 1)
     // — one blank slot before the first month and after the last.
-    const Y_AXIS_ALLOWANCE = 44;
-    const plotWidth = Math.max(0, trendChartWidth - Y_AXIS_ALLOWANCE);
-    return Math.round(plotWidth / (count + 1));
-  }, [trendMetrics.length, trendChartWidth]);
 
   // Aggregate active period stats
   const aggregateStats = useMemo(() => {
@@ -123,17 +64,9 @@ export default function ExecutiveDashboard({ logs, lang }: ExecutiveDashboardPro
     const totalBuildingEnergy = sumMetric(m => m.buildingEnergyKwh);
     const totalBuildingCost = sumMetric(m => m.buildingCostThb);
 
-    // Sum component energies for breakdown
-    const upsSum = sumMetric(m => m.upsEnergyKwh);
-    const airSum = sumMetric(m => m.airEnergyKwh);
-    const dcSum = sumMetric(m => m.dcEnergyKwh);
-
     return {
       totalEnergy,
       totalCost,
-      upsSum,
-      airSum,
-      dcSum,
       totalBuildingEnergy,
       totalBuildingCost,
       countMonths: activePeriodMetrics.length
@@ -144,13 +77,11 @@ export default function ExecutiveDashboard({ logs, lang }: ExecutiveDashboardPro
   const dict = {
     th: {
       empty: "ไม่มีข้อมูลสำหรับช่วงเวลานี้",
-      breakdown: "สัดส่วนพลังงานรายหมวดหมู่",
-      monthlyTrend: "แนวโน้มการใช้พลังงานรายเดือน (kWh)"
+
     },
     en: {
       empty: "No logs found for selected period",
-      breakdown: "Energy Subsystem Breakdown",
-      monthlyTrend: "Monthly Energy Consumption Trend (kWh)"
+
     }
   };
 
@@ -164,15 +95,6 @@ export default function ExecutiveDashboard({ logs, lang }: ExecutiveDashboardPro
       </div>
     );
   }
-
-  // Subsystem Breakdown data
-  const breakdownData = [
-    { name: "UPS Load", value: aggregateStats.upsSum, color: "#6366f1" },
-    { name: "Air Conditioning", value: aggregateStats.airSum, color: "#14b8a6" },
-    { name: "DC Power", value: aggregateStats.dcSum, color: "#f59e0b" },
-  ].filter(d => d.value > 0);
-
-  const totalBreakdownVal = breakdownData.reduce((acc, d) => acc + d.value, 0);
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -216,97 +138,7 @@ export default function ExecutiveDashboard({ logs, lang }: ExecutiveDashboardPro
         </div>
       </div>
 
-      {/* BREAKDOWN & CHART ZONE */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* Subsystem Breakdown Chart */}
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl lg:col-span-4 flex flex-col justify-between">
-          <div>
-            <h3 className="font-display font-bold text-sm text-slate-200 uppercase tracking-wider">{t.breakdown}</h3>
-            <p className="text-[11px] text-slate-400 mt-1">Energy distribution across floor systems.</p>
-          </div>
-
-          <div className="h-44 my-4 flex items-center justify-center relative">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={breakdownData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={50}
-                  outerRadius={70}
-                  paddingAngle={4}
-                  dataKey="value"
-                >
-                  {breakdownData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="absolute flex flex-col items-center justify-center">
-              <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wide">Total</span>
-              <span className="text-base font-mono font-bold text-slate-100">
-                {formatNumber2(totalBreakdownVal / 1000)} MWh
-              </span>
-            </div>
-          </div>
-
-          <div className="space-y-2 border-t border-slate-850 pt-3">
-            {breakdownData.map((d, i) => (
-              <div key={d.name} className="flex items-center justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: d.color }}></span>
-                  <span className="text-slate-300 font-medium">{d.name}</span>
-                </div>
-                <div className="text-right font-mono text-slate-400">
-                  <strong className="text-slate-200">
-                    {formatNumber2(d.value)}
-                  </strong> kWh ({formatNumber2(totalBreakdownVal > 0 ? d.value / totalBreakdownVal * 100 : 0)}%)
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Monthly Trend Analytics */}
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl lg:col-span-8 flex flex-col justify-between">
-          <div>
-            <h3 className="font-display font-bold text-sm text-slate-200 uppercase tracking-wider">{t.monthlyTrend}</h3>
-            <p className="text-[11px] text-slate-400 mt-1">Monthly energy utilization pattern · {trendMetrics.length} reporting months</p>
-          </div>
-
-          <div className="h-64 mt-4 w-full" ref={trendChartRef}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trendMetrics} margin={{ top: 28, right: 10, left: -10, bottom: 0 }}>
-                <XAxis
-                  dataKey="month"
-                  padding={{ left: trendCategoryPadding, right: trendCategoryPadding }}
-                  tickFormatter={formatMonthYear}
-                  stroke="#475569"
-                  style={{ fontSize: 10, fontFamily: "monospace" }}
-                />
-                <YAxis
-                  stroke="#475569"
-                  tickFormatter={formatCompactNumber}
-                  style={{ fontSize: 10, fontFamily: "monospace" }}
-                  domain={[0, (dataMax: number) => Math.ceil(dataMax * 1.35)]}
-                />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: "#020617", borderColor: "#1e293b", borderRadius: 12 }}
-                  labelStyle={{ color: "#94a3b8", fontWeight: "bold" }}
-                  itemStyle={{ color: "#38bdf8" }}
-                  formatter={(value: any) => [`${formatNumber2(value)} kWh`, "Floor Energy"]}
-                />
-                <Line type="monotone" dataKey="totalEnergyKwh" stroke="#7c9cc8" strokeWidth={2.5} dot={{ r: 3 }} connectNulls={false}>
-                  <LabelList dataKey="totalEnergyKwh" position="top" formatter={(value: unknown) => typeof value === "number" ? formatNumber2(value) : "—"} />
-                </Line>
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-      </div>
+      <EngineeringTrendCharts logs={logs} lang={lang} />
     </div>
   );
 }

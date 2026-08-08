@@ -28,13 +28,14 @@ export interface RackFieldChangeRequest {
   cabinetSize?: RackFieldEditRequest;
   detail?: RackFieldEditRequest;
   deviceType?: RackFieldEditRequest;
+  remarks?: RackFieldEditRequest;
 }
 
 export interface RackFieldChangeOutcome {
   rowNumber: number;
   rackId: string;
   applied: boolean;
-  conflictField?: "status" | "cabinetSize" | "detail" | "deviceType";
+  conflictField?: "status" | "cabinetSize" | "detail" | "deviceType" | "remarks";
   conflictActualValue?: string | null;
   conflictReason?: "row_not_found" | "rack_id_mismatch" | "field_mismatch";
 }
@@ -97,6 +98,9 @@ export interface SaveOutcome {
   path?: string;
 }
 
+/** Scope of a local workbook save. Save All remains the default full path. */
+export type WorkbookSaveScope = "all" | "air";
+
 /** Structured, user-presentable provider failure. */
 export class ProviderError extends Error {
   code: string;
@@ -134,7 +138,7 @@ export interface IDataProvider {
   /** Persist the complete data set (Excel = whole workbook rewrite).
    *  `currentMonth`, when known, scopes UPS Group History's incremental
    *  update to that one month instead of backfill-only-if-missing. */
-  saveAll(logs: MonthlyLog[], currentMonth?: string): Promise<SaveOutcome>;
+  saveAll(logs: MonthlyLog[], currentMonth?: string, scope?: WorkbookSaveScope): Promise<SaveOutcome>;
 
   /**
    * Persist a single month. Providers that only support full writes may

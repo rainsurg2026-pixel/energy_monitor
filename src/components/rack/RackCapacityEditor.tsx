@@ -15,7 +15,7 @@ interface StagedFieldEdit {
   next: string | null;
 }
 
-type TextEditableField = "cabinetSize" | "detail" | "deviceType";
+type TextEditableField = "cabinetSize" | "detail" | "deviceType" | "remarks";
 
 interface StagedChange {
   rackId: string;
@@ -24,10 +24,11 @@ interface StagedChange {
   cabinetSize?: StagedFieldEdit;
   detail?: StagedFieldEdit;
   deviceType?: StagedFieldEdit;
+  remarks?: StagedFieldEdit;
 }
 
 function hasAnyStagedField(change: StagedChange): boolean {
-  return Boolean(change.status || change.cabinetSize || change.detail || change.deviceType);
+  return Boolean(change.status || change.cabinetSize || change.detail || change.deviceType || change.remarks);
 }
 // duplicate imports removed
 
@@ -123,6 +124,7 @@ export default function RackCapacityEditor({ provider, onSaved }: { provider: ID
         if (change.cabinetSize) request.cabinetSize = change.cabinetSize;
         if (change.detail) request.detail = change.detail;
         if (change.deviceType) request.deviceType = change.deviceType;
+        if (change.remarks) request.remarks = change.remarks;
         return request;
       });
       const result = await provider.saveRackCapacity(changes, month);
@@ -187,7 +189,7 @@ export default function RackCapacityEditor({ provider, onSaved }: { provider: ID
         <div>
           <h3 className="text-base text-slate-100">{lang === "th" ? "แก้ไขความจุแร็ค" : "Rack Capacity Editor"}</h3>
           <p className="text-xs text-slate-400 mt-1">
-            {lang === "th" ? "ค้นหาแร็คและแก้ไขสถานะ ขนาดตู้ รายละเอียด หรือประเภทอุปกรณ์ การเปลี่ยนแปลงจะยังไม่บันทึกจนกว่าจะกดบันทึก" : "Find a rack and edit its status, cabinet size, detail, or device type. Changes are staged until you save."}
+            {lang === "th" ? "ค้นหาแร็คและแก้ไขสถานะ ขนาดตู้ รายละเอียด ประเภทอุปกรณ์ หรือหมายเหตุ การเปลี่ยนแปลงจะยังไม่บันทึกจนกว่าจะกดบันทึก" : "Find a rack and edit its status, cabinet size, detail, device type, or remarks. Changes are staged until you save."}
           </p>
         </div>
         {hasPendingWork && (
@@ -269,7 +271,7 @@ export default function RackCapacityEditor({ provider, onSaved }: { provider: ID
 
       <div className="rounded-xl border border-slate-800 overflow-hidden">
         <div className="overflow-x-auto max-h-[28rem]">
-          <table className="w-full min-w-[820px] text-xs border-collapse">
+          <table className="w-full min-w-[980px] text-xs border-collapse">
             <thead className="sticky top-0 bg-slate-950/95">
               <tr className="text-left">
                 <th className="py-3 px-4">{lang === "th" ? "โซน" : "Zone"}</th>
@@ -278,11 +280,12 @@ export default function RackCapacityEditor({ provider, onSaved }: { provider: ID
                 <th className="py-3 px-4">{lang === "th" ? "ขนาดตู้" : "Cabinet Size"}</th>
                 <th className="py-3 px-4">{lang === "th" ? "รายละเอียด" : "Detail"}</th>
                 <th className="py-3 px-4">{lang === "th" ? "ประเภทอุปกรณ์" : "Device Type"}</th>
+                <th className="py-3 px-4">{lang === "th" ? "หมายเหตุ" : "Remarks"}</th>
               </tr>
             </thead>
             <tbody>
               {filteredRecords.length === 0 && (
-                <tr><td colSpan={6} className="py-8 px-4 text-center text-slate-500">
+                <tr><td colSpan={7} className="py-8 px-4 text-center text-slate-500">
                   {lang === "th" ? "ไม่พบแร็คที่ตรงกับตัวกรอง" : "No racks match the current filters."}
                 </td></tr>
               )}
@@ -332,6 +335,15 @@ export default function RackCapacityEditor({ provider, onSaved }: { provider: ID
                         onChange={e => stageTextField(record, "deviceType", e.target.value)}
                         placeholder="—"
                         className={textFieldClass(Boolean(pending?.deviceType))}
+                      />
+                    </td>
+                    <td className="py-2 px-4">
+                      <input
+                        type="text"
+                        value={fieldDisplayValue(record, pending, "remarks")}
+                        onChange={e => stageTextField(record, "remarks", e.target.value)}
+                        placeholder="—"
+                        className={textFieldClass(Boolean(pending?.remarks))}
                       />
                     </td>
                   </tr>

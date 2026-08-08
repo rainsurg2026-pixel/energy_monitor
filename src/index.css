@@ -65,8 +65,8 @@ html:not(.theme-light) .recharts-wrapper text {
 html.theme-light table,
 html.theme-light table *,
 html.theme-light .recharts-wrapper text {
-  color: #000000 !important;
-  fill: #000000 !important;
+  color: var(--ui-text) !important;
+  fill: var(--ui-text) !important;
   font-weight: 400 !important;
 }
 
@@ -76,8 +76,8 @@ html:not(.theme-light) .recharts-default-tooltip {
 }
 
 html.theme-light .recharts-default-tooltip {
-  background: #ffffff !important;
-  border-color: #c7d0dc !important;
+  background: #f8f3eb !important;
+  border-color: #cbbba9 !important;
 }
 
 .recharts-default-tooltip,
@@ -143,21 +143,42 @@ html.theme-light .recharts-default-tooltip {
 }
 
 html.theme-light {
-  --ui-text: #000000;
+  /* Warm, low-saturation beige hierarchy: page -> cards -> controls. */
+  --ui-text: #2f2923;
   --color-indigo-400: #c8102e;
   --color-indigo-500: #e60012;
   --color-indigo-600: #d50018;
   --color-indigo-700: #a20f29;
-  --color-slate-950: #f3f5f8;
-  --color-slate-900: #ffffff;
-  --color-slate-800: #e4e8ef;
-  --color-slate-700: #c7d0dc;
-  --color-slate-600: #9aa9ba;
-  --color-slate-500: #66778c;
-  --color-slate-400: #43546a;
-  --color-slate-300: #2c3e55;
-  --color-slate-200: #172a44;
-  --color-slate-100: #0b1f3a;
-  --color-slate-50: #071426;
+  --color-slate-950: #eee5d9;
+  --color-slate-900: #f8f3eb;
+  --color-slate-800: #e5d9ca;
+  --color-slate-700: #d2c1ae;
+  --color-slate-600: #b19d88;
+  --color-slate-500: #766659;
+  --color-slate-400: #5d4f44;
+  --color-slate-300: #493d34;
+  --color-slate-200: #382f28;
+  --color-slate-100: #2d261f;
+  --color-slate-50: #211b17;
   color-scheme: light;
+}
+
+/* Explicit controls and legacy white surfaces need the same warm hierarchy
+ * when components opt out of the remapped slate palette. */
+html.theme-light input,
+html.theme-light select,
+html.theme-light textarea {
+  color: var(--ui-text);
+  background-color: #fffaf3;
+  border-color: #cdbba7;
+}
+
+html.theme-light option {
+  color: var(--ui-text);
+  background-color: #fffaf3;
+}
+
+html.theme-light .bg-white {
+  background-color: #fffaf3 !important;
+  color: var(--ui-text) !important;
 }

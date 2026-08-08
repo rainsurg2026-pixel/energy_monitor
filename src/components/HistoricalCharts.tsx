@@ -3,6 +3,7 @@ import type { MonthlyLog } from "../types";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 import { buildMonthlyChartData } from "../utils/chartData";
 import TrendLineChart from "./TrendLineChart";
+import { filterLogsForDisplay } from "../utils/displayPeriod";
 import { TrendingUp, Activity } from "lucide-react";
 
 interface HistoricalChartsProps {
@@ -10,16 +11,22 @@ interface HistoricalChartsProps {
   isGoogleConnected?: boolean;
   googleUserEmail?: string | null;
   lang?: "th" | "en";
+  displayPeriod?: string;
 }
 
 type ChartMetric = "energy" | "cost" | "subsystems";
 type TrendPeriod = 3 | 6 | 12;
 
-export default function HistoricalCharts({ logs, isGoogleConnected = false, googleUserEmail = null, lang = "th" }: HistoricalChartsProps) {
+export default function HistoricalCharts({ logs, isGoogleConnected = false, googleUserEmail = null, lang = "th", displayPeriod = "2026" }: HistoricalChartsProps) {
   const [activeMetric, setActiveMetric] = useState<ChartMetric>("energy");
   const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>(12);
+  // Build each metric from the full retained history so January calculations
+  // can still use a prior-year source row, then limit only the visible chart.
   const monthlyData = useMemo(() => buildMonthlyChartData(logs), [logs]);
-  const visibleData = useMemo(() => monthlyData.slice(-trendPeriod), [monthlyData, trendPeriod]);
+  const visibleData = useMemo(
+    () => monthlyData.filter(point => filterLogsForDisplay([{ month: point.month }], displayPeriod).length > 0).slice(-trendPeriod),
+    [monthlyData, trendPeriod, displayPeriod]
+  );
   const selectedValues = visibleData.map(point => activeMetric === "energy" ? point.buildingEnergy : activeMetric === "cost" ? point.buildingCost : point.upsEnergy);
   const total = selectedValues.reduce((sum, value) => value === null ? sum : sum + value, 0);
   const presentCount = selectedValues.filter((value): value is number => value !== null).length;

@@ -33,7 +33,7 @@ log.air = {
   }
 };
 
-const missing = listMissingFields(log).map(field => field.label);
+const missing = listMissingFields(log, devices.airFields).map(field => field.label);
 assert("decimal EB41A is valid", !missing.includes("EB41A (GWh)"));
 assert("zero EB41B is valid", !missing.includes("EB41B (GWh)"));
 assert("decimal EB43A and EB44A are valid", !missing.includes("EB43A (GWh)") && !missing.includes("EB44A (GWh)"));
@@ -51,3 +51,17 @@ const reloaded = rowsToLogs(rows, devices)[0];
 assert("saved EB41A persists after reload", reloaded.air.eb41a === 1.25);
 assert("saved EB41B persists after reload", reloaded.air.eb41b === 0);
 assert("saved EB43 and EB44 meters persist after reload", reloaded.air.meters?.eb43a === 2.5 && reloaded.air.meters?.eb43b === 0 && reloaded.air.meters?.eb44a === 3.75 && reloaded.air.meters?.eb44b === 4);
+
+// Site-aware regression guard: a Rangsit profile must ignore stale Srinakarin
+// meter keys that may still be present on a reused in-memory record.
+const rangsitFields = ["eb41a", "eb41b", "eb42a", "eb42b"];
+const rangsitLog = createEmptyLog("2026-07", { upsIds: [], dcIds: [], airFields: rangsitFields });
+rangsitLog.air.meters = { eb43a: null, eb43b: null, eb44a: null, eb44b: null };
+rangsitLog.air.eb41a = 1;
+rangsitLog.air.eb41b = 2;
+rangsitLog.air.eb42a = 3;
+rangsitLog.air.eb42b = 4;
+const rangsitAirMissing = listMissingFields(rangsitLog, rangsitFields)
+  .filter(field => field.section === "air")
+  .map(field => field.label);
+assert("Rangsit validation ignores stale EB43/EB44 keys", rangsitAirMissing.length === 0 && !rangsitAirMissing.some(label => /EB43|EB44/.test(label)));

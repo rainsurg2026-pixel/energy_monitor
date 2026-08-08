@@ -7,6 +7,39 @@ coverage/
 .env*
 !.env.example
 
+# Local agent/editor state - keep repository instructions, exclude machine state.
+.claude/settings.local.json
+.claude/settings.local.*
+.claude/local/
+.agents/
+.codex/
+
+# Workstation-local skills and packaged skill archives. These remain available
+# locally but are not application source.
+.claude/skills/
+.claude/skills.zip
+skills/
+skills/**/*.zip
+
+# Temporary, cache, and local database files.
+.cache/
+.vite/
+.tmp/
+tmp/
+work/
+*.tmp
+*.temp
+*.swp
+*.swo
+*.pid
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.local
+firebase-applet-config.json
+
 # Desktop Google OAuth client credentials (Desktop-app-type client_id/secret
 # from Google Cloud Console) - never committed; populate from the .example
 # template locally. See docs/GOOGLE_OAUTH_SETUP.md.
@@ -17,13 +50,31 @@ google-oauth-desktop-config.json
 # Electron build output
 dist-electron/
 release/
+# Packaged binaries and generated archives
+*.exe
+*.msi
+*.asar
+*.zip
+
+# Backups and generated exports
+*.bak
+*.backup
+backup/
+exports/
+*.export.*
+*.test.pdf
+
+# Operational/local workbook data and generated spreadsheet exports
+*.xls
+*.xlsx
+*.xlsm
+*.xlsb
+
 # Live workbook database - not source code
 RST_Dashboard.xlsm
 # Portable runtime folders (created beside the exe / project root in dev)
 config/
-backup/
 logs/
-exports/
 *.appmeta.json
 DC_Rangsit.xlsm
 DC_Srinakarin.xlsm

@@ -83,7 +83,8 @@ function findDc(log: MonthlyLog, id: string): DcRecord | null {
   return log.dc.find(record => matchDcId(id, record.panelId)) ?? null;
 }
 
-export function getAirFields(log: MonthlyLog): string[] {
+export function getAirFields(log: MonthlyLog, configuredFields?: readonly string[]): string[] {
+  if (configuredFields && configuredFields.length > 0) return [...configuredFields];
   const configured = log.energyCalculation?.airFields;
   if (configured && configured.length > 0) return [...configured];
   const meters = Object.keys(log.air.meters ?? {});

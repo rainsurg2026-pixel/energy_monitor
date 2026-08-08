@@ -2,13 +2,38 @@ import type { EngineeringDashboardSnapshot, ReportComparisonFacility, ReportData
 import { formatNumber } from "../../utils/numberFormatBridge";
 import { formatTimestamp } from "../../utils";
 import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics } from "../../utils/rackCapacity";
-import { rackStatusColorForRatio } from "../../utils/rackStatusConfig";
 import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
 import { calculateCapacityHealthScore, utilizationColorHex } from "../../utils/capacityHealth";
 import { getCapacityHealth } from "../../utils/capacityForecast";
 import { getAccessibleTextColor } from "../../utils/colorContrast";
+import { findPreviousRackUnitCapacityRow, usagePercent } from "../../utils/rackUnitCapacity";
+import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
 
 const FONT_STACK = '"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif';
+
+/** Export-only palette. These colors are deliberately darker than the live
+ * dashboard accents so thin PDF strokes, legends, and point labels remain
+ * legible in print. Series colors never depend on row order. The PUE token is
+ * reserved for benchmark export surfaces; All Report keeps PUE dashboard-only
+ * under the existing report-safety contract. */
+const REPORT_PALETTE = {
+  energy: "#1d4ed8",
+  ups: "#0f766e",
+  air: "#c2410c",
+  dc: "#7c3aed",
+  cost: "#047857",
+  rate: "#b45309",
+  pue: "#b91c1c",
+  rackInUse: "#1d4ed8",
+  rackAvailable: "#059669",
+  rackReserved: "#b45309",
+  rackPending: "#b91c1c",
+  rackOther: "#475569",
+  rackTotal: "#64748b",
+  siteRangsit: "#1d4ed8",
+  siteSrinakarin: "#c2410c",
+  siteOther: "#475569"
+} as const;
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -135,7 +160,23 @@ function engineeringDashboard(data: ReportData, dashboard: EngineeringDashboardS
   return `<section class="page dashboard-page"><div class="dashboard-head"><div><p class="eyebrow">SELECTED-MONTH ENGINEERING ANALYSIS</p><h2>Building Energy Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${dashboard.daysInMonth} days in selected month</p></div><div class="dashboard-tag">Engineering analysis<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis">${kpi("Total 4th Floor Energy", format2(dashboard.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Estimated 4th Floor Electricity Cost", format2(dashboard.floorCostThb), "THB", "Calculated from building average rate")}${kpi("4th Floor Energy Share", `${format2(dashboard.floorSharePercent)}%`, "of building energy", `Building total: ${format2(dashboard.buildingEnergyKwh)} kWh`)}${kpi("Building Average Electricity Rate", format2(dashboard.averageRateThbPerKwh), "THB/kWh", `Building cost: ${format2(dashboard.buildingCostThb)} THB`)}</div>${srinakarinOverall}<article class="block"><h3>${detailedUpsTitle}</h3>${table(["No.", "UPS Group", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %", "Monthly Energy kWh"], upsRows)}<p class="note">UPS group capacity and mapping values are read directly from Dashboard-FAC. Monthly energy uses load × 24 hours × selected-month days.</p></article>${upsComparison(detailedComparisonTitle, dashboard.upsGroups)}</section><section class="page dashboard-page"><div class="continuation">Building Energy Dashboard · ${escapeHtml(formatMonth(data.reportingMonth))}</div><article class="block"><h3>${showAcPowerPanel ? "UPS / PPC Detailed Configuration Mapping" : "UPS Detailed Configuration Mapping"}</h3>${table(detailedHeaders, upsDetails, "dense")}<p class="note">Detail total: ${format2(dashboard.detailedVoltageAvg)} V average · ${format2(dashboard.detailedCurrentSum)} A · ${format2(dashboard.totalUpsKw)} kW · ${format2(dashboard.totalUpsKva)} kVA.</p></article><article class="block"><h3>2. Air Conditioning Energy Consumption — 4th Floor</h3>${table(["Reporting Month", ...dashboard.airFields.map(field => `${field.toUpperCase()} (GWh)`), "Total AC Energy"], airRows)}<p class="note">Air-conditioning energy is the complete GWh meter difference × 1,000,000. Missing readings remain unavailable, rather than being treated as zero.</p></article><article class="block"><h3>3. DC Power Panel Load Status</h3>${table(["No.", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current @220V (A)", "AC Power (W)", "Monthly Energy (kWh)"], dcRows)}<p class="note">DC total: ${format2(dashboard.totalDcPowerW)} W DC · ${format2(dashboard.totalDcAcCurrentA)} A AC · ${format2(dashboard.totalDcAcPowerW)} W AC · ${format2(dashboard.totalDcEnergyKwh)} kWh.</p></article><article class="block"><h3>4. Overall Energy Consumption & Electricity Cost</h3>${overall}</article></section>`;
 }
 
-function donutSvg(segments: Array<{ name: string; count: number; ratio: number | null }>, total: number): string {
+function reportRackStatusColor(status: string): string {
+  switch (status) {
+    case "In Use": return REPORT_PALETTE.rackInUse;
+    case "Available": return REPORT_PALETTE.rackAvailable;
+    case "Reserved": return REPORT_PALETTE.rackReserved;
+    case "Pending Dismantle": return REPORT_PALETTE.rackPending;
+    default: return REPORT_PALETTE.rackOther;
+  }
+}
+
+/** Shared donut renderer for every proportional-ring chart in this report
+ *  (Rack Capacity status, Rack Capacity Site Comparison, Rack Unit Capacity
+ *  Used/Available). `color` on a segment overrides the stable report rack
+ *  palette; `centerLabel`/`centerSubLabel` override the default
+ *  "<total> / Total Racks" center text the same way. One renderer, no
+ *  per-page duplicate SVG code. */
+function donutSvg(segments: Array<{ name: string; count: number; ratio: number | null; color?: string }>, total: number, centerLabel?: string, centerSubLabel?: string): string {
   const size = 220, r = 78, cx = size / 2, cy = size / 2, circumference = 2 * Math.PI * r;
   let offset = 0;
   const arcs = segments
@@ -145,10 +186,13 @@ function donutSvg(segments: Array<{ name: string; count: number; ratio: number |
       const dash = `${(fraction * circumference).toFixed(2)} ${circumference.toFixed(2)}`;
       const rotate = offset * 360;
       offset += fraction;
-      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${rackStatusColorForRatio(s.name, s.ratio)}" stroke-width="34" stroke-dasharray="${dash}" transform="rotate(${rotate - 90} ${cx} ${cy})"/>`;
+      const color = s.color ?? reportRackStatusColor(s.name);
+      return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="34" stroke-dasharray="${dash}" transform="rotate(${rotate - 90} ${cx} ${cy})"/>`;
     })
     .join("");
-  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="Rack Status Distribution">${arcs}<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="26" font-weight="700" fill="#29415d">${total}</text><text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="11" fill="#657488">Total Racks</text></svg>`;
+  const primary = centerLabel ?? String(total);
+  const secondary = centerSubLabel ?? "Total Racks";
+  return `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="Rack Status Distribution">${arcs}<text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="26" font-weight="700" fill="#29415d">${escapeHtml(primary)}</text><text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="11" fill="#657488">${escapeHtml(secondary)}</text></svg>`;
 }
 
 /** The Rack Unit Capacity row for this report's single Reporting Month
@@ -160,33 +204,74 @@ function unitCapacityRowForReportingMonth(data: ReportData): RackUnitCapacityRow
   return data.rackUnitCapacity.find(row => row.month === data.reportingMonth) ?? null;
 }
 
-/** This report's single Reporting Month's Total (U)/Used (U)/Available (U)/
- *  Availability Capacity (%), plus the "Rack Unit Capacity Image" for that
- *  same month (read from the per-(Facility, Reporting Month) image history
- *  store - see reportDataBuilder.ts) - U-capacity is a genuinely separate
- *  business dimension from rack count (never inferred from it), so this
- *  block is omitted entirely (with a plain note) until real Rack Unit
- *  Capacity data exists for the selected month. */
-function rackUnitCapacityBlock(data: ReportData): string {
-  if (data.rackUnitCapacity.length === 0) {
-    return `<p class="note">Rack Unit Capacity data is not yet available in this workbook.</p>`;
-  }
-  const row = unitCapacityRowForReportingMonth(data);
-  if (!row) {
-    return `<p class="note">No Rack Unit Capacity data is available for the selected reporting month (${escapeHtml(formatMonth(data.reportingMonth))}).</p>`;
-  }
-  const availabilityText = row.availabilityPct === null ? "—" : `${(row.availabilityPct * 100).toFixed(2)}%`;
-  const image = data.rackUnitCapacityImageDataUri && data.rackUnitCapacityImageMeta
+/** The Monthly Rack Unit Capacity Image figure (or placeholder) for one
+ *  Rack Unit Capacity row - image bytes/metadata come exclusively from
+ *  ImageStorageProvider via reportDataBuilder.ts
+ *  (data.rackUnitCapacityImageDataUri/Meta); never a second image source,
+ *  never the legacy Excel-embedded mechanisms. Same placeholder copy as
+ *  the Dashboard (RackUnitCapacitySummary.tsx) for a missing image. */
+function rackUnitCapacityImageFigure(data: ReportData, row: RackUnitCapacityRow): string {
+  return data.rackUnitCapacityImageDataUri && data.rackUnitCapacityImageMeta
     ? `<figure class="rack-unit-capacity-image-figure">` +
       `<img src="${data.rackUnitCapacityImageDataUri}" alt="Rack Unit Capacity Image" class="rack-unit-capacity-image"/>` +
       `<figcaption class="rack-unit-capacity-image-caption">` +
       `<span>Reporting Month: ${escapeHtml(formatMonth(row.month))}</span>` +
-      `<span>Last Updated: ${escapeHtml(formatTimestamp(new Date(data.rackUnitCapacityImageMeta.savedAt)))}</span>` +
-      `<span>Resolution: ${data.rackUnitCapacityImageMeta.width}×${data.rackUnitCapacityImageMeta.height}px</span>` +
       `<span>Captured By: ${escapeHtml(data.rackUnitCapacityImageMeta.savedBy)}</span>` +
+      `<span>Captured Date: ${escapeHtml(formatTimestamp(new Date(data.rackUnitCapacityImageMeta.savedAt)))}</span>` +
+      `<span>Resolution: ${data.rackUnitCapacityImageMeta.width}×${data.rackUnitCapacityImageMeta.height}px</span>` +
       `</figcaption></figure>`
     : `<div class="rack-unit-capacity-image-placeholder"><span>Rack Unit Capacity image not yet captured for this reporting month.</span></div>`;
-  return `<article class="block"><h3>Rack Unit Capacity — ${escapeHtml(formatMonth(row.month))}</h3><div class="kpis">${kpi("Total (U)", String(row.totalU), "U", "")}${kpi("Used (U)", String(row.usedU), "U", "")}${kpi("Available (U)", String(row.availableU), "U", "")}${kpi("Availability Capacity", availabilityText, "", "")}</div>${image}</article>`;
+}
+
+/** Rack Unit Capacity and Utilization - the executive page restoring full
+ *  Dashboard/PDF parity with RackUnitCapacitySummary.tsx: 2x3 KPI cards, a
+ *  large Used/Available donut (left, ~60%), and the Monthly Rack Unit
+ *  Capacity Image (right, ~40%). Every number/color/image comes from the
+ *  same sources the Dashboard reads - unitCapacityRowForReportingMonth()
+ *  above, findPreviousRackUnitCapacityRow()/trendCalculator.ts (shared with
+ *  the Dashboard's own trend arrow), utilizationColorHex() (shared with the
+ *  Capacity Health Gauge), the shared donutSvg() renderer above, and
+ *  rackUnitCapacityImageFigure() above - no calculation, color, or image
+ *  logic is reimplemented here. */
+function renderRackUnitCapacityExecutivePage(data: ReportData): string {
+  const subtitle = `${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))}`;
+  if (data.rackUnitCapacity.length === 0) {
+    return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">Rack Unit Capacity data is not yet available in this workbook.</p></section>`;
+  }
+  const row = unitCapacityRowForReportingMonth(data);
+  if (!row) {
+    return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">No Rack Unit Capacity data is available for the selected reporting month (${escapeHtml(formatMonth(data.reportingMonth))}).</p></section>`;
+  }
+  const previousRow = findPreviousRackUnitCapacityRow(data.rackUnitCapacity, row.month);
+  const usagePctNow = usagePercent(row);
+  const usagePctPrev = previousRow ? usagePercent(previousRow) : null;
+  const trendDirection = usagePctNow !== null && usagePctPrev !== null ? getTrendDirection(calculatePercentageDelta(usagePctNow, usagePctPrev), 0.05) : null;
+  const trendValue = trendDirection === null || usagePctNow === null || usagePctPrev === null
+    ? "—"
+    : `${trendDirection === "Up" ? "▲" : trendDirection === "Down" ? "▼" : "◆"} ${Math.abs(calculatePercentageDelta(usagePctNow, usagePctPrev)).toFixed(1)}%`;
+  const trendNote = trendDirection === null ? "no prior month" : getTrendLabel(trendDirection, "en");
+  const availabilityText = formatRatioPercent(row.availabilityPct);
+  const kpis = [
+    kpi("Total (U)", String(row.totalU), "U", ""),
+    kpi("Used (U)", String(row.usedU), "U", ""),
+    kpi("Available (U)", String(row.availableU), "U", ""),
+    kpi("Availability %", availabilityText, "", ""),
+    kpi("Usage %", usagePctNow === null ? "—" : `${usagePctNow.toFixed(1)}%`, "", ""),
+    kpi("Trend vs Previous Month", trendValue, "", trendNote)
+  ].join("");
+  const donut = donutSvg(
+    [
+      { name: "Used", count: row.usedU, ratio: null, color: REPORT_PALETTE.rackInUse },
+      { name: "Available", count: Math.max(0, row.availableU), ratio: null, color: REPORT_PALETTE.rackAvailable }
+    ],
+    row.totalU,
+    `${row.usedU} / ${row.totalU}`,
+    "Used / Total (U)"
+  );
+  const legend = `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackInUse}"></i><span>Used (U)</span><strong>${row.usedU}</strong></div>` +
+    `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackAvailable}"></i><span>Available (U)</span><strong>${row.availableU}</strong></div>` +
+    `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackTotal}"></i><span>Total (U)</span><strong>${row.totalU}</strong></div>`;
+  return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><div class="kpis-3col">${kpis}</div><div class="rack-unit-capacity-layout"><div class="ruc-left"><div class="block gauge-row">${donut}<div class="gauge-caption">${legend}</div></div></div><div class="ruc-right">${rackUnitCapacityImageFigure(data, row)}</div></div></section>`;
 }
 
 /** Half-donut gauge arc: a track path drawn once in a neutral color, then
@@ -253,7 +338,7 @@ function capacityHealthPage(data: ReportData): string {
 
 function rackComparisonRow(label: string, m: RackCapacityMetrics): string[] {
   return [
-    escapeHtml(label),
+    escapeHtml(comparisonFacilityLabel(label)),
     String(m.total),
     `${m.inUse.count} (${formatRatioPercent(m.inUse.ratio, 1)})`,
     `${m.available.count} (${formatRatioPercent(m.available.ratio, 1)})`,
@@ -263,11 +348,8 @@ function rackComparisonRow(label: string, m: RackCapacityMetrics): string[] {
 }
 
 /** One facility's pie + legend for the Rack Capacity Site Comparison page.
- *  Reuses donutSvg() (the same renderer rackCapacityPage() uses) and
- *  rackStatusColorForRatio() for every swatch - "In Use" gets the dynamic
- *  utilization color, every other status its fixed rackStatusConfig.ts
- *  color, exactly matching the single-facility Rack Capacity page. No
- *  second palette or a second pie implementation. */
+ *  Reuses donutSvg() and the stable export rack-status palette for every
+ *  swatch, so the same status always has the same printed color. */
 function rackComparisonDonutBlock(label: string, metrics: RackCapacityMetrics): string {
   const segments = [
     { name: "In Use", count: metrics.inUse.count, ratio: metrics.inUse.ratio },
@@ -278,9 +360,16 @@ function rackComparisonDonutBlock(label: string, metrics: RackCapacityMetrics): 
   ];
   const legend = segments
     .filter(s => s.count > 0)
-    .map(s => `<div class="legend-row"><i style="background:${rackStatusColorForRatio(s.name, s.ratio)}"></i><span>${escapeHtml(s.name)}</span><strong>${s.count} (${formatRatioPercent(s.ratio, 1)})</strong></div>`)
+    .map(s => `<div class="legend-row"><i style="background:${reportRackStatusColor(s.name)}"></i><span>${escapeHtml(s.name)}</span><strong>${s.count} (${formatRatioPercent(s.ratio, 1)})</strong></div>`)
     .join("");
-  return `<div class="rack-comparison-donut"><h3>${escapeHtml(label)}</h3>${donutSvg(segments, metrics.total)}<div class="rack-comparison-legend">${legend}</div></div>`;
+  return `<div class="rack-comparison-donut"><h3>${escapeHtml(comparisonFacilityLabel(label))}</h3>${donutSvg(segments, metrics.total)}<div class="rack-comparison-legend">${legend}</div></div>`;
+}
+
+/** Comparison-only label rule. Normal report cover/facility titles retain the
+ * configured long display name; only the two-site comparison context removes
+ * the redundant "Data Center" suffix. */
+function comparisonFacilityLabel(label: string): string {
+  return label.replace(/\s+Data Center\b/gi, "").trim();
 }
 
 /** Rack Capacity Site Comparison - self vs sibling facility, current (live)
@@ -299,13 +388,13 @@ function rackComparisonPage(data: ReportData): string {
     rows.push(rackComparisonRow(other.label, otherMetrics));
     donuts.push(rackComparisonDonutBlock(other.label, otherMetrics));
   }
-  const note = other ? "" : `<p class="note">Only ${escapeHtml(self.label)} is shown — the sibling facility's Rack Capacity data was unavailable for this export.</p>`;
+  const note = other ? "" : `<p class="note">Only ${escapeHtml(comparisonFacilityLabel(self.label))} is shown — the sibling facility's Rack Capacity data was unavailable for this export.</p>`;
   return `<section class="page"><h2>Rack Capacity Site Comparison</h2><div class="rack-comparison-donuts">${donuts.join("")}</div>${table(["Facility", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle"], rows)}${note}</section>`;
 }
 
 function rackCapacityPage(data: ReportData): string {
   if (!data.rack || data.rack.records.length === 0) {
-    return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">Rack capacity data is unavailable in this workbook.</p>${rackUnitCapacityBlock(data)}</section>`;
+    return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">Rack capacity data is unavailable in this workbook.</p></section>`;
   }
   const metrics = calculateRackCapacityMetrics(data.rack.records);
   const cards = [
@@ -342,13 +431,16 @@ function rackCapacityPage(data: ReportData): string {
     `${metrics.pendingDismantle.count} (${formatRatioPercent(metrics.pendingDismantle.ratio, 1)})`,
     String(metrics.total)
   ]);
-  return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">${escapeHtml(data.facility)} · Usage ${formatRatioPercent(metrics.inUse.ratio)} · Availability ${formatRatioPercent(metrics.available.ratio)}</p><div class="kpis">${kpis}</div><div class="rack-donut-row"><div>${donut}</div><div class="table-wrap" style="flex:1"><table><thead><tr><th class="left">Rack Zone</th><th>In Use</th><th>Available</th><th>Reserved</th><th>Pending Dismantle</th><th>Total</th></tr></thead><tbody>${zoneRows.map(row => `<tr>${row.map((cell, i) => `<td${i === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div>${rackUnitCapacityBlock(data)}</section>`;
+  return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">${escapeHtml(data.facility)} · Usage ${formatRatioPercent(metrics.inUse.ratio)} · Availability ${formatRatioPercent(metrics.available.ratio)}</p><div class="kpis">${kpis}</div><div class="rack-donut-row"><div>${donut}</div><div class="table-wrap" style="flex:1"><table><thead><tr><th class="left">Rack Zone</th><th>In Use</th><th>Available</th><th>Reserved</th><th>Pending Dismantle</th><th>Total</th></tr></thead><tbody>${zoneRows.map(row => `<tr>${row.map((cell, i) => `<td${i === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div></section>`;
 }
 
-/** Same per-facility accent colors as the dashboard's FacilityComparison.tsx
- *  siteColour() - one shared color rule, never a second palette. */
+/** Stable export-only facility colors. Match by name so long display labels
+ *  such as "Rangsit Data Center" still receive distinct site colors. */
 function siteColour(label: string): string {
-  return label.trim().toLowerCase() === "rangsit" ? "#e87959" : "#5b8db8";
+  const normalized = label.trim().toLowerCase();
+  if (normalized.includes("rangsit")) return REPORT_PALETTE.siteRangsit;
+  if (normalized.includes("srinakarin")) return REPORT_PALETTE.siteSrinakarin;
+  return REPORT_PALETTE.siteOther;
 }
 
 /** Monthly Energy Consumption Trend + Floor 4 Electricity Cost Trend -
@@ -366,9 +458,9 @@ function comparisonTrendPages(data: ReportData): string {
   if (selfTrend.length < 2) return "";
   const otherByMonth = new Map(otherTrend.map(row => [row.month, row] as const));
   const buildSeries = (metric: "buildingEnergyKwh" | "floorCostThb"): TrendSeries[] => {
-    const series: TrendSeries[] = [{ name: self.label, color: siteColour(self.label), values: selfTrend.map(row => row[metric]) }];
+    const series: TrendSeries[] = [{ name: comparisonFacilityLabel(self.label), color: siteColour(self.label), values: selfTrend.map(row => row[metric]) }];
     if (other) {
-      series.push({ name: other.label, color: siteColour(other.label), values: selfTrend.map(row => otherByMonth.get(row.month)?.[metric] ?? null) });
+      series.push({ name: comparisonFacilityLabel(other.label), color: siteColour(other.label), values: selfTrend.map(row => otherByMonth.get(row.month)?.[metric] ?? null) });
     }
     return series;
   };
@@ -399,12 +491,12 @@ function comparisonPage(data: ReportData): string {
   if (other) rows.push(comparisonRow(other));
   const note = other
     ? ""
-    : `<p class="note">Only ${escapeHtml(self.label)} is shown — the sibling facility's workbook was unavailable for this export.</p>`;
+    : `<p class="note">Only ${escapeHtml(comparisonFacilityLabel(self.label))} is shown — the sibling facility's workbook was unavailable for this export.</p>`;
   return `${comparisonTrendPages(data)}<section class="page"><h2>Site Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(self.month))}</p>${table(["Facility", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], rows)}${note}</section>`;
 }
 function comparisonRow(facility: ReportComparisonFacility): string[] {
   return [
-    escapeHtml(facility.label),
+    escapeHtml(comparisonFacilityLabel(facility.label)),
     format2(facility.buildingEnergyKwh),
     format2(facility.buildingCostThb),
     format2(facility.floorEnergyKwh),
@@ -418,14 +510,14 @@ export function buildReportHtml(data: ReportData): string {
   const range = `${formatMonth(data.historicalStart)} – ${formatMonth(data.historicalEnd)}`;
   const dashboard = data.engineeringDashboard ? engineeringDashboard(data, data.engineeringDashboard) : "";
   const trendPages: Array<[string, string, string, Array<number | null>, string]> = [
-    ["Total 4th Floor Energy Trend", "kWh", "#6366f1", data.monthlyRows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy for the selected reporting window."],
-    ["UPS System Energy Trend", "kWh", "#3b82f6", data.monthlyRows.map(row => row.upsEnergyKwh), "Monthly UPS system energy utilization."],
-    ["Air Conditioning Energy Trend", "kWh", "#14b8a6", data.monthlyRows.map(row => row.airEnergyKwh), "Meter-difference energy; gaps indicate an unavailable prior reading."],
-    ["DC Power Panel Energy Trend", "kWh", "#f59e0b", data.monthlyRows.map(row => row.dcEnergyKwh), "Monthly DC panel energy estimate."],
-    ["Estimated 4th Floor Cost Trend", "THB", "#10b981", data.monthlyRows.map(row => row.floorCostThb), "Estimated cost at the building average electricity rate."],
-    ["Building Average Electricity Rate Trend", "THB/kWh", "#f97316", data.monthlyRows.map(row => row.averageRateThbPerKwh), "Building electricity cost divided by building energy."],
+    ["Total 4th Floor Energy Trend", "kWh", REPORT_PALETTE.energy, data.monthlyRows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy for the selected reporting window."],
+    ["UPS System Energy Trend", "kWh", REPORT_PALETTE.ups, data.monthlyRows.map(row => row.upsEnergyKwh), "Monthly UPS system energy utilization."],
+    ["Air Conditioning Energy Trend", "kWh", REPORT_PALETTE.air, data.monthlyRows.map(row => row.airEnergyKwh), "Meter-difference energy; gaps indicate an unavailable prior reading."],
+    ["DC Power Panel Energy Trend", "kWh", REPORT_PALETTE.dc, data.monthlyRows.map(row => row.dcEnergyKwh), "Monthly DC panel energy estimate."],
+    ["Estimated 4th Floor Cost Trend", "THB", REPORT_PALETTE.cost, data.monthlyRows.map(row => row.floorCostThb), "Estimated cost at the building average electricity rate."],
+    ["Building Average Electricity Rate Trend", "THB/kWh", REPORT_PALETTE.rate, data.monthlyRows.map(row => row.averageRateThbPerKwh), "Building electricity cost divided by building energy."],
   ];
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(data.title)}</title><style>
-@page{size:A4 landscape;margin:8mm 9mm 12mm}*{box-sizing:border-box}html,body{margin:0;color:#243247;background:#fff;font:12px/1.3 ${FONT_STACK}}.cover{height:180mm;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:34px;margin:0;color:#29415d}.cover h2{font-size:20px;font-weight:400;color:#7c6a68}.meta{margin-top:16px;border-top:1px solid #e6d9d2;padding-top:12px;color:#5f6f82}.page{page-break-before:always;padding-top:1mm}.page h2{font-size:23px;margin:0 0 7px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:5px}.page h3{font-size:16px;color:#3e5874;margin:0 0 6px}.dashboard-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #e8d7d0;padding-bottom:8px}.dashboard-head h2{border:0;padding:0;margin:0}.dashboard-head p{margin:3px 0;color:#5f6f82}.eyebrow{font-size:9px!important;font-weight:bold;letter-spacing:1px;color:#a25e4c!important}.dashboard-tag{font-size:10px;text-align:right;color:#52687f;border-left:1px solid #e7d9d2;padding-left:12px}.continuation{font-size:10px;font-weight:bold;color:#68798a;border-bottom:1px solid #e7d9d2;padding-bottom:4px;margin-bottom:7px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:9px 0}.kpi{min-height:74px;padding:9px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:6px;break-inside:avoid}.kpi-label{font-size:10px;color:#67788b;text-transform:uppercase;font-weight:bold}.kpi-value{font-size:21px;font-weight:700;margin-top:5px;color:#29415d}.kpi-unit,.kpi-note,.note{font-size:10px;color:#64758a}.kpi-note{margin-top:3px}.block{margin:9px 0;padding:9px;border:1px solid #e7dcd6;border-radius:6px;break-inside:avoid}.note{margin:6px 0 0}.table-wrap{margin:4px 0;overflow:hidden}table{border-collapse:collapse;width:100%;font-size:10px}th,td{padding:4px;border:1px solid #eadfda;text-align:right;vertical-align:top}td.left,th:first-child{text-align:left}th{background:#eee3dd;color:#40566e;font-weight:bold}.dense table{font-size:8.5px}.dense th,.dense td{padding:3px}.ups-comparison{display:grid;gap:7px;margin-top:8px}.ups-bar-row{display:grid;grid-template-columns:90px 1fr 52px;gap:8px;align-items:center;font-size:11px}.ups-bar-row strong{text-align:right}.ups-track{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden}.ups-track i{display:block;height:100%;border-radius:99px;background:#10b981}.ups-track i.medium{background:#f59e0b}.ups-track i.high{background:#e05b4c}.trend-page{height:183mm;display:flex;flex-direction:column}.trend-page h2{font-size:26px;margin-bottom:2px}.chart-unit{margin:0 0 5px;color:#657488;font-size:12px}.trend-svg{width:100%;height:142mm;flex:1;overflow:visible}.grid{stroke:#dce4ea;stroke-width:1}.axis-tick,.month-label,.point-value{fill:#44566b;font-family:${FONT_STACK}}.axis-tick{font-size:20px}.month-label{font-size:19px}.point-value{font-size:19px;font-weight:bold}.chart-explanation{margin:2px 5mm 0;font-size:12px;color:#52687f;text-align:center}.trend-legend{display:flex;gap:18px;margin:0 0 4px}.trend-legend span{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#3e5874;font-weight:600}.trend-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}.rack-donut-row{display:flex;gap:16px;align-items:flex-start;margin-top:8px}.rack-comparison-donuts{display:flex;gap:32px;justify-content:center;margin:10px 0 16px}.rack-comparison-donut{text-align:center}.rack-comparison-donut h3{margin-bottom:4px}.rack-comparison-legend{display:flex;flex-direction:column;gap:3px;margin-top:8px;text-align:left}.legend-row{display:flex;align-items:center;gap:6px;font-size:10px;color:#3e5874}.legend-row i{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}.legend-row strong{margin-left:auto;font-weight:700}.rack-unit-capacity-image-figure{margin:8px 0 0;display:inline-block}.rack-unit-capacity-image{display:block;max-width:260px;max-height:150px;object-fit:contain;border:1px solid #e7dcd6;border-radius:8px;box-shadow:0 1px 3px rgba(41,65,93,.12)}.rack-unit-capacity-image-caption{display:flex;flex-direction:column;gap:1px;margin-top:5px;font-size:9px;color:#657488}.rack-unit-capacity-image-placeholder{margin-top:8px;width:260px;height:150px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;border:1px dashed #cfc0b8;border-radius:8px;background:#f8f3f0;color:#8a7d78;font-size:10px}.gauge-row{display:flex;align-items:center;gap:20px;margin-top:6px}.gauge-caption{flex:1}.gauge-health-label{font-size:20px;font-weight:700;margin:0 0 4px}.heatmap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}.heatmap-tile{border-radius:8px;padding:8px}.heatmap-zone{font-size:12px;font-weight:700;margin:0}.heatmap-pct{font-size:18px;font-weight:700;margin:2px 0}.heatmap-detail{font-size:9px;margin:0;opacity:.9}
-</style></head><body><main class="cover"><h1>${escapeHtml(data.title)}</h1><h2>${escapeHtml(data.thaiSubtitle)}</h2><div class="meta">Facility: ${escapeHtml(data.facility)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}<br>Source workbook: ${escapeHtml(data.sourceWorkbook)}<br>Application version: ${escapeHtml(data.appVersion)}</div></main>${dashboard}${trendPages.map(([title, unit, color, values, explanation]) => trendPage(title, unit, [{ name: title, color, values }], data.monthlyRows, explanation, "FACILITY TREND ANALYTICS")).join("")}<section class="page"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section>${comparisonPage(data)}${rackCapacityPage(data)}${capacityHealthPage(data)}${rackComparisonPage(data)}<script>document.body.dataset.reportReady="true";</script></body></html>`;
+@page{size:A4 landscape;margin:8mm 9mm 12mm}*{box-sizing:border-box}html,body{margin:0;color:#243247;background:#fff;font:12px/1.3 ${FONT_STACK}}.cover{height:180mm;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:34px;margin:0;color:#29415d}.cover h2{font-size:20px;font-weight:400;color:#7c6a68}.meta{margin-top:16px;border-top:1px solid #e6d9d2;padding-top:12px;color:#5f6f82}.page{page-break-before:always;padding-top:1mm}.page h2{font-size:23px;margin:0 0 7px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:5px}.page h3{font-size:16px;color:#3e5874;margin:0 0 6px}.dashboard-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #e8d7d0;padding-bottom:8px}.dashboard-head h2{border:0;padding:0;margin:0}.dashboard-head p{margin:3px 0;color:#5f6f82}.eyebrow{font-size:9px!important;font-weight:bold;letter-spacing:1px;color:#a25e4c!important}.dashboard-tag{font-size:10px;text-align:right;color:#52687f;border-left:1px solid #e7d9d2;padding-left:12px}.continuation{font-size:10px;font-weight:bold;color:#68798a;border-bottom:1px solid #e7d9d2;padding-bottom:4px;margin-bottom:7px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:9px 0}.kpi{min-height:74px;padding:9px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:6px;break-inside:avoid}.kpi-label{font-size:10px;color:#67788b;text-transform:uppercase;font-weight:bold}.kpi-value{font-size:21px;font-weight:700;margin-top:5px;color:#29415d}.kpi-unit,.kpi-note,.note{font-size:10px;color:#64758a}.kpi-note{margin-top:3px}.block{margin:9px 0;padding:9px;border:1px solid #e7dcd6;border-radius:6px;break-inside:avoid}.note{margin:6px 0 0}.table-wrap{margin:4px 0;overflow:hidden}table{border-collapse:collapse;width:100%;font-size:10px}th,td{padding:4px;border:1px solid #eadfda;text-align:right;vertical-align:top}td.left,th:first-child{text-align:left}th{background:#eee3dd;color:#40566e;font-weight:bold}.dense table{font-size:8.5px}.dense th,.dense td{padding:3px}.ups-comparison{display:grid;gap:7px;margin-top:8px}.ups-bar-row{display:grid;grid-template-columns:90px 1fr 52px;gap:8px;align-items:center;font-size:11px}.ups-bar-row strong{text-align:right}.ups-track{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden}.ups-track i{display:block;height:100%;border-radius:99px;background:${REPORT_PALETTE.ups}}.ups-track i.medium{background:${REPORT_PALETTE.rate}}.ups-track i.high{background:${REPORT_PALETTE.pue}}.trend-page{height:183mm;display:flex;flex-direction:column}.trend-page h2{font-size:26px;margin-bottom:2px}.chart-unit{margin:0 0 5px;color:#657488;font-size:12px}.trend-svg{width:100%;height:142mm;flex:1;overflow:visible}.grid{stroke:#dce4ea;stroke-width:1}.axis-tick,.month-label,.point-value{fill:#44566b;font-family:${FONT_STACK}}.axis-tick{font-size:20px}.month-label{font-size:19px}.point-value{font-size:19px;font-weight:bold}.chart-explanation{margin:2px 5mm 0;font-size:12px;color:#52687f;text-align:center}.trend-legend{display:flex;gap:18px;margin:0 0 4px}.trend-legend span{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#3e5874;font-weight:600}.trend-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}.rack-donut-row{display:flex;gap:16px;align-items:flex-start;margin-top:8px}.rack-comparison-donuts{display:flex;gap:32px;justify-content:center;margin:10px 0 16px}.rack-comparison-donut{text-align:center}.rack-comparison-donut h3{margin-bottom:4px}.rack-comparison-legend{display:flex;flex-direction:column;gap:3px;margin-top:8px;text-align:left}.legend-row{display:flex;align-items:center;gap:6px;font-size:10px;color:#3e5874}.legend-row i{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}.legend-row strong{margin-left:auto;font-weight:700}.rack-unit-capacity-image-figure{margin:8px 0 0;display:inline-block}.rack-unit-capacity-image{display:block;max-width:260px;max-height:150px;object-fit:contain;border:1px solid #e7dcd6;border-radius:8px;box-shadow:0 1px 3px rgba(41,65,93,.12)}.rack-unit-capacity-image-caption{display:flex;flex-direction:column;gap:1px;margin-top:5px;font-size:9px;color:#657488}.rack-unit-capacity-image-placeholder{margin-top:8px;width:260px;height:150px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;border:1px dashed #cfc0b8;border-radius:8px;background:#f8f3f0;color:#8a7d78;font-size:10px}.gauge-row{display:flex;align-items:center;gap:20px;margin-top:6px}.gauge-caption{flex:1}.gauge-health-label{font-size:20px;font-weight:700;margin:0 0 4px}.heatmap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}.heatmap-tile{border-radius:8px;padding:8px}.heatmap-zone{font-size:12px;font-weight:700;margin:0}.heatmap-pct{font-size:18px;font-weight:700;margin:2px 0}.heatmap-detail{font-size:9px;margin:0;opacity:.9}.kpis-3col{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:9px 0}.rack-unit-capacity-layout{display:flex;gap:16px;align-items:stretch;margin-top:4px}.rack-unit-capacity-layout .ruc-left{flex:3}.rack-unit-capacity-layout .ruc-right{flex:2}.rack-unit-capacity-layout .rack-unit-capacity-image-figure,.rack-unit-capacity-layout .rack-unit-capacity-image-placeholder{width:100%;max-width:none;height:100%;min-height:90mm}.rack-unit-capacity-layout .rack-unit-capacity-image{max-width:100%;max-height:82mm;width:100%}
+</style></head><body><main class="cover"><h1>${escapeHtml(data.title)}</h1><h2>${escapeHtml(data.thaiSubtitle)}</h2><div class="meta">Facility: ${escapeHtml(data.facility)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}<br>Source workbook: ${escapeHtml(data.sourceWorkbook)}<br>Application version: ${escapeHtml(data.appVersion)}</div></main>${dashboard}${trendPages.map(([title, unit, color, values, explanation]) => trendPage(title, unit, [{ name: title, color, values }], data.monthlyRows, explanation, "FACILITY TREND ANALYTICS")).join("")}<section class="page"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section>${comparisonPage(data)}${rackCapacityPage(data)}${renderRackUnitCapacityExecutivePage(data)}${capacityHealthPage(data)}${rackComparisonPage(data)}<script>document.body.dataset.reportReady="true";</script></body></html>`;
 }

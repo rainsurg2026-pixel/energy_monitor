@@ -16,7 +16,9 @@ import type { ImageBytesInput, StoredImageMeta } from "../../storage/ImageStorag
 
 function sanitizeFacility(raw: unknown): string {
   if (typeof raw !== "string" || raw.trim().length === 0) throw new PayloadError("facility is required.");
-  return raw.trim().slice(0, 200);
+  const facility = raw.trim().slice(0, 200);
+  if (facility === "." || facility === ".." || /[\\/\0]/.test(facility)) throw new PayloadError("facility contains an invalid path character.");
+  return facility;
 }
 
 function sanitizeReportingMonth(raw: unknown): string {

@@ -150,6 +150,13 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
   const afterDeviceType = (await readRackCapacityFromBuffer(deviceTypeResult.buffer))!.records.find(r => r.rowNumber === cabinetTarget.rowNumber)!;
   check(`${label}: Device Type actually changed on re-read`, afterDeviceType.deviceType === "Storage");
 
+  const remarksResult = await applyRackCapacityFieldChanges(original, [
+    { rowNumber: cabinetTarget.rowNumber, rackId: cabinetTarget.rackId!, remarks: { expected: cabinetTarget.remarks, next: "Edited rack remark" } }
+  ]);
+  check(`${label}: Remarks change applied`, remarksResult.outcomes[0].applied === true);
+  const afterRemarks = (await readRackCapacityFromBuffer(remarksResult.buffer))!.records.find(r => r.rowNumber === cabinetTarget.rowNumber)!;
+  check(`${label}: Remarks actually changed on re-read`, afterRemarks.remarks === "Edited rack remark");
+
   // ---- v2.2.3: clearing a free-text field to blank is legitimate (not coerced to a fake value) ----
   const clearResult = await applyRackCapacityFieldChanges(original, [
     { rowNumber: cabinetTarget.rowNumber, rackId: cabinetTarget.rackId!, detail: { expected: cabinetTarget.detail, next: null } }
@@ -158,7 +165,7 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
   const afterClear = (await readRackCapacityFromBuffer(clearResult.buffer))!.records.find(r => r.rowNumber === cabinetTarget.rowNumber)!;
   check(`${label}: cleared Detail reads back as null, not "null"/empty-string-with-junk`, afterClear.detail === null);
 
-  // ---- v2.2.3: ONE staged rack modification covering ALL FOUR fields at once ----
+  // ---- v2.3.1: ONE staged rack modification covering ALL FIVE fields at once ----
   const multiTarget = before.records.find(r => r.rackId && r.rowNumber !== target.rowNumber && r.rowNumber !== second.rowNumber && r.rowNumber !== cabinetTarget.rowNumber)!;
   const multiResult = await applyRackCapacityFieldChanges(original, [
     {
@@ -167,16 +174,18 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
       status: { expected: multiTarget.status, next: multiTarget.status === "In Use" ? "Reserved" : "In Use" },
       cabinetSize: { expected: multiTarget.cabinetSize, next: "45U-combo" },
       detail: { expected: multiTarget.detail, next: "Combo detail" },
-      deviceType: { expected: multiTarget.deviceType, next: "Network" }
+      deviceType: { expected: multiTarget.deviceType, next: "Network" },
+      remarks: { expected: multiTarget.remarks, next: "Combo remark" }
     }
   ]);
-  check(`${label}: one rack, all four fields changed at once, applies as ONE outcome`, multiResult.outcomes.length === 1 && multiResult.outcomes[0].applied === true);
-  check(`${label}: multi-field change updates changedCount for all 4 touched cells`, multiResult.changedCount === 4);
+  check(`${label}: one rack, all five fields changed at once, applies as ONE outcome`, multiResult.outcomes.length === 1 && multiResult.outcomes[0].applied === true);
+  check(`${label}: multi-field change updates changedCount for all 5 touched cells`, multiResult.changedCount === 5);
   const afterMulti = (await readRackCapacityFromBuffer(multiResult.buffer))!.records.find(r => r.rowNumber === multiTarget.rowNumber)!;
   check(`${label}: multi-field Status applied`, afterMulti.status === (multiTarget.status === "In Use" ? "Reserved" : "In Use"));
   check(`${label}: multi-field Cabinet Size applied`, afterMulti.cabinetSize === "45U-combo");
   check(`${label}: multi-field Detail applied`, afterMulti.detail === "Combo detail");
   check(`${label}: multi-field Device Type applied`, afterMulti.deviceType === "Network");
+  check(`${label}: multi-field Remarks applied`, afterMulti.remarks === "Combo remark");
 
   // ---- v2.2.3: a conflict on ONE field of a multi-field change blocks the WHOLE row (no partial write) ----
   const partialConflict = await applyRackCapacityFieldChanges(original, [

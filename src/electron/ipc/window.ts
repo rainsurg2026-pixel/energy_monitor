@@ -25,6 +25,8 @@ function sanitizeConfigPatch(raw: unknown): Partial<AppConfig> {
     patch.startupBehavior = input.startupBehavior;
   if (input.theme === "dark" || input.theme === "light") patch.theme = input.theme;
   if (input.language === "th" || input.language === "en") patch.language = input.language;
+  if (typeof input.globalDataDisplayPeriod === "string" && input.globalDataDisplayPeriod.trim().length > 0)
+    patch.globalDataDisplayPeriod = input.globalDataDisplayPeriod.trim();
   if (typeof input.backupFolder === "string" || input.backupFolder === null)
     patch.backupFolder = input.backupFolder as string | null;
   if (typeof input.backupKeep === "number" && Number.isFinite(input.backupKeep))

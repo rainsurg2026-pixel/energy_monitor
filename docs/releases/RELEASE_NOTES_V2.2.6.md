@@ -157,6 +157,68 @@ other status its fixed `rackStatusConfig.ts` color (Available green,
 Reserved blue, Pending Dismantle brown). No second palette or a second
 pie-drawing implementation.
 
+## Hotfix — Rack Unit Capacity Executive Page (PDF)
+
+Post-release regression fix: "Export All Report" was missing the complete
+"Rack Unit Capacity and Utilization" executive page. Feature B (above)
+redesigned the *Dashboard's* Rack Unit Capacity summary; the PDF side had
+only ever carried a stripped-down block (`rackUnitCapacityBlock()`) tacked
+onto the bottom of the Rack Capacity page — 4 bare KPI cards (Total/Used/
+Available (U)/Availability Capacity) and a cramped 260×150px image, with no
+donut, no Usage %, no Trend vs Previous Month, and no dedicated page heading
+at all.
+
+Restored as a full standalone page, `renderRackUnitCapacityExecutivePage()`
+in `reportHtml.ts`, positioned immediately after "Rack Capacity and
+Utilization" (before "Capacity Health and Zone Heatmap"): a 2×3 KPI grid
+(Total (U)/Used (U)/Available (U)/Availability %/Usage %/Trend vs Previous
+Month), a large Used/Available donut (~60% width) with a legend, and the
+Monthly Rack Unit Capacity Image (~40% width, with Reporting Month/Captured
+By/Captured Date/Resolution caption) or the same placeholder the Dashboard
+shows when no image exists for the month.
+
+Zero duplicated logic — every number, color, and pixel of this page comes
+from something that already existed:
+
+- `unitCapacityRowForReportingMonth()` (pre-existing) for the Reporting
+  Month's row.
+- New `findPreviousRackUnitCapacityRow()` (`src/utils/rackUnitCapacity.ts`)
+  for "previous month" — extracted from what was previously duplicated
+  inline logic in the Dashboard's `RackUnitCapacitySummary.tsx`; the
+  Dashboard component was updated to call this same shared helper too, so
+  neither surface can drift from the other.
+- `calculatePercentageDelta`/`getTrendDirection`/`getTrendLabel`
+  (`trendCalculator.ts`, pre-existing) for the trend arrow — the exact same
+  calls the Dashboard's own trend card uses.
+- `utilizationColorHex()` (`capacityHealth.ts`, pre-existing, already used
+  by the Capacity Health Gauge) for the donut's "Used" segment color — the
+  literal same function call as the Dashboard, not a re-derived color.
+- `donutSvg()` — generalized (optional per-segment `color` override,
+  optional `centerLabel`/`centerSubLabel`) rather than writing a second
+  donut renderer; the two existing callers (Rack Capacity page, Rack
+  Capacity Site Comparison) are unaffected — they still call it with only
+  the original 2 arguments, so their output is byte-identical to before.
+- The image figure/placeholder markup, extracted into
+  `rackUnitCapacityImageFigure()` from the now-deleted
+  `rackUnitCapacityBlock()`, reads exclusively through
+  `data.rackUnitCapacityImageDataUri`/`Meta` (`ImageStorageProvider` via
+  `reportDataBuilder.ts`) — never the legacy Excel-embedded mechanisms,
+  never a second image source.
+
+The old `rackUnitCapacityBlock()` and its 2 call sites were deleted — its
+content is now fully superseded by the new adjacent page, so the same data
+is never shown twice on consecutive pages.
+
+Layout reuses existing CSS wholesale (`.kpi`/`.block`/`.gauge-row`/
+`.gauge-caption`/`.legend-row`, all pre-existing); the only additions are
+`.kpis-3col` (a 3-column variant of the existing `.kpis` grid) and
+`.rack-unit-capacity-layout`/`.ruc-left`/`.ruc-right` (a 60/40 flex split,
+matching the Dashboard's own `lg:col-span-3`/`lg:col-span-2` out of 5
+columns exactly).
+
+Export All Report page count: 15 → 16 (verified against both facilities'
+real workbooks).
+
 ## Testing
 
 - `npm run lint` (renderer + Electron strict TypeScript) — clean throughout.
@@ -170,6 +232,31 @@ pie-drawing implementation.
   extraction, checksum-verified filesystem landing, orphan recovery,
   complete removal from the workbook, byte-identical VBA/pivot/table
   preservation, and idempotency on a second run) — both green, both
+  facilities.
+- **Hotfix regression** (Rack Unit Capacity executive page):
+  `scripts/test-all-report.ts` extended to assert the page's presence,
+  correct page order (after Rack Capacity and Utilization, before Capacity
+  Health and Zone Heatmap), and correct Facility subtitle against both real
+  workbooks; `scripts/test-rack-unit-capacity.ts` extended with 8 new
+  checks against synthetic data — KPI values (including the new
+  Availability %/Usage %/Trend cards), donut legend and center label,
+  page-order adjacency, and a dedicated placeholder-path check (a month
+  with Rack Unit Capacity data but no saved image still renders the
+  Dashboard's placeholder, not a crash or blank gap). All green, both
+  facilities. Verified visually via a real Electron `printToPDF`-equivalent
+  render (screenshot) against synthetic fixture data, and against a
+  `git stash`-generated screenshot of the pre-hotfix page for a direct
+  before/after comparison.
+- **Test scripts made robust to real, changing production data**: mid-pass,
+  the real `DC_Srinakarin.xlsm` gained genuine Rack Unit Capacity rows from
+  a real, intentional edit outside this pass's own work. Both
+  `test-all-report.ts` (the "not yet available"/"no data for this
+  month"/"real data" fallback assertion) and `test-rack-unit-capacity.ts`
+  (row-count and table-ref assertions in `testFacility()`, previously
+  hardcoded assuming an empty starting sheet) were updated to derive their
+  expected values from whatever the real starting state actually is,
+  rather than assuming production workbooks stay pristine for this
+  feature. Both scripts are green against the real, current state of both
   facilities.
 - Full existing regression suite re-run and green with **zero regressions**
   from this pass: `test:rack-capacity-metrics`, `test:rack-capacity-write`,
@@ -278,6 +365,18 @@ recorded safety practice from prior releases.
 
 - No Table of Contents exists in the "Export All Report" PDF, before or
   after this pass — out of this release's explicit scope.
+- **Unrelated, pre-existing finding discovered during this hotfix's
+  regression run** (not caused by, and out of scope for, this hotfix — the
+  hotfix touches no UPS Group History code): `scripts/test-ups-group-
+  history.ts` fails one assertion, "source workbook has no History sheet
+  yet", against the real `DC_Srinakarin.xlsm`. Verified read-only: that
+  workbook genuinely already has a 330-row UPS Group History sheet, all
+  rows generated at `2026-08-01T04:28:42.833Z` — exactly matching the
+  file's own on-disk mtime, i.e. a legitimate backfill that already ran for
+  real at some earlier point, not something touched during this pass. The
+  test's "starts pristine" assumption is simply stale for this workbook now
+  and needs a separate look; `test:ups-group-history-migration` (the
+  migration-specific script) passes and is unaffected.
 - The legacy K9-slot "orphan" recovery path (Feature A) has no dedicated
   UI surface yet for browsing/re-filing recovered orphan files; they are
   logged (full path) on migration and preserved on disk under

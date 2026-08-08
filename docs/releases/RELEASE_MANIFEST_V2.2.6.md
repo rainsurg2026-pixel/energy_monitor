@@ -142,10 +142,15 @@ resolved.
 No previously-built `release/Energy Monitor-v2.2.4.*` or
 `release/Energy Monitor-v2.2.5.*` artifacts were touched.
 
+**Rebuilt and repackaged after the PDF hotfix** (see "Hotfix Addendum"
+below) — source changed, so the artifacts below supersede the original
+build's hashes recorded earlier in this manifest's history. This is the
+current, final build.
+
 | Artifact | Path | Size | SHA-256 | Timestamp (local, +07:00) |
 |---|---|---|---|---|
-| Portable EXE | `release/Energy Monitor-v2.2.6.exe` | 82,480,465 bytes (78.7 MB) | `0979558d6f4ccff776b0d27ced6175c381e4998b4522f3babad2e94b4960a538` | 2026-08-02 06:54:46 |
-| Portable ZIP | `release/Energy Monitor-v2.2.6.zip` | 82,685,068 bytes (78.9 MB) | `6d6963f82e2e08bc34aeb488d46df4286d08c5efb302625ecc7e40dba54bc9c3` | 2026-08-02 06:56:07 |
+| Portable EXE | `release/Energy Monitor-v2.2.6.exe` | 82,598,726 bytes (78.8 MB) | `518befe3c9a16bb22ebe55436239d7ab003f0fe21400b4d247afe47499ca4404` | 2026-08-02 07:53:42 |
+| Portable ZIP | `release/Energy Monitor-v2.2.6.zip` | 82,831,406 bytes (79.0 MB) | `c842d11702d33ce3ba7a5b4cf6c104fdaf3ae00154c91300043499e30d1758db` | 2026-08-02 07:55:18 |
 
 **Verified**, on the packaged executable itself: the full regression
 suite (see Test Results), a complete `npm run test:e2e` pass (100% green)
@@ -300,6 +305,120 @@ facilities, Rack Capacity, Site Comparison in both languages, PDF export,
 Export All Report, and source-workbook byte-integrity). See "Packaging
 Investigation Summary" above for the full account of the intermittent
 packaging condition observed earlier in this release cycle.
+
+## Hotfix Addendum — Rack Unit Capacity Executive Page (PDF)
+
+Applied on top of the certified v2.2.6 release above (commit `4629e4b`),
+as an uncommitted working-tree change pending Product Owner review — this
+addendum documents that work separately rather than retroactively altering
+the certification above.
+
+**Files modified**: `src/reports/pdf/reportHtml.ts` (donutSvg() generalized;
+rackUnitCapacityImageFigure() and renderRackUnitCapacityExecutivePage()
+added; rackUnitCapacityBlock() and its 2 call sites removed; new page
+wired into buildReportHtml()'s page assembly; new CSS `.kpis-3col`/
+`.rack-unit-capacity-layout`/`.ruc-left`/`.ruc-right`),
+`src/components/rack/RackUnitCapacitySummary.tsx` (deduplicated to call the
+new shared previous-month helper instead of its own inline logic),
+`scripts/test-all-report.ts` and `scripts/test-rack-unit-capacity.ts`
+(new assertions for the executive page, plus made robust to real,
+non-empty production Rack Unit Capacity data - see Workbook integrity
+below). **Files added**: `src/utils/rackUnitCapacity.ts`
+(`findPreviousRackUnitCapacityRow()` and `usagePercent()`, shared by the
+Dashboard component and the PDF - the latter added after an independent
+architecture review flagged a small duplicated calculation this pass had
+introduced; also swapped an inline percentage-format expression for the
+already-imported `formatRatioPercent()`). `git diff --stat`: 4 files
+changed, 1 file added, 177 insertions / 61 deletions.
+
+**New PDF page**: "Rack Unit Capacity and Utilization", positioned
+immediately after "Rack Capacity and Utilization" and before "Capacity
+Health and Zone Heatmap".
+
+**Export All Report page count**: 16 HTML page-sections (up from 15;
+verified against both real facility workbooks via `test-all-report.ts`'s
+page-count log line). The actual rendered PDF, via real Chromium
+`printToPDF`, is 17 physical pages for Rangsit and 18 for Srinakarin (one
+section's content overflows onto a second physical page - Srinakarin's
+extra page reflects its additional "UPS Load Status - Overall" dashboard
+subsection, a pre-existing per-facility difference, not something this
+hotfix changed). Both counts (logical sections and physical pages)
+verified directly against the real, current `DC_Rangsit.xlsm`/
+`DC_Srinakarin.xlsm` via `scripts/run-all-report-pdf-test.mjs`, and the
+Rack Unit Capacity page's content read directly from the generated PDF for
+both facilities: Rangsit correctly shows "Rack Unit Capacity data is not
+yet available in this workbook" (still zero rows); Srinakarin correctly
+shows "No Rack Unit Capacity data is available for the selected reporting
+month (Jun 2026)" (it has real rows for May and July 2026, but not June,
+its current Reporting Month) - both the empty-data and
+data-exists-but-not-for-this-month fallback paths confirmed working
+correctly against real, current, non-synthetic data.
+
+**Regression**: `npm run lint` clean, `npm run build` clean,
+`test:all-report` green for both `DC_Rangsit.xlsm` and `DC_Srinakarin.xlsm`
+(16 pages each), `test:rack-unit-capacity` green (all assertions,
+including 8 new ones covering the executive page's KPIs/donut/placeholder/
+page-order), and the full 20-script pre-existing regression suite re-run
+with zero regressions attributable to this change. One unrelated,
+pre-existing finding was surfaced incidentally (`test-ups-group-history.ts`
+against the real `DC_Srinakarin.xlsm` — see Release Notes' Known
+limitations); it does not affect this hotfix's own gates.
+
+**Workbook integrity**: the real `DC_Srinakarin.xlsm` was intentionally
+edited directly by the Product Owner partway through this pass (confirmed
+explicitly) - unrelated to any code in this hotfix, which has zero
+filesystem-write capability by construction (`reportHtml.ts` and
+`rackUnitCapacity.ts` do no I/O at all; verified by direct source
+inspection, not just by testing). Per explicit instruction, the current
+workbook state is treated as the new source of truth rather than something
+to diff against a prior snapshot. `test-all-report.ts`'s Rack Unit
+Capacity assertion and `test-rack-unit-capacity.ts`'s row-count/table-ref
+assertions (previously hardcoded assuming an empty starting sheet) were
+both updated to derive their expected values from whatever real data
+actually exists, and both are green against the real, current state of
+both facilities (re-confirmed immediately before this manifest was
+finalized).
+
+**Visual verification**: rendered via a real Electron `printToPDF`-path
+window (not a mock) against synthetic Rack Unit Capacity fixture data,
+screenshotted, and directly compared against a `git stash`-generated
+screenshot of the pre-hotfix page — confirming the reported bug (no
+dedicated page, only 4 bare KPI cards and a cramped image) and its fix
+(full 2×3 KPI grid, donut with legend, properly proportioned 60/40 image
+panel) side by side.
+
+**Architecture review**: independent review pass confirmed the highest-risk
+item (donutSvg()'s backward compatibility for its 2 pre-existing callers)
+holds byte-for-byte, and no duplicated image-loading/SVG logic exists.
+Found and fixed two low-severity duplicated-calculation findings (a
+`usagePercent()` helper extracted per the review's recommendation; an
+inline percentage format replaced with the already-imported
+`formatRatioPercent()`); two cosmetic findings (a legend swatch color not
+present on the Dashboard; the image caption's field order/labels) were
+confirmed as deliberate, explicit spec requirements from this hotfix's own
+instructions, not accidental deviations, and left as specified. "Approved
+with Conditions" verdict — all conditions addressed.
+
+**Fresh production build and packaging** (after the hotfix source changes
+above): `npm run desktop:build` clean, `npm run portable:build` succeeded
+on its first attempt (no EPERM, no retries needed), `npm run portable:zip`
+succeeded after closing a locally-open PDF viewer that was holding a
+leftover exported file from earlier testing. New artifact hashes recorded
+in the Artifacts table above. `npm run test:packaged-report` —
+**PACKAGED PORTABLE RUNTIME PASSED** — against the actual rebuilt
+`Energy Monitor-v2.2.6.exe` and the real, current `DC_Rangsit.xlsm`/
+`DC_Srinakarin.xlsm` (copied into an isolated test directory, never
+modifying the real files - confirmed unchanged before and after this
+entire build/package/verify pass).
+
+**Hotfix certification**:
+**SOURCE: PASS · REGRESSION: PASS · PACKAGING: PASS · RUNTIME: PASS · WORKBOOK INTEGRITY: PASS**
+**HOTFIX CERTIFIED**
+
+No git commit was created for this addendum — the task did not explicitly
+request one, and per `.claude/rules/git.md` a commit requires explicit
+per-change instruction. All changes remain uncommitted in the working tree
+pending Product Owner review.
 
 No git tag, GitHub release, or push was created or attempted, per this
 repository's git safety rules.

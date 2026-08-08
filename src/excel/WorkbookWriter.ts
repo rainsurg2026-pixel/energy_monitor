@@ -44,7 +44,7 @@ import { DEFAULT_DEVICE_LISTS, DeviceLists, SheetRow, logsToRows, rowKey } from 
 import { readWorkbookFromBuffer } from "./WorkbookReader";
 import { isSrinakarinWorkbook } from "./SrinakarinWorkbookAdapter";
 import { writeWorkbookMeta } from "./WorkbookVersion";
-import { calculateAverageElectricityRate, calculateEnergyCostForMonth, getAirValue } from "../utils/energyCost";
+import { calculateAverageElectricityRate, calculateEnergyCostForMonth, getAirFields, getAirValue, LEGACY_AIR_FIELDS } from "../utils/energyCost";
 import { calculateSrinakarinAggregate } from "../utils/srinakarinPower";
 import { patchUpsGroupHistoryBuffer } from "./UpsGroupHistoryWriter";
 import type { UpsGroupConfig } from "../utils/upsGroupAggregation";
@@ -1589,7 +1589,7 @@ function deriveSrinakarinPpc43AveragePatches(logs: MonthlyLog[]): InputPatch[] {
   }));
 }
 
-function srinakarinInputPatches(logs: MonthlyLog[]): Record<string, InputPatch[]> {
+function srinakarinInputPatches(logs: MonthlyLog[], scope: WorkbookSaveScope = "all"): Record<string, InputPatch[]> {
   const result: Record<string, InputPatch[]> = {
     "1.1 UPS Data Log By Phase": [],
     "1.2 UPS Data Log_Average": [],
@@ -1606,6 +1606,20 @@ function srinakarinInputPatches(logs: MonthlyLog[]): Record<string, InputPatch[]
     "4. Electricity Cost Log": []
   };
   for (const log of logs) {
+    const airValues: Record<string, number | null> = {};
+    const airFields = log.energyCalculation?.airFields?.length
+      ? [...log.energyCalculation.airFields]
+      : Array.from(new Set([
+          ...LEGACY_AIR_FIELDS,
+          ...getAirFields(log),
+          ...Object.keys(log.air).filter(field => /^eb\d+[ab]$/.test(field))
+        ]));
+    for (const field of airFields) {
+      airValues[field] = getAirValue(log, field);
+    }
+    result["2. Air Energy Consumption Log"].push({ month: log.month, values: airValues });
+    if (scope === "air") continue;
+
     if (isMonthIn2026(log.month)) {
       for (const aggregate of calculateSrinakarinAggregate(log)) {
         result["1. UPS Data Log"].push({
@@ -1640,11 +1654,6 @@ function srinakarinInputPatches(logs: MonthlyLog[]): Record<string, InputPatch[]
     }
     for (const [id, value] of Object.entries(input?.ppc43Current ?? {})) result["1.6 AC PPC43 (A)"].push({ month: log.month, id, values: { panelcurrenta: value } });
     for (const [id, values] of Object.entries(input?.ppc43Panel ?? {})) result["1.7 AC PPC43 Panel (A)"].push({ month: log.month, id, values });
-    const airValues: Record<string, number | null> = {};
-    for (const field of log.energyCalculation?.airFields ?? ["eb41a", "eb41b", "eb42a", "eb42b"]) {
-      airValues[field] = getAirValue(log, field);
-    }
-    result["2. Air Energy Consumption Log"].push({ month: log.month, values: airValues });
     for (const dc of log.dc) result["3. DC Data Log"].push({ month: log.month, id: dc.panelId, values: { voltage: dc.voltage, current: dc.current } });
     const energy = calculateEnergyCostForMonth(logs, log.month);
     result["4. Electricity Cost Log"].push({
@@ -1657,6 +1666,7 @@ function srinakarinInputPatches(logs: MonthlyLog[]): Record<string, InputPatch[]
       }
     });
   }
+  if (scope === "air") return result;
   result["1.2 UPS Data Log_Average"] = deriveSrinakarinUpsAveragePatches(result["1.1 UPS Data Log By Phase"]);
   result["1.3 UPS Data Log_Average SUM"] = deriveSrinakarinUpsSumPatches(result["1.2 UPS Data Log_Average"]);
   result["1.5 AC PPC Log_Average"] = deriveSrinakarinPpcAveragePatches(logs, result["1.4 AC PPC Log By Phase"]);
@@ -1995,7 +2005,8 @@ async function patchSheetTables(zip: JSZip, sheetXmlPath: string, sheetXml: stri
 export async function patchWorkbookBuffer(
   original: Buffer,
   logs: MonthlyLog[],
-  devices: DeviceLists = DEFAULT_DEVICE_LISTS
+  devices: DeviceLists = DEFAULT_DEVICE_LISTS,
+  scope: WorkbookSaveScope = "all"
 ): Promise<{ buffer: Buffer; stats: PatchStats[] }> {
   const zip = await JSZip.loadAsync(original);
   const sheets = await locateSheets(zip);
@@ -2036,6 +2047,7 @@ export async function patchWorkbookBuffer(
   const stats: PatchStats[] = [];
 
   for (const schema of SHEET_SCHEMAS) {
+    if (scope === "air" && schema.key !== "AIR") continue;
     const sheetName = resolved[schema.key];
     if (!sheetName) {
       throw new WorkbookError("INVALID_WORKBOOK", `Required sheet for "${schema.canonicalName}" not found in workbook.`);
@@ -2079,7 +2091,7 @@ export async function patchWorkbookBuffer(
       zip.file(location.xmlPath, clearFormulaErrorCaches(await entryText(zip, location.xmlPath) ?? ""));
     }
   }
-  await validatePersistedDcInputs(zip, sheets, sharedStrings);
+  if (scope !== "air") await validatePersistedDcInputs(zip, sheets, sharedStrings);
 
   // Force a full recalculation on next open (formula caches are stale now).
   const workbookXml = (await entryText(zip, "xl/workbook.xml"))!;
@@ -2125,11 +2137,11 @@ export async function patchWorkbookBuffer(
   return { buffer: buffer as Buffer, stats };
 }
 
-export async function patchSrinakarinWorkbookBuffer(original: Buffer, logs: MonthlyLog[]): Promise<Buffer> {
+export async function patchSrinakarinWorkbookBuffer(original: Buffer, logs: MonthlyLog[], scope: WorkbookSaveScope = "all"): Promise<Buffer> {
   const zip = await JSZip.loadAsync(original);
   const sheets = await locateSheets(zip);
   const sharedStrings = parseSharedStrings(await entryText(zip, "xl/sharedStrings.xml"));
-  const patches = srinakarinInputPatches(logs);
+  const patches = srinakarinInputPatches(logs, scope);
   const date1904 = workbookUsesDate1904((await entryText(zip, "xl/workbook.xml")) ?? "");
   const appWrittenStyleIds = new Set<string>();
   for (const location of sheets) {
@@ -2208,13 +2220,15 @@ export async function patchSrinakarinWorkbookBuffer(original: Buffer, logs: Mont
       zip.file(location.xmlPath, clearFormulaErrorCaches(await entryText(zip, location.xmlPath) ?? ""));
     }
   }
-  await validatePersistedDcInputs(zip, sheets, sharedStrings);
-  await validateSrinakarinPpc43AveragePersistence(
-    zip,
-    sheets,
-    sharedStrings,
-    patches["1.5.1 AC PPC Log_Average(43AB)"]
-  );
+  if (scope !== "air") {
+    await validatePersistedDcInputs(zip, sheets, sharedStrings);
+    await validateSrinakarinPpc43AveragePersistence(
+      zip,
+      sheets,
+      sharedStrings,
+      patches["1.5.1 AC PPC Log_Average(43AB)"]
+    );
+  }
 
   const workbookXml = await entryText(zip, "xl/workbook.xml");
   if (workbookXml) {
@@ -2366,7 +2380,11 @@ export interface SaveWorkbookOptions {
     upsGroups: UpsGroupConfig[];
     onlyMonths?: string[];
   };
+  /** Section-scoped save. Omitted/"all" runs every full workbook validator. */
+  scope?: WorkbookSaveScope;
 }
+
+export type WorkbookSaveScope = "all" | "air";
 
 export interface SaveWorkbookResult {
   path: string;
@@ -2416,7 +2434,12 @@ export async function createBackup(sourcePath: string, backupDir: string, keep: 
 }
 
 /** First mismatching (tab, month, field, intended, actual), or null if every compared field matches. */
-function findLogsMismatch(a: MonthlyLog[], b: MonthlyLog[], devices: DeviceLists): string | null {
+function findLogsMismatch(
+  a: MonthlyLog[],
+  b: MonthlyLog[],
+  devices: DeviceLists,
+  scope: WorkbookSaveScope = "all"
+): string | null {
   // Both sides are canonicalized through the same writer expansion, so device
   // order/naming differences can never produce a false mismatch.
   const num = (v: unknown) => {
@@ -2428,6 +2451,11 @@ function findLogsMismatch(a: MonthlyLog[], b: MonthlyLog[], devices: DeviceLists
   const rowsA = logsToRows(a, devices);
   const rowsB = logsToRows(b, devices);
   for (const tab of Object.keys(rowsA) as TabKey[]) {
+    // Section-scoped saves intentionally leave the other worksheet tabs
+    // untouched. A new month may therefore exist only in the requested tab;
+    // comparing every tab here would reject a valid Save AIR with a false
+    // mismatch for the still-absent UPS/DC/Energy rows.
+    if (scope === "air" && tab !== "AIR") continue;
     const listA = rowsA[tab];
     const listB = rowsB[tab];
     if (listA.length !== listB.length) return `${tab}: row count ${listA.length} (intended) vs ${listB.length} (reread)`;
@@ -2468,9 +2496,10 @@ export async function saveWorkbook(
 
   // 1. Patch in memory. Srinakarin uses a whitelist writer for purple input
   // sheets; Rangsit continues through the historical four-tab patcher.
+  const scope = options.scope ?? "all";
   const patchedBuffer = srinakarin
-    ? await patchSrinakarinWorkbookBuffer(original, logs)
-    : (await patchWorkbookBuffer(original, logs, devices)).buffer;
+    ? await patchSrinakarinWorkbookBuffer(original, logs, scope)
+    : (await patchWorkbookBuffer(original, logs, devices, scope)).buffer;
 
   // 1b. UPS Group History (optional): additive-only zip surgery on top of
   // the already-patched buffer - never touches the four managed log sheets,
@@ -2498,11 +2527,11 @@ export async function saveWorkbook(
   const logsToValidate = srinakarin
     ? logs.map(log => ({ ...log, ups: calculateSrinakarinAggregate(log) }))
     : logs;
-  const mismatch = findLogsMismatch(logsToValidate, reread.logs, devices);
+  const mismatch = findLogsMismatch(logsToValidate, reread.logs, devices, scope);
   if (mismatch) {
     throw new WorkbookError("VALIDATION_FAILED", `Save aborted - data did not round-trip identically. (${mismatch})`, "validate");
   }
-  if (!srinakarin) await validatePersistedEnergyValues(buffer, logs);
+  if (!srinakarin && scope !== "air") await validatePersistedEnergyValues(buffer, logs);
 
   // 3. Lock check on the file we are about to replace.
   const overwritingExisting = await fs
