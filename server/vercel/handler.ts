@@ -30,7 +30,13 @@ function unavailablePayload(error: unknown, environment: NodeJS.ProcessEnv): unk
   if (environment.VERCEL_ENV !== "preview") return payload;
   if (error instanceof ConfigurationError) payload.error.reason = "configuration";
   else if (error instanceof Error && error.message === "DATABASE_URL must use a non-superuser login role that is a member of energy_monitor_runtime.") payload.error.reason = "runtime-role";
-  else payload.error.reason = "database-connection";
+  else {
+    const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
+    if (code === "28P01" || code === "28000") payload.error.reason = "database-authentication";
+    else if (code === "3D000") payload.error.reason = "database-target";
+    else if (["ECONNREFUSED", "ENETUNREACH", "ENOTFOUND", "ETIMEDOUT"].includes(code)) payload.error.reason = "database-network";
+    else payload.error.reason = "database-connection";
+  }
   return payload;
 }
 
