@@ -3,6 +3,7 @@ import { withTransaction, type DbExecutor, query } from "../db/pool";
 import { HttpError } from "../errors";
 import type { Role } from "../authz";
 import type { LocalCredential, SessionRecord } from "./types";
+import type { LoginProtectionPolicy } from "./loginProtection";
 
 export interface AuthAccountRecord {
   id: string;
@@ -67,7 +68,7 @@ export interface AuthRepository {
   revokeSessionByTokenHash(tokenHash: string, reason: string): Promise<void>;
   revokeOtherSessions(userId: string, keepSessionId: string | null, reason: string): Promise<void>;
   revokeAllSessions(userId: string, reason: string): Promise<void>;
-  recordLoginFailure(userId: string, failedAttemptCount: number, lockedUntil: Date | null): Promise<void>;
+  recordLoginFailure(userId: string, now: Date, policy: LoginProtectionPolicy): Promise<{ failedAttemptCount: number; lockedUntil: Date | null; lockoutApplied: boolean }>;
   resetLoginFailures(userId: string): Promise<void>;
   replacePasswordHash(userId: string, passwordHash: string, changedAt: Date): Promise<void>;
   changePassword(userId: string, passwordHash: string, changedAt: Date, keepSessionId: string | null, actorUserId: string, correlationId: string): Promise<void>;
@@ -151,6 +152,17 @@ const ACCOUNT_SQL = `
 `;
 
 const ADMIN_INVARIANT_LOCK_KEY = "736515828225";
+const SENSITIVE_AUDIT_KEY = /(password|hash|token|csrf|secret|credential)/iu;
+
+function scrubAuditValue(value: unknown, depth = 0): unknown {
+  if (depth > 5 || value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (typeof value === "string") return value.length > 512 ? `${value.slice(0, 512)}…` : value;
+  if (Array.isArray(value)) return value.slice(0, 100).map(item => scrubAuditValue(item, depth + 1));
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key]) => !SENSITIVE_AUDIT_KEY.test(key)).map(([key, item]) => [key, scrubAuditValue(item, depth + 1)]));
+  }
+  return null;
+}
 
 export class PostgresAuthRepository implements AuthRepository {
   private readonly executor: DbExecutor;
@@ -208,7 +220,19 @@ export class PostgresAuthRepository implements AuthRepository {
   async revokeSessionByTokenHash(tokenHash: string, reason: string): Promise<void> { await query(this.executor, "UPDATE public.sessions SET revoked_at = COALESCE(revoked_at, now()), revocation_reason = COALESCE(revocation_reason, $2) WHERE token_hash = $1", [tokenHash, reason]); }
   async revokeOtherSessions(userId: string, keepSessionId: string | null, reason: string): Promise<void> { await query(this.executor, "UPDATE public.sessions SET revoked_at = COALESCE(revoked_at, now()), revocation_reason = COALESCE(revocation_reason, $3) WHERE user_id = $1::bigint AND ($2::bigint IS NULL OR id <> $2::bigint) AND revoked_at IS NULL", [userId, keepSessionId, reason]); }
   async revokeAllSessions(userId: string, reason: string): Promise<void> { await query(this.executor, "UPDATE public.sessions SET revoked_at = COALESCE(revoked_at, now()), revocation_reason = COALESCE(revocation_reason, $2) WHERE user_id = $1::bigint AND revoked_at IS NULL", [userId, reason]); }
-  async recordLoginFailure(userId: string, failedAttemptCount: number, lockedUntil: Date | null): Promise<void> { await query(this.executor, "UPDATE public.users SET failed_attempt_count = $2, locked_until = $3, updated_at = now(), row_version = row_version + 1 WHERE id = $1::bigint", [userId, failedAttemptCount, lockedUntil]); }
+  async recordLoginFailure(userId: string, now: Date, policy: LoginProtectionPolicy): Promise<{ failedAttemptCount: number; lockedUntil: Date | null; lockoutApplied: boolean }> {
+    return this.inTransaction(async repository => {
+      const result = await query<Record<string, unknown>>(repository.executor, "SELECT failed_attempt_count, locked_until FROM public.users WHERE id = $1::bigint FOR UPDATE", [userId]);
+      const row = result.rows[0];
+      if (!row) return { failedAttemptCount: 0, lockedUntil: null, lockoutApplied: false };
+      const currentLockedUntil = toDate(row.locked_until);
+      if (currentLockedUntil && currentLockedUntil.getTime() > now.getTime()) return { failedAttemptCount: Number(row.failed_attempt_count), lockedUntil: currentLockedUntil, lockoutApplied: true };
+      const failedAttemptCount = Math.max(0, Number(row.failed_attempt_count)) + 1;
+      const lockedUntil = failedAttemptCount >= policy.maxFailedAttempts ? new Date(now.getTime() + policy.lockoutDurationMs) : null;
+      await query(repository.executor, "UPDATE public.users SET failed_attempt_count = $2, locked_until = $3, updated_at = now(), row_version = row_version + 1 WHERE id = $1::bigint", [userId, failedAttemptCount, lockedUntil]);
+      return { failedAttemptCount, lockedUntil, lockoutApplied: lockedUntil !== null };
+    });
+  }
   async resetLoginFailures(userId: string): Promise<void> { await query(this.executor, "UPDATE public.users SET failed_attempt_count = 0, locked_until = NULL, updated_at = now(), row_version = row_version + 1 WHERE id = $1::bigint", [userId]); }
   async replacePasswordHash(userId: string, passwordHash: string, changedAt: Date): Promise<void> { await query(this.executor, "UPDATE public.local_credentials SET password_hash = $2, password_version = password_version + 1, updated_at = now() WHERE user_id = $1::bigint", [userId, passwordHash]); await query(this.executor, "UPDATE public.users SET password_changed_at = $2, updated_at = now(), row_version = row_version + 1 WHERE id = $1::bigint", [userId, changedAt]); }
 
@@ -267,7 +291,10 @@ export class PostgresAuthRepository implements AuthRepository {
         if (Number(admins.rows[0].count) === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain.");
       }
       await query(repository.executor, "UPDATE public.users SET active = $2, updated_at = now(), row_version = row_version + 1 WHERE id = $1::bigint", [targetUserId, active]);
-      if (!active) await repository.revokeAllSessions(targetUserId, "user_deactivated");
+      if (!active) {
+        await repository.revokeAllSessions(targetUserId, "user_deactivated");
+        await repository.audit({ actorUserId, action: "SESSION_REVOKED_ALL", entityType: "user", entityId: targetUserId, newValue: { reason: "user_deactivated" }, correlationId });
+      }
       await repository.audit({ actorUserId, action: active ? "user_activate" : "user_deactivate", entityType: "user", entityId: targetUserId, previousValue: { active: before.active }, newValue: { active }, correlationId });
       const after = await repository.findUserById(targetUserId); if (!after) throw new Error("Updated user could not be loaded."); return safeUserFromAccount(after);
     });
@@ -293,13 +320,14 @@ export class PostgresAuthRepository implements AuthRepository {
       const before = await repository.findUserById(targetUserId); if (!before) throw new HttpError(404, "USER_NOT_FOUND", "User was not found.");
       await repository.replacePasswordHash(targetUserId, passwordHash, new Date());
       await repository.revokeAllSessions(targetUserId, "admin_password_reset");
+      await repository.audit({ actorUserId, action: "SESSION_REVOKED_ALL", entityType: "user", entityId: targetUserId, newValue: { reason: "admin_password_reset" }, correlationId });
       await repository.audit({ actorUserId, action: "password_reset", entityType: "user", entityId: targetUserId, newValue: { password_changed: true }, correlationId });
       const after = await repository.findUserById(targetUserId); if (!after) throw new Error("Reset user could not be loaded."); return safeUserFromAccount(after);
     });
   }
 
   async audit(input: AuditInput): Promise<void> {
-    await query(this.executor, `INSERT INTO public.audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2::bigint,$3,$4,$5,$6::jsonb,$7::jsonb,$8)`, [input.actorUserId ? "user" : "system", input.actorUserId, input.action, input.entityType, input.entityId, input.previousValue === undefined ? null : JSON.stringify(input.previousValue), input.newValue === undefined ? null : JSON.stringify(input.newValue), input.correlationId]);
+    await query(this.executor, `INSERT INTO public.audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2::bigint,$3,$4,$5,$6::jsonb,$7::jsonb,$8)`, [input.actorUserId ? "user" : "system", input.actorUserId, input.action, input.entityId === "unknown" ? "auth" : input.entityType, input.entityId, input.previousValue === undefined ? null : JSON.stringify(scrubAuditValue(input.previousValue)), input.newValue === undefined ? null : JSON.stringify(scrubAuditValue(input.newValue)), input.correlationId]);
   }
 
   async countUsers(): Promise<number> { const result = await query<Record<string, unknown>>(this.executor, "SELECT count(*)::int AS count FROM public.users"); return Number(result.rows[0].count); }
@@ -327,17 +355,17 @@ export class InMemoryAuthRepository implements AuthRepository {
   async revokeSessionByTokenHash(tokenHash: string, reason: string): Promise<void> { const session = [...this.sessions.values()].find(item => item.tokenHash === tokenHash); if (session) session.revokedAt = new Date(); void reason; }
   async revokeOtherSessions(userId: string, keepSessionId: string | null, reason: string): Promise<void> { for (const session of this.sessions.values()) if (session.userId === userId && session.id !== keepSessionId && !session.revokedAt) session.revokedAt = new Date(); void reason; }
   async revokeAllSessions(userId: string, reason: string): Promise<void> { await this.revokeOtherSessions(userId, null, reason); }
-  async recordLoginFailure(userId: string, failedAttemptCount: number, lockedUntil: Date | null): Promise<void> { const user = this.users.get(userId); if (user) { user.failedAttemptCount = failedAttemptCount; user.lockedUntil = lockedUntil; } }
+  async recordLoginFailure(userId: string, now: Date, policy: LoginProtectionPolicy): Promise<{ failedAttemptCount: number; lockedUntil: Date | null; lockoutApplied: boolean }> { const user = this.users.get(userId); if (!user) return { failedAttemptCount: 0, lockedUntil: null, lockoutApplied: false }; if (user.lockedUntil && user.lockedUntil > now) return { failedAttemptCount: user.failedAttemptCount, lockedUntil: user.lockedUntil, lockoutApplied: true }; user.failedAttemptCount += 1; user.lockedUntil = user.failedAttemptCount >= policy.maxFailedAttempts ? new Date(now.getTime() + policy.lockoutDurationMs) : null; return { failedAttemptCount: user.failedAttemptCount, lockedUntil: user.lockedUntil, lockoutApplied: user.lockedUntil !== null }; }
   async resetLoginFailures(userId: string): Promise<void> { const user = this.users.get(userId); if (user) { user.failedAttemptCount = 0; user.lockedUntil = null; } }
   async replacePasswordHash(userId: string, passwordHash: string, changedAt: Date): Promise<void> { const user = this.users.get(userId); if (user) { user.passwordHash = passwordHash; user.passwordChangedAt = changedAt; } }
-  async changePassword(userId: string, passwordHash: string, changedAt: Date, keepSessionId: string | null, actorUserId: string, correlationId: string): Promise<void> { await this.replacePasswordHash(userId, passwordHash, changedAt); await this.revokeOtherSessions(userId, keepSessionId, "password_changed"); await this.audit({ actorUserId, action: "password_change", entityType: "user", entityId: userId, correlationId }); }
+  async changePassword(userId: string, passwordHash: string, changedAt: Date, keepSessionId: string | null, actorUserId: string, correlationId: string): Promise<void> { await this.replacePasswordHash(userId, passwordHash, changedAt); await this.revokeOtherSessions(userId, keepSessionId, "password_changed"); await this.audit({ actorUserId, action: "PASSWORD_CHANGED", entityType: "user", entityId: userId, correlationId }); await this.audit({ actorUserId, action: "SESSION_REVOKED", entityType: "user", entityId: userId, newValue: { reason: "password_changed" }, correlationId }); }
   async listUsers(): Promise<SafeUserRecord[]> { return [...this.users.values()].sort((a,b) => a.normalizedUsername.localeCompare(b.normalizedUsername)).map(safeUserFromAccount); }
   async createUser(input: CreateUserInput, correlationId: string): Promise<SafeUserRecord> { if ([...this.users.values()].some(user => user.normalizedUsername === input.normalizedUsername)) throw new HttpError(409, "USER_ALREADY_EXISTS", "A user with that username already exists."); const id = this.seedUser({ username: input.username, normalizedUsername: input.normalizedUsername, displayName: input.displayName, passwordHash: input.passwordHash, role: input.role, active: input.active }); await this.audit({ actorUserId: input.actorUserId, action: "user_create", entityType: "user", entityId: id, newValue: { username: input.username, display_name: input.displayName, role: input.role, active: input.active ?? true }, correlationId }); const user = await this.findUserById(id); if (!user) throw new Error("Created user could not be loaded."); return safeUserFromAccount(user); }
   async setUserDisplayName(targetUserId: string, displayName: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); const before = user.displayName; user.displayName = displayName; await this.audit({ actorUserId, action: "display_name_change", entityType: "user", entityId: targetUserId, previousValue: { display_name: before }, newValue: { display_name: displayName }, correlationId }); return safeUserFromAccount(user); }
-  async setUserActive(targetUserId: string, active: boolean, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); if (user.active && user.role === "admin" && !active && [...this.users.values()].filter(item => item.active && item.role === "admin" && item.id !== targetUserId).length === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain."); const before = user.active; user.active = active; if (!active) await this.revokeAllSessions(targetUserId, "user_deactivated"); await this.audit({ actorUserId, action: active ? "user_activate" : "user_deactivate", entityType: "user", entityId: targetUserId, previousValue: { active: before }, newValue: { active }, correlationId }); return safeUserFromAccount(user); }
+  async setUserActive(targetUserId: string, active: boolean, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); if (user.active && user.role === "admin" && !active && [...this.users.values()].filter(item => item.active && item.role === "admin" && item.id !== targetUserId).length === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain."); const before = user.active; user.active = active; if (!active) { await this.revokeAllSessions(targetUserId, "user_deactivated"); await this.audit({ actorUserId, action: "SESSION_REVOKED_ALL", entityType: "user", entityId: targetUserId, newValue: { reason: "user_deactivated" }, correlationId }); } await this.audit({ actorUserId, action: active ? "user_activate" : "user_deactivate", entityType: "user", entityId: targetUserId, previousValue: { active: before }, newValue: { active }, correlationId }); return safeUserFromAccount(user); }
   async setUserRole(targetUserId: string, role: Role, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); const before = user.role; if (before === "admin" && role !== "admin" && [...this.users.values()].filter(item => item.active && item.role === "admin" && item.id !== targetUserId).length === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain."); user.role = role; await this.audit({ actorUserId, action: "role_change", entityType: "user", entityId: targetUserId, previousValue: { role: before }, newValue: { role }, correlationId }); return safeUserFromAccount(user); }
-  async resetUserPassword(targetUserId: string, passwordHash: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); await this.replacePasswordHash(targetUserId, passwordHash, new Date()); await this.revokeAllSessions(targetUserId, "admin_password_reset"); await this.audit({ actorUserId, action: "password_reset", entityType: "user", entityId: targetUserId, newValue: { password_changed: true }, correlationId }); return safeUserFromAccount(user); }
-  async audit(input: AuditInput): Promise<void> { this.audits.push(structuredClone(input)); }
+  async resetUserPassword(targetUserId: string, passwordHash: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); await this.replacePasswordHash(targetUserId, passwordHash, new Date()); await this.revokeAllSessions(targetUserId, "admin_password_reset"); await this.audit({ actorUserId, action: "SESSION_REVOKED_ALL", entityType: "user", entityId: targetUserId, newValue: { reason: "admin_password_reset" }, correlationId }); await this.audit({ actorUserId, action: "password_reset", entityType: "user", entityId: targetUserId, newValue: { password_changed: true }, correlationId }); return safeUserFromAccount(user); }
+  async audit(input: AuditInput): Promise<void> { this.audits.push({ ...structuredClone(input), previousValue: scrubAuditValue(input.previousValue), newValue: scrubAuditValue(input.newValue) }); }
   async countUsers(): Promise<number> { return this.users.size; }
   async cleanupExpiredSessions(now: Date): Promise<number> { let count = 0; for (const [id, session] of this.sessions) if (session.expiresAt <= now || session.revokedAt) { this.sessions.delete(id); count++; } return count; }
 }

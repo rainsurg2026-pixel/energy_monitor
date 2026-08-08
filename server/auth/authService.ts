@@ -21,6 +21,7 @@ export interface AuthServiceOptions {
 
 export interface SafePrincipalUser { id: string; username: string; displayName: string; role: Role; active: true; }
 export interface LoginResult { user: SafePrincipalUser; sessionToken: string; expiresAt: Date; sessionId: string; }
+export interface LoginRequestMetadata { ip?: string | null; userAgent?: string | null; correlationId?: string; }
 
 function safeUser(account: AuthAccountRecord | SafeUserRecord): SafePrincipalUser {
   return { id: String(account.id), username: account.username, displayName: account.displayName, role: account.role, active: true };
@@ -41,23 +42,35 @@ export class AuthService {
     this.now = options.now ?? (() => new Date());
   }
 
-  async login(username: unknown, password: unknown, request: { ip?: string | null; userAgent?: string | null } = {}): Promise<LoginResult> {
+  async login(username: unknown, password: unknown, request: LoginRequestMetadata = {}): Promise<LoginResult> {
     let normalized = "";
-    try { normalized = normalizeUsername(username); } catch { await this.verifier.verify(password, null); throw genericCredentialsError(); }
+    try { normalized = normalizeUsername(username); } catch {
+      await this.verifier.verify(password, null);
+      await this.repository.audit({ actorUserId: null, action: "LOGIN_FAILED", entityType: "auth", entityId: "unknown", correlationId: request.correlationId ?? "login" });
+      throw genericCredentialsError();
+    }
     const record = await this.repository.findLoginByNormalizedUsername(normalized);
-    const verified = await this.verifier.verify(password, record?.credential ?? null);
     const now = this.now();
+    if (record?.account.lockedUntil && record.account.lockedUntil.getTime() > now.getTime()) {
+      await this.repository.audit({ actorUserId: null, action: "ACCOUNT_LOCKED", entityType: "user", entityId: record.account.id, correlationId: request.correlationId ?? "login" });
+      throw new HttpError(423, "ACCOUNT_LOCKED", "This account is temporarily locked. Please try again later.");
+    }
+    const verified = await this.verifier.verify(password, record?.account.active ? record.credential : null);
     const decision = decideLogin(record?.account ?? null, verified.authenticated, now, this.loginPolicy);
     if (!record || decision.outcome !== "accepted") {
       if (record && decision.outcome === "rejected" && decision.persistFailureState) {
-        await this.repository.recordLoginFailure(record.account.id, decision.failedAttemptCount, decision.lockedUntil);
+        const failureState = await this.repository.recordLoginFailure(record.account.id, now, this.loginPolicy);
+        if (failureState.lockoutApplied && !decision.lockoutApplied) decision.lockoutApplied = true;
       }
+      await this.repository.audit({ actorUserId: null, action: decision.outcome === "rejected" && decision.lockoutApplied ? "ACCOUNT_LOCKED" : "LOGIN_FAILED", entityType: record ? "user" : "auth", entityId: record?.account.id ?? "unknown", correlationId: request.correlationId ?? "login", newValue: decision.outcome === "rejected" && decision.lockoutApplied ? { lockout: true } : undefined });
       throw genericCredentialsError();
     }
     await this.repository.resetLoginFailures(record.account.id);
     if (verified.needsRehash && typeof password === "string") await this.repository.replacePasswordHash(record.account.id, await hashNewPassword(password, this.options.passwordHasher, this.options.passwordPolicy), now);
     const material = createSessionMaterial(record.account.id, now, this.sessionPolicy);
     const session = await this.repository.createSession({ userId: record.account.id, tokenHash: material.tokenHash, createdAt: material.createdAt, expiresAt: material.expiresAt, createdIp: request.ip ?? null, userAgent: request.userAgent ?? null });
+    await this.repository.audit({ actorUserId: record.account.id, action: "LOGIN_SUCCESS", entityType: "user", entityId: record.account.id, correlationId: request.correlationId ?? "login" });
+    await this.repository.audit({ actorUserId: record.account.id, action: "SESSION_CREATED", entityType: "session", entityId: session.id, correlationId: request.correlationId ?? "login" });
     return { user: safeUser(record.account), sessionToken: material.token, expiresAt: material.expiresAt, sessionId: session.id };
   }
 
@@ -69,14 +82,23 @@ export class AuthService {
     if (!lookup) return null;
     const now = this.now();
     if (!lookup.account.active || !checkSession(lookup.session, now, this.sessionPolicy).active) {
-      await this.repository.revokeSessionByTokenHash(lookup.session.tokenHash, !lookup.account.active ? "user_deactivated" : "expired");
+      const reason = !lookup.account.active ? "user_deactivated" : "expired";
+      await this.repository.revokeSessionByTokenHash(lookup.session.tokenHash, reason);
+      await this.repository.audit({ actorUserId: lookup.account.id, action: "SESSION_REVOKED", entityType: "session", entityId: lookup.session.id, newValue: { reason }, correlationId: "session-validation" });
       return null;
     }
     await this.repository.touchSession(lookup.session.id, now);
     return { principal: { userId: lookup.account.id, role: lookup.account.role, active: true, authMethod: "local", sessionId: lookup.session.id }, user: safeUser(lookup.account) };
   }
 
-  async logout(rawToken: string | undefined): Promise<void> { if (rawToken) { try { await this.repository.revokeSessionByTokenHash(hashSessionToken(rawToken), "logout"); } catch { /* malformed cookie is already effectively logged out */ } } }
+  async logout(rawToken: string | undefined): Promise<void> {
+    if (!rawToken) return;
+    let tokenHash: string;
+    try { tokenHash = hashSessionToken(rawToken); } catch { return; }
+    const lookup = await this.repository.findSessionByTokenHash(tokenHash);
+    await this.repository.revokeSessionByTokenHash(tokenHash, "logout");
+    if (lookup) await this.repository.audit({ actorUserId: lookup.account.id, action: "SESSION_REVOKED", entityType: "session", entityId: lookup.session.id, newValue: { reason: "logout" }, correlationId: "logout" });
+  }
 
   async changePassword(principal: AuthenticatedPrincipal, currentPassword: unknown, newPassword: unknown, correlationId: string): Promise<void> {
     const record = await this.repository.findLoginByNormalizedUsername((await this.repository.findUserById(principal.userId))?.normalizedUsername ?? "");

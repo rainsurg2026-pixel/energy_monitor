@@ -67,7 +67,9 @@ normal DTOs, or client responses.
 accepts a startup-created Argon2id dummy hash and verifies unknown/malformed
 credentials against it. This reduces username-enumeration timing differences;
 the login service must still return the same `INVALID_CREDENTIALS` response for
-missing, inactive, locked, and wrong-password accounts.
+missing, inactive, and wrong-password accounts. An already locked account is
+rejected before password verification with the explicit temporary-lock status
+required by the HTTP contract (`423 ACCOUNT_LOCKED`).
 
 The dummy hash is not a user credential and must remain in process memory. It
 must be created with the same Argon2id parameters during server startup and
@@ -111,12 +113,12 @@ policy chosen by the integration layer.
 - a locked account remains rejected until the lockout expires;
 - missing and inactive accounts do not create account-state mutations.
 
-Every rejected public login result uses `INVALID_CREDENTIALS` and the message
-`Invalid username or password.`. The caller must not disclose whether the
-username exists, the account is inactive, the password was wrong, or the
-account is locked. Per-IP rate limiting is intentionally outside this core and
-must be implemented by the HTTP/security integration using a shared durable
-store rather than process-local memory in a Vercel deployment.
+Unknown, inactive, and wrong-password attempts use `401 INVALID_CREDENTIALS`
+with the message `Invalid username or password.`. An account that is already
+locked returns `423 ACCOUNT_LOCKED`; this is the only deliberate lock-state
+distinction in the public contract. Per-IP rate limiting is implemented by the
+HTTP/security layer as 30 attempts per 15 minutes using a PostgreSQL-backed
+store for production (the in-memory store is test/development-only).
 
 ## Integration contract and security boundary
 
@@ -164,6 +166,16 @@ npm run auth:bootstrap-dev-accounts
 
 The API must still be configured with the appropriate server-side database
 environment. Live Supabase verification is a separate deployment gate.
+
+## Phase 3.5 and Phase 5 gates
+
+Local parity and Web read-path work are covered by the repository regression
+suites. The following remain explicit pre-production gates until a secure live
+database URL is injected into the local process:
+
+- `LIVE_AUTH_SUPABASE_VERIFICATION_PENDING`
+- `DEVELOPMENT_ACCOUNTS_LIVE_SEED_PENDING`
+- `LIVE_PHASE4_IMPORT_PENDING`
 
 Only active administrators can access `/settings/users` and the admin user
 management API. Active users receive `403` for that route/API. Deactivation

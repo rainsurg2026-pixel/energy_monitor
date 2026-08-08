@@ -52,9 +52,10 @@ export function createApp(dependencies: AppDependencies) {
   const service = dependencies.service ?? new ApiService(dependencies.repository);
   const auth = dependencies.authService;
   const originPolicy = createOriginPolicy({ allowedOrigins: dependencies.config.allowedOrigins, allowedPreviewOrigins: dependencies.config.allowedPreviewOrigins });
+  if (dependencies.config.nodeEnv === "production" && !dependencies.rateLimitStore) throw new Error("A durable rate-limit store is required in production.");
   const rateLimitStore = dependencies.rateLimitStore ?? new InMemoryRateLimitStore();
   const csrf = createCsrfMiddleware({ secret: dependencies.config.csrfSecret, cookieOptions: csrfCookieOptions(dependencies.config.nodeEnv, dependencies.config.sessionLifetimeMs) });
-  const loginRateLimit = createRateLimitMiddleware(rateLimitStore, { limit: 10, windowMs: 15 * 60 * 1000 }, { trustProxy: dependencies.config.trustProxy });
+  const loginRateLimit = createRateLimitMiddleware(rateLimitStore, { limit: 30, windowMs: 15 * 60 * 1000 }, { trustProxy: dependencies.config.trustProxy });
 
   app.disable("x-powered-by");
   app.use(requestId);
@@ -79,7 +80,7 @@ export function createApp(dependencies: AppDependencies) {
   // origin validation and rate limiting; subsequent cookie mutations require CSRF.
   app.post("/api/v1/auth/login", loginRateLimit, asyncRoute(async (req, res) => {
     const body = parseObjectBody(req.body);
-    const result = await auth.login(body.username, body.password, { ip: req.socket.remoteAddress ?? null, userAgent: req.header("user-agent") ?? null });
+    const result = await auth.login(body.username, body.password, { ip: req.socket.remoteAddress ?? null, userAgent: req.header("user-agent") ?? null, correlationId: res.locals.requestId });
     res.append("Set-Cookie", serializeCookie(SESSION_COOKIE_NAME, result.sessionToken, sessionCookieOptions(dependencies.config.nodeEnv, dependencies.config.sessionLifetimeMs)));
     issueCsrfCookie(res, { secret: dependencies.config.csrfSecret, cookieOptions: csrfCookieOptions(dependencies.config.nodeEnv, dependencies.config.sessionLifetimeMs) }, result.sessionToken);
     sendOk(res, { user: result.user, expiresAt: result.expiresAt.toISOString() });
@@ -110,7 +111,7 @@ export function createApp(dependencies: AppDependencies) {
     sendOk(res, { changed: true });
   }));
 
-  app.get("/api/v1/bootstrap", asyncRoute(async (_req, res) => { principal(res); sendOk(res, await service.bootstrap()); }));
+  app.get("/api/v1/bootstrap", asyncRoute(async (_req, res) => { principal(res); sendOk(res, { ...(await service.bootstrap() as Record<string, unknown>), readOnlyMode: dependencies.config.readOnlyMode }); }));
   app.get("/api/v1/sites", asyncRoute(async (_req, res) => { withPermission(res, PERMISSIONS.dashboardRead); sendOk(res, await service.listSites()); }));
   app.get("/api/v1/settings", asyncRoute(async (_req, res) => { withPermission(res, PERMISSIONS.globalSettingsRead); sendOk(res, await service.getSettings()); }));
   app.put("/api/v1/settings/display-period", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.displayPeriodManage); const body = parseObjectBody(req.body); sendOk(res, await service.updateSettings(body.start_month, body.end_month, body.expected_row_version, res.locals.requestId, actorNumber(actor.userId))); }));
