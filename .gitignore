@@ -28,6 +28,7 @@ skills/**/*.zip
 .cache/
 .vite/
 .tmp/
+skills-lock.json
 tmp/
 work/
 *.tmp
