@@ -1,15 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Check, LockKeyhole, LogOut, Pencil, Plus, ShieldCheck, UserCog, X } from "lucide-react";
-
-type Role = "admin" | "user";
-
-interface SessionUser {
-  id: string;
-  username: string;
-  displayName: string;
-  role: Role;
-  active: true;
-}
+import { apiRequest, ApiError, type Role, type SessionUser } from "./apiClient";
 
 interface ManagedUser {
   id: string;
@@ -25,39 +16,6 @@ interface SettingsResponse {
   startMonth: string;
   endMonth: string;
   rowVersion: number;
-}
-
-interface ApiResponse<T> {
-  ok: true;
-  data: T;
-}
-
-class ApiError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) {
-    super(message);
-  }
-}
-
-function csrfToken(): string | undefined {
-  const item = document.cookie.split(";").map(value => value.trim()).find(value => value.startsWith("em_csrf="));
-  return item ? decodeURIComponent(item.slice("em_csrf=".length)) : undefined;
-}
-
-async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const method = (init.method ?? "GET").toUpperCase();
-  const headers = new Headers(init.headers);
-  if (init.body && !headers.has("content-type")) headers.set("content-type", "application/json");
-  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-    const token = csrfToken();
-    if (token) headers.set("x-csrf-token", token);
-  }
-  const response = await fetch(`/api/v1${path}`, { ...init, method, headers, credentials: "include" });
-  const payload = await response.json().catch(() => null) as ApiResponse<T> | { ok?: false; error?: { code?: string; message?: string } } | null;
-  if (!response.ok || !payload || payload.ok !== true) {
-    const error = payload && "error" in payload ? payload.error : undefined;
-    throw new ApiError(response.status, error?.code ?? "REQUEST_FAILED", error?.message ?? "The request could not be completed.");
-  }
-  return payload.data;
 }
 
 function formatDate(value: string | null): string {

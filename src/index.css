@@ -145,6 +145,13 @@ html.theme-light .recharts-default-tooltip {
   opacity: 0.55;
 }
 
+.panel {
+  border: 1px solid rgb(30 41 59);
+  border-radius: 1rem;
+  background: rgb(15 23 42);
+  padding: 1.25rem;
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;

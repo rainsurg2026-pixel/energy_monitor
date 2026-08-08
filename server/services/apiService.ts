@@ -126,12 +126,12 @@ export class ApiService {
       const state = await this.availableForSite(site.id, period);
       const logs = await this.repository.getMonthlyLogs(site.id, state.availableMonths);
       const metrics = buildFacilityComparisonMetrics(logs, period.endMonth);
-      return { site, availableMonths: state.availableMonths, metrics };
+      return { site, availableMonths: state.availableMonths, metrics: Object.fromEntries(metrics) };
     }));
     const months = [...new Set(states.flatMap(state => state.availableMonths))].sort();
     const data = states.map(state => ({
       site: state.site,
-      months: months.map(month => ({ month, metrics: state.metrics.get(month) ?? null }))
+      months: months.map(month => ({ month, metrics: state.metrics[month] ?? null }))
     }));
     return { displayPeriod: period, months, sites: data };
   }

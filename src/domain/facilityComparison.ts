@@ -42,14 +42,13 @@ export function getComparisonDisplayMonths(availableMonths: readonly string[], r
 export function buildFacilityComparisonMetrics(logs: readonly MonthlyLog[], latestAllowedMonth: string): Map<string, FacilityComparisonMetrics> {
   const result = new Map<string, FacilityComparisonMetrics>();
   for (const month of monthsFor(logs, latestAllowedMonth)) {
-    const log = logs.find(candidate => normalizedMonth(candidate.month) === month);
     const values = calculateEnergyCostForMonth(logs, month);
     result.set(month, {
       buildingEnergy: values.buildingEnergyKwh,
       buildingCost: values.buildingElectricityCostThb,
       floorEnergy: values.floorEnergyKwh,
-      floorCost: log?.energyCost.floorElectricityCostThb ?? values.floorElectricityCostThb,
-      avgRate: log?.energyCost.averageElectricityRateThbPerKwh ?? values.averageElectricityRateThbPerKwh,
+      floorCost: values.floorElectricityCostThb,
+      avgRate: values.averageElectricityRateThbPerKwh,
       floorShare: values.energySharePercent,
     });
   }
