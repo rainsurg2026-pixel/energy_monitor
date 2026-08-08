@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { ConfigurationError } from "../config/env";
 import { API_HEALTH_RESPONSE } from "../http/health";
 import { createConfiguredRuntime, type ConfiguredRuntime } from "../runtime";
 
@@ -16,6 +17,21 @@ function writeJson(response: ServerResponse, statusCode: number, payload: unknow
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.setHeader("cache-control", "no-store");
   response.end(body);
+}
+
+function unavailablePayload(error: unknown, environment: NodeJS.ProcessEnv): unknown {
+  const payload: { ok: false; error: { code: string; message: string; reason?: string } } = {
+    ok: false,
+    error: { code: "SERVICE_UNAVAILABLE", message: "The API service is unavailable." }
+  };
+
+  // Preview-only classification permits safe deployment diagnostics without
+  // disclosing configuration names, hosts, credentials, or driver errors.
+  if (environment.VERCEL_ENV !== "preview") return payload;
+  if (error instanceof ConfigurationError) payload.error.reason = "configuration";
+  else if (error instanceof Error && error.message === "DATABASE_URL must use a non-superuser login role that is a member of energy_monitor_runtime.") payload.error.reason = "runtime-role";
+  else payload.error.reason = "database-connection";
+  return payload;
 }
 
 function writeHealth(response: ServerResponse, method: string | undefined): void {
@@ -45,8 +61,8 @@ export function createVercelHandler(environment: NodeJS.ProcessEnv = process.env
     try {
       const runtime = await getRuntime();
       runtime.app(request, response);
-    } catch {
-      writeJson(response, 503, { ok: false, error: { code: "SERVICE_UNAVAILABLE", message: "The API service is unavailable." } });
+    } catch (error) {
+      writeJson(response, 503, unavailablePayload(error, environment));
     }
   };
 }

@@ -42,6 +42,11 @@ await withAdapter(async base => {
   assert.equal(readiness.status, 503);
   assert.match(readiness.contentType, /application\/json/);
   assert.equal(readiness.body.includes("<div id=\"root\">"), false);
+  assert.deepEqual(JSON.parse(readiness.body), {
+    ok: false,
+    error: { code: "SERVICE_UNAVAILABLE", message: "The API service is unavailable.", reason: "configuration" }
+  });
+  assert.equal(readiness.body.includes("DATABASE_URL"), false);
 
   const bootstrap = await request(base, "/api/v1/bootstrap");
   assert.equal(bootstrap.status, 503);
