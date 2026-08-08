@@ -77,7 +77,7 @@ exports/
 RST_Dashboard.xlsm
 
 # Generated at Vercel build time from the tracked server adapter source.
-/api/[[]...path].js
+/api/runtime.js
 # Portable runtime folders (created beside the exe / project root in dev)
 config/
 !server/
