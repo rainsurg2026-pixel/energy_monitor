@@ -14,6 +14,9 @@ coverage/
 .agents/
 .codex/
 
+# Vercel project/account binding metadata is workstation-local.
+.vercel/
+
 # Workstation-local skills and packaged skill archives. These remain available
 # locally but are not application source.
 .claude/skills/
