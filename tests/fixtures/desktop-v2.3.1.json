@@ -1,0 +1,163 @@
+{
+  "formulaVersion": "desktop-v2.3.1",
+  "provenance": "sanitized synthetic fixture; shape derived from the Desktop v2.3.1 domain inputs; no operational workbook values",
+  "rangsit": {
+    "logs": [
+      {
+        "month": "2026-02",
+        "ups": [
+          { "upsId": "UPS 11A", "voltage": 220, "current": 10, "loadKw": 10, "loadKva": 12 },
+          { "upsId": "UPS 11B", "voltage": 220, "current": 20, "loadKw": 20, "loadKva": 22 },
+          { "upsId": "UPS 13A", "voltage": 220, "current": 5, "loadKw": 5, "loadKva": 6 },
+          { "upsId": "UPS 13B", "voltage": 220, "current": 15, "loadKw": 15, "loadKva": 16 },
+          { "upsId": "UPS 14C", "voltage": 220, "current": 4, "loadKw": 4, "loadKva": 5 },
+          { "upsId": "UPS 15A (PPC44A)", "voltage": 220, "current": 8, "loadKw": 8, "loadKva": 9 },
+          { "upsId": "UPS 15B (PPC44B)", "voltage": 220, "current": 12, "loadKw": 12, "loadKva": 13 }
+        ],
+        "air": { "eb41a": 100, "eb41b": 200, "eb42a": 300, "eb42b": 400 },
+        "dc": [
+          { "panelId": "DC PDB41A", "voltage": 48, "current": 10 },
+          { "panelId": "DC PDB41B", "voltage": 48, "current": 20 },
+          { "panelId": "DC PDB42A", "voltage": 48, "current": 30 },
+          { "panelId": "DC PDB42B", "voltage": 48, "current": 40 }
+        ],
+        "energyCost": { "buildingEnergyKwh": 90000, "buildingElectricityCostThb": 450000 },
+        "lastSavedUps": null,
+        "lastSavedAir": null,
+        "lastSavedDc": null,
+        "lastSavedEnergyCost": null
+      },
+      {
+        "month": "2026-03",
+        "ups": [
+          { "upsId": "UPS 11A", "voltage": 220, "current": 10, "loadKw": 10, "loadKva": 12 },
+          { "upsId": "UPS 11B", "voltage": 220, "current": 20, "loadKw": 20, "loadKva": 22 },
+          { "upsId": "UPS 13A", "voltage": 220, "current": 5, "loadKw": 5, "loadKva": 6 },
+          { "upsId": "UPS 13B", "voltage": 220, "current": 15, "loadKw": 15, "loadKva": 16 },
+          { "upsId": "UPS 14C", "voltage": 220, "current": 4, "loadKw": 4, "loadKva": 5 },
+          { "upsId": "UPS 15A (PPC44A)", "voltage": 220, "current": 8, "loadKw": 8, "loadKva": 9 },
+          { "upsId": "UPS 15B (PPC44B)", "voltage": 220, "current": 12, "loadKw": 12, "loadKva": 13 }
+        ],
+        "air": { "eb41a": 101, "eb41b": 202, "eb42a": 303, "eb42b": 404 },
+        "dc": [
+          { "panelId": "DC PDB41A", "voltage": 48, "current": 10 },
+          { "panelId": "DC PDB41B", "voltage": 48, "current": 20 },
+          { "panelId": "DC PDB42A", "voltage": 48, "current": 30 },
+          { "panelId": "DC PDB42B", "voltage": 48, "current": 40 }
+        ],
+        "energyCost": { "buildingEnergyKwh": 100000, "buildingElectricityCostThb": 500000 },
+        "lastSavedUps": null,
+        "lastSavedAir": null,
+        "lastSavedDc": null,
+        "lastSavedEnergyCost": null
+      }
+    ],
+    "rackRecords": [
+      { "rackZone": "A", "status": "In Use" },
+      { "rackZone": "A", "status": "Available" },
+      { "rackZone": "B", "status": "Reserved" },
+      { "rackZone": "B", "status": "Pending Dismantle" },
+      { "rackZone": null, "status": null },
+      { "rackZone": "B", "status": "Legacy" }
+    ],
+    "rackUnitRows": [
+      { "month": "2026-02", "totalU": 100, "usedU": 50, "availableU": 50, "availabilityPct": 0.5 },
+      { "month": "2026-03", "totalU": 120, "usedU": 72, "availableU": 48, "availabilityPct": 0.4 }
+    ],
+    "upsGroups": [
+      { "name": "UPS 11", "ids": ["UPS 11A", "UPS 11B"], "capacity": 100 },
+      { "name": "UPS 13", "ids": ["UPS 13A", "UPS 13B"], "capacity": 100 }
+    ],
+    "engineeringMapping": {
+      "sourceSheet": "synthetic",
+      "summary": [
+        { "no": 1, "name": "UPS 11", "totalLoadKw": null, "totalLoadKva": null, "capacity": 100, "loadPercent": null }
+      ],
+      "mapping": [
+        { "no": 1, "umdb": "UMDB-1", "upsId": "UPS 11A", "acPowerPanel": "PPC-1", "sts": "STS-1", "oudb": "OUDB-1", "voltage": null, "current": null, "loadKw": null, "loadKva": null, "capacity": 100, "loadPercent": null }
+      ]
+    },
+    "engineeringTopology": {
+      "upsGroups": [
+        { "name": "UPS 11", "ids": ["UPS 11A", "UPS 11B"], "capacity": 100 }
+      ],
+      "upsMapping": [
+        { "no": 1, "umdb": "UMDB-1", "upsId": "UPS 11A", "keyId": "UPS 11A", "sts": "STS-1", "oudb": "OUDB-1", "capacity": 100 }
+      ]
+    }
+  },
+  "srinakarin": {
+    "logs": [
+      {
+        "month": "2026-02",
+        "ups": [
+          { "upsId": "UPS 41A", "voltage": 220, "current": 30, "loadKw": 30, "loadKva": 36 },
+          { "upsId": "UPS 41B", "voltage": 220, "current": 40, "loadKw": 40, "loadKva": 46 }
+        ],
+        "air": { "eb41a": null, "eb41b": null, "eb42a": null, "eb42b": null, "meters": { "eb43a": 10, "eb43b": 20 } },
+        "dc": [ { "panelId": "DC PDB41A", "voltage": 48, "current": 50 } ],
+        "energyCost": { "buildingEnergyKwh": 180000, "buildingElectricityCostThb": 720000 },
+        "energyCalculation": { "upsGroups": [["UPS 41A", "UPS 41B"]], "dcIds": ["DC PDB41A"], "airFields": ["eb43a", "eb43b"] },
+        "lastSavedUps": null,
+        "lastSavedAir": null,
+        "lastSavedDc": null,
+        "lastSavedEnergyCost": null
+      },
+      {
+        "month": "2026-03",
+        "ups": [
+          { "upsId": "UPS 41A", "voltage": 220, "current": 30, "loadKw": 30, "loadKva": 36 },
+          { "upsId": "UPS 41B", "voltage": 220, "current": 40, "loadKw": 40, "loadKva": 46 },
+          { "upsId": "PPC 41A", "voltage": 210, "current": 1, "loadKw": 2, "loadKva": 3 },
+          { "upsId": "PPC 41B", "voltage": 211, "current": 2, "loadKw": 4, "loadKva": 5 },
+          { "upsId": "PPC 42A", "voltage": 212, "current": 3, "loadKw": 6, "loadKva": 7 },
+          { "upsId": "PPC 42B", "voltage": 213, "current": 4, "loadKw": 8, "loadKva": 9 },
+          { "upsId": "PPC 43A", "voltage": 214, "current": 5, "loadKw": 8, "loadKva": 9 },
+          { "upsId": "PPC 43B", "voltage": 215, "current": 6, "loadKw": 10, "loadKva": 11 },
+          { "upsId": "PPC 44A", "voltage": 216, "current": 7, "loadKw": 12, "loadKva": 13 },
+          { "upsId": "PPC 44B", "voltage": 217, "current": 8, "loadKw": 14, "loadKva": 15 }
+        ],
+        "air": { "eb41a": null, "eb41b": null, "eb42a": null, "eb42b": null, "meters": { "eb43a": 11, "eb43b": 22 } },
+        "dc": [ { "panelId": "DC PDB41A", "voltage": 48, "current": 50 } ],
+        "energyCost": { "buildingEnergyKwh": 200000, "buildingElectricityCostThb": 800000 },
+        "energyCalculation": { "upsGroups": [["UPS 41A", "UPS 41B"]], "dcIds": ["DC PDB41A"], "airFields": ["eb43a", "eb43b"] },
+        "srinakarinInputs": {
+          "upsPhase": {
+            "UPS 41A - R": { "voltage": 220, "current": 10, "loadKw": 10, "loadKva": 12 },
+            "UPS 41A - S": { "voltage": 221, "current": 11, "loadKw": 11, "loadKva": 13 },
+            "UPS 41A - T": { "voltage": 219, "current": 9, "loadKw": 9, "loadKva": 11 },
+            "UPS 41B - R": { "voltage": 220, "current": 20, "loadKw": 20, "loadKva": 22 },
+            "UPS 41B - S": { "voltage": 220, "current": 21, "loadKw": 21, "loadKva": 23 },
+            "UPS 41B - T": { "voltage": 220, "current": 19, "loadKw": 19, "loadKva": 21 }
+          },
+          "acPhase": {
+            "PPC 41A - R": { "voltage": 220, "current": 30 },
+            "PPC 41A - S": { "voltage": 221, "current": 31 },
+            "PPC 41A - T": { "voltage": 219, "current": 29 },
+            "PPC 41B - R": { "voltage": 220, "current": 40 },
+            "PPC 41B - S": { "voltage": 221, "current": 41 },
+            "PPC 41B - T": { "voltage": 219, "current": 39 }
+          },
+          "ppc43Current": {
+            "PPC 43A - R - Panel 1": 10, "PPC 43A - R - Panel 2": 11,
+            "PPC 43A - S - Panel 1": 12, "PPC 43A - S - Panel 2": 13,
+            "PPC 43A - T - Panel 1": 14, "PPC 43A - T - Panel 2": 15,
+            "PPC 43B - R - Panel 1": 20, "PPC 43B - R - Panel 2": 21,
+            "PPC 43B - S - Panel 1": 22, "PPC 43B - S - Panel 2": 23,
+            "PPC 43B - T - Panel 1": 24, "PPC 43B - T - Panel 2": 25
+          },
+          "ppc43Panel": {
+            "PPC 43A Panel 1": { "loadKw": 50, "loadKva": 60 },
+            "PPC 43A Panel 2": { "loadKw": 20, "loadKva": 30 },
+            "PPC 43B Panel 1": { "loadKw": 30, "loadKva": 40 },
+            "PPC 43B Panel 2": { "loadKw": 10, "loadKva": 20 }
+          }
+        },
+        "lastSavedUps": null,
+        "lastSavedAir": null,
+        "lastSavedDc": null,
+        "lastSavedEnergyCost": null
+      }
+    ]
+  }
+}

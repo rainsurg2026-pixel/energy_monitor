@@ -1,0 +1,83 @@
+{
+  "formulaVersion": "desktop-v2.3.1",
+  "rangsit": {
+    "energy": {
+      "buildingEnergyKwh": 100000,
+      "buildingElectricityCostThb": 500000,
+      "upsEnergyKwh": 55056,
+      "airEnergyKwh": 10000000,
+      "dcEnergyKwh": 3928.32,
+      "floorEnergyKwh": 10058984.32,
+      "floorElectricityCostThb": 50294921.6,
+      "averageElectricityRateThbPerKwh": 5,
+      "energySharePercent": 10058.98432
+    },
+    "chart": [
+      { "month": "2026-02", "label": "Feb 2026", "buildingEnergy": 90000, "floorEnergy": null, "buildingCost": 450000, "floorCost": null, "upsEnergy": 49728, "airEnergy": null, "dcEnergy": 3548.1600000000003 },
+      { "month": "2026-03", "label": "Mar 2026", "buildingEnergy": 100000, "floorEnergy": 10058984.32, "buildingCost": 500000, "floorCost": 50294921.6, "upsEnergy": 55056, "airEnergy": 10000000, "dcEnergy": 3928.32 }
+    ],
+    "rack": {
+      "total": 6,
+      "countsByStatus": { "In Use": 1, "Available": 1, "Reserved": 1, "Pending Dismantle": 1, "(blank)": 1, "Legacy": 1 },
+      "inUse": { "count": 1, "ratio": 0.16666666666666666 },
+      "available": { "count": 1, "ratio": 0.16666666666666666 },
+      "reserved": { "count": 1, "ratio": 0.16666666666666666 },
+      "pendingDismantle": { "count": 1, "ratio": 0.16666666666666666 },
+      "other": { "count": 2, "ratio": 0.3333333333333333 },
+      "zoneMetrics": [
+        { "zone": "(blank)", "total": 1, "inUse": { "count": 0, "ratio": 0 }, "available": { "count": 0, "ratio": 0 }, "reserved": { "count": 0, "ratio": 0 }, "pendingDismantle": { "count": 0, "ratio": 0 }, "other": { "count": 1, "ratio": 1 } },
+        { "zone": "A", "total": 2, "inUse": { "count": 1, "ratio": 0.5 }, "available": { "count": 1, "ratio": 0.5 }, "reserved": { "count": 0, "ratio": 0 }, "pendingDismantle": { "count": 0, "ratio": 0 }, "other": { "count": 0, "ratio": 0 } },
+        { "zone": "B", "total": 3, "inUse": { "count": 0, "ratio": 0 }, "available": { "count": 0, "ratio": 0 }, "reserved": { "count": 1, "ratio": 0.3333333333333333 }, "pendingDismantle": { "count": 1, "ratio": 0.3333333333333333 }, "other": { "count": 1, "ratio": 0.3333333333333333 } }
+      ]
+    },
+    "rackUnitPrevious": { "month": "2026-02", "totalU": 100, "usedU": 50, "availableU": 50, "availabilityPct": 0.5 },
+    "rackUnitUsagePercent": 60,
+    "groups": [
+      { "name": "UPS 11", "totalLoadKw": 30, "totalLoadKva": 34, "capacity": 100, "loadPercent": 34, "availablePercent": 66, "monthlyEnergyKwh": 22320 },
+      { "name": "UPS 13", "totalLoadKw": 20, "totalLoadKva": 22, "capacity": 100, "loadPercent": 22, "availablePercent": 78, "monthlyEnergyKwh": 14880 }
+    ],
+    "engineering": {
+      "daysInMonth": 31,
+      "previousMonth": "2026-02",
+      "upsGroups": [ { "name": "UPS 11", "totalKw": 30, "totalKva": 34, "capacity": 100, "loadPercent": 34, "availablePercent": 66, "monthlyEnergyKwh": 22320 } ],
+      "upsDetails": [ { "no": 1, "umdb": "UMDB-1", "upsId": "UPS 11A", "acPowerPanel": "PPC-1", "sts": "STS-1", "oudb": "OUDB-1", "voltage": 220, "current": 10, "loadKw": 10, "loadKva": 12, "capacity": 100, "loadPercent": 12 } ],
+      "airDifference": { "eb41a": 1, "eb41b": 2, "eb42a": 3, "eb42b": 4 },
+      "airEnergyKwh": 10000000,
+      "totalDcEnergyKwh": 3928.32,
+      "floorEnergyKwh": 10058984.32
+    },
+    "comparison": [
+      [ "2026-02", { "buildingEnergy": 90000, "buildingCost": 450000, "floorEnergy": null, "floorCost": null, "avgRate": 5, "floorShare": null } ],
+      [ "2026-03", { "buildingEnergy": 100000, "buildingCost": 500000, "floorEnergy": 10058984.32, "floorCost": 50294921.6, "avgRate": 5, "floorShare": 10058.98432 } ]
+    ]
+  },
+  "srinakarin": {
+    "energy": {
+      "buildingEnergyKwh": 200000,
+      "buildingElectricityCostThb": 800000,
+      "upsEnergyKwh": 52080,
+      "airEnergyKwh": 3000000,
+      "dcEnergyKwh": 1964.16,
+      "floorEnergyKwh": 3054044.16,
+      "floorElectricityCostThb": 12216176.64,
+      "averageElectricityRateThbPerKwh": 4,
+      "energySharePercent": 1527.02208
+    },
+    "aggregate": [
+      { "upsId": "UPS 41A", "voltage": 220, "current": 10, "loadKw": 30, "loadKva": 36 },
+      { "upsId": "UPS 41B", "voltage": 220, "current": 20, "loadKw": 60, "loadKva": 66 },
+      { "upsId": "PPC 41A", "voltage": 220, "current": 30, "loadKw": 2, "loadKva": 3 },
+      { "upsId": "PPC 41B", "voltage": 220, "current": 40, "loadKw": 4, "loadKva": 5 },
+      { "upsId": "PPC 42A", "voltage": 212, "current": 3, "loadKw": 6, "loadKva": 7 },
+      { "upsId": "PPC 42B", "voltage": 213, "current": 4, "loadKw": 8, "loadKva": 9 },
+      { "upsId": "PPC 43A", "voltage": 214, "current": 25, "loadKw": 70, "loadKva": 90 },
+      { "upsId": "PPC 43B", "voltage": 215, "current": 45, "loadKw": 40, "loadKva": 60 },
+      { "upsId": "PPC 44A", "voltage": 216, "current": 7, "loadKw": 12, "loadKva": 13 },
+      { "upsId": "PPC 44B", "voltage": 217, "current": 8, "loadKw": 14, "loadKva": 15 }
+    ],
+    "comparison": [
+      [ "2026-02", { "buildingEnergy": 180000, "buildingCost": 720000, "floorEnergy": null, "floorCost": null, "avgRate": 4, "floorShare": null } ],
+      [ "2026-03", { "buildingEnergy": 200000, "buildingCost": 800000, "floorEnergy": 3054044.16, "floorCost": 12216176.64, "avgRate": 4, "floorShare": 1527.02208 } ]
+    ]
+  }
+}
