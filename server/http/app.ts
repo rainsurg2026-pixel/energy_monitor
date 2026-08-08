@@ -121,6 +121,7 @@ export function createApp(dependencies: AppDependencies) {
   app.get("/api/v1/energy", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.energyRead); sendOk(res, await service.getEnergy(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
   app.get("/api/v1/cost", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.costRead); sendOk(res, await service.getCost(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
   app.get("/api/v1/electrical", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.electricalRead); sendOk(res, await service.getElectrical(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
+  app.get("/api/v1/sites/:siteId/periods/:month", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.operationalDataRead); sendOk(res, await service.getMonthlyLog(parseSiteId(req.params.siteId), req.params.month)); }));
   app.get("/api/v1/site-comparison", asyncRoute(async (_req, res) => { withPermission(res, PERMISSIONS.siteComparisonRead); sendOk(res, await service.getSiteComparison()); }));
   app.get("/api/v1/racks", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.rackRead); sendOk(res, await service.getRacks(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
   app.get("/api/v1/rack-unit-capacity", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.rackRead); sendOk(res, await service.getRackUnit(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));

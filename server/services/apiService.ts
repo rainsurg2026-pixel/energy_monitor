@@ -113,6 +113,32 @@ export class ApiService {
     return { siteId, month: selected, formulaVersion: DESKTOP_FORMULA_VERSION, ups: log?.ups ?? [], air: log?.air ?? null, dc: log?.dc ?? [] };
   }
 
+  /**
+   * Returns the selected month's authoritative raw inputs for an editor.
+   * Previous-month rows are used only inside the domain calculation and are
+   * deliberately not included in this DTO.
+   */
+  async getMonthlyLog(siteId: number, month: unknown): Promise<unknown> {
+    await this.requireSite(siteId);
+    const { month: selected } = await this.requireVisibleMonth(month);
+    const [logs, periods] = await Promise.all([
+      this.repository.getMonthlyLogs(siteId, [selected]),
+      this.repository.listPeriods(siteId)
+    ]);
+    const log = logs.find(item => item.month === selected) ?? null;
+    const period = periods.find(item => item.month === selected) ?? null;
+    const calculationLogs = await this.loadLogForVisibleMonth(siteId, selected, true);
+    return {
+      siteId,
+      month: selected,
+      dataset: "monthly_log",
+      formulaVersion: DESKTOP_FORMULA_VERSION,
+      rowVersion: period?.rowVersion ?? null,
+      log,
+      calculation: log ? calculateEnergyCostForMonth(calculationLogs, selected) : null
+    };
+  }
+
   async getDashboard(siteId: number, month: unknown): Promise<unknown> {
     const periods = await this.getPeriods(siteId) as { latestAvailableMonth: string | null };
     const selected = month === undefined || month === null || month === "" ? periods.latestAvailableMonth : month;
@@ -158,7 +184,7 @@ export class ApiService {
     const source = body as Record<string, unknown>;
     const log = parseMonthlyLog(source.log, selected);
     const expectedRowVersion = parseExpectedRowVersion(source.expected_row_version);
-    return this.repository.saveMonthlyLog({ siteId, log, expectedRowVersion, correlationId, actorUserId, provenance: parseProvenance(source.provenance) });
+    return this.repository.saveMonthlyLog({ siteId, log, expectedRowVersion, correlationId, actorUserId, provenance: parseProvenance(source.provenance) ?? { sourceType: "web-api" } });
   }
 
   asOfMonth(): string { return monthOfDate(this.now()); }

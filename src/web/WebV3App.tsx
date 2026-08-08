@@ -57,6 +57,89 @@ function EmptyState({ message = "ยังไม่มีข้อมูลใ�
 
 function LoadingState() { return <section className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400"><RefreshCw className="mx-auto mb-3 w-8 h-8 animate-spin text-indigo-400" /><p>กำลังโหลดข้อมูล…</p></section>; }
 
+interface MonthlyLogResponse { siteId: number; month: string; rowVersion: number | null; log: any | null; calculation: Calculation | null; }
+
+function rawEditorLog(log: any): any {
+  return {
+    month: log.month,
+    ups: log.ups ?? [],
+    air: log.air ?? { eb41a: null, eb41b: null, eb42a: null, eb42b: null, meters: {} },
+    dc: log.dc ?? [],
+    energyCost: {
+      buildingEnergyKwh: log.energyCost?.buildingEnergyKwh ?? null,
+      buildingElectricityCostThb: log.energyCost?.buildingElectricityCostThb ?? null
+    },
+    ...(log.energyCalculation ? { energyCalculation: log.energyCalculation } : {}),
+    ...(log.srinakarinInputs ? { srinakarinInputs: log.srinakarinInputs } : {})
+  };
+}
+
+function emptyEditorLog(month: string): any {
+  return { month, ups: [], air: { eb41a: null, eb41b: null, eb42a: null, eb42b: null, meters: {} }, dc: [], energyCost: { buildingEnergyKwh: null, buildingElectricityCostThb: null } };
+}
+
+function editorError(cause: unknown): string {
+  if (!(cause instanceof ApiError)) return "ไม่สามารถบันทึกข้อมูลได้";
+  if (cause.status === 400) return `ข้อมูลไม่ถูกต้อง: ${cause.message}`;
+  if (cause.status === 401) return "Session หมดอายุ กรุณาเข้าสู่ระบบใหม่";
+  if (cause.status === 403) return "ไม่มีสิทธิ์แก้ไขข้อมูลชุดนี้";
+  if (cause.status === 409) return "ข้อมูลถูกแก้ไขโดยผู้ใช้อื่นแล้ว กรุณาโหลดค่าล่าสุดก่อนบันทึกอีกครั้ง";
+  if (cause.status === 423) return "READ_ONLY_MODE: ระบบอยู่ในโหมดอ่านข้อมูลเท่านั้น";
+  if (cause.status === 429) return "มีคำขอมากเกินไป กรุณาลองใหม่ภายหลัง";
+  if (cause.status >= 500) return "ระบบปลายทางไม่พร้อม กรุณาลองใหม่ภายหลัง";
+  return cause.message || "ไม่สามารถบันทึกข้อมูลได้";
+}
+
+function OperationalEditor({ siteId, month, readOnly, onDirty, onSaved }: { siteId: number; month: string; readOnly: boolean; onDirty: (dirty: boolean) => void; onSaved: () => void }) {
+  const [data, setData] = useState<MonthlyLogResponse | null>(null);
+  const [rawText, setRawText] = useState("");
+  const [initialText, setInitialText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState<"Idle" | "Saving" | "Saved" | "Error">("Idle");
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!siteId || !month) { setData(null); setRawText(""); setInitialText(""); onDirty(false); return; }
+    setLoading(true); setError(null);
+    try {
+      const result = await apiRequest<MonthlyLogResponse>(`/sites/${siteId}/periods/${encodeURIComponent(month)}`);
+      const nextText = JSON.stringify(result.log ? rawEditorLog(result.log) : emptyEditorLog(month), null, 2);
+      setData(result); setRawText(nextText); setInitialText(nextText); onDirty(false); setStatus("Idle");
+    } catch (cause) { setData(null); setError(editorError(cause)); } finally { setLoading(false); }
+  }, [month, onDirty, siteId]);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { onDirty(Boolean(rawText) && rawText !== initialText); }, [initialText, onDirty, rawText]);
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (readOnly || status === "Saving" || !data) return;
+    let log: unknown;
+    try { log = JSON.parse(rawText); } catch { setStatus("Error"); setError("Raw input JSON ไม่ถูกต้อง"); return; }
+    setStatus("Saving"); setError(null);
+    try {
+      await apiRequest(`/sites/${siteId}/periods/${encodeURIComponent(month)}`, {
+        method: "PUT",
+        body: JSON.stringify({ log, expected_row_version: data.rowVersion, provenance: { source_type: "web-api", source_location: `site:${siteId}/month:${month}` } })
+      });
+      setStatus("Saved");
+      await load();
+      onSaved();
+    } catch (cause) { setStatus("Error"); setError(editorError(cause)); }
+  };
+
+  if (!siteId || !month) return null;
+  return <section className="mt-5 bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4" data-testid="operational-editor">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs uppercase tracking-[0.2em] text-indigo-400 font-bold">Operational write</p><h2 className="text-xl font-semibold mt-1">Raw inputs — {month}</h2><p className="text-xs text-slate-500 mt-1">แก้ไขเฉพาะ raw inputs; ค่าพลังงาน/ค่าใช้จ่าย derived คำนวณใหม่จาก domain layer หลังบันทึก</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${status === "Error" ? "bg-rose-500/15 text-rose-300" : status === "Saving" ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"}`}>{status}</span></div>
+    {readOnly && <p className="text-xs text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-xl p-3">READ_ONLY_MODE: operational writes are disabled by the server.</p>}
+    {loading && <p className="text-sm text-slate-400">กำลังโหลด raw inputs…</p>}
+    {error && <div role="alert" className="text-sm text-rose-200 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3"><span>{error}</span>{status === "Error" && <button type="button" onClick={() => void load()} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold">โหลดค่าล่าสุด</button>}</div>}
+    {!loading && data && <form onSubmit={save} className="space-y-3"><textarea aria-label="Raw operational inputs" value={rawText} onChange={event => { setRawText(event.target.value); setStatus("Idle"); }} disabled={readOnly || status === "Saving"} spellCheck={false} className="w-full min-h-80 bg-slate-950 border border-slate-700 rounded-xl p-3 font-mono text-xs text-slate-200 outline-none focus:border-indigo-500 disabled:opacity-60" /><div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-slate-500">row_version: {data.rowVersion ?? "new"} · null และ 0 จะถูกเก็บตามความหมายเดิม</p><button type="submit" disabled={readOnly || status === "Saving" || rawText === initialText} className="rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-4 py-2.5 text-sm font-semibold">{status === "Saving" ? "กำลังบันทึก…" : "บันทึก raw inputs"}</button></div></form>}
+    {!loading && !data && !error && <p className="text-sm text-slate-400">ยังไม่มี monthly dataset สำหรับช่วงนี้</p>}
+    {data?.calculation && <details className="text-sm"><summary className="cursor-pointer font-semibold text-slate-300">Derived calculation (read-only)</summary><div className="mt-3"><CalculationCards calculation={data.calculation} /></div></details>}
+  </section>;
+}
+
 function Shell({ user, bootstrap, route, onNavigate, onLogout, children }: { user: SessionUser; bootstrap: BootstrapState; route: string; onNavigate: (path: string) => void; onLogout: () => Promise<void>; children: ReactNode }) {
   const links = [
     ["/dashboard", "Dashboard", Gauge], ["/energy", "Energy", Zap], ["/cost", "Cost", Calculator], ["/electrical", "Electrical", Activity], ["/site-comparison", "Site Comparison", ChartNoAxesCombined], ["/racks", "Racks", Boxes], ["/rack-units", "Rack Units", Table2]
@@ -65,7 +148,7 @@ function Shell({ user, bootstrap, route, onNavigate, onLogout, children }: { use
     <header className="sticky top-0 z-10 border-b border-slate-800 bg-slate-950/95 backdrop-blur"><div className="max-w-7xl mx-auto px-4 md:px-6 py-4 flex flex-wrap items-center gap-4 justify-between">
       <div><p className="text-[11px] uppercase tracking-[0.2em] text-indigo-400 font-bold">Energy Monitor</p><p className="text-lg font-semibold mt-1">Web v3</p></div>
       <div className="flex items-center gap-3 text-sm"><span className="text-slate-400">{user.displayName}</span><span className="rounded-full bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 px-2.5 py-1 text-xs font-bold">{user.role}</span><button onClick={() => void onLogout()} className="inline-flex items-center gap-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-semibold"><LogOut className="w-3.5 h-3.5" /> ออกจากระบบ</button></div>
-    </div><nav aria-label="Application" className="max-w-7xl mx-auto px-4 md:px-6 pb-3 flex flex-wrap gap-2">{links.map(([path, label, Icon]) => <a key={path} href={path} onClick={event => { event.preventDefault(); onNavigate(path); }} className={`rounded-xl px-3 py-2 text-xs font-semibold inline-flex items-center gap-1.5 ${route === path ? "bg-indigo-600" : "bg-slate-800 hover:bg-slate-700"}`}><Icon className="w-3.5 h-3.5" />{label}</a>)}<a href="/settings" className="rounded-xl bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-semibold inline-flex items-center gap-1.5"><Settings className="w-3.5 h-3.5" /> Settings</a></nav></header>
+    </div><nav aria-label="Application" className="max-w-7xl mx-auto px-4 md:px-6 pb-3 flex flex-wrap gap-2">{links.map(([path, label, Icon]) => <a key={path} href={path} onClick={event => { event.preventDefault(); onNavigate(path); }} className={`rounded-xl px-3 py-2 text-xs font-semibold inline-flex items-center gap-1.5 ${route === path ? "bg-indigo-600" : "bg-slate-800 hover:bg-slate-700"}`}><Icon className="w-3.5 h-3.5" />{label}</a>)}<a href="/settings" onClick={event => { event.preventDefault(); onNavigate("/settings"); }} className="rounded-xl bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-semibold inline-flex items-center gap-1.5"><Settings className="w-3.5 h-3.5" /> Settings</a></nav></header>
     {bootstrap.readOnlyMode && <div className="bg-amber-500/10 border-b border-amber-500/30 text-amber-200 px-4 py-2 text-center text-xs font-semibold">READ_ONLY_MODE: ระบบอยู่ในโหมดอ่านข้อมูลเท่านั้น</div>}
     <main className="max-w-7xl mx-auto px-4 md:px-6 py-6">{children}</main>
   </div>;
@@ -81,7 +164,7 @@ function CalculationCards({ calculation }: { calculation: Calculation }) {
   return <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3"><MetricCard label="Building Energy" value={calculation.buildingEnergyKwh} unit="kWh" /><MetricCard label="Floor Energy" value={calculation.floorEnergyKwh} unit="kWh" /><MetricCard label="Floor Cost" value={calculation.floorElectricityCostThb} unit="THB" /><MetricCard label="Average Rate" value={calculation.averageElectricityRateThbPerKwh} unit="THB/kWh" /><MetricCard label="UPS Energy" value={calculation.upsEnergyKwh} unit="kWh" /><MetricCard label="Air Energy" value={calculation.airEnergyKwh} unit="kWh" /><MetricCard label="DC Energy" value={calculation.dcEnergyKwh} unit="kWh" /><MetricCard label="Energy Share" value={calculation.energySharePercent} unit="%" /></div>;
 }
 
-function ReadDataPage({ kind, siteId, month }: { kind: "dashboard" | "energy" | "cost" | "electrical" | "racks" | "rack-units"; siteId: number; month: string }) {
+function ReadDataPage({ kind, siteId, month, refreshKey = 0 }: { kind: "dashboard" | "energy" | "cost" | "electrical" | "racks" | "rack-units"; siteId: number; month: string; refreshKey?: number }) {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,7 +173,7 @@ function ReadDataPage({ kind, siteId, month }: { kind: "dashboard" | "energy" | 
     const endpoint = kind === "dashboard" ? `/dashboard?siteId=${siteId}${month ? `&month=${encodeURIComponent(month)}` : ""}` : `/${kind}?siteId=${siteId}&month=${encodeURIComponent(month)}`;
     setLoading(true); setError(null);
     void apiRequest<any>(endpoint).then(setData).catch(cause => setError(cause instanceof ApiError && cause.status === 404 ? "ช่วงเวลานี้ไม่อยู่ใน Global Display Period หรือยังไม่มีข้อมูล" : "ไม่สามารถโหลดข้อมูลจาก API ได้")).finally(() => setLoading(false));
-  }, [kind, month, siteId]);
+  }, [kind, month, refreshKey, siteId]);
   if (loading) return <LoadingState />;
   if (error) return <section role="alert" className="bg-rose-500/10 border border-rose-500/30 text-rose-200 rounded-2xl p-5">{error}</section>;
   if (!data) return <EmptyState />;
@@ -122,7 +205,10 @@ export default function WebV3App() {
   const [route, setRoute] = useState(initialPath === "/" ? "/dashboard" : initialPath);
   const [siteId, setSiteId] = useState(0);
   const [month, setMonth] = useState("");
-  const navigate = useCallback((path: string) => { window.history.pushState({}, "", path); setRoute(path); }, []);
+  const [formDirty, setFormDirty] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const canLeaveForm = useCallback(() => !formDirty || window.confirm("มีการแก้ไข raw inputs ที่ยังไม่บันทึก ต้องการออกจากหน้านี้หรือไม่?"), [formDirty]);
+  const navigate = useCallback((path: string) => { if (!canLeaveForm()) return; window.history.pushState({}, "", path); setRoute(path); setFormDirty(false); }, [canLeaveForm]);
 
   useEffect(() => { if (window.location.pathname === "/") window.history.replaceState({}, "", "/dashboard"); const handler = () => setRoute(window.location.pathname.replace(/\/+$/, "") || "/dashboard"); window.addEventListener("popstate", handler); return () => window.removeEventListener("popstate", handler); }, []);
   useEffect(() => { void apiRequest<{ authenticated: boolean; user: SessionUser | null }>("/auth/session").then(result => setUser(result.authenticated ? result.user : null)).catch(() => setUser(null)); }, []);
@@ -133,5 +219,7 @@ export default function WebV3App() {
   if (!user) return <LoginView onAuthenticated={setUser} />;
   if (!bootstrap) return <LoadingState />;
   const needsScope = ["/dashboard", "/energy", "/cost", "/electrical", "/racks", "/rack-units"].includes(route);
-  return <Shell user={user} bootstrap={bootstrap} route={route} onNavigate={navigate} onLogout={logout}>{needsScope && <ScopeBar bootstrap={bootstrap} siteId={siteId} month={month} onSiteChange={id => { setSiteId(id); const next = bootstrap.sites.find(item => item.site.id === id)?.latestAvailableMonth; if (next) setMonth(next); }} onMonthChange={setMonth} />}{needsScope && <div className="mt-5"><ReadDataPage kind={(route.slice(1) || "dashboard") as "dashboard" | "energy" | "cost" | "electrical" | "racks" | "rack-units"} siteId={selectedSite?.site.id ?? siteId} month={month} /></div>}{route === "/site-comparison" && <SiteComparisonPage />}{!needsScope && route !== "/site-comparison" && <EmptyState message="เลือกเมนูจากแถบด้านบน" />}</Shell>;
+  const selectedKind = (route.slice(1) || "dashboard") as "dashboard" | "energy" | "cost" | "electrical" | "racks" | "rack-units";
+  const editableRoute = ["/energy", "/electrical", "/cost"].includes(route);
+  return <Shell user={user} bootstrap={bootstrap} route={route} onNavigate={navigate} onLogout={logout}>{needsScope && <ScopeBar bootstrap={bootstrap} siteId={siteId} month={month} onSiteChange={id => { if (!canLeaveForm()) return; setSiteId(id); const next = bootstrap.sites.find(item => item.site.id === id)?.latestAvailableMonth; if (next) setMonth(next); setFormDirty(false); }} onMonthChange={nextMonth => { if (!canLeaveForm()) return; setMonth(nextMonth); setFormDirty(false); }} />}{needsScope && <div className="mt-5"><ReadDataPage kind={selectedKind} siteId={selectedSite?.site.id ?? siteId} month={month} refreshKey={refreshKey} />{editableRoute && <OperationalEditor siteId={selectedSite?.site.id ?? siteId} month={month} readOnly={Boolean(bootstrap.readOnlyMode)} onDirty={setFormDirty} onSaved={() => setRefreshKey(value => value + 1)} />}</div>}{route === "/site-comparison" && <SiteComparisonPage />}{!needsScope && route !== "/site-comparison" && <EmptyState message="เลือกเมนูจากแถบด้านบน" />}</Shell>;
 }

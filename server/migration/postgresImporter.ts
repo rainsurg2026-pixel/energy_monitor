@@ -9,6 +9,7 @@ import type { MigrationImportResult, MigrationPlan } from "./types";
 export interface MigrationImportOptions {
   allowWrite: boolean;
   targetEnvironment: "development" | "test" | "production";
+  readOnlyMode?: boolean;
 }
 
 export class MigrationImportError extends Error {
@@ -104,6 +105,7 @@ async function recordFailedBatch(pool: Pool, plan: MigrationPlan, code: string, 
 
 export async function importMigrationPlan(pool: Pool, plan: MigrationPlan, options: MigrationImportOptions): Promise<MigrationImportResult> {
   if (!options.allowWrite) throw new MigrationImportError("WRITE_NOT_ENABLED", "Import requires an explicit write flag.");
+  if (options.readOnlyMode) throw new MigrationImportError("READ_ONLY_MODE", "Migration import is disabled while READ_ONLY_MODE is enabled.");
   if (options.targetEnvironment === "production") throw new MigrationImportError("PRODUCTION_IMPORT_BLOCKED", "Direct production migration is prohibited.");
   const errors = plan.issues.filter(entry => entry.severity === "error");
   if (errors.length > 0) throw new MigrationImportError("PLAN_INVALID", "Migration plan contains validation errors.");

@@ -10,6 +10,18 @@ export interface InMemoryRepositoryOptions {
   rackSnapshots?: Record<string, RackSnapshotRecord>;
   rackUnitSnapshots?: Record<string, RackUnitSnapshotRecord>;
   databaseReady?: boolean;
+  auditFailure?: boolean;
+}
+
+export interface InMemoryAuditEvent {
+  actorUserId: number | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  previousValue: Record<string, unknown> | null;
+  newValue: Record<string, unknown> | null;
+  correlationId: string;
+  occurredAt: string;
 }
 export class InMemoryRepository implements BackendRepository {
   private readonly sites: SiteRecord[];
@@ -19,14 +31,17 @@ export class InMemoryRepository implements BackendRepository {
   private readonly rackSnapshots: Record<string, RackSnapshotRecord>;
   private readonly rackUnitSnapshots: Record<string, RackUnitSnapshotRecord>;
   private readonly databaseReady: boolean;
+  private readonly auditFailure: boolean;
+  readonly auditEvents: InMemoryAuditEvent[] = [];
 
   constructor(options: InMemoryRepositoryOptions = {}) {
     this.sites = options.sites ?? [];
-    this.logs = options.logs ?? {};
+    this.logs = structuredClone(options.logs ?? {});
     this.settings = options.settings ?? null;
     this.rackSnapshots = options.rackSnapshots ?? {};
     this.rackUnitSnapshots = options.rackUnitSnapshots ?? {};
     this.databaseReady = options.databaseReady ?? true;
+    this.auditFailure = options.auditFailure ?? false;
   }
 
   async ping(): Promise<void> { if (!this.databaseReady) throw new Error("in-memory repository is not ready"); }
@@ -34,15 +49,32 @@ export class InMemoryRepository implements BackendRepository {
   async getSite(siteId: number): Promise<SiteRecord | null> { return this.sites.find(site => site.id === siteId) ?? null; }
   async getGlobalSettings(): Promise<DisplayPeriod | null> { return this.settings ? { ...this.settings } : null; }
 
-  async updateGlobalSettings(input: UpdateSettingsInput): Promise<DisplayPeriod> {
-    if (!this.settings) {
-      if (input.expectedRowVersion !== 0) throw new HttpError(409, "STALE_VERSION", "Global settings changed before this update was saved.");
-      this.settings = { startMonth: input.startMonth, endMonth: input.endMonth, rowVersion: 1 };
+  async updateGlobalSettings(input: UpdateSettingsInput, correlationId = "settings-update"): Promise<DisplayPeriod> {
+    const previous = this.settings ? { ...this.settings } : null;
+    const auditLength = this.auditEvents.length;
+    try {
+      if (!this.settings) {
+        if (input.expectedRowVersion !== 0) throw new HttpError(409, "STALE_VERSION", "Global settings changed before this update was saved.");
+        this.settings = { startMonth: input.startMonth, endMonth: input.endMonth, rowVersion: 1 };
+      } else {
+        if (this.settings.rowVersion !== input.expectedRowVersion) throw new HttpError(409, "STALE_VERSION", "Global settings changed before this update was saved.");
+        this.settings = { startMonth: input.startMonth, endMonth: input.endMonth, rowVersion: input.expectedRowVersion + 1 };
+      }
+      this.recordAudit({
+        actorUserId: input.actorUserId ?? null,
+        action: previous ? "update" : "create",
+        entityType: "global_settings",
+        entityId: "1",
+        previousValue: previous ? { startMonth: previous.startMonth, endMonth: previous.endMonth, rowVersion: previous.rowVersion } : null,
+        newValue: { startMonth: this.settings.startMonth, endMonth: this.settings.endMonth, rowVersion: this.settings.rowVersion },
+        correlationId
+      });
       return { ...this.settings };
+    } catch (error) {
+      this.settings = previous;
+      this.auditEvents.length = auditLength;
+      throw error;
     }
-    if (this.settings.rowVersion !== input.expectedRowVersion) throw new HttpError(409, "STALE_VERSION", "Global settings changed before this update was saved.");
-    this.settings = { startMonth: input.startMonth, endMonth: input.endMonth, rowVersion: input.expectedRowVersion + 1 };
-    return { ...this.settings };
   }
 
   async listPeriods(siteId: number): Promise<PeriodRecord[]> {
@@ -62,11 +94,30 @@ export class InMemoryRepository implements BackendRepository {
     const current = index >= 0 ? { rowVersion: this.periodVersions[key] ?? 1 } : null;
     if (current && input.expectedRowVersion !== current.rowVersion) throw new HttpError(409, "STALE_VERSION", "Monthly data changed before this save was committed.");
     if (!current && input.expectedRowVersion !== null && input.expectedRowVersion !== 0) throw new HttpError(409, "STALE_VERSION", "Monthly data changed before this save was committed.");
-    const rowVersion = current ? current.rowVersion + 1 : 1;
-    const cloned = structuredClone(input.log);
-    if (index >= 0) logs[index] = cloned; else logs.push(cloned);
-    this.periodVersions[key] = rowVersion;
-    return { id: index >= 0 ? index + 1 : logs.length, siteId: input.siteId, month: input.log.month, hasData: true, rowVersion };
+    const previousLogs = structuredClone(logs);
+    const previousPeriodVersions = { ...this.periodVersions };
+    const auditLength = this.auditEvents.length;
+    try {
+      const rowVersion = current ? current.rowVersion + 1 : 1;
+      const cloned = structuredClone(input.log);
+      if (index >= 0) logs[index] = cloned; else logs.push(cloned);
+      this.periodVersions[key] = rowVersion;
+      this.recordAudit({
+        actorUserId: input.actorUserId ?? null,
+        action: "upsert",
+        entityType: "monthly_period",
+        entityId: key,
+        previousValue: { dataset: "monthly_log", siteId: input.siteId, month: input.log.month, rowVersion: current?.rowVersion ?? null },
+        newValue: { dataset: "monthly_log", siteId: input.siteId, month: input.log.month, record: "raw_inputs", rowVersion, provenance: input.provenance?.sourceType ?? "web-api" },
+        correlationId: input.correlationId
+      });
+      return { id: index >= 0 ? index + 1 : logs.length, siteId: input.siteId, month: input.log.month, hasData: true, rowVersion };
+    } catch (error) {
+      this.logs[input.siteId] = previousLogs;
+      this.periodVersions = previousPeriodVersions;
+      this.auditEvents.length = auditLength;
+      throw error;
+    }
   }
 
   async getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null> { return this.rackSnapshots[`${siteId}:${month}`] ?? null; }
@@ -76,6 +127,12 @@ export class InMemoryRepository implements BackendRepository {
     const previous = this.settings ? { ...this.settings } : null;
     const previousLogs = structuredClone(this.logs);
     const previousPeriodVersions = { ...this.periodVersions };
-    try { return await work(this); } catch (error) { this.settings = previous; this.logs = previousLogs; this.periodVersions = previousPeriodVersions; throw error; }
+    const previousAudits = structuredClone(this.auditEvents);
+    try { return await work(this); } catch (error) { this.settings = previous; this.logs = previousLogs; this.periodVersions = previousPeriodVersions; this.auditEvents.length = 0; this.auditEvents.push(...previousAudits); throw error; }
+  }
+
+  private recordAudit(event: Omit<InMemoryAuditEvent, "occurredAt">): void {
+    if (this.auditFailure) throw new Error("audit write failed");
+    this.auditEvents.push({ ...structuredClone(event), occurredAt: new Date().toISOString() });
   }
 }

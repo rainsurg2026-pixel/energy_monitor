@@ -28,7 +28,7 @@ if (preview.errors.length > 0) {
   const config = loadServerConfig(process.env, { requireDatabase: true, requireRuntimeDatabase: false, requireMigrationDatabase: true });
   const pool = createPool(config, "migration");
   try {
-    const result = await importMigrationPlan(pool, plan, { allowWrite: true, targetEnvironment: process.env.MIGRATION_TARGET });
+    const result = await importMigrationPlan(pool, plan, { allowWrite: true, targetEnvironment: process.env.MIGRATION_TARGET, readOnlyMode: config.readOnlyMode });
     console.log(JSON.stringify({ stage: "import", ...result }, null, 2));
   } finally {
     await pool.end();

@@ -107,10 +107,29 @@ function SettingsNav({ user, onLogout }: { user: SessionUser; onLogout: () => Pr
 function SettingsHome({ user }: { user: SessionUser }) {
   const [settings, setSettings] = useState<SettingsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    void apiRequest<SettingsResponse>("/settings").then(setSettings).catch(() => setError("Settings could not be loaded."));
+  const load = useCallback(async () => {
+    try { setSettings(await apiRequest<SettingsResponse>("/settings")); setError(null); } catch { setError("Settings could not be loaded."); }
   }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!settings || user.role !== "admin" || busy) return;
+    setBusy(true); setSaved(false); setError(null);
+    const form = new FormData(event.currentTarget as HTMLFormElement);
+    try {
+      await apiRequest<SettingsResponse>("/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: form.get("start_month"), end_month: form.get("end_month"), expected_row_version: settings.rowVersion }) });
+      await load(); setSaved(true);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 409) setError("Display Period ถูกแก้ไขโดยผู้ใช้อื่นแล้ว กรุณาโหลดค่าล่าสุดก่อนบันทึก");
+      else if (cause instanceof ApiError && cause.status === 423) setError("READ_ONLY_MODE: ไม่อนุญาตให้แก้ไขการตั้งค่า");
+      else setError(cause instanceof ApiError ? cause.message : "Display Period could not be updated.");
+    } finally { setBusy(false); }
+  };
 
   return (
     <section className="max-w-7xl mx-auto px-6 py-8 space-y-6">
@@ -119,7 +138,7 @@ function SettingsHome({ user }: { user: SessionUser }) {
         <h1 className="text-3xl font-semibold mt-2">Application settings</h1>
         <p className="text-slate-400 mt-2">Effective settings are available to authenticated users. Administrative controls are shown according to the server session role.</p>
       </div>
-      {error && <p role="alert" className="text-rose-300">{error}</p>}
+      {error && <p role="alert" className="text-rose-300 flex flex-wrap items-center gap-3"><span>{error}</span><button type="button" onClick={() => void load()} className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-semibold">Reload latest</button></p>}
       <div className="grid md:grid-cols-2 gap-5">
         <article className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
           <h2 className="font-semibold">General</h2>
@@ -127,8 +146,10 @@ function SettingsHome({ user }: { user: SessionUser }) {
         </article>
         <article className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3">
           <h2 className="font-semibold">Global Display Period</h2>
-          {settings ? <p className="text-sm text-slate-300">{settings.startMonth} → {settings.endMonth}</p> : <p className="text-sm text-slate-500">Loading…</p>}
-          <p className="text-xs text-slate-500">Only administrators can change this setting.</p>
+          {settings ? <p className="text-sm text-slate-300">{settings.startMonth} → {settings.endMonth} <span className="text-xs text-slate-500">(row_version {settings.rowVersion})</span></p> : <p className="text-sm text-slate-500">Loading…</p>}
+          {user.role === "admin" && settings && <form onSubmit={save} className="grid sm:grid-cols-3 gap-3 pt-2"><label className="text-xs text-slate-400">Start month<input name="start_month" type="month" defaultValue={settings.startMonth} className="field mt-1 w-full" required /></label><label className="text-xs text-slate-400">End month<input name="end_month" type="month" defaultValue={settings.endMonth} className="field mt-1 w-full" required /></label><button disabled={busy} className="self-end rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-4 py-2.5 text-sm font-semibold">{busy ? "Saving…" : "Save Display Period"}</button></form>}
+          {saved && <p role="status" className="text-xs text-emerald-300">Saved. Bootstrap will use the new contiguous month range.</p>}
+          <p className="text-xs text-slate-500">Only administrators can change this setting. The server validates range and optimistic row_version.</p>
         </article>
       </div>
     </section>

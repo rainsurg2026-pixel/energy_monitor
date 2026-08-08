@@ -41,6 +41,7 @@
     "test:api": "node node_modules/tsx/dist/cli.mjs scripts/test-api-foundation.ts",
     "test:phase3": "node --import tsx --test server/auth/authCore.test.ts server/authz/authz.test.ts server/http/security/security.test.ts && npm run test:api",
     "test:phase35": "node node_modules/tsx/dist/cli.mjs scripts/test-phase35.ts",
+    "test:phase6": "node node_modules/tsx/dist/cli.mjs scripts/test-phase6.ts",
     "test:phase3:live": "node node_modules/tsx/dist/cli.mjs scripts/test-live-phase3.ts",
     "test:display-period": "node node_modules/tsx/dist/cli.mjs scripts/test-display-period-policy.ts",
     "test:postgres": "node node_modules/tsx/dist/cli.mjs scripts/test-postgres-foundation.ts",

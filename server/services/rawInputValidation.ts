@@ -1,4 +1,4 @@
-import type { AirRecord, DcRecord, EnergyCalculationProfile, MonthlyLog, SrinakarinInputSnapshot, UpsRecord } from "../../src/types";
+import type { AirRecord, EnergyCalculationProfile, MonthlyLog, SrinakarinInputSnapshot, UpsRecord } from "../../src/types";
 import { HttpError } from "../errors";
 
 type JsonObject = Record<string, unknown>;
@@ -37,6 +37,9 @@ function parseUps(value: unknown, index: number): UpsRecord {
   }
   return record;
 }
+function assertUnique(values: string[], field: string): void {
+  if (new Set(values).size !== values.length) throw new HttpError(400, "DUPLICATE_INPUT", `${field} contains duplicate identifiers.`);
+}
 function parseSrinakarin(value: unknown): SrinakarinInputSnapshot | undefined {
   if (value === undefined || value === null) return undefined;
   const source = object(value, "srinakarinInputs");
@@ -60,7 +63,6 @@ export function parseMonthlyLog(value: unknown, expectedMonth: string): MonthlyL
   if (!Array.isArray(upsValue)) throw new HttpError(400, "INVALID_BODY", "log.ups must be an array.");
   const dcValue = source.dc;
   if (!Array.isArray(dcValue)) throw new HttpError(400, "INVALID_BODY", "log.dc must be an array.");
-  const dc: DcRecord[] = dcValue.map((entry, index) => { const item = object(entry, `log.dc[${index}]`); return { panelId: text(item.panelId, `log.dc[${index}].panelId`), voltage: nullableNumber(item.voltage, `log.dc[${index}].voltage`), current: nullableNumber(item.current, `log.dc[${index}].current`) }; });
   const energy = object(source.energyCost, "log.energyCost");
   let energyCalculation: EnergyCalculationProfile | undefined;
   if (source.energyCalculation !== undefined) {
@@ -72,7 +74,11 @@ export function parseMonthlyLog(value: unknown, expectedMonth: string): MonthlyL
     if (!Array.isArray(dcIds) || !dcIds.every(item => typeof item === "string") || !Array.isArray(airFields) || !airFields.every(item => typeof item === "string")) throw new HttpError(400, "INVALID_BODY", "log.energyCalculation lists must contain strings.");
     energyCalculation = { upsGroups: groups as string[][], dcIds: dcIds as string[], airFields: airFields as string[] };
   }
-  return { month: expectedMonth, ups: upsValue.map(parseUps), air, dc, energyCost: { buildingEnergyKwh: nullableNumber(energy.buildingEnergyKwh, "log.energyCost.buildingEnergyKwh"), buildingElectricityCostThb: nullableNumber(energy.buildingElectricityCostThb, "log.energyCost.buildingElectricityCostThb") }, lastSavedUps: null, lastSavedAir: null, lastSavedDc: null, lastSavedEnergyCost: null, energyCalculation, srinakarinInputs: parseSrinakarin(source.srinakarinInputs) };
+  const ups = upsValue.map(parseUps);
+  const dc = dcValue.map((entry, index) => { const item = object(entry, `log.dc[${index}]`); return { panelId: text(item.panelId, `log.dc[${index}].panelId`), voltage: nullableNumber(item.voltage, `log.dc[${index}].voltage`), current: nullableNumber(item.current, `log.dc[${index}].current`) }; });
+  assertUnique(ups.map(item => item.upsId), "log.ups");
+  assertUnique(dc.map(item => item.panelId), "log.dc");
+  return { month: expectedMonth, ups, air, dc, energyCost: { buildingEnergyKwh: nullableNumber(energy.buildingEnergyKwh, "log.energyCost.buildingEnergyKwh"), buildingElectricityCostThb: nullableNumber(energy.buildingElectricityCostThb, "log.energyCost.buildingElectricityCostThb") }, lastSavedUps: null, lastSavedAir: null, lastSavedDc: null, lastSavedEnergyCost: null, energyCalculation, srinakarinInputs: parseSrinakarin(source.srinakarinInputs) };
 }
 
 export function parseExpectedRowVersion(value: unknown): number | null {
