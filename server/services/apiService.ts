@@ -7,6 +7,7 @@ import { HttpError } from "../errors";
 import { assertDisplayPeriod, assertStrictMonth, allowedMonths, isAllowedMonth, latestAvailableMonth, previousCalculationMonth, visibleMonths, type DisplayPeriod } from "../policies/displayPeriod";
 import type { BackendRepository, SiteRecord } from "../repositories/contracts";
 import { parseExpectedRowVersion, parseMonthlyLog, parseProvenance } from "./rawInputValidation";
+import { API_HEALTH_RESPONSE } from "../http/health";
 
 export interface ApiServiceOptions { repository: BackendRepository; now?: () => Date; }
 
@@ -15,7 +16,7 @@ function monthOfDate(date: Date): string { return `${date.getUTCFullYear()}-${St
 export class ApiService {
   constructor(private readonly repository: BackendRepository, private readonly now: () => Date = () => new Date()) {}
 
-  async health(): Promise<{ status: "ok"; service: string }> { return { status: "ok", service: "energy-monitor-api" }; }
+  async health(): Promise<typeof API_HEALTH_RESPONSE> { return API_HEALTH_RESPONSE; }
   async readiness(): Promise<{ status: "ready" }> {
     try {
       await this.repository.ping();

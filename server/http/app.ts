@@ -141,7 +141,7 @@ export function createApp(dependencies: AppDependencies) {
     if (isHttpError(error)) { res.status(error.status).json({ ok: false, error: { code: error.code, message: error.message, requestId: request } }); return; }
     if (error && typeof error === "object" && (("type" in error && (error as { type?: unknown }).type === "entity.too.large") || ("status" in error && (error as { status?: unknown }).status === 413))) { res.status(413).json({ ok: false, error: { code: "PAYLOAD_TOO_LARGE", message: "Request body exceeds the permitted size.", requestId: request } }); return; }
     if (error instanceof SyntaxError) { res.status(400).json({ ok: false, error: { code: "INVALID_JSON", message: "Request body is not valid JSON.", requestId: request } }); return; }
-    console.error(`[${request}] API error`, error instanceof Error ? error.message : error);
+    console.error(`[${request}] API error`, error instanceof Error ? error.name : "UNKNOWN_ERROR");
     res.status(500).json({ ok: false, error: { code: "INTERNAL_ERROR", message: "An unexpected server error occurred.", requestId: request } });
   };
   app.use(errorHandler);

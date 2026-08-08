@@ -1,22 +1,9 @@
-import { createApp } from "./http/app";
-import { loadDotEnvFile, loadServerConfig } from "./config/env";
-import { assertRuntimeRole, createPool } from "./db/pool";
-import { PostgresRepository } from "./db/postgresRepository";
-import { PostgresAuthRepository } from "./auth/repository";
-import { AuthService } from "./auth/authService";
-import { Argon2idPasswordHasher } from "./auth/passwordHasher";
-import { PostgresRateLimitStore } from "./http/security/rateLimit";
+import { loadDotEnvFile } from "./config/env";
+import { createConfiguredRuntime } from "./runtime";
 
 loadDotEnvFile();
-const config = loadServerConfig();
-const pool = createPool(config, "runtime");
-await assertRuntimeRole(pool);
-const passwordHasher = new Argon2idPasswordHasher();
-const dummyPasswordHash = await passwordHasher.hash("energy-monitor-dummy-login-sentinel");
-const authRepository = new PostgresAuthRepository(pool);
-const authService = new AuthService(authRepository, { passwordHasher, dummyPasswordHash, sessionPolicy: { absoluteLifetimeMs: config.sessionLifetimeMs } });
-const app = createApp({ config, repository: new PostgresRepository(pool), authService, rateLimitStore: new PostgresRateLimitStore(pool) });
-const server = app.listen(config.port, () => console.log(`Energy Monitor API listening on port ${config.port}`));
-const shutdown = async () => { server.close(); await pool.end(); };
+const runtime = await createConfiguredRuntime();
+const server = runtime.app.listen(runtime.config.port, () => console.log(`Energy Monitor API listening on port ${runtime.config.port}`));
+const shutdown = async () => { server.close(); await runtime.pool.end(); };
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
