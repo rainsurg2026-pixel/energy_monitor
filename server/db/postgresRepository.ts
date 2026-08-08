@@ -145,7 +145,7 @@ export class PostgresRepository implements BackendRepository {
     if (input.provenance) {
       await client.query("INSERT INTO provenance_records(entity_type, entity_id, source_type, source_file_hash, source_file_name, source_sheet, source_location) VALUES ('monthly_period', $1, $2, $3, $4, $5, $6)", [periodId, input.provenance.sourceType, input.provenance.sourceFileHash ?? null, input.provenance.sourceFileName ?? null, input.provenance.sourceSheet ?? null, input.provenance.sourceLocation ?? null]);
     }
-    await client.query("INSERT INTO audit_events(actor_type, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ('system','upsert','monthly_period',$1,jsonb_build_object('row_version',$2),jsonb_build_object('row_version',$3,'month',$4),$5)", [periodId, input.expectedRowVersion, rowVersion, input.log.month, input.correlationId]);
+    await client.query("INSERT INTO audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [input.actorUserId === null || input.actorUserId === undefined ? "system" : "user", input.actorUserId ?? null, "upsert", "monthly_period", periodId, JSON.stringify({ row_version: input.expectedRowVersion }), JSON.stringify({ row_version: rowVersion, month: input.log.month }), input.correlationId]);
     return { id: Number(periodId), siteId: input.siteId, month: input.log.month, hasData: true, rowVersion };
   }
 
@@ -163,8 +163,8 @@ export class PostgresRepository implements BackendRepository {
         );
         if (!created.rows[0]) throw new HttpError(409, "STALE_VERSION", "Global settings changed before this update was saved.");
         await client.query(
-          "INSERT INTO audit_events(actor_type, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ('system', 'create', 'global_settings', '1', NULL, jsonb_build_object('start_month', $1, 'end_month', $2, 'row_version', $3), $4)",
-          [input.startMonth, input.endMonth, created.rows[0].row_version, correlationId]
+          "INSERT INTO audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+          [input.actorUserId === null || input.actorUserId === undefined ? "system" : "user", input.actorUserId ?? null, "create", "global_settings", "1", null, JSON.stringify({ start_month: input.startMonth, end_month: input.endMonth, row_version: created.rows[0].row_version }), correlationId]
         );
         return { startMonth: monthString(created.rows[0].start_month), endMonth: monthString(created.rows[0].end_month), rowVersion: created.rows[0].row_version };
       }
@@ -176,8 +176,8 @@ export class PostgresRepository implements BackendRepository {
       if (update.rows.length === 0) throw new HttpError(409, "STALE_VERSION", "Global settings changed before this update was saved.");
       const row = update.rows[0];
       await client.query(
-        "INSERT INTO audit_events(actor_type, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ('system', 'update', 'global_settings', '1', jsonb_build_object('start_month', $1, 'end_month', $2, 'row_version', $3), jsonb_build_object('start_month', $4, 'end_month', $5, 'row_version', $6), $7)",
-        [monthString(previous.rows[0].start_month), monthString(previous.rows[0].end_month), previous.rows[0].row_version, input.startMonth, input.endMonth, row.row_version, correlationId]
+        "INSERT INTO audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [input.actorUserId === null || input.actorUserId === undefined ? "system" : "user", input.actorUserId ?? null, "update", "global_settings", "1", JSON.stringify({ start_month: monthString(previous.rows[0].start_month), end_month: monthString(previous.rows[0].end_month), row_version: previous.rows[0].row_version }), JSON.stringify({ start_month: input.startMonth, end_month: input.endMonth, row_version: row.row_version }), correlationId]
       );
       return { startMonth: monthString(row.start_month), endMonth: monthString(row.end_month), rowVersion: row.row_version };
     });
@@ -271,13 +271,13 @@ class PostgresTransactionRepository extends PostgresRepository {
       if (input.expectedRowVersion !== 0) throw new HttpError(409, "STALE_VERSION", "Global settings changed before this update was saved.");
       const created = await this.client.query<{ start_month: string; end_month: string; row_version: number }>("INSERT INTO global_settings(id, start_month, end_month, row_version) VALUES (1, $1::date, $2::date, 1) ON CONFLICT (id) DO NOTHING RETURNING start_month, end_month, row_version", [`${input.startMonth}-01`, `${input.endMonth}-01`]);
       if (!created.rows[0]) throw new HttpError(409, "STALE_VERSION", "Global settings changed before this update was saved.");
-      await this.client.query("INSERT INTO audit_events(actor_type,action,entity_type,entity_id,new_value,correlation_id) VALUES ('system','create','global_settings','1',jsonb_build_object('start_month',$1,'end_month',$2,'row_version',$3),$4)",[input.startMonth,input.endMonth,created.rows[0].row_version,correlationId]);
+       await this.client.query("INSERT INTO audit_events(actor_type,actor_user_id,action,entity_type,entity_id,new_value,correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7)",[input.actorUserId === null || input.actorUserId === undefined ? "system" : "user", input.actorUserId ?? null, "create", "global_settings", "1", JSON.stringify({ start_month: input.startMonth, end_month: input.endMonth, row_version: created.rows[0].row_version }), correlationId]);
       const r = created.rows[0]; return { startMonth: monthString(r.start_month), endMonth: monthString(r.end_month), rowVersion: r.row_version };
     }
     if (previous.rows[0].row_version !== input.expectedRowVersion) throw new HttpError(409,"STALE_VERSION","Global settings changed before this update was saved.");
     const result = await this.client.query("UPDATE global_settings SET start_month=$1::date,end_month=$2::date,row_version=row_version+1,updated_at=now() WHERE id=1 AND row_version=$3 RETURNING start_month,end_month,row_version", [`${input.startMonth}-01`, `${input.endMonth}-01`, input.expectedRowVersion]);
     if (!result.rows[0]) throw new HttpError(409,"STALE_VERSION","Global settings changed before this update was saved.");
-    const r=result.rows[0]; await this.client.query("INSERT INTO audit_events(actor_type,action,entity_type,entity_id,previous_value,new_value,correlation_id) VALUES ('system','update','global_settings','1',jsonb_build_object('start_month',$1,'end_month',$2,'row_version',$3),jsonb_build_object('start_month',$4,'end_month',$5,'row_version',$6),$7)",[monthString(previous.rows[0].start_month),monthString(previous.rows[0].end_month),previous.rows[0].row_version,input.startMonth,input.endMonth,r.row_version,correlationId]);
+     const r=result.rows[0]; await this.client.query("INSERT INTO audit_events(actor_type,actor_user_id,action,entity_type,entity_id,previous_value,new_value,correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",[input.actorUserId === null || input.actorUserId === undefined ? "system" : "user", input.actorUserId ?? null, "update", "global_settings", "1", JSON.stringify({ start_month: monthString(previous.rows[0].start_month), end_month: monthString(previous.rows[0].end_month), row_version: previous.rows[0].row_version }), JSON.stringify({ start_month: input.startMonth, end_month: input.endMonth, row_version: r.row_version }), correlationId]);
     return {startMonth:monthString(r.start_month),endMonth:monthString(r.end_month),rowVersion:r.row_version};
   }
   override async saveMonthlyLog(input: SaveMonthlyLogInput): Promise<PeriodRecord> { return this.saveMonthlyLogInTransaction(this.client, input); }

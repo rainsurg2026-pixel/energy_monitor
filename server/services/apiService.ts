@@ -64,13 +64,13 @@ export class ApiService {
     return period;
   }
 
-  async updateSettings(startMonth: unknown, endMonth: unknown, expectedRowVersion: unknown, correlationId: string): Promise<DisplayPeriod> {
+  async updateSettings(startMonth: unknown, endMonth: unknown, expectedRowVersion: unknown, correlationId: string, actorUserId?: number | null): Promise<DisplayPeriod> {
     const start = this.strictMonth(startMonth, "start_month");
     const end = this.strictMonth(endMonth, "end_month");
     if (typeof expectedRowVersion !== "number" || !Number.isSafeInteger(expectedRowVersion) || expectedRowVersion < 0 || expectedRowVersion > 2147483647) throw new HttpError(400, "INVALID_ROW_VERSION", "expected_row_version must be a PostgreSQL-safe non-negative integer.");
     const expected = expectedRowVersion;
     try { assertDisplayPeriod(start, end); } catch (error) { throw new HttpError(400, "INVALID_DISPLAY_PERIOD", error instanceof Error ? error.message : "Invalid Display Period."); }
-    return this.repository.updateGlobalSettings({ startMonth: start, endMonth: end, expectedRowVersion: expected }, correlationId);
+    return this.repository.updateGlobalSettings({ startMonth: start, endMonth: end, expectedRowVersion: expected, actorUserId }, correlationId);
   }
 
   async getPeriods(siteId: number): Promise<unknown> {
@@ -151,14 +151,14 @@ export class ApiService {
     return { siteId, month: selected, snapshot: { ...snapshot, availableU: snapshot.totalU - snapshot.usedU, usagePercent: usagePercent(snapshot), availabilityPercent: snapshot.totalU > 0 ? ((snapshot.totalU - snapshot.usedU) / snapshot.totalU) * 100 : null } };
   }
 
-  async saveMonthlyLog(siteId: number, month: unknown, body: unknown, correlationId: string): Promise<unknown> {
+  async saveMonthlyLog(siteId: number, month: unknown, body: unknown, correlationId: string, actorUserId?: number | null): Promise<unknown> {
     await this.requireSite(siteId);
     const { month: selected } = await this.requireVisibleMonth(month);
     if (body === null || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "INVALID_BODY", "Request body must be a JSON object.");
     const source = body as Record<string, unknown>;
     const log = parseMonthlyLog(source.log, selected);
     const expectedRowVersion = parseExpectedRowVersion(source.expected_row_version);
-    return this.repository.saveMonthlyLog({ siteId, log, expectedRowVersion, correlationId, provenance: parseProvenance(source.provenance) });
+    return this.repository.saveMonthlyLog({ siteId, log, expectedRowVersion, correlationId, actorUserId, provenance: parseProvenance(source.provenance) });
   }
 
   asOfMonth(): string { return monthOfDate(this.now()); }

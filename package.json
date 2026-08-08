@@ -18,6 +18,7 @@
     "desktop:build": "npm run build && node scripts/build-electron.mjs",
     "server:dev": "node node_modules/tsx/dist/cli.mjs server/main.ts",
     "db:migrate": "node node_modules/tsx/dist/cli.mjs scripts/run-migrations.ts",
+    "auth:bootstrap-admin": "node node_modules/tsx/dist/cli.mjs scripts/bootstrap-admin.ts",
     "lint:server": "node node_modules/typescript/bin/tsc --noEmit -p tsconfig.server.json",
     "portable": "npm run desktop:build && node scripts/run-electron-builder.mjs --win portable",
     "portable:build": "node scripts/run-electron-builder.mjs --win portable",
@@ -35,6 +36,8 @@
     "test:energy-cost-dashboard": "node node_modules/tsx/dist/cli.mjs scripts/test-energy-cost-dashboard-fac.ts",
     "test:domain-parity": "node node_modules/tsx/dist/cli.mjs scripts/test-domain-parity.ts",
     "test:api": "node node_modules/tsx/dist/cli.mjs scripts/test-api-foundation.ts",
+    "test:phase3": "node --import tsx --test server/auth/authCore.test.ts server/authz/authz.test.ts server/http/security/security.test.ts && npm run test:api",
+    "test:phase3:live": "node node_modules/tsx/dist/cli.mjs scripts/test-live-phase3.ts",
     "test:display-period": "node node_modules/tsx/dist/cli.mjs scripts/test-display-period-policy.ts",
     "test:postgres": "node node_modules/tsx/dist/cli.mjs scripts/test-postgres-foundation.ts",
     "test:air-validation": "node node_modules/tsx/dist/cli.mjs scripts/test-air-validation.ts",
@@ -83,6 +86,7 @@
     "vite": "^6.2.3"
   },
   "dependencies": {
+    "argon2": "^0.45.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "pg": "^8.22.0"
