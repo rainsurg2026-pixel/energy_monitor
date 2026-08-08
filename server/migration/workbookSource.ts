@@ -89,7 +89,11 @@ function readCachedEvidence(workbook: ExcelJS.Workbook): { evidence: CachedEvide
           sourceSheet: worksheet.name,
           sourceLocation: `${worksheet.name}!${cell.address}`,
           formulaVersion: DESKTOP_FORMULA_VERSION,
-          authoritativeInput: !cachedDerivedField && !derivedSheet
+          // A cached result is migration evidence only.  Even if its column is
+          // labelled like an input, the workbook formula (rather than a raw
+          // source reading) produced the value, so it must never be promoted
+          // to an authoritative input for the v3 calculation layer.
+          authoritativeInput: !info.formula && !cachedDerivedField && !derivedSheet
         });
       });
     }

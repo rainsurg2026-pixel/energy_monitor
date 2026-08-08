@@ -19,6 +19,7 @@
     "desktop:build": "npm run build && node scripts/build-electron.mjs",
     "server:dev": "node node_modules/tsx/dist/cli.mjs server/main.ts",
     "db:migrate": "node node_modules/tsx/dist/cli.mjs scripts/run-migrations.ts",
+    "db:seed-development-master-data": "node node_modules/tsx/dist/cli.mjs scripts/seed-development-master-data.ts",
     "auth:bootstrap-admin": "node node_modules/tsx/dist/cli.mjs scripts/bootstrap-admin.ts",
     "auth:bootstrap-dev-accounts": "node node_modules/tsx/dist/cli.mjs scripts/bootstrap-development-accounts.ts",
     "migration:workbook": "node node_modules/tsx/dist/cli.mjs scripts/migrate-workbook.ts",

@@ -55,7 +55,10 @@ export function createMigrationPlan(source: MigrationSource, mapping: MigrationS
   if (source.validation.errors.length > 0) source.validation.errors.forEach(message => issues.push(issue("WORKBOOK_VALIDATION", message)));
   source.validation.warnings.forEach(message => issues.push({ severity: "warning", code: "WORKBOOK_WARNING", message }));
   source.integrity.duplicateKeys.forEach(entry => issues.push(issue("DUPLICATE_SOURCE_ROW", `${entry.tab} has duplicate ${entry.month}${entry.deviceId ? `/${entry.deviceId}` : ""} rows: ${entry.rowNumbers.join(", ")}.`)));
-  source.integrity.missingMonths.forEach(entry => issues.push(issue("MONTH_MAPPING_MISSING", `${entry.tab} has no source row for ${entry.month}.`)));
+  // Workbooks legitimately begin collecting some domains later than others.
+  // Preserve those months with null raw values and retain this diagnostic, but
+  // do not reject the whole batch solely because a historical domain is absent.
+  source.integrity.missingMonths.forEach(entry => issues.push({ severity: "warning", code: "MONTH_MAPPING_MISSING", message: `${entry.tab} has no source row for ${entry.month}.` }));
   source.integrity.missingDevices.forEach(entry => issues.push(issue("DEVICE_MAPPING_MISSING", `${entry.tab} is missing ${entry.deviceId} for ${entry.month}.`)));
   source.integrity.invalidIds.forEach(entry => issues.push(issue("DEVICE_MAPPING_INVALID", `${entry.tab} row ${entry.rowNumber} has an unknown device identifier.`)));
   source.integrity.unexpectedBlankRows.forEach(entry => issues.push(issue("UNEXPECTED_BLANK_ROW", `${entry.tab} row ${entry.rowNumber} contains values but no valid month.`)));
