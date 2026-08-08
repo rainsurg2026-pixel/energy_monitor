@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { API_HEALTH_RESPONSE } from "../server/http/health";
-import { createConfiguredRuntime, type ConfiguredRuntime } from "../server/runtime";
+import { API_HEALTH_RESPONSE } from "../http/health";
+import { createConfiguredRuntime, type ConfiguredRuntime } from "../runtime";
 
 type VercelNodeHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
 

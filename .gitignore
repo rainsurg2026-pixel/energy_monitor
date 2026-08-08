@@ -75,6 +75,9 @@ exports/
 
 # Live workbook database - not source code
 RST_Dashboard.xlsm
+
+# Generated at Vercel build time from the tracked server adapter source.
+/api/[[]...path].js
 # Portable runtime folders (created beside the exe / project root in dev)
 config/
 !server/

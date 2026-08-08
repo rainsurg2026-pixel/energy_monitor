@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readFile } from "node:fs/promises";
-import { createVercelHandler } from "../api/[...path]";
+import { createVercelHandler } from "../server/vercel/handler";
 import { loadServerConfig } from "../server/config/env";
 
 const testEnvironment: NodeJS.ProcessEnv = {
