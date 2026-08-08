@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-energy_monitor}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-energy_monitor_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-energy_monitor}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - energy-monitor-postgres:/var/lib/postgresql/data
+
+volumes:
+  energy-monitor-postgres:
