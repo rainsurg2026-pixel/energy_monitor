@@ -12,6 +12,7 @@ works with a native PostgreSQL installation.
 
 ```powershell
 Copy-Item .env.example .env
+$env:POSTGRES_PASSWORD = Read-Host "Local PostgreSQL password"
 docker compose -f docker-compose.postgres.yml up -d
 npm run db:migrate
 npm run server:dev
@@ -37,7 +38,7 @@ an isolated local/test database:
 ```powershell
 $env:NODE_ENV = "test"
 $env:ALLOW_DATABASE_TESTS = "true"
-$env:DATABASE_URL = "postgresql://energy_monitor:local-test-only@127.0.0.1:5432/energy_monitor_test"
+$env:DATABASE_URL = Read-Host "Local test DATABASE_URL"
 npm run test:postgres
 ```
 
