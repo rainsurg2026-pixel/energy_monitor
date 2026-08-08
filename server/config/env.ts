@@ -4,6 +4,7 @@ import { config as loadDotEnv } from "dotenv";
 export interface ServerConfig {
   databaseUrl: string | null;
   directDatabaseUrl: string | null;
+  databaseCaCertificate?: string | null;
   nodeEnv: "development" | "test" | "production";
   port: number;
   appOrigin: string;
@@ -49,6 +50,17 @@ function parseOrigins(value: string | undefined): string[] {
   return (value ?? "").split(",").map(item => item.trim()).filter(Boolean);
 }
 
+function databaseCaCertificate(environment: NodeJS.ProcessEnv, required: boolean): string | null {
+  // Vercel environment variables can contain either literal newlines or escaped
+  // newlines. Normalize only in memory; this value is never exposed to clients.
+  const value = environment.SUPABASE_DB_CA_CERT?.trim().replace(/\\n/g, "\n") || null;
+  if (required && !value) throw new ConfigurationError("SUPABASE_DB_CA_CERT is required for a hosted API database connection.");
+  if (value && !/^-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----$/.test(value)) {
+    throw new ConfigurationError("SUPABASE_DB_CA_CERT must contain a PEM certificate.");
+  }
+  return value;
+}
+
 export function isVercelEnvironment(environment: NodeJS.ProcessEnv): boolean {
   return environment.VERCEL === "1" || Boolean(environment.VERCEL_ENV?.trim());
 }
@@ -68,6 +80,7 @@ export function loadServerConfig(
   if (requireRuntimeDatabase && !databaseUrl) throw new ConfigurationError("DATABASE_URL is required for the API server.");
   if (requireMigrationDatabase && !directDatabaseUrl) throw new ConfigurationError("DIRECT_DATABASE_URL is required for the migration/admin path.");
   if (hosted && nodeEnv !== "production") throw new ConfigurationError("NODE_ENV=production is required for a hosted server.");
+  const caCertificate = databaseCaCertificate(environment, hosted && requireRuntimeDatabase);
   const appOrigin = environment.APP_ORIGIN?.trim() || "";
   if (hosted && !appOrigin) throw new ConfigurationError("APP_ORIGIN is required for a hosted server.");
   if (hosted && environment.TRUST_PROXY !== "true") throw new ConfigurationError("TRUST_PROXY=true is required for a hosted server.");
@@ -80,6 +93,7 @@ export function loadServerConfig(
   return {
     databaseUrl,
     directDatabaseUrl,
+    databaseCaCertificate: caCertificate,
     nodeEnv,
     port,
     appOrigin: appOrigin || "http://localhost:3000",

@@ -66,6 +66,7 @@ export function createApp(dependencies: AppDependencies) {
   app.get("/api/v1/health", asyncRoute(async (_req, res) => sendOk(res, await service.health())));
   app.get("/api/v1/health/ready", asyncRoute(async (_req, res) => sendOk(res, await service.readiness())));
   app.get("/api/v1/ready", asyncRoute(async (_req, res) => sendOk(res, await service.readiness())));
+  app.get("/api/v1/readiness", asyncRoute(async (_req, res) => sendOk(res, await service.readiness())));
 
   app.use("/api/v1", readOnlyMutationGuard.bind(null, dependencies.config));
   app.use("/api/v1", createAuthContextMiddleware(auth));

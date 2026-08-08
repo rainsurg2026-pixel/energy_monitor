@@ -4,6 +4,9 @@ import type { AddressInfo } from "node:net";
 import { readFile } from "node:fs/promises";
 import { createVercelHandler } from "../server/vercel/handler";
 import { loadServerConfig } from "../server/config/env";
+import { createPoolOptions } from "../server/db/pool";
+
+const testCertificate = "-----BEGIN CERTIFICATE-----\npreview-test-certificate\n-----END CERTIFICATE-----";
 
 const testEnvironment: NodeJS.ProcessEnv = {
   NODE_ENV: "production",
@@ -14,7 +17,8 @@ const testEnvironment: NodeJS.ProcessEnv = {
   APP_ORIGINS: "https://preview.example.test",
   SESSION_SECRET: "s".repeat(32),
   CSRF_SECRET: "c".repeat(32),
-  READ_ONLY_MODE: "true"
+  READ_ONLY_MODE: "true",
+  SUPABASE_DB_CA_CERT: testCertificate
 };
 
 async function withAdapter<T>(work: (base: string) => Promise<T>): Promise<T> {
@@ -47,6 +51,12 @@ await withAdapter(async base => {
     error: { code: "SERVICE_UNAVAILABLE", message: "The API service is unavailable.", reason: "configuration" }
   });
   assert.equal(readiness.body.includes("DATABASE_URL"), false);
+  assert.equal(readiness.body.includes("SUPABASE_DB_CA_CERT"), false);
+
+  const readinessAlias = await request(base, "/api/v1/readiness");
+  assert.equal(readinessAlias.status, 503);
+  assert.match(readinessAlias.contentType, /application\/json/);
+  assert.equal(readinessAlias.body.includes("<div id=\"root\">"), false);
 
   const bootstrap = await request(base, "/api/v1/bootstrap");
   assert.equal(bootstrap.status, 503);
@@ -68,8 +78,13 @@ assert.match(spaRewrite.source ?? "", /api\$/);
 
 assert.throws(() => loadServerConfig({ ...testEnvironment, READ_ONLY_MODE: "false" }, { requireDatabase: false, requireRuntimeDatabase: false }), /READ_ONLY_MODE=true/);
 assert.throws(() => loadServerConfig({ ...testEnvironment, DATABASE_URL: "runtime-dsn-placeholder", DB_POOL_MAX: "11" }), /DB_POOL_MAX/);
-const previewConfig = loadServerConfig({ ...testEnvironment, DATABASE_URL: "runtime-dsn-placeholder" });
+assert.throws(() => loadServerConfig({ ...testEnvironment, DATABASE_URL: "postgresql://pooler.example.test:6543/postgres", SUPABASE_DB_CA_CERT: "" }), /SUPABASE_DB_CA_CERT/);
+const previewConfig = loadServerConfig({ ...testEnvironment, DATABASE_URL: "postgresql://pooler.example.test:6543/postgres?sslmode=no-verify", SUPABASE_DB_CA_CERT: testCertificate });
 assert.equal(previewConfig.nodeEnv, "production");
 assert.equal(previewConfig.readOnlyMode, true);
+assert.equal(previewConfig.databaseCaCertificate, testCertificate);
+const poolOptions = createPoolOptions(previewConfig);
+assert.deepEqual(poolOptions.ssl, { ca: testCertificate, rejectUnauthorized: true });
+assert.equal(poolOptions.connectionString?.includes("sslmode"), false);
 
 console.log("vercel adapter: smoke passed; health/readiness/API paths are JSON and not SPA HTML");
