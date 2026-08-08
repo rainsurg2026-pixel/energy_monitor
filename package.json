@@ -19,6 +19,7 @@
     "server:dev": "node node_modules/tsx/dist/cli.mjs server/main.ts",
     "db:migrate": "node node_modules/tsx/dist/cli.mjs scripts/run-migrations.ts",
     "auth:bootstrap-admin": "node node_modules/tsx/dist/cli.mjs scripts/bootstrap-admin.ts",
+    "auth:bootstrap-dev-accounts": "node node_modules/tsx/dist/cli.mjs scripts/bootstrap-development-accounts.ts",
     "lint:server": "node node_modules/typescript/bin/tsc --noEmit -p tsconfig.server.json",
     "portable": "npm run desktop:build && node scripts/run-electron-builder.mjs --win portable",
     "portable:build": "node scripts/run-electron-builder.mjs --win portable",

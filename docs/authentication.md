@@ -137,3 +137,35 @@ The next agents must:
 The core intentionally contains no Supabase client, Supabase Auth dependency,
 RLS policy, database query, HTTP response, cookie operation, or secret
 configuration.
+
+## Development accounts and integrated authorization
+
+The one-time `auth:bootstrap-dev-accounts` command can create the development
+accounts `admin` (`admin` role) and `usertest` (`user` role). It is disabled in
+production, requires `DEV_ACCOUNT_BOOTSTRAP=true`, and reads both passwords
+only from the local process environment. It never prints or persists them.
+
+The command uses the migration/admin database path, hashes passwords with
+Argon2id, creates accounts as active, and refuses to modify an existing
+account with an unexpected role or inactive status. Existing accounts and
+passwords are never overwritten. Its shorter development-only password
+policy is available only behind the explicit non-production bootstrap gate;
+normal API account creation and password reset retain the 12-character policy.
+
+Example PowerShell flow (enter secrets locally; do not put them in source or
+chat):
+
+```powershell
+$env:DEV_ACCOUNT_BOOTSTRAP = "true"
+$env:DEV_ADMIN_PASSWORD = "<local secret>"
+$env:DEV_USER_PASSWORD = "<local secret>"
+npm run auth:bootstrap-dev-accounts
+```
+
+The API must still be configured with the appropriate server-side database
+environment. Live Supabase verification is a separate deployment gate.
+
+Only active administrators can access `/settings/users` and the admin user
+management API. Active users receive `403` for that route/API. Deactivation
+and password reset revoke sessions, audit events omit credential material, and
+the last active administrator cannot be deactivated or demoted.
