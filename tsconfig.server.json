@@ -17,6 +17,8 @@
     "server/**/*.ts",
     "scripts/run-migrations.ts",
     "scripts/bootstrap-development-accounts.ts",
+    "scripts/migrate-workbook.ts",
+    "scripts/test-migration-tooling.ts",
     "scripts/test-api-foundation.ts",
     "scripts/test-live-phase3.ts",
     "scripts/test-display-period-policy.ts",

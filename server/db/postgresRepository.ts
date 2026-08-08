@@ -262,7 +262,7 @@ export class PostgresRepository implements BackendRepository {
   }
 }
 
-class PostgresTransactionRepository extends PostgresRepository {
+export class PostgresTransactionRepository extends PostgresRepository {
   constructor(private readonly client: PoolClient) { super(null, client); }
   override async withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T> { return work(this); }
   override async updateGlobalSettings(input: UpdateSettingsInput, correlationId: string): Promise<DisplayPeriod> {
