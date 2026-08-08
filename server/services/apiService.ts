@@ -16,7 +16,14 @@ export class ApiService {
   constructor(private readonly repository: BackendRepository, private readonly now: () => Date = () => new Date()) {}
 
   async health(): Promise<{ status: "ok"; service: string }> { return { status: "ok", service: "energy-monitor-api" }; }
-  async readiness(): Promise<{ status: "ready" }> { await this.repository.ping(); return { status: "ready" }; }
+  async readiness(): Promise<{ status: "ready" }> {
+    try {
+      await this.repository.ping();
+      return { status: "ready" };
+    } catch {
+      throw new HttpError(503, "DATABASE_NOT_READY", "The database is not ready.");
+    }
+  }
 
   private async requirePeriod(): Promise<DisplayPeriod> {
     const settings = await this.repository.getGlobalSettings();

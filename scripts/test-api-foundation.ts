@@ -56,4 +56,9 @@ await withApi(false, async base => {
 }, initialSettingsRepository);
 check("first-run repository state is initialized", (await initialSettingsRepository.getGlobalSettings())?.rowVersion === 1);
 
+await withApi(false, async base => {
+  const ready = await json(base, "/api/v1/health/ready");
+  check("database readiness failure is reported as 503", ready.status === 503 && ready.body.error?.code === "DATABASE_NOT_READY");
+}, new InMemoryRepository({ databaseReady: false }));
+
 console.log(`api foundation: ${checks} assertions passed`);
