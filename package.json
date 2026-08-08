@@ -30,6 +30,7 @@
     "test:excel": "node node_modules/tsx/dist/cli.mjs scripts/test-excel-roundtrip.ts",
     "test:save-formatting": "node node_modules/tsx/dist/cli.mjs scripts/test-save-formatting-regression.ts",
     "test:energy-cost-dashboard": "node node_modules/tsx/dist/cli.mjs scripts/test-energy-cost-dashboard-fac.ts",
+    "test:domain-parity": "node node_modules/tsx/dist/cli.mjs scripts/test-domain-parity.ts",
     "test:air-validation": "node node_modules/tsx/dist/cli.mjs scripts/test-air-validation.ts",
     "test:srinakarin": "node node_modules/tsx/dist/cli.mjs scripts/test-srinakarin-read.ts",
     "test:srinakarin:roundtrip": "node node_modules/tsx/dist/cli.mjs scripts/test-srinakarin-roundtrip.ts",
