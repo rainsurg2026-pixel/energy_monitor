@@ -5,7 +5,7 @@
  */
 
 export interface DomainRackRecord {
-  rowNumber?: number;
+  rowNumber?: number | null;
   rackZone: string | null;
   rackId?: string | null;
   status: string | null;

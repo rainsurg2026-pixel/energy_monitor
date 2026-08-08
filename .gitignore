@@ -74,6 +74,9 @@ exports/
 RST_Dashboard.xlsm
 # Portable runtime folders (created beside the exe / project root in dev)
 config/
+!server/
+!server/config/
+!server/config/env.ts
 logs/
 *.appmeta.json
 DC_Rangsit.xlsm
