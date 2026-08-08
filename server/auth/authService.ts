@@ -87,12 +87,18 @@ export class AuthService {
   }
 
   async listUsers(principal: AuthenticatedPrincipal): Promise<SafeUserRecord[]> { requirePermission(principal, PERMISSIONS.usersList); return this.repository.listUsers(); }
-  async createUser(principal: AuthenticatedPrincipal, input: { username: unknown; displayName: unknown; password: unknown; role: Role }, correlationId: string): Promise<SafeUserRecord> {
+  async createUser(principal: AuthenticatedPrincipal, input: { username: unknown; displayName: unknown; password: unknown; role: Role; active?: unknown }, correlationId: string): Promise<SafeUserRecord> {
     requirePermission(principal, PERMISSIONS.usersCreate);
     const normalizedUsername = normalizeUsername(input.username);
     if (typeof input.displayName !== "string" || input.displayName.trim().length === 0 || input.displayName.trim().length > 256) throw new HttpError(400, "INVALID_DISPLAY_NAME", "display_name is invalid.");
+    if (input.active !== undefined && typeof input.active !== "boolean") throw new HttpError(400, "INVALID_ACTIVE", "active must be boolean.");
     const hash = await hashNewPassword(input.password, this.options.passwordHasher, this.options.passwordPolicy);
-    return this.repository.createUser({ username: input.username as string, normalizedUsername, displayName: input.displayName.trim(), passwordHash: hash, role: input.role, actorUserId: principal.userId }, correlationId);
+    return this.repository.createUser({ username: input.username as string, normalizedUsername, displayName: input.displayName.trim(), passwordHash: hash, role: input.role, active: input.active as boolean | undefined, actorUserId: principal.userId }, correlationId);
+  }
+  async setUserDisplayName(principal: AuthenticatedPrincipal, targetUserId: string, displayName: unknown, correlationId: string): Promise<SafeUserRecord> {
+    requirePermission(principal, PERMISSIONS.usersUpdate);
+    if (typeof displayName !== "string" || displayName.trim().length === 0 || displayName.trim().length > 256) throw new HttpError(400, "INVALID_DISPLAY_NAME", "display_name is invalid.");
+    return this.repository.setUserDisplayName(targetUserId, displayName.trim(), principal.userId, correlationId);
   }
   async setUserActive(principal: AuthenticatedPrincipal, targetUserId: string, active: boolean, correlationId: string): Promise<SafeUserRecord> {
     requirePermission(principal, PERMISSIONS.usersActivate);

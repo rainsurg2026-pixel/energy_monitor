@@ -13,6 +13,8 @@ export interface AuthAccountRecord {
   failedAttemptCount: number;
   lockedUntil: Date | null;
   passwordChangedAt: Date | null;
+  createdAt: Date;
+  lastLoginAt: Date | null;
   role: Role;
 }
 
@@ -32,9 +34,8 @@ export interface SafeUserRecord {
   displayName: string;
   active: boolean;
   role: Role;
-  failedAttemptCount: number;
-  lockedUntil: Date | null;
-  passwordChangedAt: Date | null;
+  createdAt: Date;
+  lastLoginAt: Date | null;
 }
 
 export interface CreateUserInput {
@@ -43,6 +44,7 @@ export interface CreateUserInput {
   displayName: string;
   passwordHash: string;
   role: Role;
+  active?: boolean;
   actorUserId: string | null;
 }
 
@@ -71,6 +73,7 @@ export interface AuthRepository {
   changePassword(userId: string, passwordHash: string, changedAt: Date, keepSessionId: string | null, actorUserId: string, correlationId: string): Promise<void>;
   listUsers(): Promise<SafeUserRecord[]>;
   createUser(input: CreateUserInput, correlationId: string): Promise<SafeUserRecord>;
+  setUserDisplayName(targetUserId: string, displayName: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord>;
   setUserActive(targetUserId: string, active: boolean, actorUserId: string, correlationId: string): Promise<SafeUserRecord>;
   setUserRole(targetUserId: string, role: Role, actorUserId: string, correlationId: string): Promise<SafeUserRecord>;
   resetUserPassword(targetUserId: string, passwordHash: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord>;
@@ -106,11 +109,23 @@ function accountFromRow(row: Record<string, unknown>): AuthAccountRecord {
     failedAttemptCount: Number(row.failed_attempt_count),
     lockedUntil: toDate(row.locked_until),
     passwordChangedAt: toDate(row.password_changed_at),
+    createdAt: requiredDate(row.created_at, "created_at"),
+    lastLoginAt: toDate(row.last_login_at),
     role: roleOf(row.role)
   };
 }
 
-function safeUserFromAccount(account: AuthAccountRecord): SafeUserRecord { return { ...account }; }
+function safeUserFromAccount(account: AuthAccountRecord): SafeUserRecord {
+  return {
+    id: account.id,
+    username: account.username,
+    displayName: account.displayName,
+    active: account.active,
+    role: account.role,
+    createdAt: account.createdAt,
+    lastLoginAt: account.lastLoginAt
+  };
+}
 
 function sessionFromRow(row: Record<string, unknown>): SessionRecord {
   return {
@@ -126,7 +141,9 @@ function sessionFromRow(row: Record<string, unknown>): SessionRecord {
 
 const ACCOUNT_SQL = `
   SELECT u.id::text, u.username, u.normalized_username, u.display_name, u.active,
-         u.failed_attempt_count, u.locked_until, u.password_changed_at,
+          u.failed_attempt_count, u.locked_until, u.password_changed_at,
+          u.created_at,
+          (SELECT max(s.created_at) FROM public.sessions s WHERE s.user_id = u.id) AS last_login_at,
          r.name AS role
   FROM public.users u
   JOIN public.user_roles ur ON ur.user_id = u.id
@@ -211,13 +228,13 @@ export class PostgresAuthRepository implements AuthRepository {
   async createUser(input: CreateUserInput, correlationId: string): Promise<SafeUserRecord> {
     return this.inTransaction(async repository => {
       try {
-        const inserted = await query<Record<string, unknown>>(repository.executor, `INSERT INTO public.users(username, normalized_username, display_name, password_changed_at) VALUES ($1,$2,$3,now()) RETURNING id::text`, [input.username, input.normalizedUsername, input.displayName]);
+        const inserted = await query<Record<string, unknown>>(repository.executor, `INSERT INTO public.users(username, normalized_username, display_name, active, password_changed_at) VALUES ($1,$2,$3,$4,now()) RETURNING id::text`, [input.username, input.normalizedUsername, input.displayName, input.active ?? true]);
         const userId = String(inserted.rows[0].id);
         await query(repository.executor, "INSERT INTO public.local_credentials(user_id, password_hash) VALUES ($1::bigint,$2)", [userId, input.passwordHash]);
         const role = await query<Record<string, unknown>>(repository.executor, "SELECT id FROM public.roles WHERE name = $1", [input.role]);
         await query(repository.executor, "INSERT INTO public.user_roles(user_id, role_id, assigned_by_user_id) VALUES ($1::bigint,$2::bigint,$3::bigint)", [userId, role.rows[0].id, input.actorUserId]);
         await query(repository.executor, "INSERT INTO public.auth_identities(user_id, provider, provider_subject) VALUES ($1::bigint, 'local', $2)", [userId, input.normalizedUsername]);
-        await repository.audit({ actorUserId: input.actorUserId, action: "user_create", entityType: "user", entityId: userId, newValue: { username: input.username, display_name: input.displayName, role: input.role }, correlationId });
+        await repository.audit({ actorUserId: input.actorUserId, action: "user_create", entityType: "user", entityId: userId, newValue: { username: input.username, display_name: input.displayName, role: input.role, active: input.active ?? true }, correlationId });
         const account = await repository.findUserById(userId);
         if (!account) throw new Error("Created user could not be loaded.");
         return safeUserFromAccount(account);
@@ -225,6 +242,18 @@ export class PostgresAuthRepository implements AuthRepository {
         if (error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "23505") throw new HttpError(409, "USER_ALREADY_EXISTS", "A user with that username already exists.");
         throw error;
       }
+    });
+  }
+
+  async setUserDisplayName(targetUserId: string, displayName: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord> {
+    return this.inTransaction(async repository => {
+      const before = await repository.findUserById(targetUserId);
+      if (!before) throw new HttpError(404, "USER_NOT_FOUND", "User was not found.");
+      await query(repository.executor, "UPDATE public.users SET display_name = $2, updated_at = now(), row_version = row_version + 1 WHERE id = $1::bigint", [targetUserId, displayName]);
+      await repository.audit({ actorUserId, action: "display_name_change", entityType: "user", entityId: targetUserId, previousValue: { display_name: before.displayName }, newValue: { display_name: displayName }, correlationId });
+      const after = await repository.findUserById(targetUserId);
+      if (!after) throw new Error("Updated user could not be loaded.");
+      return safeUserFromAccount(after);
     });
   }
 
@@ -287,7 +316,7 @@ export class InMemoryAuthRepository implements AuthRepository {
 
   seedUser(input: { id?: string; username: string; normalizedUsername: string; displayName: string; passwordHash: string; role: Role; active?: boolean }): string {
     const id = input.id ?? String(this.nextId++);
-    this.users.set(id, { id, username: input.username, normalizedUsername: input.normalizedUsername, displayName: input.displayName, active: input.active ?? true, failedAttemptCount: 0, lockedUntil: null, passwordChangedAt: new Date(), role: input.role, passwordHash: input.passwordHash, passwordVersion: "argon2id-v1" });
+    this.users.set(id, { id, username: input.username, normalizedUsername: input.normalizedUsername, displayName: input.displayName, active: input.active ?? true, failedAttemptCount: 0, lockedUntil: null, passwordChangedAt: new Date(), createdAt: new Date(), lastLoginAt: null, role: input.role, passwordHash: input.passwordHash, passwordVersion: "argon2id-v1" });
     return id;
   }
   async findLoginByNormalizedUsername(normalizedUsername: string): Promise<AuthLoginRecord | null> { const user = [...this.users.values()].find(item => item.normalizedUsername === normalizedUsername); return user ? { account: { ...user }, credential: { userId: user.id, passwordHash: user.passwordHash, passwordVersion: user.passwordVersion, createdAt: new Date(), updatedAt: new Date() } } : null; }
@@ -302,11 +331,12 @@ export class InMemoryAuthRepository implements AuthRepository {
   async resetLoginFailures(userId: string): Promise<void> { const user = this.users.get(userId); if (user) { user.failedAttemptCount = 0; user.lockedUntil = null; } }
   async replacePasswordHash(userId: string, passwordHash: string, changedAt: Date): Promise<void> { const user = this.users.get(userId); if (user) { user.passwordHash = passwordHash; user.passwordChangedAt = changedAt; } }
   async changePassword(userId: string, passwordHash: string, changedAt: Date, keepSessionId: string | null, actorUserId: string, correlationId: string): Promise<void> { await this.replacePasswordHash(userId, passwordHash, changedAt); await this.revokeOtherSessions(userId, keepSessionId, "password_changed"); await this.audit({ actorUserId, action: "password_change", entityType: "user", entityId: userId, correlationId }); }
-  async listUsers(): Promise<SafeUserRecord[]> { return [...this.users.values()].sort((a,b) => a.normalizedUsername.localeCompare(b.normalizedUsername)).map(user => ({ ...user })); }
-  async createUser(input: CreateUserInput, correlationId: string): Promise<SafeUserRecord> { if ([...this.users.values()].some(user => user.normalizedUsername === input.normalizedUsername)) throw new HttpError(409, "USER_ALREADY_EXISTS", "A user with that username already exists."); const id = this.seedUser({ username: input.username, normalizedUsername: input.normalizedUsername, displayName: input.displayName, passwordHash: input.passwordHash, role: input.role }); await this.audit({ actorUserId: input.actorUserId, action: "user_create", entityType: "user", entityId: id, newValue: { username: input.username, display_name: input.displayName, role: input.role }, correlationId }); return (await this.findUserById(id))!; }
-  async setUserActive(targetUserId: string, active: boolean, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); if (user.active && user.role === "admin" && !active && [...this.users.values()].filter(item => item.active && item.role === "admin" && item.id !== targetUserId).length === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain."); const before = user.active; user.active = active; if (!active) await this.revokeAllSessions(targetUserId, "user_deactivated"); await this.audit({ actorUserId, action: active ? "user_activate" : "user_deactivate", entityType: "user", entityId: targetUserId, previousValue: { active: before }, newValue: { active }, correlationId }); return { ...user }; }
-  async setUserRole(targetUserId: string, role: Role, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); const before = user.role; if (before === "admin" && role !== "admin" && [...this.users.values()].filter(item => item.active && item.role === "admin" && item.id !== targetUserId).length === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain."); user.role = role; await this.audit({ actorUserId, action: "role_change", entityType: "user", entityId: targetUserId, previousValue: { role: before }, newValue: { role }, correlationId }); return { ...user }; }
-  async resetUserPassword(targetUserId: string, passwordHash: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); await this.replacePasswordHash(targetUserId, passwordHash, new Date()); await this.revokeAllSessions(targetUserId, "admin_password_reset"); await this.audit({ actorUserId, action: "password_reset", entityType: "user", entityId: targetUserId, newValue: { password_changed: true }, correlationId }); return { ...user }; }
+  async listUsers(): Promise<SafeUserRecord[]> { return [...this.users.values()].sort((a,b) => a.normalizedUsername.localeCompare(b.normalizedUsername)).map(safeUserFromAccount); }
+  async createUser(input: CreateUserInput, correlationId: string): Promise<SafeUserRecord> { if ([...this.users.values()].some(user => user.normalizedUsername === input.normalizedUsername)) throw new HttpError(409, "USER_ALREADY_EXISTS", "A user with that username already exists."); const id = this.seedUser({ username: input.username, normalizedUsername: input.normalizedUsername, displayName: input.displayName, passwordHash: input.passwordHash, role: input.role, active: input.active }); await this.audit({ actorUserId: input.actorUserId, action: "user_create", entityType: "user", entityId: id, newValue: { username: input.username, display_name: input.displayName, role: input.role, active: input.active ?? true }, correlationId }); const user = await this.findUserById(id); if (!user) throw new Error("Created user could not be loaded."); return safeUserFromAccount(user); }
+  async setUserDisplayName(targetUserId: string, displayName: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); const before = user.displayName; user.displayName = displayName; await this.audit({ actorUserId, action: "display_name_change", entityType: "user", entityId: targetUserId, previousValue: { display_name: before }, newValue: { display_name: displayName }, correlationId }); return safeUserFromAccount(user); }
+  async setUserActive(targetUserId: string, active: boolean, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); if (user.active && user.role === "admin" && !active && [...this.users.values()].filter(item => item.active && item.role === "admin" && item.id !== targetUserId).length === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain."); const before = user.active; user.active = active; if (!active) await this.revokeAllSessions(targetUserId, "user_deactivated"); await this.audit({ actorUserId, action: active ? "user_activate" : "user_deactivate", entityType: "user", entityId: targetUserId, previousValue: { active: before }, newValue: { active }, correlationId }); return safeUserFromAccount(user); }
+  async setUserRole(targetUserId: string, role: Role, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); const before = user.role; if (before === "admin" && role !== "admin" && [...this.users.values()].filter(item => item.active && item.role === "admin" && item.id !== targetUserId).length === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain."); user.role = role; await this.audit({ actorUserId, action: "role_change", entityType: "user", entityId: targetUserId, previousValue: { role: before }, newValue: { role }, correlationId }); return safeUserFromAccount(user); }
+  async resetUserPassword(targetUserId: string, passwordHash: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); await this.replacePasswordHash(targetUserId, passwordHash, new Date()); await this.revokeAllSessions(targetUserId, "admin_password_reset"); await this.audit({ actorUserId, action: "password_reset", entityType: "user", entityId: targetUserId, newValue: { password_changed: true }, correlationId }); return safeUserFromAccount(user); }
   async audit(input: AuditInput): Promise<void> { this.audits.push(structuredClone(input)); }
   async countUsers(): Promise<number> { return this.users.size; }
   async cleanupExpiredSessions(now: Date): Promise<number> { let count = 0; for (const [id, session] of this.sessions) if (session.expiresAt <= now || session.revokedAt) { this.sessions.delete(id); count++; } return count; }

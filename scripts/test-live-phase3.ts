@@ -11,9 +11,8 @@ import { assertRuntimeRole } from "../server/db/pool";
 import { PostgresRateLimitStore } from "../server/http/security";
 import type { ServerConfig } from "../server/config/env";
 
-const databaseUrl = process.env.PHASE3_LIVE_DATABASE_URL;
-const testId = process.env.PHASE3_LIVE_TEST_ID ?? randomUUID().replaceAll("-", "");
-if (!databaseUrl) throw new Error("PHASE3_LIVE_DATABASE_URL is required.");
+export async function runLivePhase3(databaseUrl: string, testId = randomUUID().replaceAll("-", "")): Promise<void> {
+  if (!databaseUrl) throw new Error("PHASE3_LIVE_DATABASE_URL is required.");
 
 const config: ServerConfig = {
   databaseUrl,
@@ -90,17 +89,70 @@ try {
   const operatorPassword = `${randomBytes(24).toString("base64url")}Aa1!`;
   const csrfRejected = await jsonRequest("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: `phase3_live_csrf_${testId}`, display_name: "CSRF Rejected", password: operatorPassword, role: "user" }) }, admin.cookies);
   assert.equal(csrfRejected.status, 403);
-  const created = await jsonRequest("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: operatorUsername, display_name: "Phase 3 Live Test Operator", password: operatorPassword, role: "user" }) }, admin.cookies, admin.csrfToken);
+  const created = await jsonRequest("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: operatorUsername, display_name: "Phase 3 Live Test Operator", password: operatorPassword, role: "user", active: true }) }, admin.cookies, admin.csrfToken);
   assert.equal(created.status, 200);
-  const audit = await pool.query<{ count: string }>("SELECT count(*)::text AS count FROM public.audit_events WHERE correlation_id = $1 AND actor_user_id = $2::bigint", [created.requestId, adminRecord.account.id]);
-  assert.equal(Number(audit.rows[0]?.count), 1);
+  const operatorId = String(created.body.data.id);
+  assert.equal(created.body.data.active, true);
+  assert.equal(JSON.stringify(created.body).includes("password"), false);
+  const assertAudit = async (requestId: string | null, action: string): Promise<void> => {
+    assert.ok(requestId);
+    const audit = await pool.query<{ count: string }>("SELECT count(*)::text AS count FROM public.audit_events WHERE correlation_id = $1 AND actor_user_id = $2::bigint AND action = $3", [requestId, adminRecord.account.id, action]);
+    assert.equal(Number(audit.rows[0]?.count), 1, `live audit ${action}`);
+  };
+  await assertAudit(created.requestId, "user_create");
+  const credentials = await pool.query<{ password_hash: string }>("SELECT password_hash FROM public.local_credentials WHERE user_id = $1::bigint", [operatorId]);
+  assert.match(credentials.rows[0]?.password_hash ?? "", /^\$argon2id\$/);
+  assert.equal(credentials.rows[0]?.password_hash.includes(operatorPassword), false);
+  const renamed = await jsonRequest(`/api/v1/admin/users/${operatorId}/display-name`, { method: "PATCH", body: JSON.stringify({ display_name: "Phase 3 Live Renamed Operator" }) }, admin.cookies, admin.csrfToken);
+  assert.equal(renamed.status, 200);
+  assert.equal(renamed.body.data.displayName, "Phase 3 Live Renamed Operator");
+  await assertAudit(renamed.requestId, "display_name_change");
   const operator = await login(operatorUsername, operatorPassword);
   const sites = await jsonRequest("/api/v1/sites", {}, operator.cookies);
   assert.equal(sites.status, 200);
   const forbidden = await jsonRequest("/api/v1/admin/users", {}, operator.cookies);
   assert.equal(forbidden.status, 403);
+  const escalation = await jsonRequest(`/api/v1/admin/users/${operatorId}/role`, { method: "PATCH", body: JSON.stringify({ role: "admin" }) }, operator.cookies, operator.csrfToken);
+  assert.equal(escalation.status, 403);
   const forbiddenSettings = await jsonRequest("/api/v1/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: "2026-01", end_month: "2026-02", expected_row_version: 0 }) }, operator.cookies, operator.csrfToken);
   assert.equal(forbiddenSettings.status, 403);
+  const deactivated = await jsonRequest(`/api/v1/admin/users/${operatorId}/active`, { method: "PATCH", body: JSON.stringify({ active: false }) }, admin.cookies, admin.csrfToken);
+  assert.equal(deactivated.status, 200);
+  assert.equal(deactivated.body.data.active, false);
+  await assertAudit(deactivated.requestId, "user_deactivate");
+  const sessionCountAfterDeactivate = await pool.query<{ count: string }>("SELECT count(*)::text AS count FROM public.sessions WHERE user_id = $1::bigint AND revoked_at IS NULL", [operatorId]);
+  assert.equal(Number(sessionCountAfterDeactivate.rows[0]?.count), 0);
+  const inactiveLogin = await jsonRequest("/api/v1/auth/login", { method: "POST", body: JSON.stringify({ username: operatorUsername, password: operatorPassword }) });
+  assert.equal(inactiveLogin.status, 401);
+  const reactivated = await jsonRequest(`/api/v1/admin/users/${operatorId}/active`, { method: "PATCH", body: JSON.stringify({ active: true }) }, admin.cookies, admin.csrfToken);
+  assert.equal(reactivated.status, 200);
+  await assertAudit(reactivated.requestId, "user_activate");
+  const operatorAfterReactivate = await login(operatorUsername, operatorPassword);
+  const resetPassword = `${randomBytes(24).toString("base64url")}Bb2!`;
+  const reset = await jsonRequest(`/api/v1/admin/users/${operatorId}/password`, { method: "POST", body: JSON.stringify({ password: resetPassword }) }, admin.cookies, admin.csrfToken);
+  assert.equal(reset.status, 200);
+  assert.equal(JSON.stringify(reset.body).includes("password"), false);
+  await assertAudit(reset.requestId, "password_reset");
+  const resetSession = await jsonRequest("/api/v1/settings", {}, operatorAfterReactivate.cookies);
+  assert.equal(resetSession.status, 401);
+  const oldPassword = await jsonRequest("/api/v1/auth/login", { method: "POST", body: JSON.stringify({ username: operatorUsername, password: operatorPassword }) });
+  assert.equal(oldPassword.status, 401);
+  const resetLogin = await login(operatorUsername, resetPassword);
+  const resetLoginSettings = await jsonRequest("/api/v1/settings", {}, resetLogin.cookies);
+  assert.equal(resetLoginSettings.status, 200);
+  const newPassword = await jsonRequest(`/api/v1/admin/users/${operatorId}/role`, { method: "PATCH", body: JSON.stringify({ role: "admin" }) }, admin.cookies, admin.csrfToken);
+  assert.equal(newPassword.status, 200);
+  await assertAudit(newPassword.requestId, "role_change");
+  const operatorAdminAfterReset = await login(operatorUsername, resetPassword);
+  const adminAccess = await jsonRequest("/api/v1/admin/users", {}, operatorAdminAfterReset.cookies);
+  assert.equal(adminAccess.status, 200);
+  const demoted = await jsonRequest(`/api/v1/admin/users/${operatorId}/role`, { method: "PATCH", body: JSON.stringify({ role: "user" }) }, admin.cookies, admin.csrfToken);
+  assert.equal(demoted.status, 200);
+  await assertAudit(demoted.requestId, "role_change");
+  const lastAdminDemotion = await jsonRequest(`/api/v1/admin/users/${adminRecord.account.id}/role`, { method: "PATCH", body: JSON.stringify({ role: "user" }) }, admin.cookies, admin.csrfToken);
+  assert.equal(lastAdminDemotion.status, 409);
+  const selfDeactivation = await jsonRequest(`/api/v1/admin/users/${adminRecord.account.id}/active`, { method: "PATCH", body: JSON.stringify({ active: false }) }, admin.cookies, admin.csrfToken);
+  assert.equal(selfDeactivation.status, 409);
   const logout = await jsonRequest("/api/v1/auth/logout", { method: "POST" }, operator.cookies, operator.csrfToken);
   assert.equal(logout.status, 200);
   console.log(`live phase3 http: passed for ${testId}`);
@@ -108,3 +160,6 @@ try {
   await new Promise<void>(resolve => server.close(() => resolve()));
   await pool.end();
 }
+}
+
+if (process.env.PHASE3_LIVE_DATABASE_URL) await runLivePhase3(process.env.PHASE3_LIVE_DATABASE_URL, process.env.PHASE3_LIVE_TEST_ID);

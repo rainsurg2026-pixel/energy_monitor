@@ -110,11 +110,31 @@ await withApi(false, async (base, authentication) => {
   const staleSave = await client.request("/api/v1/sites/1/periods/2026-03", { method: "PUT", body: JSON.stringify({ log: fixtureLog("2026-03", 25, 130000, 650000), expected_row_version: 0 }) }); check("raw monthly dataset stale conflict", staleSave.status === 409 && staleSave.body.error?.code === "STALE_VERSION");
   const update = await client.request("/api/v1/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: "2026-02", end_month: "2026-03", expected_row_version: 1 }) }); check("settings update", update.status === 200 && update.body.data.rowVersion === 2);
   const stale = await client.request("/api/v1/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: "2026-01", end_month: "2026-03", expected_row_version: 1 }) }); check("stale settings conflict", stale.status === 409 && stale.body.error?.code === "STALE_VERSION");
-  const createdUser = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "operator", display_name: "Test Operator", password: "Correct Horse Battery Staple 456!", role: "user" }) }); check("admin can create user", createdUser.status === 200 && createdUser.body.data.role === "user");
+  const createdUser = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "operator", display_name: "Test Operator", password: "Correct Horse Battery Staple 456!", role: "user", active: true }) });
+  const createdUserJson = JSON.stringify(createdUser.body);
+  const operatorId = String(createdUser.body.data?.id ?? "");
+  check("admin can create active user", createdUser.status === 200 && createdUser.body.data.role === "user" && createdUser.body.data.active === true);
+  check("user management response excludes credential internals", !createdUserJson.includes("passwordHash") && !createdUserJson.includes("failedAttemptCount") && !createdUserJson.includes("lockedUntil"));
+  const displayName = await client.request(`/api/v1/admin/users/${operatorId}/display-name`, { method: "PATCH", body: JSON.stringify({ display_name: "Renamed Operator" }) }); check("admin can edit display name", displayName.status === 200 && displayName.body.data.displayName === "Renamed Operator");
   const userClient = await login(base, { username: "operator", password: "Correct Horse Battery Staple 456!" });
   const forbiddenAdminRead = await userClient.request("/api/v1/admin/users"); check("user cannot access admin user management", forbiddenAdminRead.status === 403 && forbiddenAdminRead.body.error?.code === "FORBIDDEN");
   const forbiddenSettingsWrite = await userClient.request("/api/v1/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: "2026-02", end_month: "2026-03", expected_row_version: 2 }) }); check("user cannot change display period", forbiddenSettingsWrite.status === 403 && forbiddenSettingsWrite.body.error?.code === "FORBIDDEN");
+  const forbiddenRoleChange = await userClient.request(`/api/v1/admin/users/${operatorId}/role`, { method: "PATCH", body: JSON.stringify({ role: "admin" }) }); check("user cannot escalate own role", forbiddenRoleChange.status === 403 && forbiddenRoleChange.body.error?.code === "FORBIDDEN");
+  const deactivated = await client.request(`/api/v1/admin/users/${operatorId}/active`, { method: "PATCH", body: JSON.stringify({ active: false }) }); check("admin can deactivate user", deactivated.status === 200 && deactivated.body.data.active === false);
+  const revokedSession = await userClient.request("/api/v1/settings"); check("deactivation rejects existing session", revokedSession.status === 401);
+  const reactivated = await client.request(`/api/v1/admin/users/${operatorId}/active`, { method: "PATCH", body: JSON.stringify({ active: true }) }); check("admin can reactivate user", reactivated.status === 200 && reactivated.body.data.active === true);
+  const userAfterReactivate = await login(base, { username: "operator", password: "Correct Horse Battery Staple 456!" });
+  const reset = await client.request(`/api/v1/admin/users/${operatorId}/password`, { method: "POST", body: JSON.stringify({ password: "Correct Horse Battery Staple 789!" }) }); check("admin password reset succeeds without returning a secret", reset.status === 200 && !JSON.stringify(reset.body).includes("Correct Horse Battery Staple"));
+  const oldSessionAfterReset = await userAfterReactivate.request("/api/v1/settings"); check("password reset revokes target sessions", oldSessionAfterReset.status === 401);
+  const oldPassword = await login(base, { username: "operator", password: "Correct Horse Battery Staple 456!" }).catch(() => null); check("old password fails after reset", oldPassword === null);
+  const newPassword = await login(base, { username: "operator", password: "Correct Horse Battery Staple 789!" }); check("new password works after reset", Boolean(newPassword));
+  const promoted = await client.request(`/api/v1/admin/users/${operatorId}/role`, { method: "PATCH", body: JSON.stringify({ role: "admin" }) }); check("admin can change user role", promoted.status === 200 && promoted.body.data.role === "admin");
+  const promotedAccess = await newPassword.request("/api/v1/admin/users"); check("role change takes effect on next request", promotedAccess.status === 200);
+  const demoted = await client.request(`/api/v1/admin/users/${operatorId}/role`, { method: "PATCH", body: JSON.stringify({ role: "user" }) }); check("admin can demote another admin while one remains", demoted.status === 200 && demoted.body.data.role === "user");
   const selfDeactivation = await client.request("/api/v1/admin/users/1/active", { method: "PATCH", body: JSON.stringify({ active: false }) }); check("admin cannot deactivate the current account", selfDeactivation.status === 409 && selfDeactivation.body.error?.code === "SELF_DEACTIVATION_NOT_ALLOWED");
+  const lastAdminDemotion = await client.request("/api/v1/admin/users/1/role", { method: "PATCH", body: JSON.stringify({ role: "user" }) }); check("last active admin cannot be demoted", lastAdminDemotion.status === 409 && lastAdminDemotion.body.error?.code === "LAST_ADMIN");
+  const auditedActions = authentication.repository.audits.map(audit => audit.action);
+  check("admin user-management actions are audited", ["user_create", "display_name_change", "user_deactivate", "user_activate", "password_reset", "role_change"].every(action => auditedActions.includes(action)));
   check("test auth fixture uses the expected admin identity", authentication.admin.username === "admin");
 });
 
@@ -122,6 +142,7 @@ await withApi(true, async base => {
   const client = await login(base, { username: "admin", password: "Correct Horse Battery Staple 123!" });
   const get = await client.request("/api/v1/settings"); check("read-only GET allowed", get.status === 200);
   const put = await client.request("/api/v1/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: "2026-01", end_month: "2026-03", expected_row_version: 1 }) }); check("read-only mutation rejected server-side", put.status === 423 && put.body.error?.code === "READ_ONLY_MODE");
+  const userMutation = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "blocked", display_name: "Blocked", password: "Correct Horse Battery Staple 999!", role: "user" }) }); check("read-only blocks user management mutation", userMutation.status === 423 && userMutation.body.error?.code === "READ_ONLY_MODE");
 });
 
 const transactionRepository = new InMemoryRepository({ settings: { startMonth: "2026-01", endMonth: "2026-03", rowVersion: 1 } });

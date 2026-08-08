@@ -17,6 +17,7 @@
     "server/**/*.ts",
     "scripts/run-migrations.ts",
     "scripts/test-api-foundation.ts",
+    "scripts/test-live-phase3.ts",
     "scripts/test-display-period-policy.ts",
     "scripts/test-postgres-foundation.ts",
     "src/types.ts",

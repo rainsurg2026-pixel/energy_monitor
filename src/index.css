@@ -124,6 +124,39 @@ html.theme-light .recharts-default-tooltip {
   box-shadow: 0 0 0 1px rgb(244 63 94 / 0.4);
 }
 
+/* Web v3 Settings controls share the same compact control language without
+ * changing the existing desktop component markup. */
+.field {
+  width: 100%;
+  min-height: 2.5rem;
+  border-radius: 0.75rem;
+  border: 1px solid rgb(51 65 85);
+  background: rgb(2 6 23);
+  color: rgb(226 232 240);
+  padding: 0.625rem 0.75rem;
+  outline: none;
+}
+
+.field:focus {
+  border-color: rgb(99 102 241);
+}
+
+.field:disabled {
+  opacity: 0.55;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  padding: 0.35rem;
+}
+
+.icon-button:hover {
+  background: rgb(30 41 59);
+}
+
 /* Shared entry-table contract: fixed tracks keep every header directly above
  * its field, while numeric controls and their text share the same centre. */
 .entry-data-table {

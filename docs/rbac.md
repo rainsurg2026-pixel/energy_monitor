@@ -46,6 +46,7 @@ Only these roles exist in Web v3.0.0:
 | Read effective Display Period | Yes | Yes |
 | List users | Yes | No |
 | Create users | Yes | No |
+| Edit user display names | Yes | No |
 | Activate/deactivate users | Yes | No |
 | Assign `admin`/`user` roles | Yes | No |
 | Reset/replace a user password | Yes | No |
