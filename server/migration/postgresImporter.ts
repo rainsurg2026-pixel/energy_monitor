@@ -42,6 +42,28 @@ function authoritativeLog(log: MonthlyLog): MonthlyLog {
   };
 }
 
+async function importRackSnapshots(client: PoolClient, siteId: number, plan: MigrationPlan): Promise<void> {
+  const rackCapacity = plan.source.rackCapacitySnapshot;
+  if (rackCapacity) {
+    const inserted = await client.query<{ id: string }>(
+      "INSERT INTO rack_capacity_snapshots(site_id, snapshot_month) VALUES ($1, $2::date) RETURNING id",
+      [siteId, `${rackCapacity.month}-01`]
+    );
+    for (const record of rackCapacity.records) {
+      await client.query(
+        "INSERT INTO rack_capacity_records(snapshot_id, source_row_number, rack_zone, rack_id, status, cabinet_size, detail, device_type, remarks, raw_inputs) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
+        [inserted.rows[0].id, record.rowNumber, record.rackZone, record.rackId, record.status, record.cabinetSize, record.detail, record.deviceType, record.remarks, record]
+      );
+    }
+  }
+  for (const row of plan.source.rackUnitCapacityRows) {
+    await client.query(
+      "INSERT INTO rack_unit_capacity_snapshots(site_id, period_month, total_u, used_u) VALUES ($1, $2::date, $3, $4)",
+      [siteId, `${row.month}-01`, row.totalU, row.usedU]
+    );
+  }
+}
+
 async function insertCalculationOutputs(client: PoolClient, periodId: number, plan: MigrationPlan, month: string, batchId: number): Promise<void> {
   const calculation = plan.calculations.find(entry => entry.month === month);
   if (!calculation) throw new MigrationImportError("CALCULATION_MISSING", `No domain calculation exists for ${month}.`);
@@ -131,6 +153,17 @@ export async function importMigrationPlan(pool: Pool, plan: MigrationPlan, optio
       const months = plan.source.logs.map(log => `${log.month}-01`);
       const existingPeriods = await client.query<{ period_month: string }>("SELECT period_month FROM monthly_periods WHERE site_id = $1 AND period_month = ANY($2::date[]) FOR SHARE", [siteRow.id, months]);
       if (existingPeriods.rows.length > 0) throw new MigrationImportError("DUPLICATE_TARGET_PERIOD", "One or more target months already contain data; no overwrite was attempted.");
+      const rackMonths = [
+        ...(plan.source.rackCapacitySnapshot ? [plan.source.rackCapacitySnapshot.month] : []),
+        ...plan.source.rackUnitCapacityRows.map(row => row.month)
+      ];
+      if (rackMonths.length > 0) {
+        const existingRacks = await client.query<{ count: string }>(
+          "SELECT (SELECT count(*) FROM rack_capacity_snapshots WHERE site_id = $1 AND snapshot_month = ANY($2::date[])) + (SELECT count(*) FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = ANY($2::date[])) AS count",
+          [siteRow.id, rackMonths.map(month => `${month}-01`)]
+        );
+        if (Number(existingRacks.rows[0].count) > 0) throw new MigrationImportError("DUPLICATE_TARGET_RACK_SNAPSHOT", "One or more target rack snapshots already contain data; no overwrite was attempted.");
+      }
 
       const batch = await client.query<{ id: string }>(
         `INSERT INTO migration_batches(source_type, source_identity, source_hash, status, row_count, idempotency_key, metadata)
@@ -159,17 +192,20 @@ export async function importMigrationPlan(pool: Pool, plan: MigrationPlan, optio
         }
         await insertCalculationOutputs(client, period.id, plan, log.month, batchId);
       }
+      await importRackSnapshots(client, Number(siteRow.id), plan);
 
       const actualLogs = await transactionRepository.getMonthlyLogs(Number(siteRow.id), plan.source.logs.map(log => log.month));
       const parityIssues = verifyCalculatedParity(plan.calculations, actualLogs);
       if (parityIssues.length > 0) throw new MigrationImportError("GOLDEN_PARITY_MISMATCH", "Recomputed database inputs did not match the Phase 1 calculation outputs.");
       const periodIdValues = [...periodIds.values()];
-      const [provenance, evidence, runs] = await Promise.all([
+      const [provenance, evidence, runs, rackCapacity, rackUnits] = await Promise.all([
         client.query<{ count: string }>("SELECT count(*)::text AS count FROM provenance_records WHERE entity_type = 'monthly_period' AND source_file_hash = $1 AND entity_id = ANY($2::bigint[])", [plan.source.sourceFileHash, periodIdValues]),
         client.query<{ count: string }>("SELECT count(*)::text AS count FROM legacy_cached_evidence WHERE period_id = ANY($1::bigint[])", [periodIdValues]),
-        client.query<{ count: string }>("SELECT count(*)::text AS count FROM calculation_runs WHERE period_id = ANY($1::bigint[]) AND input_hash = $2", [periodIdValues, plan.source.sourceFileHash])
+        client.query<{ count: string }>("SELECT count(*)::text AS count FROM calculation_runs WHERE period_id = ANY($1::bigint[]) AND input_hash = $2", [periodIdValues, plan.source.sourceFileHash]),
+        client.query<{ count: string }>("SELECT count(*)::text AS count FROM rack_capacity_records r JOIN rack_capacity_snapshots s ON s.id = r.snapshot_id WHERE s.site_id = $1 AND s.snapshot_month = $2::date", [siteRow.id, `${plan.source.rackCapacitySnapshot?.month ?? "0001-01"}-01`]),
+        client.query<{ count: string }>("SELECT count(*)::text AS count FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = ANY($2::date[])", [siteRow.id, plan.source.rackUnitCapacityRows.map(row => `${row.month}-01`)])
       ]);
-      if (Number(provenance.rows[0].count) !== plan.source.logs.length || Number(evidence.rows[0].count) !== plan.source.cachedEvidence.length || Number(runs.rows[0].count) !== plan.source.logs.length) throw new MigrationImportError("IMPORT_VERIFY_FAILED", "Raw provenance, cached evidence, or calculation run counts did not match the migration plan.");
+      if (Number(provenance.rows[0].count) !== plan.source.logs.length || Number(evidence.rows[0].count) !== plan.source.cachedEvidence.length || Number(runs.rows[0].count) !== plan.source.logs.length || Number(rackCapacity.rows[0].count) !== (plan.source.rackCapacitySnapshot?.records.length ?? 0) || Number(rackUnits.rows[0].count) !== plan.source.rackUnitCapacityRows.length) throw new MigrationImportError("IMPORT_VERIFY_FAILED", "Raw provenance, cached evidence, calculation runs, or rack snapshot counts did not match the migration plan.");
       await client.query("UPDATE migration_batches SET status='verified', success_count=$2, completed_at=now() WHERE id=$1", [batchId, plan.source.logs.length]);
       return { status: "imported", batchId, verified: true, importedMonths: plan.source.logs.map(log => log.month).sort(), cachedEvidenceCount: plan.source.cachedEvidence.length };
     });

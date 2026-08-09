@@ -7,6 +7,8 @@ import { readWorkbookFromBuffer } from "../../src/excel/WorkbookReader";
 import { normalizeMonthCell } from "../../src/excel/ExcelSchema";
 import type { DeviceLists } from "../../src/excel/SheetMapper";
 import { DEFAULT_DEVICE_LISTS } from "../../src/excel/SheetMapper";
+import { readRackCapacityFromBuffer } from "../../src/reports/rackCapacityReader";
+import { readRackUnitCapacityFromBuffer } from "../../src/excel/RackUnitCapacityWriter";
 import type { CachedEvidenceRecord, MigrationSource } from "./types";
 
 type PlainValue = string | number | Date | null;
@@ -104,7 +106,11 @@ function readCachedEvidence(workbook: ExcelJS.Workbook): { evidence: CachedEvide
 export async function readWorkbookSource(filePath: string, devices: DeviceLists = DEFAULT_DEVICE_LISTS): Promise<MigrationSource> {
   const sourcePath = path.resolve(filePath);
   const buffer = await readFile(sourcePath);
-  const workbookResult = await readWorkbookFromBuffer(buffer, devices);
+  const [workbookResult, rackCapacity, rackUnitCapacityRows] = await Promise.all([
+    readWorkbookFromBuffer(buffer, devices),
+    readRackCapacityFromBuffer(buffer),
+    readRackUnitCapacityFromBuffer(buffer)
+  ]);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
   const cached = readCachedEvidence(workbook);
@@ -119,6 +125,10 @@ export async function readWorkbookSource(filePath: string, devices: DeviceLists 
     validation: workbookResult.validation,
     integrity: workbookResult.integrity,
     cachedEvidence: cached.evidence,
-    sourceLocationsByMonth: cached.locations
+    sourceLocationsByMonth: cached.locations,
+    rackCapacitySnapshot: rackCapacity && workbookResult.logs.length > 0
+      ? { month: [...workbookResult.logs].sort((a, b) => b.month.localeCompare(a.month))[0].month, sourceSheet: rackCapacity.sourceSheet, records: rackCapacity.records }
+      : null,
+    rackUnitCapacityRows
   };
 }

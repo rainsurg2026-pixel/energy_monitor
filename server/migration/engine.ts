@@ -87,7 +87,9 @@ export function createMigrationPlan(source: MigrationSource, mapping: MigrationS
     source,
     mapping,
     idempotencyKey,
-    rowCount: source.logs.reduce((total, log) => total + countRawRows(log), 0),
+    rowCount: source.logs.reduce((total, log) => total + countRawRows(log), 0)
+      + (source.rackCapacitySnapshot?.records.length ?? 0)
+      + source.rackUnitCapacityRows.length,
     calculations,
     issues
   };
@@ -149,6 +151,8 @@ export function createSyntheticMigrationSource(logs: MonthlyLog[], sourceFileHas
     validation: { ok: true, errors: [], warnings: [], sheetNames: {} },
     integrity: { duplicateKeys: [], missingMonths: [], missingDevices: [], unexpectedBlankRows: [], invalidIds: [] },
     cachedEvidence: [],
-    sourceLocationsByMonth: Object.fromEntries(logs.map(log => [log.month, [`synthetic://${log.month}`]]))
+    sourceLocationsByMonth: Object.fromEntries(logs.map(log => [log.month, [`synthetic://${log.month}`]])),
+    rackCapacitySnapshot: null,
+    rackUnitCapacityRows: []
   };
 }

@@ -2,6 +2,8 @@ import type { ComputedMonthMetrics } from "../../src/domain/analytics";
 import type { EnergyCostCalculation } from "../../src/domain/energyCost";
 import type { MonthlyLog } from "../../src/types";
 import type { ExcelIntegrityReport, WorkbookValidation } from "../../src/excel/WorkbookReader";
+import type { RackRecord } from "../../src/reports/reportTypes";
+import type { RackUnitCapacityRow } from "../../src/excel/RackUnitCapacityWriter";
 
 export interface MigrationIssue {
   severity: "error" | "warning";
@@ -33,6 +35,10 @@ export interface MigrationSource {
   integrity: ExcelIntegrityReport;
   cachedEvidence: CachedEvidenceRecord[];
   sourceLocationsByMonth: Record<string, string[]>;
+  /** Current Table7 snapshot; the source workbook has no per-row historical rack detail. */
+  rackCapacitySnapshot: { month: string; sourceSheet: string; records: RackRecord[] } | null;
+  /** Persisted one-row-per-month Rack Unit history from the source workbook. */
+  rackUnitCapacityRows: RackUnitCapacityRow[];
 }
 
 export interface MigrationSiteMapping {
