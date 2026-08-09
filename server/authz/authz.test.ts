@@ -12,6 +12,22 @@ import {
   requireOperationAllowedInReadOnlyMode,
   requirePermission,
   requireRole,
+  requireScope,
+  canListUsers,
+  canCreateUsers,
+  canUpdateUsers,
+  canActivateUsers,
+  canAssignRoles,
+  canResetPasswords,
+  canReadAuditHistory,
+  canManageBackupRestore,
+  canManageMigration,
+  canAlterAuditRecords,
+  canManageGlobalSettings,
+  canManageDisplayPeriod,
+  canReadOperationalSurfaces,
+  canWriteOperationalData,
+  canExportReports,
   type AuthenticatedPrincipal,
   type Principal
 } from "./index";
@@ -68,5 +84,32 @@ check("read-only migration control blocked", !isOperationAllowedInReadOnlyMode(R
 check("admin does not affect read-only decision", evaluateReadOnlyOperation(READ_ONLY_OPERATIONS.operationalDataWrite, true).allowed === false);
 check("normal mode allows mutations", isOperationAllowedInReadOnlyMode(READ_ONLY_OPERATIONS.operationalDataWrite, false));
 expectAuthzError("read-only denial", () => requireOperationAllowedInReadOnlyMode(READ_ONLY_OPERATIONS.displayPeriodWrite, true), 423, "READ_ONLY_MODE");
+
+// Named scope.ts predicates (mqr-webapp-new's lib/scope.ts pattern) must
+// agree with the underlying PERMISSIONS table they wrap - not a second,
+// independently-maintained source of truth.
+check("everyone reads operational surfaces", canReadOperationalSurfaces("user") && canReadOperationalSurfaces("admin"));
+check("everyone exports reports", canExportReports("user") && canExportReports("admin"));
+check("user cannot write operational data is false (both roles can)", canWriteOperationalData("user") && canWriteOperationalData("admin"));
+for (const [predicate, name] of [
+  [canManageGlobalSettings, "canManageGlobalSettings"],
+  [canManageDisplayPeriod, "canManageDisplayPeriod"],
+  [canListUsers, "canListUsers"],
+  [canCreateUsers, "canCreateUsers"],
+  [canUpdateUsers, "canUpdateUsers"],
+  [canActivateUsers, "canActivateUsers"],
+  [canAssignRoles, "canAssignRoles"],
+  [canResetPasswords, "canResetPasswords"],
+  [canReadAuditHistory, "canReadAuditHistory"],
+  [canManageBackupRestore, "canManageBackupRestore"],
+  [canManageMigration, "canManageMigration"]
+] as const) {
+  check(`${name} denies user`, !predicate("user"));
+  check(`${name} allows admin`, predicate("admin"));
+}
+check("canAlterAuditRecords denies both roles (no path grants it)", !canAlterAuditRecords("user") && !canAlterAuditRecords("admin"));
+check("requireScope allows a satisfied predicate", requireScope(admin, canListUsers) === admin);
+expectAuthzError("requireScope denies an unsatisfied predicate", () => requireScope(user, canListUsers), 403, "FORBIDDEN");
+expectAuthzError("requireScope requires authentication", () => requireScope(null, canListUsers), 401, "UNAUTHORIZED");
 
 console.log(`authz: ${checks} assertions passed`);
