@@ -29,6 +29,7 @@ export async function createConfiguredRuntime(environment: NodeJS.ProcessEnv = p
     const authService = new AuthService(authRepository, {
       passwordHasher,
       dummyPasswordHash: await passwordHasher.hash("energy-monitor-dummy-login-sentinel"),
+      sessionSecret: config.sessionSecret,
       sessionPolicy: { absoluteLifetimeMs: config.sessionLifetimeMs }
     });
     const app = createApp({

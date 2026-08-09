@@ -3,16 +3,21 @@ import { CredentialVerifier, GENERIC_LOGIN_FAILURE } from "./credentialVerifier"
 import { decideLogin, DEFAULT_LOGIN_PROTECTION_POLICY, type LoginProtectionPolicy } from "./loginProtection";
 import { checkSession, createSessionMaterial, DEFAULT_SESSION_POLICY, type SessionPolicy } from "./sessions";
 import { hashSessionToken } from "./sessionTokens";
+import { signSessionJwt, verifySessionJwt } from "./sessionJwt";
 import { normalizeUsername, type PasswordPolicy } from "./passwordPolicy";
 import type { AuthenticatedPrincipal, Role } from "../authz";
-import { requirePermission, actorIdentityFromPrincipal } from "../authz";
-import { PERMISSIONS } from "../authz/permissions";
+import { requireScope, actorIdentityFromPrincipal } from "../authz";
+import { canListUsers, canCreateUsers, canUpdateUsers, canActivateUsers, canAssignRoles, canResetPasswords } from "../authz/scope";
 import { HttpError } from "../errors";
 import type { AuthAccountRecord, AuthRepository, SafeUserRecord } from "./repository";
 
 export interface AuthServiceOptions {
   readonly passwordHasher: PasswordHasher;
   readonly dummyPasswordHash: string;
+  /** Signs/verifies the session JWT (see sessionJwt.ts). Reused from the
+   *  existing SESSION_SECRET config value - never wired to anything until
+   *  now. */
+  readonly sessionSecret: string;
   readonly sessionPolicy?: SessionPolicy;
   readonly loginProtectionPolicy?: LoginProtectionPolicy;
   readonly passwordPolicy?: PasswordPolicy;
@@ -71,13 +76,16 @@ export class AuthService {
     const session = await this.repository.createSession({ userId: record.account.id, tokenHash: material.tokenHash, createdAt: material.createdAt, expiresAt: material.expiresAt, createdIp: request.ip ?? null, userAgent: request.userAgent ?? null });
     await this.repository.audit({ actorUserId: record.account.id, action: "LOGIN_SUCCESS", entityType: "user", entityId: record.account.id, correlationId: request.correlationId ?? "login" });
     await this.repository.audit({ actorUserId: record.account.id, action: "SESSION_CREATED", entityType: "session", entityId: session.id, correlationId: request.correlationId ?? "login" });
-    return { user: safeUser(record.account), sessionToken: material.token, expiresAt: material.expiresAt, sessionId: session.id };
+    const sessionToken = await signSessionJwt({ sid: material.token, userId: String(record.account.id), role: record.account.role }, this.options.sessionSecret, material.expiresAt);
+    return { user: safeUser(record.account), sessionToken, expiresAt: material.expiresAt, sessionId: session.id };
   }
 
   async authenticateSession(rawToken: string | undefined): Promise<{ principal: AuthenticatedPrincipal; user: SafePrincipalUser } | null> {
     if (!rawToken) return null;
+    const claims = await verifySessionJwt(rawToken, this.options.sessionSecret);
+    if (!claims) return null;
     let tokenHash: string;
-    try { tokenHash = hashSessionToken(rawToken); } catch { return null; }
+    try { tokenHash = hashSessionToken(claims.sid); } catch { return null; }
     const lookup = await this.repository.findSessionByTokenHash(tokenHash);
     if (!lookup) return null;
     const now = this.now();
@@ -93,8 +101,10 @@ export class AuthService {
 
   async logout(rawToken: string | undefined): Promise<void> {
     if (!rawToken) return;
+    const claims = await verifySessionJwt(rawToken, this.options.sessionSecret);
+    if (!claims) return;
     let tokenHash: string;
-    try { tokenHash = hashSessionToken(rawToken); } catch { return; }
+    try { tokenHash = hashSessionToken(claims.sid); } catch { return; }
     const lookup = await this.repository.findSessionByTokenHash(tokenHash);
     await this.repository.revokeSessionByTokenHash(tokenHash, "logout");
     if (lookup) await this.repository.audit({ actorUserId: lookup.account.id, action: "SESSION_REVOKED", entityType: "session", entityId: lookup.session.id, newValue: { reason: "logout" }, correlationId: "logout" });
@@ -108,9 +118,9 @@ export class AuthService {
     await this.repository.changePassword(principal.userId, hash, this.now(), principal.sessionId ?? null, actorIdentityFromPrincipal(principal).actorUserId, correlationId);
   }
 
-  async listUsers(principal: AuthenticatedPrincipal): Promise<SafeUserRecord[]> { requirePermission(principal, PERMISSIONS.usersList); return this.repository.listUsers(); }
+  async listUsers(principal: AuthenticatedPrincipal): Promise<SafeUserRecord[]> { requireScope(principal, canListUsers); return this.repository.listUsers(); }
   async createUser(principal: AuthenticatedPrincipal, input: { username: unknown; displayName: unknown; password: unknown; role: Role; active?: unknown }, correlationId: string): Promise<SafeUserRecord> {
-    requirePermission(principal, PERMISSIONS.usersCreate);
+    requireScope(principal, canCreateUsers);
     const normalizedUsername = normalizeUsername(input.username);
     if (typeof input.displayName !== "string" || input.displayName.trim().length === 0 || input.displayName.trim().length > 256) throw new HttpError(400, "INVALID_DISPLAY_NAME", "display_name is invalid.");
     if (input.active !== undefined && typeof input.active !== "boolean") throw new HttpError(400, "INVALID_ACTIVE", "active must be boolean.");
@@ -118,16 +128,16 @@ export class AuthService {
     return this.repository.createUser({ username: input.username as string, normalizedUsername, displayName: input.displayName.trim(), passwordHash: hash, role: input.role, active: input.active as boolean | undefined, actorUserId: principal.userId }, correlationId);
   }
   async setUserDisplayName(principal: AuthenticatedPrincipal, targetUserId: string, displayName: unknown, correlationId: string): Promise<SafeUserRecord> {
-    requirePermission(principal, PERMISSIONS.usersUpdate);
+    requireScope(principal, canUpdateUsers);
     if (typeof displayName !== "string" || displayName.trim().length === 0 || displayName.trim().length > 256) throw new HttpError(400, "INVALID_DISPLAY_NAME", "display_name is invalid.");
     return this.repository.setUserDisplayName(targetUserId, displayName.trim(), principal.userId, correlationId);
   }
   async setUserActive(principal: AuthenticatedPrincipal, targetUserId: string, active: boolean, correlationId: string): Promise<SafeUserRecord> {
-    requirePermission(principal, PERMISSIONS.usersActivate);
+    requireScope(principal, canActivateUsers);
     if (!active && targetUserId === principal.userId) throw new HttpError(409, "SELF_DEACTIVATION_NOT_ALLOWED", "An administrator cannot deactivate the current account.");
     return this.repository.setUserActive(targetUserId, active, principal.userId, correlationId);
   }
-  async setUserRole(principal: AuthenticatedPrincipal, targetUserId: string, role: Role, correlationId: string): Promise<SafeUserRecord> { requirePermission(principal, PERMISSIONS.rolesAssign); return this.repository.setUserRole(targetUserId, role, principal.userId, correlationId); }
-  async resetUserPassword(principal: AuthenticatedPrincipal, targetUserId: string, newPassword: unknown, correlationId: string): Promise<SafeUserRecord> { requirePermission(principal, PERMISSIONS.passwordsReset); const hash = await hashNewPassword(newPassword, this.options.passwordHasher, this.options.passwordPolicy); return this.repository.resetUserPassword(targetUserId, hash, principal.userId, correlationId); }
+  async setUserRole(principal: AuthenticatedPrincipal, targetUserId: string, role: Role, correlationId: string): Promise<SafeUserRecord> { requireScope(principal, canAssignRoles); return this.repository.setUserRole(targetUserId, role, principal.userId, correlationId); }
+  async resetUserPassword(principal: AuthenticatedPrincipal, targetUserId: string, newPassword: unknown, correlationId: string): Promise<SafeUserRecord> { requireScope(principal, canResetPasswords); const hash = await hashNewPassword(newPassword, this.options.passwordHasher, this.options.passwordPolicy); return this.repository.resetUserPassword(targetUserId, hash, principal.userId, correlationId); }
   async cleanupExpiredSessions(): Promise<number> { return this.repository.cleanupExpiredSessions(this.now()); }
 }

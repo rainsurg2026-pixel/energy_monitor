@@ -18,7 +18,7 @@ function expectStatus(name: string, error: unknown, status: number): void { chec
 
 const repository = new InMemoryAuthRepository();
 const dummyPasswordHash = await hasher.hash("phase35-dummy-login-sentinel");
-const service = new AuthService(repository, { passwordHasher: hasher, dummyPasswordHash });
+const service = new AuthService(repository, { passwordHasher: hasher, dummyPasswordHash, sessionSecret: config.sessionSecret });
 const password = "Phase35-local-test-password";
 const userId = repository.seedUser({ username: "phase35-user", normalizedUsername: normalizeUsername("phase35-user"), displayName: "Phase 3.5 User", passwordHash: await hasher.hash(password), role: "user" });
 
@@ -33,7 +33,7 @@ check("successful login returns safe session material", Boolean(login.user && lo
 check("login and session creation events are audited", repository.audits.some(item => item.action === "LOGIN_SUCCESS") && repository.audits.some(item => item.action === "SESSION_CREATED"));
 await service.logout(login.sessionToken);
 check("logout revokes the server-side session", (await service.authenticateSession(login.sessionToken)) === null);
-await assert.rejects(() => new AuthService(new (class extends InMemoryAuthRepository { override async findSessionByTokenHash(): Promise<never> { throw new Error("session store unavailable"); } })(), { passwordHasher: hasher, dummyPasswordHash }).authenticateSession(login.sessionToken));
+await assert.rejects(() => new AuthService(new (class extends InMemoryAuthRepository { override async findSessionByTokenHash(): Promise<never> { throw new Error("session store unavailable"); } })(), { passwordHasher: hasher, dummyPasswordHash, sessionSecret: config.sessionSecret }).authenticateSession(login.sessionToken));
 check("session-store failure fails closed", true);
 
 await repository.audit({ actorUserId: userId, action: "TEST_REDACTION", entityType: "user", entityId: userId, newValue: { password: "redacted-test-value", password_hash: "redacted-test-hash", safe: true }, correlationId: "phase35-redaction" });

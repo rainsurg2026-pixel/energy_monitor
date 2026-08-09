@@ -41,7 +41,7 @@
     "test:domain-parity": "node node_modules/tsx/dist/cli.mjs scripts/test-domain-parity.ts",
     "test:migration-tooling": "node node_modules/tsx/dist/cli.mjs scripts/test-migration-tooling.ts",
     "test:api": "node node_modules/tsx/dist/cli.mjs scripts/test-api-foundation.ts",
-    "test:phase3": "node --import tsx --test server/auth/authCore.test.ts server/authz/authz.test.ts server/http/security/security.test.ts && npm run test:api",
+    "test:phase3": "node --import tsx --test server/auth/authCore.test.ts server/auth/sessionJwt.test.ts server/authz/authz.test.ts server/http/security/security.test.ts && npm run test:api",
     "test:phase35": "node node_modules/tsx/dist/cli.mjs scripts/test-phase35.ts",
     "test:phase6": "node node_modules/tsx/dist/cli.mjs scripts/test-phase6.ts",
     "test:phase3:live": "node node_modules/tsx/dist/cli.mjs scripts/test-live-phase3.ts",
@@ -98,6 +98,7 @@
     "argon2": "^0.45.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "jose": "^6.2.8",
     "pg": "^8.22.0"
   }
 }

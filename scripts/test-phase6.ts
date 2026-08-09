@@ -25,7 +25,7 @@ function check(name: string, value: unknown): void { assert.equal(Boolean(value)
 async function authFixture(): Promise<{ service: AuthService; repository: InMemoryAuthRepository; admin: { username: string; password: string } }> {
   const repository = new InMemoryAuthRepository();
   const password = "Phase6 synthetic admin password 123!";
-  const service = new AuthService(repository, { passwordHasher: hasher, dummyPasswordHash: await hasher.hash("phase6-dummy") });
+  const service = new AuthService(repository, { passwordHasher: hasher, dummyPasswordHash: await hasher.hash("phase6-dummy"), sessionSecret: config.sessionSecret });
   repository.seedUser({ username: "phase6-admin", normalizedUsername: normalizeUsername("phase6-admin"), displayName: "Phase 6 Admin", passwordHash: await hasher.hash(password), role: "admin" });
   return { service, repository, admin: { username: "phase6-admin", password } };
 }

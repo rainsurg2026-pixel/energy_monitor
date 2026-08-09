@@ -38,7 +38,7 @@ interface TestAuth {
 async function testAuth(): Promise<TestAuth> {
   const repository = new InMemoryAuthRepository();
   const dummyPasswordHash = await testHasher.hash("dummy-password-for-tests");
-  const service = new AuthService(repository, { passwordHasher: testHasher, dummyPasswordHash });
+  const service = new AuthService(repository, { passwordHasher: testHasher, dummyPasswordHash, sessionSecret: config().sessionSecret });
   const admin = { username: "admin", password: "Correct Horse Battery Staple 123!" };
   repository.seedUser({ username: admin.username, normalizedUsername: normalizeUsername(admin.username), displayName: "Test Admin", passwordHash: await testHasher.hash(admin.password), role: "admin" });
   return { service, repository, admin };
