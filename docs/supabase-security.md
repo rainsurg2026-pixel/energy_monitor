@@ -117,54 +117,47 @@ tables, audit append/read, and provenance append/read. It has no `TRUNCATE`,
 not include `schema_migrations`, `legacy_cached_evidence`,
 `migration_batches`, or `migration_errors`.
 
-RLS policies targeted to `energy_monitor_runtime` permit the trusted backend
-role to perform the operations already required by the API. Their predicates
-require PostgreSQL membership in `energy_monitor_runtime`; they are not
-unconditional `USING (true)`/`WITH CHECK (true)` policies and cannot be used by
-a browser role after the revokes. The role is `NOBYPASSRLS`, so the backend
-remains subject to the explicitly granted backend policy.
+RLS policies targeted to `energy_monitor_runtime` remain as defense in depth.
+Their predicates require PostgreSQL membership in `energy_monitor_runtime`; they
+are not unconditional `USING (true)`/`WITH CHECK (true)` policies and cannot be
+used by a browser role after the revokes.
 
 This is a deliberate trust boundary: the API runtime may access shared
 operational data, but it must enforce session authentication, `admin`/`user`
 RBAC, `READ_ONLY_MODE`, Global Settings/Display Period authorization, safe
 input handling, and actor attribution. RLS cannot call `auth.uid()` for these
 local application sessions and must not be treated as a substitute for API
-authorization.
+authorization. The supported Supabase-managed `postgres` connection used by
+the small internal Vercel deployment has `BYPASSRLS`; therefore the API/service
+layer is the primary authorization boundary. Browser roles still have no table
+grants and cannot directly access application tables.
 
 Tables without a runtime grant or runtime policy remain migration/admin-only.
-RLS is enabled on every Phase 2 table, including the migration metadata table,
-even where the runtime has no access. RLS is not forced for the migration owner,
-so the separate migration connection can record `schema_migrations`; the
-runtime role is `NOBYPASSRLS` and remains subject to its explicit policies.
+RLS is enabled on every Phase 2 table, including the migration metadata table.
+The separate migration/admin connection can record `schema_migrations`; the
+Vercel runtime never runs migrations on startup.
 
 ## Role provisioning and connection separation
 
 No login role password is present in tracked SQL or documentation.
 
-1. Apply migration `001` and `002` with a separate direct migration/admin
-   connection owned by the database administrator. Keep that credential in the
-   Supabase/Vercel secret store or an approved operator secret manager.
-2. Provision a dedicated **login** role out of band. It must be
-   `LOGIN`, `NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION`, and
-   `NOBYPASSRLS`, with a rotated secret that is never committed. Grant that
-   login role membership in `energy_monitor_runtime`; do not grant it
-   `postgres`, `service_role`, or any migration-admin role.
-3. Give Vercel only the runtime `DATABASE_URL` for that login role. Keep the
-   direct migration/admin URL separate and unavailable to browser/build
-   variables. Do not use a Supabase service-role key as the database runtime
-   identity.
-4. For Vercel/serverless runtime, use the Supabase transaction pooler (port
+1. Apply migrations and controlled bootstrap/import operations with an
+   operator-only database connection. Keep that credential in an approved
+   secret store and unavailable to browser/build variables.
+2. Give Vercel only the server-side `DATABASE_URL` generated from the
+   Supabase-managed PostgreSQL connection identity. Never expose it to browser
+   code or use a Supabase service-role key in the frontend.
+3. For Vercel/serverless runtime, use the Supabase Shared transaction pooler (port
    6543) with a small pool appropriate to the function lifecycle. Use the
    direct database connection (port 5432) for migrations or persistent admin
    operations. Current `pg` queries use text plus values and no named prepared
    statements, which is compatible with transaction pooling.
 
-The Phase 3 server keeps this separation operationally: the API process uses
-only `DATABASE_URL` and verifies at startup that its login role is a
-non-superuser member of `energy_monitor_runtime`. It does not run migrations
-on web startup. `npm run db:migrate` and `npm run auth:bootstrap-admin` are
-separate operator commands using `DIRECT_DATABASE_URL`; both URLs remain
-server-side and must never be exposed to browser/build variables.
+The server keeps this separation operationally: the API process uses only
+`DATABASE_URL` and does not run migrations on web startup. `npm run db:migrate`
+and `npm run auth:bootstrap-admin` are separate operator commands using
+`DIRECT_DATABASE_URL`; both URLs remain server-side and must never be exposed
+to browser/build variables.
 
 ## Audit actor integration
 

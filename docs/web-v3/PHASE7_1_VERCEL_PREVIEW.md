@@ -6,17 +6,19 @@ not duplicate business routes or create a second authorization boundary.
 
 ## Runtime boundary
 
-- `DATABASE_URL` is the pooled PostgreSQL connection for the non-superuser
-  `energy_monitor_runtime` membership used by the API.
+- `DATABASE_URL` is the server-only Supabase Shared Pooler Transaction Mode
+  connection used by the API. The application API remains the authorization
+  boundary; browser code never receives this credential.
 - `DIRECT_DATABASE_URL` is for operator-only migrations/bootstrap. It is not
   read by the Vercel request handler and must not be configured as a browser
   variable.
 - A small `pg.Pool` is created once per warm function instance and reused.
-  The runtime role assertion remains mandatory.
+  Runtime startup validates hosted configuration and verified TLS without
+  requiring a custom PostgreSQL runtime login role.
 - Vercel Preview must use the confirmed development/test Supabase project,
   never a production database.
-- Missing runtime database configuration or a failed runtime-role check fails
-  database-dependent requests closed with a generic HTTP 503. The process
+- Missing runtime database configuration fails database-dependent requests
+  closed with a generic HTTP 503. The process
   health endpoint remains database-independent; readiness still checks the
   database.
 

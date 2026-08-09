@@ -7,7 +7,6 @@ import { Argon2idPasswordHasher, hashNewPassword } from "../server/auth/password
 import { PostgresAuthRepository } from "../server/auth/repository";
 import { AuthService } from "../server/auth/authService";
 import { PostgresRepository } from "../server/db/postgresRepository";
-import { assertRuntimeRole } from "../server/db/pool";
 import { PostgresRateLimitStore } from "../server/http/security";
 import type { ServerConfig } from "../server/config/env";
 
@@ -31,7 +30,7 @@ const config: ServerConfig = {
 };
 
 const pool = new Pool({ connectionString: databaseUrl, max: 2, connectionTimeoutMillis: 10_000 });
-await assertRuntimeRole(pool);
+await pool.query("SELECT 1");
 const passwordHasher = new Argon2idPasswordHasher();
 const authRepository = new PostgresAuthRepository(pool);
 const authService = new AuthService(authRepository, { passwordHasher, dummyPasswordHash: await passwordHasher.hash(`dummy-${testId}`) });

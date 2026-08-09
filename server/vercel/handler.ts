@@ -1,6 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ConfigurationError } from "../config/env";
-import { RuntimeRoleError } from "../db/pool";
 import { API_HEALTH_RESPONSE } from "../http/health";
 import { createConfiguredRuntime, type ConfiguredRuntime } from "../runtime";
 
@@ -22,7 +21,7 @@ function writeJson(response: ServerResponse, statusCode: number, payload: unknow
 }
 
 function unavailablePayload(error: unknown, environment: NodeJS.ProcessEnv): unknown {
-  const payload: { ok: false; error: { code: string; message: string; reason?: string; runtimeRole?: { configured_username_matches_expected: boolean; current_user_matches_expected: boolean } } } = {
+  const payload: { ok: false; error: { code: string; message: string; reason?: string } } = {
     ok: false,
     error: { code: "SERVICE_UNAVAILABLE", message: "The API service is unavailable." }
   };
@@ -31,14 +30,6 @@ function unavailablePayload(error: unknown, environment: NodeJS.ProcessEnv): unk
   // disclosing configuration names, hosts, credentials, or driver errors.
   if (environment.VERCEL_ENV !== "preview") return payload;
   if (error instanceof ConfigurationError) payload.error.reason = "configuration";
-  else if (error instanceof RuntimeRoleError) {
-    payload.error.reason = "runtime-role";
-    payload.error.runtimeRole = {
-      configured_username_matches_expected: error.configuredUsernameMatchesExpected,
-      current_user_matches_expected: error.currentUserMatchesExpected
-    };
-  }
-  else if (error instanceof Error && error.message === "DATABASE_URL must use a non-superuser login role that is a member of energy_monitor_runtime.") payload.error.reason = "runtime-role";
   else {
     const code = typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : "";
     if (code === "28P01" || code === "28000") payload.error.reason = "database-authentication";
