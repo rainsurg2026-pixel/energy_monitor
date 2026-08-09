@@ -59,7 +59,9 @@ async function main(): Promise<void> {
   // and src/reports/upsMappingReader.ts. facility.profile.dashboard remains
   // as valid, unused fallback infrastructure; it is no longer the active
   // source DashboardSummary renders from.
-  const dashboardCalculationSource = await fs.readFile(path.join(root, "src", "utils", "engineeringDashboard.ts"), "utf8");
+  // engineeringDashboard.ts under utils is now a compatibility re-export;
+  // inspect the domain implementation where the calculation source lives.
+  const dashboardCalculationSource = await fs.readFile(path.join(root, "src", "domain", "engineeringDashboard.ts"), "utf8");
   check("DashboardSummary reads UPS groups from the shared workbook calculation, not static config",
     dashboardSource.includes("buildEngineeringDashboardSnapshot") && dashboardCalculationSource.includes("upsMapping?.summary"));
   check("DashboardSummary reads UPS mapping from the shared workbook calculation, not static config",

@@ -67,8 +67,8 @@ async function main(): Promise<void> {
   // test-dashboard-workbook-mapping.ts. Still true either way: no branch.
   check("DashboardSummary reads UPS groups/mapping from data, not a branch",
     dashboardSource.includes("buildEngineeringDashboardSnapshot") &&
-    (await fs.readFile(path.join(root, "src", "utils", "engineeringDashboard.ts"), "utf8")).includes("upsMapping?.summary") &&
-    (await fs.readFile(path.join(root, "src", "utils", "engineeringDashboard.ts"), "utf8")).includes("upsMapping?.mapping"));
+    (await fs.readFile(path.join(root, "src", "domain", "engineeringDashboard.ts"), "utf8")).includes("upsMapping?.summary") &&
+    (await fs.readFile(path.join(root, "src", "domain", "engineeringDashboard.ts"), "utf8")).includes("upsMapping?.mapping"));
   check("UniversalFilterBar reads UPS filter options from facility.profile.dashboard, not a branch",
     filterBarSource.includes("facility?.profile.dashboard.upsGroups") &&
     filterBarSource.includes("facility?.profile.dashboard.upsMapping"));

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { Pool } from "pg";
 import { createApp } from "../server/http/app";
@@ -7,11 +7,16 @@ import { Argon2idPasswordHasher, hashNewPassword } from "../server/auth/password
 import { PostgresAuthRepository } from "../server/auth/repository";
 import { AuthService } from "../server/auth/authService";
 import { PostgresRepository } from "../server/db/postgresRepository";
-import { PostgresRateLimitStore } from "../server/http/security";
+import { PostgresRateLimitStore, type RateLimitStore } from "../server/http/security";
 import type { ServerConfig } from "../server/config/env";
 
 export async function runLivePhase3(databaseUrl: string, testId = randomUUID().replaceAll("-", "")): Promise<void> {
   if (!databaseUrl) throw new Error("PHASE3_LIVE_DATABASE_URL is required.");
+
+const databaseCaCertificate = process.env.SUPABASE_DB_CA_CERT?.trim().replace(/\\n/g, "\n");
+if (!databaseCaCertificate || !/^-----BEGIN CERTIFICATE-----[\s\S]+-----END CERTIFICATE-----$/.test(databaseCaCertificate)) {
+  throw new Error("SUPABASE_DB_CA_CERT must contain a PEM certificate for the live database test.");
+}
 
 const config: ServerConfig = {
   databaseUrl,
@@ -29,54 +34,69 @@ const config: ServerConfig = {
   readOnlyMode: false
 };
 
-const pool = new Pool({ connectionString: databaseUrl, max: 2, connectionTimeoutMillis: 10_000 });
-await pool.query("SELECT 1");
+const pool = new Pool({ connectionString: databaseUrl, ssl: { ca: databaseCaCertificate, rejectUnauthorized: true }, max: 2, connectionTimeoutMillis: 10_000 });
+let databaseConnected = false;
 const passwordHasher = new Argon2idPasswordHasher();
 const authRepository = new PostgresAuthRepository(pool);
 const authService = new AuthService(authRepository, { passwordHasher, dummyPasswordHash: await passwordHasher.hash(`dummy-${testId}`) });
 const adminUsername = `phase3_live_admin_${testId}`;
+const operatorUsername = `phase3_live_operator_${testId}`;
+const scopedUsernames = [adminUsername, operatorUsername];
+const postgresRateLimitStore = new PostgresRateLimitStore(pool);
+const scopedRateLimitKeys = new Set<string>();
+const rateLimitStore: RateLimitStore = {
+  consume: (key, policy) => {
+    const scopedKey = `phase3-live:${testId}:${key}`;
+    scopedRateLimitKeys.add(scopedKey);
+    return postgresRateLimitStore.consume(scopedKey, policy);
+  },
+  reset: key => postgresRateLimitStore.reset(`phase3-live:${testId}:${key}`)
+};
 const adminPassword = `${randomBytes(24).toString("base64url")}Aa1!`;
 const adminHash = await hashNewPassword(adminPassword, passwordHasher);
-await authRepository.createUser({ username: adminUsername, normalizedUsername: adminUsername, displayName: "Phase 3 Live Test Admin", passwordHash: adminHash, role: "admin", actorUserId: null }, `phase3-live:${testId}:seed`);
-const adminRecord = await authRepository.findLoginByNormalizedUsername(adminUsername);
-if (!adminRecord) throw new Error("Live test administrator could not be loaded.");
-
-const app = createApp({ config, repository: new PostgresRepository(pool), authService, rateLimitStore: new PostgresRateLimitStore(pool) });
-const server = createServer(app);
-await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-const address = server.address();
-if (!address || typeof address === "string") throw new Error("Live test server did not bind.");
-const base = `http://127.0.0.1:${address.port}`;
-
-function cookiesFrom(response: Response): string[] {
-  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
-  const values = typeof headers.getSetCookie === "function" ? headers.getSetCookie() : (response.headers.get("set-cookie") ?? "").split(/,(?=[^;]+?=)/);
-  return values.map(value => value.split(";")[0].trim()).filter(Boolean);
-}
-
-function cookieValue(cookies: readonly string[], name: string): string {
-  const value = cookies.find(cookie => cookie.startsWith(`${name}=`));
-  if (!value) throw new Error(`Missing ${name} cookie.`);
-  return decodeURIComponent(value.slice(name.length + 1));
-}
-
-async function jsonRequest(path: string, init: RequestInit = {}, cookieJar: readonly string[] = [], csrfToken?: string): Promise<{ status: number; body: any; cookies: string[]; requestId: string | null }> {
-  const headers = new Headers(init.headers);
-  headers.set("content-type", "application/json");
-  headers.set("origin", "http://test");
-  if (cookieJar.length > 0) headers.set("cookie", cookieJar.join("; "));
-  if (csrfToken && ["POST", "PUT", "PATCH", "DELETE"].includes(init.method?.toUpperCase() ?? "GET")) headers.set("x-csrf-token", csrfToken);
-  const response = await fetch(`${base}${path}`, { ...init, headers });
-  return { status: response.status, body: await response.json(), cookies: cookiesFrom(response), requestId: response.headers.get("x-request-id") };
-}
-
-async function login(username: string, password: string): Promise<{ cookies: string[]; csrfToken: string }> {
-  const response = await jsonRequest("/api/v1/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
-  assert.equal(response.status, 200, "live login");
-  return { cookies: response.cookies, csrfToken: cookieValue(response.cookies, "em_csrf") };
-}
-
+let server: ReturnType<typeof createServer> | null = null;
 try {
+  await pool.query("SELECT 1");
+  databaseConnected = true;
+  await authRepository.createUser({ username: adminUsername, normalizedUsername: adminUsername, displayName: "Phase 3 Live Test Admin", passwordHash: adminHash, role: "admin", actorUserId: null }, `phase3-live:${testId}:seed`);
+  const adminRecord = await authRepository.findLoginByNormalizedUsername(adminUsername);
+  if (!adminRecord) throw new Error("Live test administrator could not be loaded.");
+
+  const app = createApp({ config, repository: new PostgresRepository(pool), authService, rateLimitStore });
+  server = createServer(app);
+  await new Promise<void>(resolve => server?.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Live test server did not bind.");
+  const base = `http://127.0.0.1:${address.port}`;
+
+  function cookiesFrom(response: Response): string[] {
+    const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+    const values = typeof headers.getSetCookie === "function" ? headers.getSetCookie() : (response.headers.get("set-cookie") ?? "").split(/,(?=[^;]+?=)/);
+    return values.map(value => value.split(";")[0].trim()).filter(Boolean);
+  }
+
+  function cookieValue(cookies: readonly string[], name: string): string {
+    const value = cookies.find(cookie => cookie.startsWith(`${name}=`));
+    if (!value) throw new Error(`Missing ${name} cookie.`);
+    return decodeURIComponent(value.slice(name.length + 1));
+  }
+
+  async function jsonRequest(path: string, init: RequestInit = {}, cookieJar: readonly string[] = [], csrfToken?: string): Promise<{ status: number; body: any; cookies: string[]; requestId: string | null }> {
+    const headers = new Headers(init.headers);
+    headers.set("content-type", "application/json");
+    headers.set("origin", "http://test");
+    if (cookieJar.length > 0) headers.set("cookie", cookieJar.join("; "));
+    if (csrfToken && ["POST", "PUT", "PATCH", "DELETE"].includes(init.method?.toUpperCase() ?? "GET")) headers.set("x-csrf-token", csrfToken);
+    const response = await fetch(`${base}${path}`, { ...init, headers });
+    return { status: response.status, body: await response.json(), cookies: cookiesFrom(response), requestId: response.headers.get("x-request-id") };
+  }
+
+  async function login(username: string, password: string): Promise<{ cookies: string[]; csrfToken: string }> {
+    const response = await jsonRequest("/api/v1/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+    assert.equal(response.status, 200, "live login");
+    return { cookies: response.cookies, csrfToken: cookieValue(response.cookies, "em_csrf") };
+  }
+
   const health = await jsonRequest("/api/v1/health");
   assert.equal(health.status, 200);
   const admin = await login(adminUsername, adminPassword);
@@ -84,7 +104,6 @@ try {
   assert.equal(users.status, 200);
   assert.equal(users.body.data.some((user: { username: string }) => user.username === adminUsername), true);
 
-  const operatorUsername = `phase3_live_operator_${testId}`;
   const operatorPassword = `${randomBytes(24).toString("base64url")}Aa1!`;
   const csrfRejected = await jsonRequest("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: `phase3_live_csrf_${testId}`, display_name: "CSRF Rejected", password: operatorPassword, role: "user" }) }, admin.cookies);
   assert.equal(csrfRejected.status, 403);
@@ -156,7 +175,32 @@ try {
   assert.equal(logout.status, 200);
   console.log(`live phase3 http: passed for ${testId}`);
 } finally {
-  await new Promise<void>(resolve => server.close(() => resolve()));
+  if (server) await new Promise<void>(resolve => server?.close(() => resolve()));
+  if (databaseConnected) {
+    await pool.query("BEGIN");
+    try {
+      for (const key of scopedRateLimitKeys) await postgresRateLimitStore.reset(key);
+      const users = await pool.query<{ id: string }>("SELECT id::text FROM public.users WHERE normalized_username = ANY($1::text[])", [scopedUsernames]);
+      const userIds = users.rows.map(row => row.id);
+      if (userIds.length > 0) {
+        await pool.query("DELETE FROM public.audit_events WHERE entity_type = 'user' AND entity_id = ANY($1::text[])", [userIds]);
+        await pool.query("DELETE FROM public.users WHERE id::text = ANY($1::text[])", [userIds]);
+      }
+      await pool.query("COMMIT");
+    } catch (error) {
+      await pool.query("ROLLBACK");
+      throw error;
+    }
+    const remaining = await pool.query<{ users: string; audits: string; rate_limit_buckets: string }>(`
+      SELECT
+        (SELECT count(*)::text FROM public.users WHERE normalized_username = ANY($1::text[])) AS users,
+        (SELECT count(*)::text FROM public.audit_events WHERE entity_type = 'user' AND entity_id IN (SELECT id::text FROM public.users WHERE normalized_username = ANY($1::text[]))) AS audits,
+        (SELECT count(*)::text FROM public.http_rate_limit_buckets WHERE key_hash = ANY($2::text[])) AS rate_limit_buckets
+    `, [scopedUsernames, [...scopedRateLimitKeys].map(key => createHash("sha256").update(key, "utf8").digest("hex"))]);
+    assert.equal(Number(remaining.rows[0]?.users), 0, "live synthetic users cleaned");
+    assert.equal(Number(remaining.rows[0]?.audits), 0, "live synthetic audits cleaned");
+    assert.equal(Number(remaining.rows[0]?.rate_limit_buckets), 0, "live rate-limit buckets cleaned");
+  }
   await pool.end();
 }
 }

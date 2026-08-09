@@ -8,7 +8,8 @@ import {
   locateRackCapacityHistorySheet,
   migrateRackCapacityHistoryFormats,
   RACK_CAPACITY_HISTORY_SHEET_NAME,
-  RACK_CAPACITY_HISTORY_TOTAL_ZONE
+  RACK_CAPACITY_HISTORY_TOTAL_ZONE,
+  rackCapacityHistoryRowsFromMetrics
 } from "../src/excel/RackCapacityHistoryWriter";
 import { saveRackCapacityFieldChanges } from "../src/excel/RackCapacityWriter";
 import { calculateRackCapacityMetrics } from "../src/utils/rackCapacity";
@@ -21,6 +22,10 @@ function check(name: string, condition: boolean, detail = ""): void {
     failures++;
     console.error(`  FAIL  ${name}${detail ? ` - ${detail}` : ""}`);
   }
+}
+
+function historyKey(row: { facility: string; snapshotMonth: string; rackZone: string }): string {
+  return `${row.facility.toLowerCase()}|${row.snapshotMonth}|${row.rackZone.toLowerCase()}`;
 }
 
 async function unrelatedPartHashes(buffer: Buffer): Promise<Record<string, string>> {
@@ -36,7 +41,9 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
   const original = await fs.readFile(sourcePath);
   const beforeHashes = await unrelatedPartHashes(original);
 
-  check(`${label}: no History sheet before first save`, (await readRackCapacityHistoryFromBuffer(original)).length === 0);
+  const existingHistory = await readRackCapacityHistoryFromBuffer(original);
+  const existingHistoryKeys = new Set(existingHistory.map(historyKey));
+  check(`${label}: any pre-existing History rows are readable`, existingHistory.every(row => row.snapshotMonth.length === 7 && row.facility.length > 0));
 
   const rack = await readRackCapacityFromBuffer(original);
   const metrics = calculateRackCapacityMetrics(rack!.records);
@@ -44,15 +51,19 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
   // ---- First save: January snapshot ----
   const buffer1 = await patchRackCapacityHistoryBuffer(original, label.toLowerCase(), "2026-01", metrics);
   const rows1 = await readRackCapacityHistoryFromBuffer(buffer1);
-  check(`${label}: sheet created with one row per zone + one (Total) row`, rows1.length === metrics.zoneMetrics.length + 1, `${rows1.length} vs expected ${metrics.zoneMetrics.length + 1}`);
-  const totalRow1 = rows1.find(r => r.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE);
+  const januaryRows = rackCapacityHistoryRowsFromMetrics(label.toLowerCase(), "2026-01", metrics, new Date(0).toISOString());
+  const januaryNewCount = januaryRows.filter(row => !existingHistoryKeys.has(historyKey(row))).length;
+  const expectedRowsAfterJanuary = existingHistory.length + januaryNewCount;
+  check(`${label}: first save retains history and adds one row per zone + one (Total) row`, rows1.length === expectedRowsAfterJanuary, `${rows1.length} vs expected ${expectedRowsAfterJanuary}`);
+  const totalRow1 = rows1.find(r => r.snapshotMonth === "2026-01" && r.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE);
   check(`${label}: (Total) row totalRacks matches facility total`, totalRow1?.totalRacks === metrics.total);
   check(`${label}: (Total) row inUse matches metrics`, totalRow1?.inUse === metrics.inUse.count);
   check(`${label}: (Total) row usagePct is a 0-1 fraction, not 0-100`, (totalRow1?.usagePct ?? 0) <= 1);
-  check(`${label}: every row tagged with the right facility`, rows1.every(r => r.facility === label.toLowerCase()));
-  check(`${label}: every row tagged with the right month`, rows1.every(r => r.snapshotMonth === "2026-01"));
+  const januaryResultRows = rows1.filter(row => januaryRows.some(incoming => historyKey(incoming) === historyKey(row)));
+  check(`${label}: saved January rows are tagged with the right facility`, januaryResultRows.every(r => r.facility === label.toLowerCase()));
+  check(`${label}: saved January rows are tagged with the right month`, januaryResultRows.every(r => r.snapshotMonth === "2026-01"));
   const zoneWithData = metrics.zoneMetrics[0];
-  const zoneRow1 = rows1.find(r => r.rackZone === zoneWithData.zone);
+  const zoneRow1 = rows1.find(r => r.snapshotMonth === "2026-01" && r.rackZone === zoneWithData.zone);
   check(`${label}: a real zone row's counts match calculateRackCapacityMetrics exactly (single authoritative calculation)`, zoneRow1?.inUse === zoneWithData.inUse.count && zoneRow1?.available === zoneWithData.available.count);
 
   const sheetExists = await (async () => {
@@ -115,14 +126,17 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
   ]);
   const buffer3 = await patchRackCapacityHistoryBuffer(buffer1, label.toLowerCase(), "2026-01", changedMetrics);
   const rows3 = await readRackCapacityHistoryFromBuffer(buffer3);
-  check(`${label}: updated month does not create a duplicate row (still zones+1 rows)`, rows3.length === metrics.zoneMetrics.length + 1, String(rows3.length));
-  const totalRow3 = rows3.find(r => r.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE);
+  check(`${label}: updated month does not create a duplicate row`, rows3.length === expectedRowsAfterJanuary, String(rows3.length));
+  const totalRow3 = rows3.find(r => r.snapshotMonth === "2026-01" && r.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE);
   check(`${label}: updated month's (Total) row reflects the new counts`, totalRow3?.totalRacks === changedMetrics.total);
 
   // ---- Fourth save: a DIFFERENT month -> appends, never overwrites Jan ----
   const buffer4 = await patchRackCapacityHistoryBuffer(buffer3, label.toLowerCase(), "2026-02", metrics);
   const rows4 = await readRackCapacityHistoryFromBuffer(buffer4);
-  check(`${label}: a new month appends rows without touching the prior month`, rows4.length === (metrics.zoneMetrics.length + 1) * 2, String(rows4.length));
+  const februaryRows = rackCapacityHistoryRowsFromMetrics(label.toLowerCase(), "2026-02", metrics, new Date(0).toISOString());
+  const februaryNewCount = februaryRows.filter(row => !existingHistoryKeys.has(historyKey(row)) && !januaryRows.some(january => historyKey(january) === historyKey(row))).length;
+  const expectedRowsAfterFebruary = expectedRowsAfterJanuary + februaryNewCount;
+  check(`${label}: a new month appends rows without touching the prior month`, rows4.length === expectedRowsAfterFebruary, String(rows4.length));
   const janStillThere = rows4.find(r => r.snapshotMonth === "2026-01" && r.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE);
   check(`${label}: January's (updated) snapshot survives the February save untouched`, janStillThere?.totalRacks === changedMetrics.total);
   const febRow = rows4.find(r => r.snapshotMonth === "2026-02" && r.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE);
@@ -133,7 +147,8 @@ async function testFacility(label: string, sourcePath: string): Promise<void> {
   check(`${label}: VBA/pivot/table/chart/drawing parts still untouched after multiple history saves`, changed4.length === 0, changed4.join(", "));
 
   // ---- No fake backfill: this module never invents months on its own ----
-  check(`${label}: only the months explicitly saved exist (no auto-backfilled history)`, new Set(rows4.map(r => r.snapshotMonth)).size === 2);
+  const newlyAddedRows = rows4.filter(row => !existingHistoryKeys.has(historyKey(row)));
+  check(`${label}: only explicitly saved months are added (no auto-backfilled history)`, newlyAddedRows.every(row => row.snapshotMonth === "2026-01" || row.snapshotMonth === "2026-02") && newlyAddedRows.length === januaryNewCount + februaryNewCount);
 
   // ---- End-to-end: a real Table7 status Save auto-creates a history snapshot ----
   const backupDir = path.join(path.dirname(sourcePath), `backup-${label.toLowerCase()}`);
