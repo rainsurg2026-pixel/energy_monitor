@@ -6,8 +6,13 @@
  * credentials, cookies, response bodies, or tokens.
  *
  * Run from a network-enabled runner:
- *   PREVIEW_URL=https://energy-monitor-676lzno7r-dcm15.vercel.app \
+ *   PREVIEW_URL=https://energy-monitor-git-feat-web-v3-dcm15.vercel.app \
  *   npm run test:preview-http
+ *
+ * The normal-user checks use the fresh Development-only Preview UAT account
+ * by default. PREVIEW_UAT_PASSWORD is required for previewuat; the legacy
+ * DEV_USER_PASSWORD fallback is retained only when PREVIEW_UAT_USERNAME is
+ * explicitly set to the old usertest account.
  */
 type JsonObject = Record<string, unknown>;
 type HttpResponse = { status: number; body: JsonObject | null };
@@ -29,7 +34,11 @@ const baseUrl = normalizePreviewUrl(configuredPreviewUrl ?? "");
 const configuredPreviewOrigin = process.env.PREVIEW_ORIGIN?.trim();
 const previewOrigin = configuredPreviewOrigin ? new URL(normalizePreviewUrl(configuredPreviewOrigin)).origin : undefined;
 const adminPassword = process.env.DEV_ADMIN_PASSWORD;
-const userPassword = process.env.DEV_USER_PASSWORD;
+const configuredPreviewUatUsername = process.env.PREVIEW_UAT_USERNAME?.trim();
+const previewUatUsername = configuredPreviewUatUsername || "previewuat";
+const previewUatIsLegacyUsertest = previewUatUsername.toLowerCase() === "usertest";
+const previewUatPassword = process.env.PREVIEW_UAT_PASSWORD
+  ?? (previewUatIsLegacyUsertest ? process.env.DEV_USER_PASSWORD : undefined);
 
 function requiredCredential(name: string, value: string | undefined): string {
   if (!value) {
@@ -40,7 +49,10 @@ function requiredCredential(name: string, value: string | undefined): string {
 }
 
 const requiredAdminPassword = requiredCredential("DEV_ADMIN_PASSWORD", adminPassword);
-const requiredUserPassword = requiredCredential("DEV_USER_PASSWORD", userPassword);
+const requiredPreviewUatPassword = requiredCredential(
+  previewUatIsLegacyUsertest ? "PREVIEW_UAT_PASSWORD or DEV_USER_PASSWORD" : "PREVIEW_UAT_PASSWORD",
+  previewUatPassword
+);
 
 class CookieJar {
   private readonly values = new Map<string, string>();
@@ -119,15 +131,15 @@ async function main(): Promise<void> {
   const adminSession = await request("/api/v1/auth/session", admin.jar);
   expect("admin session is authenticated", adminSession.status === 200 && dataOf(adminSession).authenticated === true);
 
-  const user = await login("usertest", requiredUserPassword);
-  expect("usertest login role is user", user.user.role === "user");
+  const user = await login(previewUatUsername, requiredPreviewUatPassword);
+  expect(`${previewUatUsername} login role is user`, user.user.role === "user");
   const userSession = await request("/api/v1/auth/session", user.jar);
-  expect("usertest session is authenticated", userSession.status === 200 && dataOf(userSession).authenticated === true);
+  expect(`${previewUatUsername} session is authenticated`, userSession.status === 200 && dataOf(userSession).authenticated === true);
 
   const adminUsers = await request("/api/v1/admin/users", admin.jar);
   const listedUsers = Array.isArray(adminUsers.body?.data) ? adminUsers.body.data : [];
   expect("admin can read User Management", adminUsers.status === 200 && listedUsers.some(item => (item as JsonObject).username === "admin"));
-  expect("User Management exposes both bootstrap accounts", listedUsers.some(item => (item as JsonObject).username === "usertest"));
+  expect("User Management exposes the Preview UAT user", listedUsers.some(item => (item as JsonObject).username === previewUatUsername));
   const userUsers = await request("/api/v1/admin/users", user.jar);
   expect("user is denied User Management", userUsers.status === 403 && errorCode(userUsers) === "FORBIDDEN");
 
@@ -186,9 +198,9 @@ async function main(): Promise<void> {
   expect("Site Comparison returns migrated data", comparison.status === 200 && comparisonSites.length >= 2);
 
   const userLogout = await request("/api/v1/auth/logout", user.jar, { method: "POST", headers: { "x-csrf-token": user.jar.csrfToken() ?? "" } });
-  expect("usertest logout succeeds", userLogout.status === 200);
+  expect(`${previewUatUsername} logout succeeds`, userLogout.status === 200);
   const userRevoked = await request("/api/v1/auth/session", user.jar);
-  expect("usertest session is revoked after logout", userRevoked.status === 200 && dataOf(userRevoked).authenticated === false);
+  expect(`${previewUatUsername} session is revoked after logout`, userRevoked.status === 200 && dataOf(userRevoked).authenticated === false);
   const adminLogout = await request("/api/v1/auth/logout", admin.jar, { method: "POST", headers: { "x-csrf-token": admin.jar.csrfToken() ?? "" } });
   expect("admin logout succeeds", adminLogout.status === 200);
   const adminRevoked = await request("/api/v1/auth/session", admin.jar);
