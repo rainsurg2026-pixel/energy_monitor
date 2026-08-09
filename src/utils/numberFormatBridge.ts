@@ -1,5 +1,5 @@
 /** Compatibility adapter for legacy callers; presentation-only exports. */
-export { formatNumber, formatDecimal, formatPercentage, formatEnergy, formatCompactNumber, formatCompactLabel } from "./numberFormat";
+export { formatNumber, formatDecimal, formatPercentage, formatEnergy, formatCompactNumber, formatCompactLabel, formatFixedNumber, formatFixedPercentage } from "./numberFormat";
 import { formatNumber } from "./numberFormat";
 
 export const formatNumber2 = formatNumber;

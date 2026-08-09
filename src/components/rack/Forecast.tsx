@@ -12,6 +12,7 @@ import { useRackCapacity } from "./RackCapacityContext";
 import { monthLabelLong, monthLabelShort } from "../../utils/monthUtils";
 import { getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
 import { MIN_FORECAST_HISTORY_MONTHS } from "../../utils/capacityForecast";
+import { formatFixedPercentage } from "../../utils/numberFormatBridge";
 
 export const Forecast: React.FC = () => {
   const { lang, usageForecast, usageHistory, regression } = useRackCapacity();
@@ -60,7 +61,7 @@ export const Forecast: React.FC = () => {
             <YAxis stroke="#64748b" fontSize={11} unit="%" domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} />
             <Tooltip
               contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, fontSize: 12 }}
-              formatter={(value: number | null) => (value === null ? "-" : `${value.toFixed(1)}%`)}
+              formatter={(value: number | null) => (value === null ? "-" : formatFixedPercentage(value, 1))}
             />
             {!allNull && <Line type="monotone" dataKey="history" stroke="#38bdf8" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} name={lang === "th" ? "ประวัติ" : "History"} />}
             {!allNull && <Line type="monotone" dataKey="forecast" stroke="#a78bfa" strokeWidth={2} strokeDasharray="5 4" dot={{ r: 2 }} connectNulls={false} name={lang === "th" ? "พยากรณ์" : "Forecast"} />}
@@ -77,7 +78,7 @@ export const Forecast: React.FC = () => {
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
           <p className="text-[10px] text-slate-500 uppercase tracking-wide">{lang === "th" ? "ความจุคงเหลือ" : "Remaining Capacity"}</p>
-          <p className="text-sm font-mono text-slate-100 mt-1">{remainingCapacityPct.toFixed(1)}%</p>
+          <p className="text-sm font-mono text-slate-100 mt-1">{formatFixedPercentage(remainingCapacityPct, 1)}</p>
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
           <p className="text-[10px] text-slate-500 uppercase tracking-wide">{lang === "th" ? "แนวโน้ม" : "Trend"}</p>
@@ -85,7 +86,7 @@ export const Forecast: React.FC = () => {
         </div>
         <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5">
           <p className="text-[10px] text-slate-500 uppercase tracking-wide">{lang === "th" ? "ความเชื่อมั่น" : "Confidence"}</p>
-          <p className="text-sm font-mono text-slate-100 mt-1">{confidencePct === null ? "—" : `${confidencePct.toFixed(0)}%`}</p>
+          <p className="text-sm font-mono text-slate-100 mt-1">{confidencePct === null ? "—" : formatFixedPercentage(confidencePct, 0)}</p>
         </div>
       </div>
     </section>

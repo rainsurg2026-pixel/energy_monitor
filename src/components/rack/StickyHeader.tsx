@@ -8,6 +8,7 @@ import React from "react";
 import { useRackCapacity } from "./RackCapacityContext";
 import { monthLabelLong } from "../../utils/monthUtils";
 import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
+import { formatFixedPercentage } from "../../utils/numberFormatBridge";
 
 export const StickyHeader: React.FC = () => {
   const { lang, facilityName, reportingMonth, usageHistory } = useRackCapacity();
@@ -37,7 +38,7 @@ export const StickyHeader: React.FC = () => {
         </span>
         {trend !== null && (
           <span className={`inline-flex items-center gap-1 text-xs font-semibold rounded-full px-2.5 py-1 border border-slate-800 ${trendColor}`}>
-            {trend.direction === "Up" ? "▲" : trend.direction === "Down" ? "▼" : "◆"} {Math.abs(trend.pct).toFixed(1)}% {getTrendLabel(trend.direction, lang)}
+            {trend.direction === "Up" ? "▲" : trend.direction === "Down" ? "▼" : "◆"} {formatFixedPercentage(Math.abs(trend.pct), 1)} {getTrendLabel(trend.direction, lang)}
           </span>
         )}
       </div>
