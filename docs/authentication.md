@@ -181,3 +181,49 @@ Only active administrators can access `/settings/users` and the admin user
 management API. Active users receive `403` for that route/API. Deactivation
 and password reset revoke sessions, audit events omit credential material, and
 the last active administrator cannot be deactivated or demoted.
+
+## Architecture decision: divergence from the `mqr-webapp-new` reference
+
+The web migration's standing instructions name `D:\Project\mqr-webapp-new` as
+the authentication architecture reference, to be reused "whenever possible."
+This section documents why the implementation above diverges from it instead,
+per the same instructions' own requirement to record reason/impact/
+compatibility when reuse isn't followed literally.
+
+**Reason.** `mqr-webapp-new` is a Next.js 14 App Router application: route
+protection is centralized in Edge Middleware (`middleware.ts`), sessions are
+signed JWTs (`jose`) carrying claims, and RBAC is a 4-tier dealer/branch
+tenancy hierarchy (`SuperAdmin`/`CentralAdmin`/`DealerAdmin`/`DealerUser`).
+Energy Monitor's web build is a Vite + React SPA served by an Express API
+(`server/http/app.ts`) — there is no Next.js middleware layer to port the
+pattern onto, and the desktop source-of-truth app has no dealer/branch
+concept, only two roles (`admin`/`user`) with no per-record tenancy
+(`docs/rbac.md`). Reproducing the mqr pattern literally would mean rebuilding
+the web frontend on a different framework, which the standing "do not
+recreate the application" rule forbids, purely to match an implementation
+detail rather than a security property.
+
+What was built instead achieves the same *security shape* through different
+mechanisms: HttpOnly session cookies backed by a server-side revocable session
+table (opaque tokens hashed at rest, not JWTs — `server/auth/sessionTokens.ts`)
+in place of signed-JWT claims; double-submit CSRF on mutating routes in place
+of a custom header check; Argon2id password hashing in place of scrypt; and a
+centralized `server/authz` permission gate in place of Edge Middleware. Both
+designs share the same properties that actually matter for security review —
+revocable server-side sessions, CSRF-protected mutations, no client-trusted
+identity claims — implemented with the primitives this stack actually has.
+
+**Impact.** No dealer/branch multi-tenancy exists in Energy Monitor's RBAC.
+If a future requirement needs that shape (e.g. per-customer-site scoping
+beyond the existing facility model), it is new design work, not a reuse of
+`mqr-webapp-new`'s `scope.ts`/`authorization.ts` predicates — those are
+written against a tenancy model this app doesn't have.
+
+**Compatibility.** Verified independently against this repo's own Phase 3
+test plan (`docs/phase3-test-plan.md`): all Critical and High findings
+(auth boundary wired, RLS-as-defense-in-depth with `energy_monitor_runtime`
+role grants, CORS allowlisting, audit actor identity, rate limiting, live
+integration coverage) are resolved in current code, not just documented as
+intended. This decision accepts the current, independently-verified
+implementation rather than a framework-level rewrite to chase literal
+mqr-webapp-new reuse.
