@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { readFile } from "node:fs/promises";
 import { createVercelHandler } from "../server/vercel/handler";
 import { loadServerConfig } from "../server/config/env";
 import { createPoolOptions } from "../server/db/pool";
+import type { ConfiguredRuntime } from "../server/runtime";
 
 const testCertificate = "-----BEGIN CERTIFICATE-----\npreview-test-certificate\n-----END CERTIFICATE-----";
 
@@ -21,13 +22,16 @@ const testEnvironment: NodeJS.ProcessEnv = {
   SUPABASE_DB_CA_CERT: testCertificate
 };
 
-async function withAdapter<T>(work: (base: string) => Promise<T>): Promise<T> {
-  const handler = createVercelHandler(testEnvironment);
+async function withHandler<T>(handler: (request: IncomingMessage, response: ServerResponse) => void | Promise<void>, work: (base: string) => Promise<T>): Promise<T> {
   const server = createServer((request, response) => { void handler(request, response); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as AddressInfo;
   try { return await work(`http://127.0.0.1:${address.port}`); }
   finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+}
+
+async function withAdapter<T>(work: (base: string) => Promise<T>): Promise<T> {
+  return withHandler(createVercelHandler(testEnvironment), work);
 }
 
 async function request(base: string, path: string): Promise<{ status: number; contentType: string; body: string }> {
@@ -68,6 +72,28 @@ await withAdapter(async base => {
   assert.equal(sites.status, 503);
   assert.match(sites.contentType, /application\/json/);
   assert.equal(sites.body.includes("<div id=\"root\">"), false);
+});
+
+let startupAttempts = 0;
+const recoveringHandler = createVercelHandler(testEnvironment, async () => {
+  startupAttempts += 1;
+  if (startupAttempts === 1) throw new Error("temporary startup failure");
+  return {
+    app: ((_: IncomingMessage, response: ServerResponse) => {
+      response.setHeader("content-type", "application/json; charset=utf-8");
+      response.end(JSON.stringify({ ok: true, data: { recovered: true } }));
+    }) as unknown as ConfiguredRuntime["app"],
+    config: {} as ConfiguredRuntime["config"],
+    pool: {} as ConfiguredRuntime["pool"]
+  };
+});
+await withHandler(recoveringHandler, async base => {
+  const first = await request(base, "/api/v1/auth/session");
+  assert.equal(first.status, 503);
+  const second = await request(base, "/api/v1/auth/session");
+  assert.equal(second.status, 200);
+  assert.deepEqual(JSON.parse(second.body), { ok: true, data: { recovered: true } });
+  assert.equal(startupAttempts, 2);
 });
 
 const vercelConfig = JSON.parse(await readFile("vercel.json", "utf8")) as { rewrites?: Array<{ source?: string; destination?: string }> };

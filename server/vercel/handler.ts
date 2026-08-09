@@ -4,6 +4,7 @@ import { API_HEALTH_RESPONSE } from "../http/health";
 import { createConfiguredRuntime, type ConfiguredRuntime } from "../runtime";
 
 type VercelNodeHandler = (request: IncomingMessage, response: ServerResponse) => void | Promise<void>;
+type RuntimeFactory = (environment: NodeJS.ProcessEnv) => Promise<ConfiguredRuntime>;
 
 function pathnameOf(request: IncomingMessage): string {
   try { return new URL(request.url ?? "/", "http://vercel.local").pathname; }
@@ -54,10 +55,15 @@ function writeHealth(response: ServerResponse, method: string | undefined): void
   writeJson(response, 200, { ok: true, data: API_HEALTH_RESPONSE });
 }
 
-export function createVercelHandler(environment: NodeJS.ProcessEnv = process.env): VercelNodeHandler {
+export function createVercelHandler(environment: NodeJS.ProcessEnv = process.env, createRuntime: RuntimeFactory = createConfiguredRuntime): VercelNodeHandler {
   let runtimePromise: Promise<ConfiguredRuntime> | undefined;
   const getRuntime = (): Promise<ConfiguredRuntime> => {
-    runtimePromise ??= createConfiguredRuntime(environment);
+    if (!runtimePromise) {
+      runtimePromise = createRuntime(environment).catch(error => {
+        runtimePromise = undefined;
+        throw error;
+      });
+    }
     return runtimePromise;
   };
 
