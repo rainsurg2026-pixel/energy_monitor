@@ -34,14 +34,18 @@ function parseMonthYearDisplay(display) {
 }
 
 function stopProcessTree(child) {
-  if (child?.pid) spawnSync("taskkill", ["/F", "/PID", String(child.pid), "/T"], { stdio: "ignore" });
+  if (child?.pid) spawnSync("taskkill", ["/F", "/PID", String(child.pid), "/T"], {
+    stdio: "ignore",
+    timeout: 5000,
+    env: { SystemRoot: process.env.SystemRoot, ComSpec: process.env.ComSpec, Path: process.env.Path }
+  });
   child?.kill();
 }
 
 async function connect() {
   for (let i = 0; i < 40; i++) {
     try {
-      const res = await fetch(`http://127.0.0.1:${PORT}/json`);
+      const res = await fetch(`http://127.0.0.1:${PORT}/json`, { signal: AbortSignal.timeout(1000) });
       const targets = await res.json();
       const page = targets.find(t => t.type === "page" && t.webSocketDebuggerUrl);
       if (page) return new WebSocket(page.webSocketDebuggerUrl);
@@ -56,18 +60,32 @@ async function connect() {
 function makeClient(ws) {
   let id = 0;
   const pending = new Map();
+  const CDP_TIMEOUT_MS = 10_000;
   ws.addEventListener("message", ev => {
     const msg = JSON.parse(ev.data);
-    if (msg.id && pending.has(msg.id)) {
-      pending.get(msg.id)(msg);
+    const request = msg.id ? pending.get(msg.id) : undefined;
+    if (request) {
+      clearTimeout(request.timer);
       pending.delete(msg.id);
+      request.resolve(msg);
     }
+  });
+  ws.addEventListener("close", () => {
+    for (const request of pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(new Error("CDP WebSocket closed before the response arrived."));
+    }
+    pending.clear();
   });
   return {
     send(method, params = {}) {
-      return new Promise(resolve => {
+      return new Promise((resolve, reject) => {
         const mid = ++id;
-        pending.set(mid, resolve);
+        const timer = setTimeout(() => {
+          pending.delete(mid);
+          reject(new Error(`CDP request timed out: ${method}`));
+        }, CDP_TIMEOUT_MS);
+        pending.set(mid, { resolve, reject, timer });
         ws.send(JSON.stringify({ id: mid, method, params }));
       });
     }
@@ -102,9 +120,15 @@ async function main() {
 
   const env = { ...process.env, ENERGY_MONITOR_APP_ROOT: testRoot };
   delete env.ELECTRON_RUN_AS_NODE;
+  for (const name of [
+    "DATABASE_URL", "DIRECT_DATABASE_URL", "PHASE3_LIVE_DATABASE_URL", "SUPABASE_DB_CA_CERT",
+    "DEV_ADMIN_PASSWORD", "DEV_USER_PASSWORD", "BOOTSTRAP_ADMIN_PASSWORD", "SESSION_SECRET", "CSRF_SECRET"
+  ]) delete env[name];
   const electron = path.join(root, "node_modules", "electron", "dist", "electron.exe");
   const userData = path.join(process.env.TEMP ?? root, `energy-monitor-e2e-data-${Date.now()}`);
-  const app = spawn(electron, [".", `--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`], { cwd: root, env, stdio: "ignore" });
+  const electronArgs = [".", `--remote-debugging-port=${PORT}`, `--user-data-dir=${userData}`];
+  if (process.env.E2E_DISABLE_GPU === "1") electronArgs.push("--disable-gpu");
+  const app = spawn(electron, electronArgs, { cwd: root, env, stdio: "ignore" });
 
   try {
     const ws = await connect();
@@ -622,7 +646,12 @@ async function main() {
   process.exit(failures === 0 ? 0 : 1);
 }
 
-main().catch(err => {
+const e2eKeepAlive = setInterval(() => {}, 1000);
+try {
+  await main();
+} catch (err) {
   console.error("E2E crashed:", err);
-  process.exit(1);
-});
+  process.exitCode = 1;
+} finally {
+  clearInterval(e2eKeepAlive);
+}

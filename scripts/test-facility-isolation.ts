@@ -140,7 +140,7 @@ async function main(): Promise<void> {
       ? { ...l, air: { ...l.air, meters: { ...l.air.meters, eb43a: 12.3456, eb43b: 7.891, eb44a: 4.321, eb44b: 1.234 } } }
       : l
   );
-  await saveWorkbook(srinakarinCopy, edited, { backupDir, backupKeep: 3, devices: sDevices });
+  await saveWorkbook(srinakarinCopy, edited, { backupDir, backupKeep: 3, devices: sDevices, scope: "air" });
   const after = await readWorkbookFromFile(srinakarinCopy, sDevices);
   const savedMonth = after.logs.find(l => l.month === targetMonth);
 
