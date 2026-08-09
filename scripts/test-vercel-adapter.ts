@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { createVercelHandler } from "../server/vercel/handler";
 import { loadServerConfig } from "../server/config/env";
 import { createPoolOptions } from "../server/db/pool";
+import { RuntimeRoleError } from "../server/db/pool";
 import type { ConfiguredRuntime } from "../server/runtime";
 
 const testCertificate = "-----BEGIN CERTIFICATE-----\npreview-test-certificate\n-----END CERTIFICATE-----";
@@ -94,6 +95,26 @@ await withHandler(recoveringHandler, async base => {
   assert.equal(second.status, 200);
   assert.deepEqual(JSON.parse(second.body), { ok: true, data: { recovered: true } });
   assert.equal(startupAttempts, 2);
+});
+
+const runtimeRoleDiagnosticHandler = createVercelHandler(testEnvironment, async () => {
+  throw new RuntimeRoleError(true, false);
+});
+await withHandler(runtimeRoleDiagnosticHandler, async base => {
+  const result = await request(base, "/api/v1/readiness");
+  assert.equal(result.status, 503);
+  assert.deepEqual(JSON.parse(result.body), {
+    ok: false,
+    error: {
+      code: "SERVICE_UNAVAILABLE",
+      message: "The API service is unavailable.",
+      reason: "runtime-role",
+      runtimeRole: {
+        configured_username_matches_expected: true,
+        current_user_matches_expected: false
+      }
+    }
+  });
 });
 
 const vercelConfig = JSON.parse(await readFile("vercel.json", "utf8")) as { rewrites?: Array<{ source?: string; destination?: string }> };
