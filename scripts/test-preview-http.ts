@@ -1,9 +1,13 @@
 /**
  * Network-only Preview integration gate.
  *
- * This deliberately uses HTTP/fetch rather than Browser/CDP. It reads the
- * existing development account passwords only in memory and never prints
- * credentials, cookies, response bodies, or tokens.
+ * This deliberately uses HTTP/fetch rather than Browser/CDP. Credentials are
+ * read only from environment variables, held only in memory, and never
+ * appear in any log line - usernames included. Every log label uses a
+ * static role name ("Admin"/"Secondary user"), never the actual username
+ * value, and every console.log/console.error call is routed through
+ * safeLog/safeError, which additionally scrub any cookie/token/authorization
+ * header shape that could otherwise slip into a thrown error's message.
  *
  * Run from a network-enabled runner:
  *   PREVIEW_URL=https://energy-monitor-git-feat-web-v3-dcm15.vercel.app \
@@ -13,7 +17,13 @@
  * by default. PREVIEW_UAT_PASSWORD is required for previewuat; the legacy
  * DEV_USER_PASSWORD fallback is retained only when PREVIEW_UAT_USERNAME is
  * explicitly set to the old usertest account.
+ *
+ * Exit codes: 0 = every check passed. 1 = at least one check failed. 2 =
+ * required credentials/PREVIEW_URL are missing, or the environment itself
+ * (DNS/connection/permissions) is unreachable - neither is a check failure.
  */
+import { safeLog, safeError } from "./lib/redactLog";
+
 type JsonObject = Record<string, unknown>;
 type HttpResponse = { status: number; body: JsonObject | null };
 
@@ -42,7 +52,7 @@ const previewUatPassword = process.env.PREVIEW_UAT_PASSWORD
 
 function requiredCredential(name: string, value: string | undefined): string {
   if (!value) {
-    console.error(`PREVIEW_HTTP_CREDENTIALS_REQUIRED: ${name} must be available to the runner.`);
+    safeError(`PREVIEW_HTTP_CREDENTIALS_REQUIRED: ${name} must be available to the runner.`);
     process.exit(2);
   }
   return value;
@@ -103,17 +113,23 @@ function dataOf(response: HttpResponse): JsonObject { return (response.body?.dat
 function errorCode(response: HttpResponse): string | null { return typeof response.body?.error === "object" && response.body.error !== null && "code" in response.body.error ? String((response.body.error as JsonObject).code) : null; }
 function expect(name: string, condition: boolean, detail = ""): void {
   if (!condition) throw new Error(`${name}${detail ? ` (${detail})` : ""}`);
-  console.log(`PASS ${name}`);
+  safeLog(`PASS ${name}`);
 }
 
-async function login(username: string, password: string): Promise<{ jar: CookieJar; user: JsonObject }> {
+/**
+ * `label` is a fixed, non-secret display name ("Admin", "Secondary user")
+ * used in every log line for this account. The actual `username` value
+ * (which may come from PREVIEW_UAT_USERNAME) is sent in the request body,
+ * never logged.
+ */
+async function login(label: string, username: string, password: string): Promise<{ jar: CookieJar; user: JsonObject }> {
   const jar = new CookieJar();
   const csrf = await request("/api/v1/auth/csrf", jar);
-  expect(`${username} CSRF endpoint`, csrf.status === 200, `status=${csrf.status}`);
+  expect(`${label} CSRF endpoint`, csrf.status === 200, `status=${csrf.status}`);
   const response = await request("/api/v1/auth/login", jar, { method: "POST", body: JSON.stringify({ username, password }) });
-  expect(`${username} login`, response.status === 200, `status=${response.status}`);
+  expect(`${label} login`, response.status === 200, `status=${response.status}`);
   const user = dataOf(response).user as JsonObject | undefined;
-  expect(`${username} login returns safe user`, Boolean(user) && !JSON.stringify(user).toLowerCase().includes("password"));
+  expect(`${label} login returns safe user`, Boolean(user) && !JSON.stringify(user).toLowerCase().includes("password"));
   return { jar, user: user ?? {} };
 }
 
@@ -126,22 +142,22 @@ async function main(): Promise<void> {
   const unauthenticated = await request("/api/v1/bootstrap");
   expect("unauthenticated protected API returns 401", unauthenticated.status === 401 && errorCode(unauthenticated) === "UNAUTHORIZED");
 
-  const admin = await login("admin", requiredAdminPassword);
-  expect("admin login role is admin", admin.user.role === "admin");
+  const admin = await login("Admin", "admin", requiredAdminPassword);
+  expect("Admin login role is admin", admin.user.role === "admin");
   const adminSession = await request("/api/v1/auth/session", admin.jar);
-  expect("admin session is authenticated", adminSession.status === 200 && dataOf(adminSession).authenticated === true);
+  expect("Admin session is authenticated", adminSession.status === 200 && dataOf(adminSession).authenticated === true);
 
-  const user = await login(previewUatUsername, requiredPreviewUatPassword);
-  expect(`${previewUatUsername} login role is user`, user.user.role === "user");
+  const user = await login("Secondary user", previewUatUsername, requiredPreviewUatPassword);
+  expect("Secondary user login role is user", user.user.role === "user");
   const userSession = await request("/api/v1/auth/session", user.jar);
-  expect(`${previewUatUsername} session is authenticated`, userSession.status === 200 && dataOf(userSession).authenticated === true);
+  expect("Secondary user session is authenticated", userSession.status === 200 && dataOf(userSession).authenticated === true);
 
   const adminUsers = await request("/api/v1/admin/users", admin.jar);
   const listedUsers = Array.isArray(adminUsers.body?.data) ? adminUsers.body.data : [];
-  expect("admin can read User Management", adminUsers.status === 200 && listedUsers.some(item => (item as JsonObject).username === "admin"));
+  expect("Admin can read User Management", adminUsers.status === 200 && listedUsers.some(item => (item as JsonObject).username === "admin"));
   expect("User Management exposes the Preview UAT user", listedUsers.some(item => (item as JsonObject).username === previewUatUsername));
   const userUsers = await request("/api/v1/admin/users", user.jar);
-  expect("user is denied User Management", userUsers.status === 403 && errorCode(userUsers) === "FORBIDDEN");
+  expect("Secondary user is denied User Management", userUsers.status === 403 && errorCode(userUsers) === "FORBIDDEN");
 
   const bootstrap = await request("/api/v1/bootstrap", admin.jar);
   const bootstrapData = dataOf(bootstrap);
@@ -198,9 +214,9 @@ async function main(): Promise<void> {
   expect("Site Comparison returns migrated data", comparison.status === 200 && comparisonSites.length >= 2);
 
   const userLogout = await request("/api/v1/auth/logout", user.jar, { method: "POST", headers: { "x-csrf-token": user.jar.csrfToken() ?? "" } });
-  expect(`${previewUatUsername} logout succeeds`, userLogout.status === 200);
+  expect("Secondary user logout succeeds", userLogout.status === 200);
   const userRevoked = await request("/api/v1/auth/session", user.jar);
-  expect(`${previewUatUsername} session is revoked after logout`, userRevoked.status === 200 && dataOf(userRevoked).authenticated === false);
+  expect("Secondary user session is revoked after logout", userRevoked.status === 200 && dataOf(userRevoked).authenticated === false);
   const adminLogout = await request("/api/v1/auth/logout", admin.jar, { method: "POST", headers: { "x-csrf-token": admin.jar.csrfToken() ?? "" } });
   expect("admin logout succeeds", adminLogout.status === 200);
   const adminRevoked = await request("/api/v1/auth/session", admin.jar);
@@ -208,17 +224,18 @@ async function main(): Promise<void> {
   const oldSessionDenied = await request("/api/v1/bootstrap", admin.jar);
   expect("revoked admin session cannot access protected API", oldSessionDenied.status === 401 && errorCode(oldSessionDenied) === "UNAUTHORIZED");
 
-  console.log("PREVIEW_HTTP_PASS");
+  safeLog("PREVIEW_HTTP_PASS");
 }
 
 try {
   await main();
+  process.exit(0);
 } catch (error) {
   const cause = error && typeof error === "object" && "cause" in error ? (error as { cause?: { code?: unknown } }).cause?.code : undefined;
   if (cause === "EACCES" || cause === "ECONNREFUSED" || cause === "ENOTFOUND" || cause === "ETIMEDOUT") {
-    console.error(`PREVIEW_HTTP_ENVIRONMENT_UNAVAILABLE: ${String(cause)}`);
+    safeError(`PREVIEW_HTTP_ENVIRONMENT_UNAVAILABLE: ${String(cause)}`);
     process.exit(2);
   }
-  console.error(`PREVIEW_HTTP_CHECK_FAILED: ${error instanceof Error ? error.message : "unknown error"}`);
+  safeError(`PREVIEW_HTTP_CHECK_FAILED: ${error instanceof Error ? error.message : "unknown error"}`);
   process.exit(1);
 }

@@ -24,6 +24,8 @@
     "scripts/test-api-foundation.ts",
     "scripts/test-live-phase3.ts",
     "scripts/test-preview-http.ts",
+    "scripts/lib/redactLog.ts",
+    "scripts/lib/redactLog.test.ts",
     "scripts/test-display-period-policy.ts",
     "scripts/test-postgres-foundation.ts",
     "src/types.ts",
