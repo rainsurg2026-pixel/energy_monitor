@@ -50,6 +50,29 @@ function parseOrigins(value: string | undefined): string[] {
   return (value ?? "").split(",").map(item => item.trim()).filter(Boolean);
 }
 
+/**
+ * Every Vercel deployment - Production or Preview - receives its OWN
+ * correct hostname(s) as environment variables at boot: VERCEL_URL (the
+ * unique, deployment-specific hostname) and VERCEL_BRANCH_URL (the stable
+ * git-branch alias, when the project is Git-connected). Trusting these is
+ * exact-match and self-referential - a given deployment only ever learns
+ * its own hostname this way, never another deployment's or another
+ * project's - so it requires no manual APP_PREVIEW_ORIGINS maintenance per
+ * branch/deployment and cannot be broadened into a wildcard by construction.
+ * This is deliberately preferred over a `*.vercel.app` pattern match: it
+ * achieves the same goal (every Preview URL for this app works) with a
+ * strictly tighter trust boundary (this exact deployment only, not "any
+ * Vercel-hosted app"), which matters because CORS-allowed origins can read
+ * authenticated GET responses (CSRF protection on mutations is a separate,
+ * unaffected layer - see csrf.ts - but read exposure is real).
+ */
+function vercelSelfOrigins(environment: NodeJS.ProcessEnv): string[] {
+  return [environment.VERCEL_URL, environment.VERCEL_BRANCH_URL]
+    .map(host => host?.trim())
+    .filter((host): host is string => Boolean(host))
+    .map(host => `https://${host}`);
+}
+
 function databaseCaCertificate(environment: NodeJS.ProcessEnv, required: boolean): string | null {
   // Vercel environment variables can contain either literal newlines or escaped
   // newlines. Normalize only in memory; this value is never exposed to clients.
@@ -99,7 +122,7 @@ export function loadServerConfig(
     port,
     appOrigin: appOrigin || "http://localhost:3000",
     allowedOrigins: parseOrigins(environment.APP_ORIGINS || appOrigin || "http://localhost:3000"),
-    allowedPreviewOrigins: parseOrigins(environment.APP_PREVIEW_ORIGINS),
+    allowedPreviewOrigins: [...parseOrigins(environment.APP_PREVIEW_ORIGINS), ...(hosted ? vercelSelfOrigins(environment) : [])],
     trustProxy: parseBoolean(environment.TRUST_PROXY, "TRUST_PROXY"),
     sessionSecret: secretValue(environment, "SESSION_SECRET", nodeEnv),
     csrfSecret: secretValue(environment, "CSRF_SECRET", nodeEnv),
