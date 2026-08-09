@@ -10,8 +10,9 @@
  *   npm run test:preview-http
  *
  * The normal-user checks use the fresh Development-only Preview UAT account
- * by default. Override PREVIEW_UAT_USERNAME/PREVIEW_UAT_PASSWORD when a
- * network-enabled runner uses another supported test account.
+ * by default. PREVIEW_UAT_PASSWORD is required for previewuat; the legacy
+ * DEV_USER_PASSWORD fallback is retained only when PREVIEW_UAT_USERNAME is
+ * explicitly set to the old usertest account.
  */
 type JsonObject = Record<string, unknown>;
 type HttpResponse = { status: number; body: JsonObject | null };
@@ -33,8 +34,11 @@ const baseUrl = normalizePreviewUrl(configuredPreviewUrl ?? "");
 const configuredPreviewOrigin = process.env.PREVIEW_ORIGIN?.trim();
 const previewOrigin = configuredPreviewOrigin ? new URL(normalizePreviewUrl(configuredPreviewOrigin)).origin : undefined;
 const adminPassword = process.env.DEV_ADMIN_PASSWORD;
-const previewUatUsername = process.env.PREVIEW_UAT_USERNAME?.trim() || "previewuat";
-const previewUatPassword = process.env.PREVIEW_UAT_PASSWORD ?? process.env.DEV_USER_PASSWORD;
+const configuredPreviewUatUsername = process.env.PREVIEW_UAT_USERNAME?.trim();
+const previewUatUsername = configuredPreviewUatUsername || "previewuat";
+const previewUatIsLegacyUsertest = previewUatUsername.toLowerCase() === "usertest";
+const previewUatPassword = process.env.PREVIEW_UAT_PASSWORD
+  ?? (previewUatIsLegacyUsertest ? process.env.DEV_USER_PASSWORD : undefined);
 
 function requiredCredential(name: string, value: string | undefined): string {
   if (!value) {
@@ -45,7 +49,10 @@ function requiredCredential(name: string, value: string | undefined): string {
 }
 
 const requiredAdminPassword = requiredCredential("DEV_ADMIN_PASSWORD", adminPassword);
-const requiredPreviewUatPassword = requiredCredential("PREVIEW_UAT_PASSWORD or DEV_USER_PASSWORD", previewUatPassword);
+const requiredPreviewUatPassword = requiredCredential(
+  previewUatIsLegacyUsertest ? "PREVIEW_UAT_PASSWORD or DEV_USER_PASSWORD" : "PREVIEW_UAT_PASSWORD",
+  previewUatPassword
+);
 
 class CookieJar {
   private readonly values = new Map<string, string>();
