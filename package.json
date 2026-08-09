@@ -45,6 +45,7 @@
     "test:phase35": "node node_modules/tsx/dist/cli.mjs scripts/test-phase35.ts",
     "test:phase6": "node node_modules/tsx/dist/cli.mjs scripts/test-phase6.ts",
     "test:phase3:live": "node node_modules/tsx/dist/cli.mjs scripts/test-live-phase3.ts",
+    "test:preview-http": "node node_modules/tsx/dist/cli.mjs scripts/test-preview-http.ts",
     "test:vercel-adapter": "node node_modules/tsx/dist/cli.mjs scripts/test-vercel-adapter.ts",
     "test:display-period": "node node_modules/tsx/dist/cli.mjs scripts/test-display-period-policy.ts",
     "test:postgres": "node node_modules/tsx/dist/cli.mjs scripts/test-postgres-foundation.ts",
