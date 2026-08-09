@@ -12,6 +12,7 @@ import { rackStatusColorForRatio, rackStatusLabel } from "../../utils/rackStatus
 import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
 import { calculateCapacityHealthScore, getHealthLabel, utilizationColorHex } from "../../utils/capacityHealth";
 import { getCapacityHealth } from "../../utils/capacityForecast";
+import { formatFixedNumber, formatFixedPercentage } from "../../utils/numberFormatBridge";
 
 interface KpiTileProps {
   label: string;
@@ -62,7 +63,7 @@ export const ExecutiveKpiCards: React.FC = () => {
     <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-9 gap-3">
       <KpiTile
         label={lang === "th" ? "คะแนนสุขภาพโดยรวม" : "Executive Health Score"}
-        value={`${healthScore.toFixed(0)}/100`}
+        value={`${formatFixedNumber(healthScore, 0)}/100`}
         subLabel={getHealthLabel(healthLevel, lang)}
         colorHex={healthColor}
       />
@@ -93,7 +94,7 @@ export const ExecutiveKpiCards: React.FC = () => {
       />
       <KpiTile
         label={lang === "th" ? "แนวโน้มจากเดือนก่อน" : "Trend vs Prev Month"}
-        value={trend === null ? "—" : `${trend.direction === "Up" ? "▲" : trend.direction === "Down" ? "▼" : "◆"} ${Math.abs(trend.pct).toFixed(1)}%`}
+        value={trend === null ? "—" : `${trend.direction === "Up" ? "▲" : trend.direction === "Down" ? "▼" : "◆"} ${formatFixedPercentage(Math.abs(trend.pct), 1)}`}
         subLabel={trend === null ? (lang === "th" ? "ไม่มีข้อมูลเพียงพอ" : "not enough history") : getTrendLabel(trend.direction, lang)}
         colorHex={trendColor}
       />

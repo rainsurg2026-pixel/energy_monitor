@@ -15,6 +15,7 @@ import React from "react";
 import { AlertTriangle, ShieldCheck } from "lucide-react";
 import { useRackCapacity } from "./RackCapacityContext";
 import { formatRatioPercent } from "../../utils/rackCapacity";
+import { formatFixedNumber } from "../../utils/numberFormatBridge";
 import { calculateCapacityHealthScore, utilizationColorHex } from "../../utils/capacityHealth";
 import { getCapacityHealth, CapacityHealthLevel } from "../../utils/capacityForecast";
 
@@ -49,8 +50,8 @@ export const CapacityAlerts: React.FC = () => {
         scopeLabel: facilityName ?? (lang === "th" ? "ทั้งไซต์" : "Facility-wide"),
         detail:
           lang === "th"
-            ? `คะแนนสุขภาพโดยรวม ${facilityScore.toFixed(0)}/100 (การใช้งาน ${formatRatioPercent(metrics.inUse.ratio, 1)})`
-            : `Executive Health Score ${facilityScore.toFixed(0)}/100 (usage ${formatRatioPercent(metrics.inUse.ratio, 1)})`,
+            ? `คะแนนสุขภาพโดยรวม ${formatFixedNumber(facilityScore, 0)}/100 (การใช้งาน ${formatRatioPercent(metrics.inUse.ratio, 1)})`
+            : `Executive Health Score ${formatFixedNumber(facilityScore, 0)}/100 (usage ${formatRatioPercent(metrics.inUse.ratio, 1)})`,
         colorHex: utilizationColorHex(facilityScore)
       });
     }

@@ -12,6 +12,7 @@ import { useRackCapacity } from "./RackCapacityContext";
 import { getCapacityHealth } from "../../utils/capacityForecast";
 import { calculateCapacityHealthScore, getHealthLabel, utilizationColorHex } from "../../utils/capacityHealth";
 import { formatRatioPercent } from "../../utils/rackCapacity";
+import { formatFixedNumber, formatFixedPercentage } from "../../utils/numberFormatBridge";
 
 export const CapacityGauge: React.FC = () => {
   const { lang, metrics, unitCapacityRow } = useRackCapacity();
@@ -62,16 +63,16 @@ export const CapacityGauge: React.FC = () => {
               <Cell fill={color} />
               <Cell fill="#1e293b" />
             </Pie>
-            <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, fontSize: 12 }} formatter={(value: number) => `${value.toFixed(1)}%`} />
+            <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, fontSize: 12 }} formatter={(value: number) => formatFixedPercentage(value, 1)} />
           </PieChart>
         </ResponsiveContainer>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center">
-          <span className="text-3xl font-mono font-semibold" style={{ color }}>{utilization.toFixed(1)}%</span>
+          <span className="text-3xl font-mono font-semibold" style={{ color }}>{formatFixedPercentage(utilization, 1)}</span>
           <span className="text-[10px] uppercase tracking-wide text-slate-500">{getHealthLabel(health, lang)}</span>
         </div>
       </div>
       <p className="text-[11px] text-slate-500 mt-2 font-mono">
-        {lang === "th" ? `คะแนนสุขภาพ (ถ่วงน้ำหนัก): ${healthScore.toFixed(0)}/100` : `Weighted Health Score: ${healthScore.toFixed(0)}/100`}
+        {lang === "th" ? `คะแนนสุขภาพ (ถ่วงน้ำหนัก): ${formatFixedNumber(healthScore, 0)}/100` : `Weighted Health Score: ${formatFixedNumber(healthScore, 0)}/100`}
       </p>
       <p className="text-[11px] text-slate-600 mt-1">
         {unitCapacityRow
