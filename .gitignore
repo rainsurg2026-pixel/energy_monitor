@@ -77,6 +77,13 @@ exports/
 # Live workbook database - not source code
 RST_Dashboard.xlsm
 
+# Operator scratch files holding live DB connection strings / TLS CA certs
+# (never committed - these are pasted in manually for ad-hoc verification).
+.phase7-db-url
+.phase7-supabase-ca.cer
+*.supabase-ca.cer
+*-db-url
+
 # Generated at Vercel build time from the tracked server adapter source.
 /api/runtime.js
 # Portable runtime folders (created beside the exe / project root in dev)
