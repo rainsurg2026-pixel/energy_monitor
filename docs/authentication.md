@@ -182,48 +182,77 @@ management API. Active users receive `403` for that route/API. Deactivation
 and password reset revoke sessions, audit events omit credential material, and
 the last active administrator cannot be deactivated or demoted.
 
-## Architecture decision: divergence from the `mqr-webapp-new` reference
+## Architecture decision: alignment with the `mqr-webapp-new` reference
 
 The web migration's standing instructions name `D:\Project\mqr-webapp-new` as
-the authentication architecture reference, to be reused "whenever possible."
-This section documents why the implementation above diverges from it instead,
-per the same instructions' own requirement to record reason/impact/
-compatibility when reuse isn't followed literally.
+the authentication architecture reference: reuse its design, RBAC model,
+session lifecycle, authorization rules, and security patterns, replacing
+only framework-specific implementation where the target stack genuinely
+requires it. This section records what was ported as-is, what was ported as
+a pattern (same design, different framework-native mechanism), and the one
+piece of the reference architecture with no analog in this app's business
+domain to attach to.
 
-**Reason.** `mqr-webapp-new` is a Next.js 14 App Router application: route
-protection is centralized in Edge Middleware (`middleware.ts`), sessions are
-signed JWTs (`jose`) carrying claims, and RBAC is a 4-tier dealer/branch
-tenancy hierarchy (`SuperAdmin`/`CentralAdmin`/`DealerAdmin`/`DealerUser`).
-Energy Monitor's web build is a Vite + React SPA served by an Express API
-(`server/http/app.ts`) — there is no Next.js middleware layer to port the
-pattern onto, and the desktop source-of-truth app has no dealer/branch
-concept, only two roles (`admin`/`user`) with no per-record tenancy
-(`docs/rbac.md`). Reproducing the mqr pattern literally would mean rebuilding
-the web frontend on a different framework, which the standing "do not
-recreate the application" rule forbids, purely to match an implementation
-detail rather than a security property.
+**Session lifecycle — ported.** Sessions are now signed JWTs (`jose`,
+HS256), matching mqr's `lib/auth.ts`/`middleware.ts` hybrid model exactly:
+the JWT is never trusted as sole authority. It wraps the same opaque session
+secret this app already hashed and stored in `public.sessions.token_hash`
+(`server/auth/sessionJwt.ts`, `server/auth/authService.ts`), so the
+pre-existing DB-backed revocation check — the real authority, exactly as in
+mqr's `user_sessions` design — still runs on every request. The JWT adds a
+fast, stateless signature/expiry check ahead of that lookup and
+self-describes `userId`/`role`, the way mqr's `SessionUser` claims do. The
+signing secret is `SESSION_SECRET` — already present in `server/config/env.ts`
+(32-byte minimum, enforced), previously defined but unwired until now.
+Session revocation itself (`revokeSessionByTokenHash`, `revokeOtherSessions`,
+`revokeAllSessions`, `cleanupExpiredSessions` in `server/auth/repository.ts`)
+already had full parity with mqr's `sessionService.ts` lifecycle before this
+change; only the token *format* changed.
 
-What was built instead achieves the same *security shape* through different
-mechanisms: HttpOnly session cookies backed by a server-side revocable session
-table (opaque tokens hashed at rest, not JWTs — `server/auth/sessionTokens.ts`)
-in place of signed-JWT claims; double-submit CSRF on mutating routes in place
-of a custom header check; Argon2id password hashing in place of scrypt; and a
-centralized `server/authz` permission gate in place of Edge Middleware. Both
-designs share the same properties that actually matter for security review —
-revocable server-side sessions, CSRF-protected mutations, no client-trusted
-identity claims — implemented with the primitives this stack actually has.
+**RBAC model — ported as a pattern.** `server/authz/scope.ts` adds named,
+documented capability predicates (`canManageGlobalSettings`, `canListUsers`,
+`canCreateUsers`, `canAssignRoles`, `canResetPasswords`, etc.), mirroring the
+call-site ergonomics of mqr's `lib/scope.ts` (`canManageUsers`, `canDelete`,
+`canExport`, ...). Each predicate wraps the existing `PERMISSIONS`/
+`ROLE_PERMISSIONS` table in `permissions.ts` rather than duplicating role
+logic — that table remains the single source of truth, now exposed through
+the same named-boundary style mqr uses. `authService.ts`'s user-management
+methods call these predicates via the new `requireScope()` primitive
+(`server/authz/policies.ts`) instead of raw permission-string checks.
 
-**Impact.** No dealer/branch multi-tenancy exists in Energy Monitor's RBAC.
-If a future requirement needs that shape (e.g. per-customer-site scoping
-beyond the existing facility model), it is new design work, not a reuse of
-`mqr-webapp-new`'s `scope.ts`/`authorization.ts` predicates — those are
-written against a tenancy model this app doesn't have.
+**Security patterns — ported where they add something, kept where the
+existing primitive is already the stronger choice.** HttpOnly cookies,
+double-submit CSRF, and centralized `server/authz` route gating already
+matched mqr's design in shape before this change. Argon2id password hashing
+is kept rather than switched to mqr's scrypt: it is a strictly stronger,
+already-verified primitive (Phase 3 test plan), and swapping it would
+invalidate every stored credential for zero security gain — not a framework
+constraint, a deliberate exception to a mechanical port that would make the
+system worse for no reason.
 
-**Compatibility.** Verified independently against this repo's own Phase 3
-test plan (`docs/phase3-test-plan.md`): all Critical and High findings
-(auth boundary wired, RLS-as-defense-in-depth with `energy_monitor_runtime`
-role grants, CORS allowlisting, audit actor identity, rate limiting, live
-integration coverage) are resolved in current code, not just documented as
-intended. This decision accepts the current, independently-verified
-implementation rather than a framework-level rewrite to chase literal
-mqr-webapp-new reuse.
+**Not ported — no framework gap, a business-domain gap.** mqr's
+`authorization.ts` enforces per-record ownership across a 4-tier
+dealer/branch tenancy hierarchy (`SuperAdmin`/`CentralAdmin`/`DealerAdmin`/
+`DealerUser`, `dealerId`/`branchId` scoping). Energy Monitor has two roles
+(`admin`/`user`) and, by explicit documented design, no per-record ownership
+at all — `docs/rbac.md`: "Operational data is shared across authorized
+users. There is no per-user ownership rule." This is not a Next.js-vs-Express
+difference; mqr's tenancy predicates are written against a business concept
+(dealers and branches) this app's domain does not have. Fabricating dealer/
+branch-shaped scoping here would be new, unrequested business logic, not a
+port of an existing rule. If a real per-site tenancy requirement ever
+emerges, it is new design work against Energy Monitor's own facility model,
+using `scope.ts`'s established pattern — not a copy of mqr's dealer/branch
+fields.
+
+**Verification.** All of the above is covered by `server/auth/sessionJwt.test.ts`
+(JWT round-trip, wrong-secret rejection, expiry rejection) and the extended
+`server/authz/authz.test.ts` (every `scope.ts` predicate checked against both
+roles, `requireScope`'s authenticate-then-check-then-throw behavior), on top
+of the pre-existing Phase 3 suite (`npm run test:phase3`, `test:phase35`,
+`test:phase6`) — all passing after this change. Independently verified
+against this repo's own Phase 3 security review (`docs/phase3-test-plan.md`):
+all Critical and High findings (auth boundary wired, RLS-as-defense-in-depth
+with `energy_monitor_runtime` role grants, CORS allowlisting, audit actor
+identity, rate limiting, live integration coverage) remain resolved after
+this change.
