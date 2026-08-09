@@ -78,9 +78,10 @@ export function loadServerConfig(
   const requireMigrationDatabase = options.requireMigrationDatabase ?? false;
   if (requireDatabase && !databaseUrl && !directDatabaseUrl) throw new ConfigurationError("DATABASE_URL or DIRECT_DATABASE_URL is required.");
   if (requireRuntimeDatabase && !databaseUrl) throw new ConfigurationError("DATABASE_URL is required for the API server.");
-  if (requireMigrationDatabase && !directDatabaseUrl) throw new ConfigurationError("DIRECT_DATABASE_URL is required for the migration/admin path.");
+  if (requireMigrationDatabase && !directDatabaseUrl && !databaseUrl) throw new ConfigurationError("DIRECT_DATABASE_URL or DATABASE_URL is required for the migration/admin path.");
   if (hosted && nodeEnv !== "production") throw new ConfigurationError("NODE_ENV=production is required for a hosted server.");
-  const caCertificate = databaseCaCertificate(environment, hosted && requireRuntimeDatabase);
+  const managedMigrationFallback = requireMigrationDatabase && !directDatabaseUrl && Boolean(databaseUrl);
+  const caCertificate = databaseCaCertificate(environment, (hosted && requireRuntimeDatabase) || managedMigrationFallback);
   const appOrigin = environment.APP_ORIGIN?.trim() || "";
   if (hosted && !appOrigin) throw new ConfigurationError("APP_ORIGIN is required for a hosted server.");
   if (hosted && environment.TRUST_PROXY !== "true") throw new ConfigurationError("TRUST_PROXY=true is required for a hosted server.");

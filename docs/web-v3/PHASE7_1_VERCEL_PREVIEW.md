@@ -9,8 +9,9 @@ not duplicate business routes or create a second authorization boundary.
 - `DATABASE_URL` is the server-only Supabase Shared Pooler Transaction Mode
   connection used by the API. The application API remains the authorization
   boundary; browser code never receives this credential.
-- `DIRECT_DATABASE_URL` is for operator-only migrations/bootstrap. It is not
-  read by the Vercel request handler and must not be configured as a browser
+- `DIRECT_DATABASE_URL` is optional for operator-only migrations/bootstrap.
+  When unavailable in development, the same server-only managed `DATABASE_URL`
+  can be used with the verified Supabase CA. Neither value is a browser
   variable.
 - A small `pg.Pool` is created once per warm function instance and reused.
   Runtime startup validates hosted configuration and verified TLS without
@@ -27,7 +28,7 @@ not duplicate business routes or create a second authorization boundary.
 | Variable | Development | Preview | Production |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | Local/runtime database when API is used | Required; development Supabase pooled runtime URL | Not configured by this phase |
-| `DIRECT_DATABASE_URL` | Required only for local migration/bootstrap commands | Not used by the request function | Operator-only, outside this phase |
+| `DIRECT_DATABASE_URL` | Optional direct admin connection for migration/bootstrap commands | Not used by the request function | Operator-only, outside this phase |
 | `NODE_ENV` | `development` or `test` | `production` | `production` |
 | `SESSION_SECRET` | Optional local fallback | Required, server-only, at least 32 characters | Required, server-only |
 | `CSRF_SECRET` | Optional local fallback | Required, server-only, at least 32 characters | Required, server-only |

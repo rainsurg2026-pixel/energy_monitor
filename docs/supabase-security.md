@@ -142,8 +142,10 @@ Vercel runtime never runs migrations on startup.
 No login role password is present in tracked SQL or documentation.
 
 1. Apply migrations and controlled bootstrap/import operations with an
-   operator-only database connection. Keep that credential in an approved
-   secret store and unavailable to browser/build variables.
+   operator-only database connection. A direct admin URL is optional; the
+   server-only managed `DATABASE_URL` is an approved development fallback when
+   used with the verified Supabase CA. Keep either credential unavailable to
+   browser/build variables.
 2. Give Vercel only the server-side `DATABASE_URL` generated from the
    Supabase-managed PostgreSQL connection identity. Never expose it to browser
    code or use a Supabase service-role key in the frontend.
