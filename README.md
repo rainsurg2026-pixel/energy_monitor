@@ -34,6 +34,25 @@ npm run test:excel      # 35-assertion workbook round-trip (VBA/pivot safety)
 npm run test:e2e        # CDP-driven UI walkthrough of the built app
 ```
 
+## Web v3 Preview verification
+
+The web migration (`feat/web-v3`) deploys to Vercel Preview on every push.
+Verify a Preview deployment end-to-end (auth, RBAC, migrated data, read-only
+mode) with:
+
+```bash
+PREVIEW_URL=https://<your-preview-url>.vercel.app \
+DEV_ADMIN_PASSWORD=<value> PREVIEW_UAT_PASSWORD=<value> \
+npm run test:preview-http
+```
+
+or run it in CI via the manually-triggered **Preview Verification** GitHub
+Actions workflow (`.github/workflows/preview-verification.yml`). Full
+environment variable reference, exit codes, and the CI setup steps:
+[`docs/web-v3/PREVIEW_VERIFICATION.md`](docs/web-v3/PREVIEW_VERIFICATION.md).
+Never paste real credential values into a chat, issue, commit, or AI
+assistant — set them directly in your shell or CI secrets store.
+
 ## Documentation
 
 Full docs in [`docs/desktop/`](docs/desktop/README.md): User Guide,

@@ -134,7 +134,7 @@ then:
 
 | # | Check | Ref |
 |---|---|---|
-| 11.1 | `[ ]` `scripts/test-preview-http.ts` run (with real `PREVIEW_URL`/`DEV_ADMIN_PASSWORD`/`DEV_USER_PASSWORD`) passes in full — this is the closest thing to an automated version of sections 1-7 above | `npm run test:preview-http` |
+| 11.1 | `[!]` **Pending External Credentials** — `scripts/test-preview-http.ts` (the closest thing to an automated version of sections 1-7 above) requires `DEV_ADMIN_PASSWORD`/`PREVIEW_UAT_PASSWORD` for the deployed Preview's accounts. Not a code or environment defect: `/api/v1/health`, `/api/v1/readiness` (confirms DB connectivity), and unauthenticated-401 behavior were all confirmed manually against the live Preview without credentials. A human with these passwords must run it per `docs/web-v3/PREVIEW_VERIFICATION.md` and report the result before this item can close. | `npm run test:preview-http`, `docs/web-v3/PREVIEW_VERIFICATION.md` |
 | 11.2 | `[ ]` DB connectivity confirmed via the pooled `DATABASE_URL` path actually used at runtime (not just `DIRECT_DATABASE_URL`, which migration scripts use) | `docs/web-v3/PHASE7_1_VERCEL_PREVIEW.md` |
 | 11.3 | `[ ]` TLS to Supabase verified (`SUPABASE_DB_CA_CERT` present and valid, connections not falling back to unverified TLS) | |
 | 11.4 | `[ ]` Vercel function cold-start time is acceptable (check the first request after a deploy, not just a warm one) | |
