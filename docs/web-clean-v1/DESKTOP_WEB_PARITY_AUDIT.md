@@ -21,7 +21,7 @@ Authoritative Web source:
 
 Preview evidence:
 
-- https://energy-monitor-aiw8z6xlu-dcm15.vercel.app/
+- https://energy-monitor-6lbhqtrt0-dcm15.vercel.app/
 - branch alias: https://energy-monitor-git-feat-web-clean-v1-dcm15.vercel.app
 - /api/v1/health 200
 - /api/v1/readiness 200
