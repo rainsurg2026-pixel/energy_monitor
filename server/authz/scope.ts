@@ -36,6 +36,7 @@ export const canListUsers = (role: Role) => roleHasPermission(role, PERMISSIONS.
 export const canCreateUsers = (role: Role) => roleHasPermission(role, PERMISSIONS.usersCreate);
 export const canUpdateUsers = (role: Role) => roleHasPermission(role, PERMISSIONS.usersUpdate);
 export const canActivateUsers = (role: Role) => roleHasPermission(role, PERMISSIONS.usersActivate);
+export const canDeleteUsers = (role: Role) => roleHasPermission(role, PERMISSIONS.usersDelete);
 export const canAssignRoles = (role: Role) => roleHasPermission(role, PERMISSIONS.rolesAssign);
 export const canResetPasswords = (role: Role) => roleHasPermission(role, PERMISSIONS.passwordsReset);
 

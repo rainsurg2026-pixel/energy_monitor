@@ -140,6 +140,25 @@ export class ApiService {
     };
   }
 
+  /**
+   * Returns only populated, currently-visible rows for the History and export
+   * screens.  The server owns the visibility rule so a browser cannot use an
+   * editor endpoint to enumerate months outside the configured period.
+   */
+  async getHistory(siteId: number): Promise<unknown> {
+    await this.requireSite(siteId);
+    const period = await this.requirePeriod();
+    const availability = await this.availableForSite(siteId, period);
+    const logs = await this.repository.getMonthlyLogs(siteId, availability.availableMonths);
+    return {
+      siteId,
+      displayPeriod: period,
+      formulaVersion: DESKTOP_FORMULA_VERSION,
+      months: availability.availableMonths,
+      logs: logs.sort((left, right) => left.month.localeCompare(right.month))
+    };
+  }
+
   async getDashboard(siteId: number, month: unknown): Promise<unknown> {
     const periods = await this.getPeriods(siteId) as { latestAvailableMonth: string | null };
     const selected = month === undefined || month === null || month === "" ? periods.latestAvailableMonth : month;

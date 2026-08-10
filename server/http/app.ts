@@ -127,6 +127,7 @@ export function createApp(dependencies: AppDependencies) {
   app.get("/api/v1/racks", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.rackRead); sendOk(res, await service.getRacks(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
   app.get("/api/v1/rack-unit-capacity", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.rackRead); sendOk(res, await service.getRackUnit(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
   app.put("/api/v1/sites/:siteId/periods/:month", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.operationalDataWrite); sendOk(res, await service.saveMonthlyLog(parseSiteId(req.params.siteId), req.params.month, req.body, res.locals.requestId, actorNumber(actor.userId))); }));
+  app.get("/api/v1/sites/:siteId/history", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.operationalDataRead); sendOk(res, await service.getHistory(parseSiteId(req.params.siteId))); }));
 
   app.get("/api/v1/admin/users", asyncRoute(async (_req, res) => { const actor = withPermission(res, PERMISSIONS.usersList); sendOk(res, await auth.listUsers(actor)); }));
   app.post("/api/v1/admin/users", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.usersCreate); const body = parseObjectBody(req.body); sendOk(res, await auth.createUser(actor, { username: body.username, displayName: body.display_name, password: body.password, role: parseRole(body.role), active: body.active }, res.locals.requestId)); }));
@@ -134,6 +135,7 @@ export function createApp(dependencies: AppDependencies) {
   app.patch("/api/v1/admin/users/:userId/active", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.usersActivate); const body = parseObjectBody(req.body); if (typeof body.active !== "boolean") throw new HttpError(400, "INVALID_ACTIVE", "active must be boolean."); sendOk(res, await auth.setUserActive(actor, parseUserId(req.params.userId), body.active, res.locals.requestId)); }));
   app.patch("/api/v1/admin/users/:userId/role", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.rolesAssign); const body = parseObjectBody(req.body); sendOk(res, await auth.setUserRole(actor, parseUserId(req.params.userId), parseRole(body.role), res.locals.requestId)); }));
   app.post("/api/v1/admin/users/:userId/password", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.passwordsReset); const body = parseObjectBody(req.body); sendOk(res, await auth.resetUserPassword(actor, parseUserId(req.params.userId), body.password, res.locals.requestId)); }));
+  app.delete("/api/v1/admin/users/:userId", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.usersDelete); await auth.deleteUser(actor, parseUserId(req.params.userId), res.locals.requestId); res.status(204).end(); }));
 
   app.use((_req, _res, next) => next(new HttpError(404, "NOT_FOUND", "The requested API route was not found.")));
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {

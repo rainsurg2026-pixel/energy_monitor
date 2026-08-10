@@ -7,7 +7,7 @@ import { signSessionJwt, verifySessionJwt } from "./sessionJwt";
 import { normalizeUsername, type PasswordPolicy } from "./passwordPolicy";
 import type { AuthenticatedPrincipal, Role } from "../authz";
 import { requireScope, actorIdentityFromPrincipal } from "../authz";
-import { canListUsers, canCreateUsers, canUpdateUsers, canActivateUsers, canAssignRoles, canResetPasswords } from "../authz/scope";
+import { canListUsers, canCreateUsers, canUpdateUsers, canActivateUsers, canDeleteUsers, canAssignRoles, canResetPasswords } from "../authz/scope";
 import { HttpError } from "../errors";
 import type { AuthAccountRecord, AuthRepository, SafeUserRecord } from "./repository";
 
@@ -136,6 +136,11 @@ export class AuthService {
     requireScope(principal, canActivateUsers);
     if (!active && targetUserId === principal.userId) throw new HttpError(409, "SELF_DEACTIVATION_NOT_ALLOWED", "An administrator cannot deactivate the current account.");
     return this.repository.setUserActive(targetUserId, active, principal.userId, correlationId);
+  }
+  async deleteUser(principal: AuthenticatedPrincipal, targetUserId: string, correlationId: string): Promise<void> {
+    requireScope(principal, canDeleteUsers);
+    if (targetUserId === principal.userId) throw new HttpError(409, "SELF_DELETION_NOT_ALLOWED", "An administrator cannot delete the current account.");
+    await this.repository.deleteUser(targetUserId, principal.userId, correlationId);
   }
   async setUserRole(principal: AuthenticatedPrincipal, targetUserId: string, role: Role, correlationId: string): Promise<SafeUserRecord> { requireScope(principal, canAssignRoles); return this.repository.setUserRole(targetUserId, role, principal.userId, correlationId); }
   async resetUserPassword(principal: AuthenticatedPrincipal, targetUserId: string, newPassword: unknown, correlationId: string): Promise<SafeUserRecord> { requireScope(principal, canResetPasswords); const hash = await hashNewPassword(newPassword, this.options.passwordHasher, this.options.passwordPolicy); return this.repository.resetUserPassword(targetUserId, hash, principal.userId, correlationId); }

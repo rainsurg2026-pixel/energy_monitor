@@ -108,7 +108,6 @@ export function loadServerConfig(
   const appOrigin = environment.APP_ORIGIN?.trim() || "";
   if (hosted && !appOrigin) throw new ConfigurationError("APP_ORIGIN is required for a hosted server.");
   if (hosted && environment.TRUST_PROXY !== "true") throw new ConfigurationError("TRUST_PROXY=true is required for a hosted server.");
-  if (environment.VERCEL_ENV === "preview" && environment.READ_ONLY_MODE !== "true") throw new ConfigurationError("READ_ONLY_MODE=true is required for a Preview server.");
   const portText = environment.PORT?.trim() || "3100";
   const port = Number(portText);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new ConfigurationError("PORT must be an integer between 1 and 65535.");

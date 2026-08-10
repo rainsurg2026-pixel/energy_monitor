@@ -95,3 +95,4 @@ logs/
 *.appmeta.json
 DC_Rangsit.xlsm
 DC_Srinakarin.xlsm
+.vercel

@@ -7,6 +7,7 @@ import { assertPasswordPolicy, normalizeUsername } from "./passwordPolicy";
 import { sessionTokenHashesEqual } from "./sessionTokens";
 import { checkSession, createSessionMaterial, revokeSession, touchSession } from "./sessions";
 import type { LocalCredential, SessionRecord } from "./types";
+import { InMemoryAuthRepository } from "./repository";
 
 const TEST_ARGON2_PARAMETERS = { memoryCost: 8 * 1024, timeCost: 1, parallelism: 1, hashLength: 32, saltLength: 16 };
 
@@ -63,4 +64,15 @@ test("login protection locks after the threshold without account-state disclosur
   assert.equal(locked.persistFailureState, true);
   assert.deepEqual(inactive.failure, locked.failure);
   assert.equal(decideLogin({ active: true, failedAttemptCount: locked.failedAttemptCount, lockedUntil: locked.lockedUntil }, true, now, policy).outcome, "rejected");
+});
+
+test("user deletion preserves the active-admin invariant and writes a sanitized audit event", async () => {
+  const repository = new InMemoryAuthRepository();
+  const adminId = repository.seedUser({ username: "admin", normalizedUsername: "admin", displayName: "Admin", passwordHash: "hash", role: "admin" });
+  const userId = repository.seedUser({ username: "user", normalizedUsername: "user", displayName: "User", passwordHash: "hash", role: "user" });
+  await assert.rejects(() => repository.deleteUser(adminId, "99", "test"), { code: "LAST_ADMIN" });
+  await repository.deleteUser(userId, adminId, "test");
+  assert.equal(await repository.findUserById(userId), null);
+  assert.equal(repository.audits.at(-1)?.action, "user_delete");
+  assert.deepEqual(repository.audits.at(-1)?.previousValue, { username: "user", display_name: "User", role: "user", active: true });
 });
