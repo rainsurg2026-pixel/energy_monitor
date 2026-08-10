@@ -2,6 +2,110 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Dashboard + Rack Capacity implementation
+
+Implemented per explicit instruction, Reports & Export explicitly excluded
+from this pass.
+
+**Dashboard - STATIC/API VERIFIED.** CleanWebApp's Dashboard previously
+rendered only the Engineering-equivalent view (`DashboardSummary`) with no
+Executive View and no way to reach it. Added a `DashboardView` wrapper that
+reuses, unmodified, the same Electron-independent shared components Desktop
+uses: `ExecutiveDashboard` (Whole Building vs 4th Floor electricity
+consumption/cost comparison, energy/cost trend via `EngineeringTrendCharts`),
+`SmartInsightPanel`, and `UniversalFilterBar` (Year/Period/Trend/Category/
+UPS Group/Compare - all wired to the shared `ReportContext`, not decorative).
+`Forecast` and `Energy Benchmarking` are **INTENTIONALLY REMOVED**, not a
+gap: `UniversalFilterBar`'s own 4-view tab switcher was hard-coded to
+always show all 4 views with no way to hide any; added an optional
+`reportViews` prop (default: all 4, so Desktop's `App.tsx` call site is
+completely unaffected) and CleanWebApp passes only
+`["executive", "dashboard"]` - no dead tab, no unused route, no orphaned
+component reference anywhere in the Web bundle.
+
+Chart numeric labels (values shown directly, not hover-only): already
+satisfied by reuse, no additional work needed. `TrendLineChart` (used by
+`EngineeringTrendCharts`/`ExecutiveDashboard`) already draws direct SVG
+`<text>` labels via the shared `formatNumber2` formatter.
+`DashboardSummary` (Engineering View) has no chart library at all - it's
+cards/tables, which are inherently always-visible, not hover-gated.
+
+**Light theme contrast - a real, measured defect, fixed.** The
+amber/emerald/purple/rose/sky/teal accent shades used across
+`ExecutiveDashboard`/`SmartInsightPanel`/`UniversalFilterBar`/
+`DashboardSummary` (status highlights, KPI deltas, icons) are tuned for
+dark-theme legibility. Computed real WCAG contrast ratios (OKLCH -> sRGB ->
+relative luminance, not estimated): every one measured 1.1-2.8:1 against
+the light theme's `#f6f1e8` page background - effectively invisible.
+Extended `html.theme-light`'s existing token-remap pattern (the same
+mechanism already used for `--color-slate-*` and `--color-indigo-600/700`)
+with WCAG AA-passing (>=6.3:1, computed) same-hue darker equivalents for
+every shade actually used. Because Tailwind v4's color palette is
+CSS-variable-driven here, this fixes every existing usage of these classes
+app-wide with zero changes to individual components - not a hard-coded
+color in a Dashboard file. New regression test
+(`test:web-clean-v1-theme`) computes and asserts real contrast ratios for
+every added token, not just presence, so a future edit can't silently
+reintroduce unreadable text.
+
+**Rack Capacity and Utilization - STATIC/API VERIFIED, upgraded from
+CONFIRMED GAP.** Root cause (recorded in the earlier session below):
+present at every layer except the Web UI - XLSM sheets, calculation engine
+(`calculateRackCapacityMetrics`/`usagePercent`, both tested), and API
+(`GET /racks`, `GET /rack-unit-capacity`) all existed; CleanWebApp had no
+nav entry, no view, no fetch. Fixed: added a "Rack Capacity" nav entry and
+a read-only `RackCapacityView`.
+- Zone/status: reuses `RackCapacityProvider` + `RackCapacitySummaryCard`
+  (zone table, donut, Zone Heatmap) verbatim - no second calculation
+  implementation. A new `RackCapacityMonthSync` child syncs the context's
+  page-local `reportingMonth` (used only for the Summary Card's header
+  label; Desktop itself doesn't tie it to the app's global Reporting
+  month either - it's genuinely page-local state there too) to the month
+  actually fetched, so the header can never show a different month than
+  the data underneath it.
+- Rack Unit Capacity: a new, smaller summary card rather than reusing
+  `RackUnitCapacitySummary` verbatim - that component needs a 12-month
+  trend chart and a monthly image, neither backed by a bulk-history or
+  image-storage API today. Showing them would mean either hammering the
+  single-month endpoint 12+ times for data it wasn't designed to serve, or
+  a permanently-empty section; documented here as a scope limitation
+  instead of faked. All displayed values (Total/Used/Available/Usage%)
+  come straight from the API's own precomputed output - nothing
+  recomputed or invented in the UI.
+- Deliberately read-only: the API only exposes GET for both endpoints (no
+  create/edit route exists at all), matching the Rack Capacity Editor
+  being explicitly out of scope for Web.
+- Export wiring (`exports.ts`'s `rack: null`) deliberately left untouched
+  - Reports & Export work is excluded from this pass per instruction.
+
+Regression coverage added to `test-api-foundation.ts`: rack records reach
+the DTO with correct derived metrics; a site with no rack snapshot returns
+`null` (not an error, not another site's data) - covers facility
+isolation for this endpoint. 55/55 API assertions pass (up from 53 after
+the UPS History fix). All pre-existing suites (`domain-parity`,
+`rack-capacity-metrics`, `rack-unit-capacity`, `rack-status-config`,
+`display-period`, `air-validation`) still pass unchanged. `npm run lint`
+and `npm run build` both clean throughout.
+
+**Re-affirmed from earlier this session, not re-verified from scratch in
+this pass** (see the relevant sections above/below for original evidence):
+facility context adapter (`normalizeBootstrap`) intact; User Management
+backend (last-admin protection, session revocation, audit logging) intact;
+Data Entry field-driven-per-facility architecture (`meterFields` prop, not
+hardcoded) intact; Rangsit (4 EB air fields) vs Srinakarin (6 EB43/EB44
+fields) facility-specific configuration intact per `test:air-validation`.
+No code changes were needed in these areas this pass because none were
+found broken - re-stating "VERIFIED" here would not be based on new
+evidence, so this session did not re-run live checks against them.
+
+**Still NOT VERIFIED - EXTERNAL BLOCKER** (unchanged): live Supabase
+schema/RLS/row-count verification (MCP still can't see
+`tofdgndrrpnnyhbuurbx`); all live/interactive browser UAT (Chrome
+extension still not connected this session) - Dashboard tab switching,
+Rack Capacity rendering, filter interactivity, and the light theme fix
+are all correct by source/computed-contrast/build evidence, not by having
+been seen rendered in an actual browser.
+
 ## 2026-08-11 follow-up verification
 
 Independently re-verified (not blindly trusted) against current repository
@@ -353,7 +457,10 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
 | Theme | Desktop light/dark setting | Settings-only theme controls, semantic tokens, dark/light visual audit and theme test | PASS | No header theme switcher |
 | Security/RBAC | authenticated workbook operations | auth/security/API tests pass; no service-role key in Clean source | PASS | Supabase connector permission prevents remote RLS audit |
 | Database schema/RLS | workbook data migrated to actual project | local migrations and repository contracts available | BLOCKED | Restore Supabase MCP read permission before schema claims |
-| Rack Capacity/Utilization | dedicated Desktop nav section; XLSM Rack Capacity/Rack Unit Capacity/Rack Capacity History sheets | no nav entry, no view, in CleanWebApp; API routes and calc engine (`calculateRackCapacityMetrics`, `usagePercent`) exist and pass tests but are never called by the frontend; export DTO fields always null | GAP (DESKTOP ONLY) | P1 - build a Rack view wired to the existing `/racks`/`/rack-unit-capacity` endpoints; wire exports once the view exists |
+| Rack Capacity/Utilization | dedicated Desktop nav section; XLSM Rack Capacity/Rack Unit Capacity/Rack Capacity History sheets | Read-only Rack Capacity view added 2026-08-11: nav entry, zone/status via reused `RackCapacitySummaryCard`, Rack Unit Capacity summary via new lightweight card, both fed by the existing API | STATIC/API VERIFIED | Editor (create/edit racks) and Rack Unit Capacity 12-month trend/image remain out of scope - no corresponding API. Export wiring (`rack: null`) deliberately deferred to the Export phase. Live browser UAT NOT VERIFIED |
+| Dashboard - Executive View | Desktop `ExecutiveDashboard` (Whole Building vs 4th Floor electricity/cost comparison, trend) | Added 2026-08-11, component reused verbatim | STATIC/API VERIFIED | Live browser UAT NOT VERIFIED |
+| Dashboard - Engineering View | Desktop `DashboardSummary` (detailed operational KPIs) | Already present, unchanged | PASS (pre-existing) | - |
+| Dashboard - Forecast/Benchmark | Desktop-only `ForecastDashboard`/`BenchmarkDashboard` | Not implemented; `UniversalFilterBar`'s tab switcher restricted to Executive/Engineering only via new `reportViews` prop | INTENTIONAL DIFFERENCE | Not a defect - explicit scope exclusion |
 | API surface | Desktop's per-metric drilldown (Energy/Cost/Electrical pages) | `/dashboard`, `/energy`, `/cost`, `/electrical`, `/periods`, `/sites` are implemented server-side but never called by CleanWebApp (it fetches full history and aggregates client-side instead) | NOT APPLICABLE | Likely legacy from the superseded WebV3App; confirm intentional before ever deleting - not a defect for CleanWebApp today |
 
 ## Priority gates
@@ -383,13 +490,12 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
   `feat/web-v3`~~ Done 2026-08-11: fully untracked (not just repointed) on
   both branches; `feat/web-v3` retired entirely after its two substantive
   changes were ported. See the 2026-08-11 consolidation section above.
-- **Build a Rack Capacity/Utilization view in CleanWebApp**, wired to the
-  already-working `/api/v1/racks` and `/api/v1/rack-unit-capacity`
-  endpoints and the already-tested `calculateRackCapacityMetrics`/
-  `usagePercent` functions. This is the single largest confirmed functional
-  gap versus Desktop. Once built, wire the `rack`/`rackHistory`/
-  `rackUnitCapacity`/`rackComparison` fields in `exports.ts` (currently
-  always null/empty).
+- ~~Build a Rack Capacity/Utilization view in CleanWebApp~~ Done
+  2026-08-11 (read-only zone/status + Rack Unit Capacity summary). Still
+  open: wire the `rack`/`rackHistory`/`rackUnitCapacity`/`rackComparison`
+  fields in `exports.ts` (currently always null/empty) - deferred to the
+  Reports & Export phase, not attempted yet per instruction.
+- ~~Add a Dashboard Executive View~~ Done 2026-08-11.
 
 ### P2
 
