@@ -103,6 +103,14 @@ await withApi(false, async (base, authentication) => {
   const periods = await client.request("/api/v1/periods?siteId=1"); check("periods expose allowed/latest", periods.status === 200 && periods.body.data.latestAvailableMonth === "2026-01" && !periods.body.data.availableMonths.includes("2025-12") && !periods.body.data.availableMonths.includes("2026-12"));
   const energy = await client.request("/api/v1/energy?siteId=1&month=2026-01"); const energyText = JSON.stringify(energy.body); check("hidden previous is used internally", energy.status === 200 && energy.body.data.calculation.airEnergyKwh === 16000000); check("hidden previous is not in DTO", !energyText.includes("2025-12"));
   const rackUnit = await client.request("/api/v1/rack-unit-capacity?siteId=1&month=2026-01"); check("rack unit raw snapshot is exposed with derived metrics", rackUnit.status === 200 && rackUnit.body.data.snapshot.availableU === 50 && rackUnit.body.data.snapshot.usagePercent === 87.5);
+  // Rack Capacity (zone/status): the Web Rack Capacity view was previously
+  // entirely absent, so this endpoint had no caller and no test. Verify the
+  // records reach the DTO with derived metrics, and that a site with no
+  // rack snapshot returns null (not an error) rather than another site's data.
+  const racks = await client.request("/api/v1/racks?siteId=1&month=2026-01");
+  check("rack snapshot is exposed with derived metrics", racks.status === 200 && racks.body.data.snapshot.records.length === 3 && racks.body.data.snapshot.metrics.total === 3 && racks.body.data.snapshot.metrics.inUse.count === 1);
+  const racksEmptySite = await client.request("/api/v1/racks?siteId=2&month=2026-02");
+  check("a site with no rack snapshot returns null, not an error or another site's data", racksEmptySite.status === 200 && racksEmptySite.body.data.snapshot === null);
   const comparison = await client.request("/api/v1/site-comparison"); check("comparison excludes hidden period", comparison.status === 200 && comparison.body.data.months.join(",") === "2026-01,2026-02" && !JSON.stringify(comparison.body).includes("2025-12"));
   // UPS Group History: was previously never fetched at all (no repository
   // method/route existed), so the History screen's UPS tab always showed

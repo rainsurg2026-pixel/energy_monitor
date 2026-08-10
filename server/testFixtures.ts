@@ -36,6 +36,19 @@ export function apiTestRepository(readOnly = false): InMemoryRepository {
     },
     settings: { startMonth: "2026-01", endMonth: "2026-12", rowVersion: 1 },
     rackUnitSnapshots: { "1:2026-01": { month: "2026-01", rowVersion: 1, totalU: 400, usedU: 350 } },
+    rackSnapshots: {
+      "1:2026-01": {
+        month: "2026-01",
+        rowVersion: 1,
+        records: [
+          { rowNumber: 1, rackZone: "Zone A", rackId: "A-01", status: "In Use", cabinetSize: "42U", detail: null, deviceType: "Server", remarks: null },
+          { rowNumber: 2, rackZone: "Zone A", rackId: "A-02", status: "Available", cabinetSize: "42U", detail: null, deviceType: null, remarks: null },
+          { rowNumber: 3, rackZone: "Zone B", rackId: "B-01", status: "Reserved", cabinetSize: "42U", detail: null, deviceType: null, remarks: null }
+        ]
+      }
+      // Site 2 deliberately has no rack snapshot at all - covers the
+      // genuinely-empty-rack-data case.
+    },
     upsGroupHistory: {
       1: [
         // Outside the configured Display Period (starts 2026-01) - must be
