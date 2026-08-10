@@ -31,7 +31,12 @@ const config: ServerConfig = {
   csrfSecret: randomBytes(32).toString("base64url"),
   sessionLifetimeMs: 8 * 60 * 60 * 1000,
   poolMax: 2,
-  readOnlyMode: false
+  readOnlyMode: false,
+  googleClientId: null,
+  googleClientSecret: null,
+  googleRedirectUri: null,
+  googleTokenEncryptionKey: null,
+  googleSuccessRedirect: "http://test/settings/google-sheets"
 };
 
 const pool = new Pool({ connectionString: databaseUrl, ssl: { ca: databaseCaCertificate, rejectUnauthorized: true }, max: 2, connectionTimeoutMillis: 10_000 });

@@ -51,7 +51,10 @@ async function main(): Promise<void> {
   await fs.rm(workDir, { recursive: true, force: true });
   await fs.mkdir(workDir, { recursive: true });
   const target = path.join(workDir, "DC_Rangsit_migration.xlsm");
-  await fs.copyFile(path.join(root, "DC_Rangsit.xlsm"), target);
+  // Root workbooks are current Desktop v2.3.1 working files and may already
+  // have UPS Group History. Migration-on-open must start from a preserved
+  // pre-history workbook, never from a mutable user/source workbook.
+  await fs.copyFile(path.join(root, "backup/2026-07-31_v2.2.0/DC_Rangsit.xlsm"), target);
   const originalBytes = await fs.readFile(target);
 
   const preOpen = await readUpsGroupHistoryFromBuffer(originalBytes);

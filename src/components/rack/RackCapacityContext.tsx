@@ -10,7 +10,7 @@
  * status counting from rackCapacity's calculateRackCapacityMetrics - this
  * module never re-implements any of it.
  */
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { RackCapacitySummary } from "../../reports/reportTypes";
 import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
 import type { RackCapacityHistoryRow } from "../../excel/RackCapacityHistoryWriter";
@@ -53,6 +53,10 @@ export interface RackCapacityContextValue {
 export interface RackCapacityProviderProps {
   lang: "th" | "en";
   facilityName?: string | null;
+  /** Optional Web route seed. Desktop keeps the current-month default; the
+   * Web route seeds the shared context from the month selected in ScopeBar so
+   * every Rack Capacity child renders the same reporting month immediately. */
+  initialReportingMonth?: string;
   rackCapacity: RackCapacitySummary | null;
   rackUnitCapacity: RackUnitCapacityRow[];
   rackCapacityHistory: RackCapacityHistoryRow[];
@@ -64,13 +68,18 @@ const RackCapacityContext = createContext<RackCapacityContextValue | undefined>(
 export const RackCapacityProvider: React.FC<RackCapacityProviderProps> = ({
   lang,
   facilityName = null,
+  initialReportingMonth,
   rackCapacity,
   rackUnitCapacity,
   rackCapacityHistory,
   children
 }) => {
-  const [reportingMonth, setReportingMonth] = useState<string>(() => currentMonth());
+  const [reportingMonth, setReportingMonth] = useState<string>(() => initialReportingMonth ?? currentMonth());
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialReportingMonth) setReportingMonth(initialReportingMonth);
+  }, [initialReportingMonth]);
 
   const metrics = useMemo(() => calculateRackCapacityMetrics(rackCapacity?.records ?? []), [rackCapacity]);
 

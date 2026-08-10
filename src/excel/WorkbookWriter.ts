@@ -2434,7 +2434,7 @@ export async function createBackup(sourcePath: string, backupDir: string, keep: 
 }
 
 /** First mismatching (tab, month, field, intended, actual), or null if every compared field matches. */
-function findLogsMismatch(
+export function findLogsMismatch(
   a: MonthlyLog[],
   b: MonthlyLog[],
   devices: DeviceLists,

@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { loadServerConfig } from "./env";
 import { createOriginPolicy, createCorsMiddleware } from "../http/security/cors";
+import { assertRuntimeDatabaseIdentity } from "../db/pool";
 
 const SECRET = "a".repeat(32);
+const SESSION_SECRET = "s".repeat(32);
+const CSRF_SECRET = "c".repeat(32);
+const TEST_CA_CERTIFICATE = "-----BEGIN CERTIFICATE-----\nVEVTVA==\n-----END CERTIFICATE-----";
 
 /** Minimal environment that satisfies every hosted-Preview validation
  *  branch in loadServerConfig, so these tests isolate origin derivation
@@ -18,8 +22,8 @@ function previewEnvironment(overrides: Record<string, string | undefined> = {}):
     APP_ORIGIN: "https://energy-monitor-abc123-dcm15.vercel.app",
     TRUST_PROXY: "true",
     READ_ONLY_MODE: "true",
-    SESSION_SECRET: SECRET,
-    CSRF_SECRET: SECRET,
+    SESSION_SECRET,
+    CSRF_SECRET,
     DATABASE_URL: "postgres://user:pass@localhost:5432/db",
     ...overrides
   };
@@ -33,7 +37,7 @@ test("a Vercel-hosted deployment trusts its own VERCEL_URL and VERCEL_BRANCH_URL
 
 test("a non-hosted (local) environment does not add any Vercel self-origin", () => {
   const config = loadServerConfig(
-    { NODE_ENV: "development", SESSION_SECRET: SECRET, CSRF_SECRET: SECRET, DATABASE_URL: "postgres://user:pass@localhost:5432/db" },
+    { NODE_ENV: "development", SESSION_SECRET, CSRF_SECRET, DATABASE_URL: "postgres://user:pass@localhost:5432/db" },
     { requireDatabase: false, requireRuntimeDatabase: false }
   );
   assert.deepEqual(config.allowedPreviewOrigins, []);
@@ -72,6 +76,78 @@ test("end-to-end: a request from this deployment's own Preview URL is allowed, a
   const evilRes = mockResponse();
   middleware(mockRequest("https://evil.example"), evilRes, () => { throw new Error("evil origin reached the route"); });
   assert.equal(evilRes.statusCode, 403);
+});
+
+test("hosted configuration rejects a malformed runtime database URL before pool creation", () => {
+  assert.throws(
+    () => loadServerConfig(previewEnvironment({ DATABASE_URL: "not-a-postgres-url" }), { requireDatabase: true, requireRuntimeDatabase: true }),
+    /DATABASE_URL must be a PostgreSQL URL/
+  );
+});
+
+test("hosted runtime requires the Supabase Transaction Pooler and normalizes PEM newlines", () => {
+  const config = loadServerConfig(previewEnvironment({
+    DATABASE_URL: "postgres://user:pass@pooler.example:6543/db",
+    SUPABASE_DB_CA_CERT: TEST_CA_CERTIFICATE.replace(/\n/g, "\\n")
+  }), { requireDatabase: true, requireRuntimeDatabase: true });
+  assert.equal(config.databaseCaCertificate, TEST_CA_CERTIFICATE);
+  assert.throws(
+    () => loadServerConfig(previewEnvironment({
+      DATABASE_URL: "postgres://user:pass@pooler.example:5432/db",
+      SUPABASE_DB_CA_CERT: TEST_CA_CERTIFICATE
+    }), { requireDatabase: true, requireRuntimeDatabase: true }),
+    /Supabase Transaction Pooler port 6543/
+  );
+});
+
+test("hosted configuration rejects identical session and CSRF secrets", () => {
+  assert.throws(
+    () => loadServerConfig(previewEnvironment({ SESSION_SECRET: SECRET, CSRF_SECRET: SECRET }), { requireDatabase: false, requireRuntimeDatabase: false }),
+    /SESSION_SECRET and CSRF_SECRET must be different/
+  );
+});
+
+test("hosted configuration requires explicit Supabase Storage settings when requested", () => {
+  assert.throws(
+    () => loadServerConfig(previewEnvironment(), { requireDatabase: false, requireRuntimeDatabase: false, requireStorage: true }),
+    /SUPABASE_URL is required for hosted Storage/
+  );
+});
+
+test("hosted configuration accepts a complete Storage contract", () => {
+  const config = loadServerConfig(previewEnvironment({
+    SUPABASE_URL: "https://example.supabase.co",
+    SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+    SUPABASE_WORKBOOK_BUCKET: "workbooks",
+    SUPABASE_IMAGE_BUCKET: "rack-unit-images"
+  }), { requireDatabase: false, requireRuntimeDatabase: false, requireStorage: true });
+  assert.equal(config.supabaseUrl, "https://example.supabase.co");
+  assert.equal(config.workbookStorageBucket, "workbooks");
+  assert.equal(config.imageStorageBucket, "rack-unit-images");
+});
+
+test("enabled hosted Google OAuth rejects a non-HTTPS redirect URI", () => {
+  assert.throws(
+    () => loadServerConfig(previewEnvironment({
+      GOOGLE_CLIENT_ID: "client-id",
+      GOOGLE_CLIENT_SECRET: "client-secret",
+      GOOGLE_OAUTH_REDIRECT_URI: "http://example.test/callback",
+      GOOGLE_TOKEN_ENCRYPTION_KEY: SECRET
+    }), { requireDatabase: false, requireRuntimeDatabase: false }),
+    /GOOGLE_OAUTH_REDIRECT_URI must use https/
+  );
+});
+
+test("hosted runtime identity must be a non-bypass energy_monitor_runtime member", () => {
+  assert.doesNotThrow(() => assertRuntimeDatabaseIdentity({ runtime_member: true, bypass_rls: false }));
+  assert.throws(
+    () => assertRuntimeDatabaseIdentity({ runtime_member: true, bypass_rls: true }),
+    /non-bypass member of energy_monitor_runtime/
+  );
+  assert.throws(
+    () => assertRuntimeDatabaseIdentity({ runtime_member: false, bypass_rls: false }),
+    /non-bypass member of energy_monitor_runtime/
+  );
 });
 
 function mockRequest(origin: string) {

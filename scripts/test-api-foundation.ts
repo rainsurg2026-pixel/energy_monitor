@@ -24,7 +24,12 @@ const config = (readOnlyMode = false): ServerConfig => ({
   csrfSecret: "test-csrf-secret-test-csrf-secret-1234",
   sessionLifetimeMs: 8 * 60 * 60 * 1000,
   poolMax: 3,
-  readOnlyMode
+  readOnlyMode,
+  googleClientId: null,
+  googleClientSecret: null,
+  googleRedirectUri: null,
+  googleTokenEncryptionKey: null,
+  googleSuccessRedirect: "http://test/settings/google-sheets"
 });
 let checks = 0;
 function check(name: string, condition: unknown): void { assert.equal(Boolean(condition), true, name); checks++; }
@@ -101,8 +106,12 @@ await withApi(false, async (base, authentication) => {
   const readiness = await json(base, "/api/v1/health/ready"); check("readiness", readiness.status === 200 && readiness.body.data.status === "ready");
   const periods = await client.request("/api/v1/periods?siteId=1"); check("periods expose allowed/latest", periods.status === 200 && periods.body.data.latestAvailableMonth === "2026-01" && !periods.body.data.availableMonths.includes("2025-12") && !periods.body.data.availableMonths.includes("2026-12"));
   const energy = await client.request("/api/v1/energy?siteId=1&month=2026-01"); const energyText = JSON.stringify(energy.body); check("hidden previous is used internally", energy.status === 200 && energy.body.data.calculation.airEnergyKwh === 16000000); check("hidden previous is not in DTO", !energyText.includes("2025-12"));
+  const dashboard = await client.request("/api/v1/dashboard?siteId=1&month=2026-01"); check("dashboard exposes shared engineering snapshot", dashboard.status === 200 && dashboard.body.data.engineeringDashboard?.buildingEnergyKwh === 100000 && Array.isArray(dashboard.body.data.engineeringDashboard?.dcPanels));
   const rackUnit = await client.request("/api/v1/rack-unit-capacity?siteId=1&month=2026-01"); check("rack unit raw snapshot is exposed with derived metrics", rackUnit.status === 200 && rackUnit.body.data.snapshot.availableU === 50 && rackUnit.body.data.snapshot.usagePercent === 87.5);
   const comparison = await client.request("/api/v1/site-comparison"); check("comparison excludes hidden period", comparison.status === 200 && comparison.body.data.months.join(",") === "2026-01,2026-02" && !JSON.stringify(comparison.body).includes("2025-12"));
+  const report = await client.request("/api/v1/reports/all?siteId=1&month=2026-01"); check("Desktop-compatible report endpoint returns rendered HTML", report.status === 200 && report.body.data.formulaVersion === "desktop-v2.3.1" && report.body.data.html.includes("Data Center Energy"));
+  const exportData = await client.request("/api/v1/sites/1/export-data"); check("workbook export endpoint returns scoped monthly and rack data", exportData.status === 200 && exportData.body.data.siteId === 1 && Array.isArray(exportData.body.data.logs) && Array.isArray(exportData.body.data.rackCapacitySnapshots) && Array.isArray(exportData.body.data.rackUnitCapacitySnapshots));
+  const integrity = await client.request("/api/v1/integrity?siteId=1"); check("integrity endpoint returns scoped Postgres findings", integrity.status === 200 && integrity.body.data.siteId === 1 && integrity.body.data.scope === "postgres-monthly-log-projection");
   const invalid = await client.request("/api/v1/energy?siteId=1&month=2026/01"); check("strict month validation", invalid.status === 404 || invalid.status === 400);
   const outside = await client.request("/api/v1/energy?siteId=1&month=2025-12"); check("outside period rejected", outside.status === 404 && outside.body.error?.code === "MONTH_OUTSIDE_DISPLAY_PERIOD");
   const future = await client.request("/api/v1/energy?siteId=1&month=2026-12"); check("future month rejected", future.status === 404 && future.body.error?.code === "MONTH_NOT_AVAILABLE");
@@ -117,9 +126,13 @@ await withApi(false, async (base, authentication) => {
   check("user management response excludes credential internals", !createdUserJson.includes("passwordHash") && !createdUserJson.includes("failedAttemptCount") && !createdUserJson.includes("lockedUntil"));
   const displayName = await client.request(`/api/v1/admin/users/${operatorId}/display-name`, { method: "PATCH", body: JSON.stringify({ display_name: "Renamed Operator" }) }); check("admin can edit display name", displayName.status === 200 && displayName.body.data.displayName === "Renamed Operator");
   const userClient = await login(base, { username: "operator", password: "Correct Horse Battery Staple 456!" });
+  const auditHistory = await client.request("/api/v1/admin/audit?limit=20"); check("admin can read bounded audit history", auditHistory.status === 200 && Array.isArray(auditHistory.body.data));
   const forbiddenAdminRead = await userClient.request("/api/v1/admin/users"); check("user cannot access admin user management", forbiddenAdminRead.status === 403 && forbiddenAdminRead.body.error?.code === "FORBIDDEN");
+  const forbiddenAuditRead = await userClient.request("/api/v1/admin/audit"); check("user cannot read audit history", forbiddenAuditRead.status === 403 && forbiddenAuditRead.body.error?.code === "FORBIDDEN");
+  const deferredWorkbookImport = await userClient.request("/api/v1/sites/1/import-workbook", { method: "POST", body: JSON.stringify({ file_name: "desktop.xlsx", content_base64: "AAAA" }) }); check("deferred workbook import is not exposed by the Web API", deferredWorkbookImport.status === 404 && deferredWorkbookImport.body.error?.code === "NOT_FOUND");
   const forbiddenSettingsWrite = await userClient.request("/api/v1/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: "2026-02", end_month: "2026-03", expected_row_version: 2 }) }); check("user cannot change display period", forbiddenSettingsWrite.status === 403 && forbiddenSettingsWrite.body.error?.code === "FORBIDDEN");
   const forbiddenRoleChange = await userClient.request(`/api/v1/admin/users/${operatorId}/role`, { method: "PATCH", body: JSON.stringify({ role: "admin" }) }); check("user cannot escalate own role", forbiddenRoleChange.status === 403 && forbiddenRoleChange.body.error?.code === "FORBIDDEN");
+  const forbiddenDelete = await userClient.request("/api/v1/admin/users/1", { method: "DELETE" }); check("user cannot delete an account", forbiddenDelete.status === 403 && forbiddenDelete.body.error?.code === "FORBIDDEN");
   const deactivated = await client.request(`/api/v1/admin/users/${operatorId}/active`, { method: "PATCH", body: JSON.stringify({ active: false }) }); check("admin can deactivate user", deactivated.status === 200 && deactivated.body.data.active === false);
   const revokedSession = await userClient.request("/api/v1/settings"); check("deactivation rejects existing session", revokedSession.status === 401);
   const reactivated = await client.request(`/api/v1/admin/users/${operatorId}/active`, { method: "PATCH", body: JSON.stringify({ active: true }) }); check("admin can reactivate user", reactivated.status === 200 && reactivated.body.data.active === true);
@@ -133,8 +146,15 @@ await withApi(false, async (base, authentication) => {
   const demoted = await client.request(`/api/v1/admin/users/${operatorId}/role`, { method: "PATCH", body: JSON.stringify({ role: "user" }) }); check("admin can demote another admin while one remains", demoted.status === 200 && demoted.body.data.role === "user");
   const selfDeactivation = await client.request("/api/v1/admin/users/1/active", { method: "PATCH", body: JSON.stringify({ active: false }) }); check("admin cannot deactivate the current account", selfDeactivation.status === 409 && selfDeactivation.body.error?.code === "SELF_DEACTIVATION_NOT_ALLOWED");
   const lastAdminDemotion = await client.request("/api/v1/admin/users/1/role", { method: "PATCH", body: JSON.stringify({ role: "user" }) }); check("last active admin cannot be demoted", lastAdminDemotion.status === 409 && lastAdminDemotion.body.error?.code === "LAST_ADMIN");
+  const deleted = await client.request(`/api/v1/admin/users/${operatorId}`, { method: "DELETE" }); check("admin can delete a user", deleted.status === 200 && deleted.body.data.deleted === true);
+  const deletedSession = await newPassword.request("/api/v1/settings"); check("user deletion revokes existing sessions", deletedSession.status === 401);
+  const deletedLogin = await login(base, { username: "operator", password: "Correct Horse Battery Staple 789!" }).catch(() => null); check("deleted user cannot log in", deletedLogin === null);
+  const usersAfterDelete = await client.request("/api/v1/admin/users"); check("deleted user is removed from the admin list", usersAfterDelete.status === 200 && !usersAfterDelete.body.data.some((item: { id: string }) => item.id === operatorId));
+  const exportAfterDelete = await client.request("/api/v1/sites/1/export-data"); check("deleting a user preserves energy records", exportAfterDelete.status === 200 && exportAfterDelete.body.data.logs.length === exportData.body.data.logs.length);
+  const deferredWorkbookExport = await client.request("/api/v1/sites/1/export-workbook"); check("deferred source workbook export is not exposed by the Web API", deferredWorkbookExport.status === 404 && deferredWorkbookExport.body.error?.code === "NOT_FOUND");
+  const selfDelete = await client.request("/api/v1/admin/users/1", { method: "DELETE" }); check("admin cannot delete the current account", selfDelete.status === 409 && selfDelete.body.error?.code === "SELF_DELETE_NOT_ALLOWED");
   const auditedActions = authentication.repository.audits.map(audit => audit.action);
-  check("admin user-management actions are audited", ["user_create", "display_name_change", "user_deactivate", "user_activate", "password_reset", "role_change"].every(action => auditedActions.includes(action)));
+  check("admin user-management actions are audited", ["user_create", "display_name_change", "user_deactivate", "user_activate", "password_reset", "role_change", "user_delete"].every(action => auditedActions.includes(action)));
   check("test auth fixture uses the expected admin identity", authentication.admin.username === "admin");
 });
 

@@ -15,7 +15,7 @@
  * vbaProject.bin/pivot tables/charts).
  */
 import JSZip from "jszip";
-import { entryText, getAttr, workbookUsesDate1904 } from "./ExcelZipUtils";
+import { entryText, getAttr, resolveRelationshipTarget, workbookMonthSerial, workbookUsesDate1904 } from "./ExcelZipUtils";
 
 // Excel worksheet names have a hard 31-character limit; "Rack Unit Capacity
 // Image History" (32 chars) exceeds it and made ExcelJS reject the workbook
@@ -251,6 +251,215 @@ export async function readRackUnitCapacityImageHistoryRowsWithNumbers(buffer: Bu
  *  so it can extract every row without re-scanning the sheet per row. */
 export async function readRackUnitCapacityImageHistoryRowImage(zip: JSZip, sheetXmlPath: string, rowNumber: number): Promise<RackUnitCapacityImageHistoryEntry | null> {
   return readRowImage(zip, sheetXmlPath, anchorRowFor(rowNumber));
+}
+
+export interface RackUnitCapacityImageInput {
+  bytes: Buffer;
+  type: "png" | "jpeg";
+  width: number;
+  height: number;
+}
+
+function xmlEscape(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function columnLetter(index: number): string {
+  let value = index;
+  let result = "";
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    result = String.fromCharCode(65 + remainder) + result;
+    value = Math.floor((value - 1) / 26);
+  }
+  return result;
+}
+
+function inlineStringCell(ref: string, value: string): string {
+  return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(value)}</t></is></c>`;
+}
+
+function numberCell(ref: string, value: number): string {
+  return `<c r="${ref}"><v>${value}</v></c>`;
+}
+
+function historyHeaderRow(): string {
+  const headers = ["ReportingMonth", "Facility", "Timestamp", "User", "MimeType", "DataVersion"];
+  return `<row r="1">${headers.map((header, index) => inlineStringCell(`${columnLetter(index + 1)}1`, header)).join("")}</row>`;
+}
+
+function historyRowXml(rowNumber: number, row: RackUnitCapacityImageHistoryRow, date1904: boolean): string {
+  const monthSerial = workbookMonthSerial(row.reportingMonth, date1904);
+  const monthCell = monthSerial === null
+    ? inlineStringCell(`A${rowNumber}`, row.reportingMonth)
+    : numberCell(`A${rowNumber}`, monthSerial);
+  return `<row r="${rowNumber}">${monthCell}${inlineStringCell(`B${rowNumber}`, row.facility)}${inlineStringCell(`C${rowNumber}`, row.timestamp)}${inlineStringCell(`D${rowNumber}`, row.user)}${inlineStringCell(`E${rowNumber}`, row.mimeType)}${numberCell(`F${rowNumber}`, row.dataVersion)}</row>`;
+}
+
+/** Create the legacy image-history worksheet on demand. It is intentionally a
+ * plain worksheet (not an Excel table): the sheet is migration-only and the
+ * drawing part is shared by all month anchors. */
+export async function ensureRackUnitCapacityImageHistorySheet(zip: JSZip): Promise<{ xmlPath: string; created: boolean }> {
+  const existing = await locateRackUnitCapacityImageHistorySheet(zip);
+  if (existing) return { xmlPath: existing, created: false };
+
+  const workbookXml = await entryText(zip, "xl/workbook.xml");
+  const relsXml = await entryText(zip, "xl/_rels/workbook.xml.rels");
+  const contentTypesXml = await entryText(zip, "[Content_Types].xml");
+  if (!workbookXml || !relsXml || !contentTypesXml) throw new Error("Workbook is missing required OOXML registration parts.");
+
+  const sheetIndexes = Object.keys(zip.files)
+    .map(name => name.match(/^xl\/worksheets\/sheet(\d+)\.xml$/)?.[1])
+    .filter(Boolean)
+    .map(Number);
+  const nextSheetIndex = (sheetIndexes.length ? Math.max(...sheetIndexes) : 0) + 1;
+  const xmlPath = `xl/worksheets/sheet${nextSheetIndex}.xml`;
+  const sheetRelsPath = `xl/worksheets/_rels/sheet${nextSheetIndex}.xml.rels`;
+  const sheetIds = [...workbookXml.matchAll(/<sheet\b([^>]*)\/>/g)].map(m => Number(getAttr(m[1], "sheetId"))).filter(Number.isFinite);
+  const nextSheetId = (sheetIds.length ? Math.max(...sheetIds) : 0) + 1;
+  const relIds = [...relsXml.matchAll(/<Relationship\b([^>]*)\/>/g)].map(m => Number((getAttr(m[1], "Id") ?? "rId0").replace("rId", ""))).filter(Number.isFinite);
+  const newRid = `rId${(relIds.length ? Math.max(...relIds) : 0) + 1}`;
+
+  zip.file(xmlPath,
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n` +
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    `<dimension ref="A1:F1"/><sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>` +
+    `<sheetData>${historyHeaderRow()}</sheetData></worksheet>`
+  );
+  zip.file(sheetRelsPath, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`);
+  zip.file("xl/workbook.xml", workbookXml.replace(/<\/sheets>/, `<sheet name="${xmlEscape(RACK_UNIT_CAPACITY_IMAGE_HISTORY_SHEET_NAME)}" sheetId="${nextSheetId}" r:id="${newRid}"/></sheets>`));
+  zip.file("xl/_rels/workbook.xml.rels", relsXml.replace(/<\/Relationships>/, `<Relationship Id="${newRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${nextSheetIndex}.xml"/></Relationships>`));
+  zip.file("[Content_Types].xml", contentTypesXml.replace(/<\/Types>/, `<Override PartName="/${xmlPath}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`));
+  return { xmlPath, created: true };
+}
+
+interface HistoryDrawingPart {
+  drawingPath: string;
+  drawingRelsPath: string;
+  sheetRelsPath: string;
+}
+
+async function ensureHistoryDrawing(zip: JSZip, sheetXmlPath: string): Promise<HistoryDrawingPart> {
+  const sheetFile = sheetXmlPath.replace(/^xl\/worksheets\//, "");
+  const sheetRelsPath = `xl/worksheets/_rels/${sheetFile}.rels`;
+  let sheetRelsXml = (await entryText(zip, sheetRelsPath)) ?? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`;
+  const drawingRelationship = [...sheetRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)].find(m => getAttr(m[1], "Type")?.endsWith("/drawing"));
+  if (drawingRelationship) {
+    const target = getAttr(drawingRelationship[1], "Target");
+    if (target) {
+      const drawingPath = resolveRelationshipTarget("xl/worksheets", target);
+      return { drawingPath, drawingRelsPath: `xl/drawings/_rels/${drawingPath.replace(/^xl\/drawings\//, "")}.rels`, sheetRelsPath };
+    }
+  }
+
+  const drawingIndexes = Object.keys(zip.files).map(name => name.match(/^xl\/drawings\/drawing(\d+)\.xml$/)?.[1]).filter(Boolean).map(Number);
+  const drawingIndex = (drawingIndexes.length ? Math.max(...drawingIndexes) : 0) + 1;
+  const drawingPath = `xl/drawings/drawing${drawingIndex}.xml`;
+  const drawingRelsPath = `xl/drawings/_rels/drawing${drawingIndex}.xml.rels`;
+  const relIds = [...sheetRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)].map(m => Number((getAttr(m[1], "Id") ?? "rId0").replace("rId", ""))).filter(Number.isFinite);
+  const newRid = `rId${(relIds.length ? Math.max(...relIds) : 0) + 1}`;
+  zip.file(drawingPath, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"></xdr:wsDr>`);
+  zip.file(drawingRelsPath, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`);
+  zip.file(sheetRelsPath, sheetRelsXml.replace(/<\/Relationships>/, `<Relationship Id="${newRid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing${drawingIndex}.xml"/></Relationships>`));
+
+  const sheetXml = await entryText(zip, sheetXmlPath);
+  if (!sheetXml) throw new Error(`Missing image-history worksheet part ${sheetXmlPath}.`);
+  const drawingElement = `<drawing r:id="${newRid}"/>`;
+  zip.file(sheetXmlPath, sheetXml.replace("</worksheet>", `${drawingElement}</worksheet>`));
+  const contentTypesXml = await entryText(zip, "[Content_Types].xml");
+  if (contentTypesXml && !contentTypesXml.includes(`PartName="/${drawingPath}"`)) {
+    zip.file("[Content_Types].xml", contentTypesXml.replace(/<\/Types>/, `<Override PartName="/${drawingPath}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/></Types>`));
+  }
+  return { drawingPath, drawingRelsPath, sheetRelsPath };
+}
+
+function nextIndexedPart(zip: JSZip, pattern: RegExp): number {
+  const values = Object.keys(zip.files).map(name => Number(name.match(pattern)?.[1])).filter(Number.isFinite);
+  return (values.length ? Math.max(...values) : 0) + 1;
+}
+
+function imageContentType(type: "png" | "jpeg"): string {
+  return type === "png" ? "image/png" : "image/jpeg";
+}
+
+function historyAnchor(rowNumber: number, image: RackUnitCapacityImageInput, relationshipId: string): string {
+  const cx = Math.max(1, Math.round(image.width)) * EMU_PER_PX;
+  const cy = Math.max(1, Math.round(image.height)) * EMU_PER_PX;
+  return `<xdr:oneCellAnchor><xdr:from><xdr:col>${ANCHOR_COL}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>${anchorRowFor(rowNumber)}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="${cx}" cy="${cy}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${rowNumber}" name="Rack Unit Capacity Image ${rowNumber}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="${relationshipId}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`;
+}
+
+async function upsertHistoryImage(zip: JSZip, sheetXmlPath: string, rowNumber: number, image: RackUnitCapacityImageInput): Promise<void> {
+  const drawing = await ensureHistoryDrawing(zip, sheetXmlPath);
+  const drawingXml = await entryText(zip, drawing.drawingPath);
+  const drawingRelsXml = await entryText(zip, drawing.drawingRelsPath);
+  if (!drawingXml || !drawingRelsXml) throw new Error("Image-history drawing parts are missing.");
+  const anchorRow = anchorRowFor(rowNumber);
+  const anchorMatch = [...drawingXml.matchAll(/<xdr:oneCellAnchor>[\s\S]*?<\/xdr:oneCellAnchor>/g)].find(m => new RegExp(`<xdr:row>${anchorRow}<\\/xdr:row>`).test(m[0]));
+  const existingRid = anchorMatch?.[0].match(/r:embed="([^"]+)"/)?.[1] ?? null;
+  const mediaIndex = nextIndexedPart(zip, /^xl\/media\/image(\d+)\./);
+  const extension = image.type;
+  const mediaPath = `xl/media/image${mediaIndex}.${extension}`;
+  zip.file(mediaPath, image.bytes);
+
+  let relationshipId = existingRid;
+  let patchedRels = drawingRelsXml;
+  let oldMediaPath: string | null = null;
+  if (existingRid) {
+    const existingRel = [...drawingRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)].find(m => getAttr(m[1], "Id") === existingRid);
+    const oldTarget = existingRel ? getAttr(existingRel[1], "Target") : null;
+    if (oldTarget) oldMediaPath = resolveRelationshipTarget("xl/drawings", oldTarget);
+    if (existingRel) patchedRels = drawingRelsXml.replace(existingRel[0], existingRel[0].replace(/Target="[^"]*"/, `Target="../media/image${mediaIndex}.${extension}"`));
+  } else {
+    const ids = [...drawingRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)].map(m => Number((getAttr(m[1], "Id") ?? "rId0").replace("rId", ""))).filter(Number.isFinite);
+    relationshipId = `rId${(ids.length ? Math.max(...ids) : 0) + 1}`;
+    patchedRels = drawingRelsXml.replace(/<\/Relationships>/, `<Relationship Id="${relationshipId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/image${mediaIndex}.${extension}"/></Relationships>`);
+  }
+  zip.file(drawing.drawingRelsPath, patchedRels);
+  if (oldMediaPath && oldMediaPath !== mediaPath && !patchedRels.includes(oldMediaPath.replace(/^xl\//, "../"))) zip.remove(oldMediaPath);
+
+  const replacement = historyAnchor(rowNumber, image, relationshipId!);
+  const patchedDrawing = anchorMatch ? drawingXml.replace(anchorMatch[0], replacement) : drawingXml.replace("</xdr:wsDr>", `${replacement}</xdr:wsDr>`);
+  zip.file(drawing.drawingPath, patchedDrawing);
+
+  const contentTypesXml = await entryText(zip, "[Content_Types].xml");
+  if (contentTypesXml) {
+    let patchedTypes = contentTypesXml;
+    if (!new RegExp(`<Default\\b[^>]*Extension="${extension}"`).test(patchedTypes)) {
+      patchedTypes = patchedTypes.replace(/<\/Types>/, `<Default Extension="${extension}" ContentType="${imageContentType(extension)}"/></Types>`);
+    }
+    zip.file("[Content_Types].xml", patchedTypes);
+  }
+}
+
+/** Insert or replace one image-history row. All month anchors share one
+ * drawing part because OOXML permits only one drawing relationship per sheet. */
+export async function upsertRackUnitCapacityImageHistoryRow(
+  zip: JSZip,
+  sheetXmlPath: string,
+  row: RackUnitCapacityImageHistoryRow,
+  image: RackUnitCapacityImageInput
+): Promise<boolean> {
+  const xml = await entryText(zip, sheetXmlPath);
+  if (!xml) throw new Error(`Image-history worksheet part missing: ${sheetXmlPath}`);
+  const workbookXml = await entryText(zip, "xl/workbook.xml");
+  const date1904 = workbookUsesDate1904(workbookXml ?? "");
+  const sheetDataMatch = xml.match(/<sheetData\s*\/>|<sheetData>([\s\S]*?)<\/sheetData>/);
+  if (!sheetDataMatch) throw new Error("Image-history worksheet has no sheetData.");
+  const existingRows = parseExistingRows(sheetDataMatch[1] ?? "", date1904);
+  const key = rowKey(row.facility, row.reportingMonth);
+  const existing = existingRows.find(item => item.row && rowKey(item.row.facility, item.row.reportingMonth) === key);
+  const rowNumber = existing?.rowNumber ?? Math.max(1, ...existingRows.map(item => item.rowNumber)) + 1;
+  const rows = new Map<number, RackUnitCapacityImageHistoryRow>();
+  for (const item of existingRows) if (item.row) rows.set(item.rowNumber, item.row);
+  rows.set(rowNumber, row);
+  const newSheetData = `<sheetData>${historyHeaderRow()}${[...rows.keys()].sort((a, b) => a - b).map(n => historyRowXml(n, rows.get(n)!, date1904)).join("")}</sheetData>`;
+  const changed = sheetDataMatch[0] !== newSheetData;
+  if (changed) {
+    const lastRow = Math.max(1, ...rows.keys());
+    zip.file(sheetXmlPath, xml.replace(sheetDataMatch[0], newSheetData).replace(/<dimension\s+ref="[^"]*"\s*\/>/, `<dimension ref="A1:F${lastRow}"/>`));
+  }
+  await upsertHistoryImage(zip, sheetXmlPath, rowNumber, image);
+  return true;
 }
 
 /**

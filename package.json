@@ -30,17 +30,34 @@
     "test:rack-capacity-metrics": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-capacity-metrics.ts",
     "test:rack-capacity-write": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-capacity-write.ts",
     "test:rack-capacity-image": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-capacity-image.ts",
+    "test:rack-capacity-image-embed": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-capacity-image-embed.ts",
+    "test:rack-capacity-image-migration": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-capacity-image-migration.ts",
     "test:rack-capacity-history": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-capacity-history.ts",
     "test:image-storage-provider": "node node_modules/tsx/dist/cli.mjs scripts/test-image-storage-provider.ts",
     "test:rack-unit-image-migration": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-unit-image-migration.ts",
     "test:rack-status-config": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-status-config.ts",
     "test:rack-unit-capacity": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-unit-capacity.ts",
+    "test:rack-unit-capacity-image-history": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-unit-capacity-image-history.ts",
     "test:excel": "node node_modules/tsx/dist/cli.mjs scripts/test-excel-roundtrip.ts",
     "test:save-formatting": "node node_modules/tsx/dist/cli.mjs scripts/test-save-formatting-regression.ts",
     "test:energy-cost-dashboard": "node node_modules/tsx/dist/cli.mjs scripts/test-energy-cost-dashboard-fac.ts",
     "test:domain-parity": "node node_modules/tsx/dist/cli.mjs scripts/test-domain-parity.ts",
     "test:migration-tooling": "node node_modules/tsx/dist/cli.mjs scripts/test-migration-tooling.ts",
     "test:api": "node node_modules/tsx/dist/cli.mjs scripts/test-api-foundation.ts",
+    "test:web-reporting": "node node_modules/tsx/dist/cli.mjs scripts/test-web-reporting.ts",
+    "test:web-csv-export": "node node_modules/tsx/dist/cli.mjs scripts/test-web-csv-export.ts",
+    "test:web-report-artifacts": "node node_modules/tsx/dist/cli.mjs scripts/test-web-report-artifacts.ts",
+    "test:web-chromium-renderer": "node node_modules/tsx/dist/cli.mjs scripts/test-web-chromium-renderer.ts",
+    "test:web-workbook-roundtrip": "node node_modules/tsx/dist/cli.mjs scripts/test-web-workbook-roundtrip.ts",
+    "test:web-workbook-integrity": "node node_modules/tsx/dist/cli.mjs scripts/test-web-workbook-integrity.ts",
+    "test:web-google-sheets": "node node_modules/tsx/dist/cli.mjs scripts/test-web-google-sheets.ts",
+    "test:web-workbook-export": "node node_modules/tsx/dist/cli.mjs scripts/test-web-workbook-export.ts",
+    "test:web-import": "node node_modules/tsx/dist/cli.mjs scripts/test-web-import.ts",
+    "test:web-report-history-image": "node node_modules/tsx/dist/cli.mjs scripts/test-web-report-history-image.ts",
+    "test:web-section-save-parity": "node node_modules/tsx/dist/cli.mjs scripts/test-web-section-save-parity.ts",
+    "test:web-editor-parity": "node node_modules/tsx/dist/cli.mjs scripts/test-web-editor-parity.ts",
+    "test:web-history-rack-edit": "node node_modules/tsx/dist/cli.mjs scripts/test-web-history-rack-edit.ts",
+    "test:web-integrity": "node node_modules/tsx/dist/cli.mjs scripts/test-web-integrity.ts",
     "test:phase3": "node --import tsx --test server/auth/authCore.test.ts server/auth/sessionJwt.test.ts server/authz/authz.test.ts server/http/security/security.test.ts server/config/env.test.ts scripts/lib/redactLog.test.ts && npm run test:api",
     "test:phase35": "node node_modules/tsx/dist/cli.mjs scripts/test-phase35.ts",
     "test:phase6": "node node_modules/tsx/dist/cli.mjs scripts/test-phase6.ts",
@@ -95,10 +112,15 @@
     "vite": "^6.2.3"
   },
   "dependencies": {
+    "@sparticuz/chromium": "^149.0.0",
     "argon2": "^0.45.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "jose": "^6.2.8",
-    "pg": "^8.22.0"
+    "pg": "^8.22.0",
+    "puppeteer-core": "^25.5.0"
+  },
+  "overrides": {
+    "uuid": "11.1.1"
   }
 }

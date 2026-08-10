@@ -33,7 +33,7 @@ previous good deployment is not deleted when a new one goes live.
    `git push --force`, never rewrite `main`'s history), state the reason,
    and get it through the same merge policy as any other change once
    validated.
-4. Confirm via `GET /api/v1/health` and `/api/v1/readiness` against the
+4. Confirm via `GET /api/v1/health` and `/api/v1/health/ready` against the
    Production URL that the rolled-back deployment is actually serving
    traffic, not just that the dashboard says so.
 

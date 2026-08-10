@@ -8,7 +8,7 @@ const WebV3App = lazy(() => import('./web/WebV3App.tsx'));
 const webRuntime = window.location.protocol === 'http:' || window.location.protocol === 'https:';
 const path = window.location.pathname.replace(/\/+$/, '') || '/';
 const isWebV3SettingsRoute = webRuntime && (path === '/settings' || path.startsWith('/settings/'));
-const isWebV3ReadRoute = webRuntime && new Set(['/','/login','/dashboard','/energy','/cost','/electrical','/site-comparison','/racks','/rack-units']).has(path);
+const isWebV3ReadRoute = webRuntime && new Set(['/','/login','/dashboard','/energy','/cost','/electrical','/history','/site-comparison','/racks','/rack-units','/reports']).has(path);
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

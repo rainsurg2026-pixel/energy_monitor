@@ -3,6 +3,36 @@ import type { ServerConfig } from "../config/env";
 
 export type DbExecutor = Pick<Pool, "query"> | Pick<PoolClient, "query">;
 
+export interface RuntimeDatabaseIdentityRow {
+  runtime_member: boolean;
+  bypass_rls: boolean;
+}
+
+export class RuntimeDatabaseIdentityError extends Error {
+  readonly code = "RUNTIME_DB_ROLE_INVALID";
+
+  constructor() {
+    super("The runtime database identity must be a non-bypass member of energy_monitor_runtime.");
+    this.name = "RuntimeDatabaseIdentityError";
+  }
+}
+
+export function assertRuntimeDatabaseIdentity(row: RuntimeDatabaseIdentityRow | undefined): void {
+  if (!row || row.runtime_member !== true || row.bypass_rls !== false) throw new RuntimeDatabaseIdentityError();
+}
+
+export async function verifyRuntimeDatabaseIdentity(executor: DbExecutor): Promise<void> {
+  const result = await executor.query<RuntimeDatabaseIdentityRow>(`
+    SELECT
+      pg_has_role(current_user, 'energy_monitor_runtime', 'member') AS runtime_member,
+      COALESCE(
+        (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user),
+        true
+      ) AS bypass_rls
+  `);
+  assertRuntimeDatabaseIdentity(result.rows[0]);
+}
+
 function removeConnectionStringSslOptions(connectionString: string): string {
   const url = new URL(connectionString);
   for (const parameter of ["sslmode", "sslrootcert", "sslcert", "sslkey"]) url.searchParams.delete(parameter);

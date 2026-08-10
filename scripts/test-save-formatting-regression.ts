@@ -12,6 +12,7 @@ import crypto from "node:crypto";
 import { readWorkbookFromFile } from "../src/excel/WorkbookReader";
 import { saveWorkbook } from "../src/excel/WorkbookWriter";
 import { normalizeMonthCell } from "../src/excel/ExcelSchema";
+import { entryText, locateSheetXmlPathByName, workbookMonthSerial, workbookUsesDate1904 } from "../src/excel/ExcelZipUtils";
 import { calculateAverageElectricityRate, calculateEnergyCostForMonth } from "../src/utils/energyCost";
 
 const root = process.cwd();
@@ -106,10 +107,82 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
+/**
+ * The Srinakarin fixture may be left on a different active dashboard month
+ * than this regression test's input month.  Patch only the disposable copy
+ * so WorkbookWriter validates the same month that the test edits, while the
+ * production fixture and its cached formulas remain untouched.
+ */
+function ppc43Average(
+  log: NonNullable<Awaited<ReturnType<typeof readWorkbookFromFile>>["logs"]>[number],
+  id: "PPC 43A" | "PPC 43B",
+  field: "voltage" | "current"
+): number {
+  const values = Object.entries(log.srinakarinInputs?.acPhase ?? {})
+    .filter(([phaseId]) => phaseId.startsWith(`${id} - `))
+    .map(([, value]) => value[field])
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (values.length === 0) throw new Error(`${id} has no finite ${field} values`);
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function replaceNumericCellValue(sheetXml: string, address: string, value: number): string {
+  const marker = `<c r="${address}"`;
+  const start = sheetXml.indexOf(marker);
+  if (start < 0) throw new Error(`Cell ${address} is missing`);
+  const end = sheetXml.indexOf("</c>", start);
+  if (end < 0) throw new Error(`Cell ${address} is not closed`);
+  const cell = sheetXml.slice(start, end + 4);
+  const patched = /<v>[^<]*<\/v>/.test(cell)
+    ? cell.replace(/<v>[^<]*<\/v>/, `<v>${value}</v>`)
+    : cell.replace("</c>", `<v>${value}</v></c>`);
+  return `${sheetXml.slice(0, start)}${patched}${sheetXml.slice(end + 4)}`;
+}
+
+async function setDashboardActiveMonth(
+  file: string,
+  month: string,
+  values: { a: { voltage: number; current: number }; b: { voltage: number; current: number } }
+): Promise<void> {
+  const zip = await JSZip.loadAsync(await fs.readFile(file));
+  const workbookXml = await entryText(zip, "xl/workbook.xml");
+  const sheetPath = await locateSheetXmlPathByName(zip, "Dashboard-FAC");
+  if (!workbookXml || !sheetPath) throw new Error("Dashboard-FAC worksheet could not be located");
+  const sheetXml = await entryText(zip, sheetPath);
+  if (!sheetXml) throw new Error(`Dashboard-FAC worksheet XML is missing: ${sheetPath}`);
+  const serial = workbookMonthSerial(month, workbookUsesDate1904(workbookXml));
+  if (serial === null) throw new Error(`Invalid test month: ${month}`);
+  const cellMatch = sheetXml.match(/<c\b[^>]*\br="H1"[^>]*>[\s\S]*?<\/c>/);
+  if (!cellMatch) throw new Error("Dashboard-FAC active month cell H1 is missing");
+  const patchedCell = cellMatch[0]
+    .replace(/\s+t="[^"]*"/, "")
+    .replace(/(<v>)[^<]*(<\/v>)/, `$1${serial}$2`);
+  if (patchedCell === cellMatch[0]) throw new Error("Dashboard-FAC active month cell H1 has no numeric value");
+  let patchedSheet = sheetXml.replace(cellMatch[0], patchedCell);
+  // Dashboard-FAC stores formula results as cached values.  The source
+  // fixture can have H1 and those cached results on different months, so
+  // synchronize only this disposable copy before exercising saveWorkbook.
+  patchedSheet = replaceNumericCellValue(patchedSheet, "G24", values.a.voltage);
+  patchedSheet = replaceNumericCellValue(patchedSheet, "H24", values.a.current);
+  patchedSheet = replaceNumericCellValue(patchedSheet, "G25", values.b.voltage);
+  patchedSheet = replaceNumericCellValue(patchedSheet, "H25", values.b.current);
+  zip.file(sheetPath, patchedSheet);
+  await fs.writeFile(file, await zip.generateAsync({ type: "nodebuffer" }));
+}
+
 async function runFacility(name: "Rangsit" | "Srinakarin", sourceName: string, sheets: string[]): Promise<void> {
   console.log(`\n${name}`);
   const target = path.join(workDir, `${name}.xlsm`);
   await fs.copyFile(path.join(root, sourceName), target);
+  if (name === "Srinakarin") {
+    const source = await readWorkbookFromFile(target);
+    const sourceLog = source.logs.find(item => item.month === MONTH);
+    if (!sourceLog) throw new Error(`${name} is missing ${MONTH}`);
+    await setDashboardActiveMonth(target, MONTH, {
+      a: { voltage: ppc43Average(sourceLog, "PPC 43A", "voltage"), current: ppc43Average(sourceLog, "PPC 43A", "current") },
+      b: { voltage: ppc43Average(sourceLog, "PPC 43B", "voltage"), current: ppc43Average(sourceLog, "PPC 43B", "current") }
+    });
+  }
   const sourceVba = await vbaHash(target);
   const before = await readWorkbookFromFile(target);
   check(`${name}: source workbook validates`, before.validation.ok, before.validation.errors.join("; "));

@@ -1,5 +1,6 @@
 import type { AirRecord, EnergyCalculationProfile, MonthlyLog, SrinakarinInputSnapshot, UpsRecord } from "../../src/types";
 import { HttpError } from "../errors";
+import type { MonthlySectionKey, RackSnapshotRecord, RackUnitSnapshotRecord } from "../repositories/contracts";
 
 type JsonObject = Record<string, unknown>;
 function object(value: unknown, field: string): JsonObject {
@@ -20,9 +21,27 @@ function nullableText(value: unknown, field: string): string | null {
   if (typeof value !== "string") throw new HttpError(400, "INVALID_BODY", `${field} must be a string or null.`);
   return value;
 }
+function nonNegativeNumber(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new HttpError(400, "INVALID_BODY", `${field} must be a finite non-negative number.`);
+  return value;
+}
 function numberMap(value: unknown, field: string): Record<string, number | null> {
   const source = object(value ?? {}, field);
   return Object.fromEntries(Object.entries(source).map(([key, entry]) => [text(key, `${field} key`), nullableNumber(entry, `${field}.${key}`)]));
+}
+
+const MONTHLY_SECTION_KEYS: readonly MonthlySectionKey[] = ["ups", "air", "dc", "energyCost"];
+
+export function parseSavedSections(value: unknown): MonthlySectionKey[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new HttpError(400, "INVALID_BODY", "changed_sections must be an array.");
+  const sections = value.map((entry, index) => {
+    if (typeof entry !== "string" || !MONTHLY_SECTION_KEYS.includes(entry as MonthlySectionKey)) {
+      throw new HttpError(400, "INVALID_BODY", `changed_sections[${index}] is not a supported monthly section.`);
+    }
+    return entry as MonthlySectionKey;
+  });
+  return [...new Set(sections)];
 }
 function phase(value: unknown, field: string): { voltage: number | null; current: number | null; loadKw: number | null; loadKva: number | null } {
   const source = object(value, field);
@@ -85,6 +104,32 @@ export function parseExpectedRowVersion(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 2147483647) throw new HttpError(400, "INVALID_ROW_VERSION", "expected_row_version must be a PostgreSQL-safe non-negative integer or null.");
   return value;
+}
+
+export function parseRackSnapshotRecords(value: unknown): RackSnapshotRecord["records"] {
+  if (!Array.isArray(value)) throw new HttpError(400, "INVALID_BODY", "records must be an array.");
+  return value.map((entry, index) => {
+    const source = object(entry, `records[${index}]`);
+    const rowNumber = source.rowNumber ?? source.row_number;
+    if (rowNumber !== null && rowNumber !== undefined && (!Number.isSafeInteger(rowNumber) || Number(rowNumber) < 1)) {
+      throw new HttpError(400, "INVALID_BODY", `records[${index}].rowNumber must be a positive integer or null.`);
+    }
+    return {
+      rowNumber: rowNumber === null || rowNumber === undefined ? null : Number(rowNumber),
+      rackZone: nullableText(source.rackZone ?? source.rack_zone, `records[${index}].rackZone`),
+      rackId: nullableText(source.rackId ?? source.rack_id, `records[${index}].rackId`),
+      status: nullableText(source.status, `records[${index}].status`),
+      cabinetSize: nullableText(source.cabinetSize ?? source.cabinet_size, `records[${index}].cabinetSize`),
+      detail: nullableText(source.detail, `records[${index}].detail`),
+      deviceType: nullableText(source.deviceType ?? source.device_type, `records[${index}].deviceType`),
+      remarks: nullableText(source.remarks, `records[${index}].remarks`)
+    };
+  });
+}
+
+export function parseRackUnitSnapshot(value: unknown): Pick<RackUnitSnapshotRecord, "totalU" | "usedU"> {
+  const source = object(value, "rack_unit");
+  return { totalU: nonNegativeNumber(source.totalU ?? source.total_u, "rack_unit.totalU"), usedU: nonNegativeNumber(source.usedU ?? source.used_u, "rack_unit.usedU") };
 }
 
 export function parseProvenance(value: unknown): { sourceType: string; sourceFileHash?: string | null; sourceFileName?: string | null; sourceSheet?: string | null; sourceLocation?: string | null } | undefined {

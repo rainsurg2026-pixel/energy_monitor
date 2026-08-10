@@ -11,7 +11,7 @@ import type { ServerConfig } from "../server/config/env";
 import { apiTestRepository } from "../server/testFixtures";
 
 const hasher = new Argon2idPasswordHasher({ memoryCost: 8 * 1024, timeCost: 1, parallelism: 1, hashLength: 16, saltLength: 16 });
-const config: ServerConfig = { databaseUrl: null, directDatabaseUrl: null, nodeEnv: "test", port: 0, appOrigin: "http://test", allowedOrigins: ["http://test"], allowedPreviewOrigins: [], trustProxy: false, sessionSecret: "test-session-secret-test-session-secret-1234", csrfSecret: "test-csrf-secret-test-csrf-secret-1234", sessionLifetimeMs: 8 * 60 * 60 * 1000, poolMax: 3, readOnlyMode: false };
+const config: ServerConfig = { databaseUrl: null, directDatabaseUrl: null, nodeEnv: "test", port: 0, appOrigin: "http://test", allowedOrigins: ["http://test"], allowedPreviewOrigins: [], trustProxy: false, sessionSecret: "test-session-secret-test-session-secret-1234", csrfSecret: "test-csrf-secret-test-csrf-secret-1234", sessionLifetimeMs: 8 * 60 * 60 * 1000, poolMax: 3, readOnlyMode: false, googleClientId: null, googleClientSecret: null, googleRedirectUri: null, googleTokenEncryptionKey: null, googleSuccessRedirect: "http://test/settings/google-sheets" };
 let assertions = 0;
 function check(name: string, value: unknown): void { assert.equal(Boolean(value), true, name); assertions += 1; }
 function expectStatus(name: string, error: unknown, status: number): void { check(name, error instanceof HttpError && error.status === status); }

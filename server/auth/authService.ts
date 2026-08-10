@@ -7,9 +7,9 @@ import { signSessionJwt, verifySessionJwt } from "./sessionJwt";
 import { normalizeUsername, type PasswordPolicy } from "./passwordPolicy";
 import type { AuthenticatedPrincipal, Role } from "../authz";
 import { requireScope, actorIdentityFromPrincipal } from "../authz";
-import { canListUsers, canCreateUsers, canUpdateUsers, canActivateUsers, canAssignRoles, canResetPasswords } from "../authz/scope";
+import { canListUsers, canCreateUsers, canUpdateUsers, canActivateUsers, canDeleteUsers, canAssignRoles, canResetPasswords, canReadAuditHistory } from "../authz/scope";
 import { HttpError } from "../errors";
-import type { AuthAccountRecord, AuthRepository, SafeUserRecord } from "./repository";
+import type { AuditRecord, AuthAccountRecord, AuthRepository, SafeUserRecord } from "./repository";
 
 export interface AuthServiceOptions {
   readonly passwordHasher: PasswordHasher;
@@ -119,6 +119,7 @@ export class AuthService {
   }
 
   async listUsers(principal: AuthenticatedPrincipal): Promise<SafeUserRecord[]> { requireScope(principal, canListUsers); return this.repository.listUsers(); }
+  async listAuditHistory(principal: AuthenticatedPrincipal, limit = 100): Promise<AuditRecord[]> { requireScope(principal, canReadAuditHistory); return this.repository.listAuditHistory(Math.max(1, Math.min(200, Math.trunc(limit)))); }
   async createUser(principal: AuthenticatedPrincipal, input: { username: unknown; displayName: unknown; password: unknown; role: Role; active?: unknown }, correlationId: string): Promise<SafeUserRecord> {
     requireScope(principal, canCreateUsers);
     const normalizedUsername = normalizeUsername(input.username);
@@ -139,5 +140,10 @@ export class AuthService {
   }
   async setUserRole(principal: AuthenticatedPrincipal, targetUserId: string, role: Role, correlationId: string): Promise<SafeUserRecord> { requireScope(principal, canAssignRoles); return this.repository.setUserRole(targetUserId, role, principal.userId, correlationId); }
   async resetUserPassword(principal: AuthenticatedPrincipal, targetUserId: string, newPassword: unknown, correlationId: string): Promise<SafeUserRecord> { requireScope(principal, canResetPasswords); const hash = await hashNewPassword(newPassword, this.options.passwordHasher, this.options.passwordPolicy); return this.repository.resetUserPassword(targetUserId, hash, principal.userId, correlationId); }
+  async deleteUser(principal: AuthenticatedPrincipal, targetUserId: string, correlationId: string): Promise<void> {
+    requireScope(principal, canDeleteUsers);
+    if (targetUserId === principal.userId) throw new HttpError(409, "SELF_DELETE_NOT_ALLOWED", "An administrator cannot delete the current account.");
+    await this.repository.deleteUser(targetUserId, principal.userId, correlationId);
+  }
   async cleanupExpiredSessions(): Promise<number> { return this.repository.cleanupExpiredSessions(this.now()); }
 }

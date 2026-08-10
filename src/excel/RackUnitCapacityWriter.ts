@@ -144,13 +144,19 @@ function buildRowXml(rowNumber: number, row: RackUnitCapacityRow, styles: RowSty
 /** Parses one existing <row> into a complete row. Understands both a real
  *  Excel-date Month (current format) and inline text (defensive only - this
  *  sheet has no pre-v2.2.3 legacy rows since it did not exist before). */
-function parseFullRow(rawRowXml: string, date1904: boolean): RackUnitCapacityRow | null {
+function parseFullRow(rawRowXml: string, date1904: boolean, sharedStrings: string[]): RackUnitCapacityRow | null {
   const cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
   const cells: Array<string | number | null> = [];
   for (const cellMatch of rawRowXml.matchAll(cellRe)) {
+    const attrs = cellMatch[1];
     const inner = cellMatch[2] ?? null;
     if (!inner) {
       cells.push(null);
+      continue;
+    }
+    if (/\bt="s"/.test(attrs)) {
+      const sharedIndex = inner.match(/<v>(\d+)<\/v>/);
+      cells.push(sharedIndex ? sharedStrings[Number(sharedIndex[1])] ?? null : null);
       continue;
     }
     const t = inner.match(/<t[^>]*>([\s\S]*?)<\/t>/);
@@ -181,15 +187,23 @@ interface ExistingRow {
   row: RackUnitCapacityRow | null;
 }
 
-function parseExistingRows(sheetDataInner: string, date1904: boolean): ExistingRow[] {
+function parseExistingRows(sheetDataInner: string, date1904: boolean, sharedStrings: string[] = []): ExistingRow[] {
   const rows: ExistingRow[] = [];
   const rowRe = /<row\b[^>]*?r="(\d+)"[^>]*?(?:\/>|>[\s\S]*?<\/row>)/g;
   for (const match of sheetDataInner.matchAll(rowRe)) {
     const rowNumber = parseInt(match[1], 10);
     if (rowNumber === 1) continue; // header, always rebuilt fresh
-    rows.push({ rowNumber, row: parseFullRow(match[0], date1904) });
+    rows.push({ rowNumber, row: parseFullRow(match[0], date1904, sharedStrings) });
   }
   return rows;
+}
+
+async function readSharedStrings(zip: JSZip): Promise<string[]> {
+  const xml = await entryText(zip, "xl/sharedStrings.xml");
+  return [...(xml ?? "").matchAll(/<si>([\s\S]*?)<\/si>/g)].map(match => {
+    const text = match[1].match(/<t[^>]*>([\s\S]*?)<\/t>/);
+    return text ? xmlUnescape(text[1]) : "";
+  });
 }
 
 function tableXml(tableId: number, ref: string): string {
@@ -336,10 +350,11 @@ export async function upsertRackUnitCapacityRow(
   if (!sheetDataMatch) throw new Error("Rack Unit Capacity worksheet has no sheetData.");
   const workbookXml = await entryText(zip, "xl/workbook.xml");
   const date1904 = workbookUsesDate1904(workbookXml ?? "");
+  const sharedStrings = await readSharedStrings(zip);
   const styles = await ensureRowStyles(zip);
 
   const inner = sheetDataMatch[1] ?? "";
-  const existingRows = parseExistingRows(inner, date1904);
+  const existingRows = parseExistingRows(inner, date1904, sharedStrings);
   const byKey = new Map(existingRows.filter(r => r.row).map(r => [rowKey(r.row!.month), r]));
 
   let maxRowNumber = existingRows.reduce((max, r) => Math.max(max, r.rowNumber), 1);
@@ -405,9 +420,10 @@ export async function readRackUnitCapacityFromBuffer(buffer: Buffer): Promise<Ra
   if (!xml) return [];
   const workbookXml = await entryText(zip, "xl/workbook.xml");
   const date1904 = workbookUsesDate1904(workbookXml ?? "");
+  const sharedStrings = await readSharedStrings(zip);
   const sheetDataMatch = xml.match(/<sheetData\s*\/>|<sheetData>([\s\S]*?)<\/sheetData>/);
   if (!sheetDataMatch || !sheetDataMatch[1]) return [];
-  return parseExistingRows(sheetDataMatch[1], date1904)
+  return parseExistingRows(sheetDataMatch[1], date1904, sharedStrings)
     .map(r => r.row)
     .filter((row): row is RackUnitCapacityRow => row !== null);
 }
@@ -416,4 +432,3 @@ export async function readRackUnitCapacityFromBuffer(buffer: Buffer): Promise<Ra
 // slot) is now handled generically by RackUnitCapacityImageMigration.ts's
 // readK9Image (shared with the pre-v2.2.3 "Rack Capacity" sheet's identical
 // legacy slot), not duplicated here.
-

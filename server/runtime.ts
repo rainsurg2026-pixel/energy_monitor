@@ -5,7 +5,7 @@ import { AuthService } from "./auth/authService";
 import { PostgresAuthRepository } from "./auth/repository";
 import { loadServerConfig, type ServerConfig } from "./config/env";
 import { PostgresRepository } from "./db/postgresRepository";
-import { createPool } from "./db/pool";
+import { createPool, verifyRuntimeDatabaseIdentity } from "./db/pool";
 import { createApp } from "./http/app";
 import { PostgresRateLimitStore } from "./http/security/rateLimit";
 
@@ -20,10 +20,16 @@ export interface ConfiguredRuntime {
  * this pool; local development owns the same pool until main.ts shuts down.
  */
 export async function createConfiguredRuntime(environment: NodeJS.ProcessEnv = process.env): Promise<ConfiguredRuntime> {
-  const config = loadServerConfig(environment, { requireDatabase: true, requireRuntimeDatabase: true });
+  const config = loadServerConfig(environment, {
+    requireDatabase: true,
+    requireRuntimeDatabase: true,
+  });
   const pool = createPool(config, "runtime");
 
   try {
+    if (config.nodeEnv === "production" || Boolean(environment.VERCEL_ENV?.trim())) {
+      await verifyRuntimeDatabaseIdentity(pool);
+    }
     const passwordHasher = new Argon2idPasswordHasher();
     const authRepository = new PostgresAuthRepository(pool);
     const authService = new AuthService(authRepository, {
@@ -32,9 +38,10 @@ export async function createConfiguredRuntime(environment: NodeJS.ProcessEnv = p
       sessionSecret: config.sessionSecret,
       sessionPolicy: { absoluteLifetimeMs: config.sessionLifetimeMs }
     });
+    const repository = new PostgresRepository(pool);
     const app = createApp({
       config,
-      repository: new PostgresRepository(pool),
+      repository,
       authService,
       rateLimitStore: new PostgresRateLimitStore(pool)
     });

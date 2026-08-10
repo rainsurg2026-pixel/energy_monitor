@@ -17,8 +17,15 @@ Legend: `[ ]` not run · `[x]` passed · `[!]` failed (record the issue) ·
       silently drifted.
 - [ ] `npm run test:phase3`, `test:phase35`, `test:phase6` all pass.
 - [ ] `.env`/Vercel project environment has `DATABASE_URL`, `SESSION_SECRET`,
-      `CSRF_SECRET`, and (Preview only) `READ_ONLY_MODE=true` set — confirm
-      via Vercel dashboard, never by printing secret values.
+      `CSRF_SECRET`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+      `SUPABASE_WORKBOOK_BUCKET`, `SUPABASE_IMAGE_BUCKET`,
+      `SUPABASE_DB_CA_CERT`, and (Preview only)
+      `READ_ONLY_MODE=true` set — confirm via Vercel dashboard, never by
+      printing secret values.
+- [ ] If Google Sheets is enabled, `GOOGLE_CLIENT_ID`,
+      `GOOGLE_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`,
+      `GOOGLE_TOKEN_ENCRYPTION_KEY`, and `GOOGLE_OAUTH_SUCCESS_REDIRECT` are
+      configured together as server-only values.
 
 ## 1. Authentication
 
@@ -67,32 +74,45 @@ Legend: `[ ]` not run · `[x]` passed · `[!]` failed (record the issue) ·
 
 ## 5. Data migration / Excel-origin data integrity
 
-The web app does **not** expose live Excel editing or file upload/download
-today — those remain Desktop-only. What the web app *does* expose is data
-that originated from a one-time Excel-workbook migration into Postgres.
-Verify the migration, not an Excel UI that doesn't exist here:
+The Web app exposes administrator-only workbook import, core export, retained
+source-workbook round-trip export and workbook-level integrity inspection.
+Verify the original OOXML package is returned rather than silently generating
+a weaker replacement workbook:
 
 | # | Check | Ref |
 |---|---|---|
 | 5.1 | `[ ]` `npm run test:migration-tooling` passes (preview-only, no live writes) | |
 | 5.2 | `[ ]` For each migrated site, spot-check 2-3 months of migrated dashboard/energy/cost figures against the source `.xlsm` directly (not just against the API's own domain-parity suite, which tests calculation logic, not migrated data fidelity) | `docs/data-migration.md` |
 | 5.3 | `[ ]` Migration is confirmed idempotent — re-running the importer against an already-migrated source does not duplicate rows (checked by source-hash, not by re-running against Production) | `docs/data-migration.md`'s provenance/hash design |
-| 5.4 | `[-]` Live Excel import re-run against Production — **do not do this casually**; it's a deployment gate of its own (`LIVE_PHASE4_IMPORT_PENDING` in `docs/authentication.md`), not a routine verification step |
+| 5.4 | `[ ]` Administrator-only Web workbook import accepts the approved `.xlsx`/`.xlsm`, validates before commit, records SHA-256 provenance, and a second upload of the same source is idempotent | `POST /api/v1/sites/:siteId/import-workbook`, `/import` |
+| 5.5 | `[ ]` Web XLSX export opens successfully and includes the core Desktop-aligned sheets for the selected site | `GET /api/v1/sites/:siteId/export-data`, `/reports` |
+| 5.6 | `[ ]` Source workbook export returns the retained `.xlsx`/`.xlsm` package with VBA/pivot/chart/drawing members preserved | `GET /api/v1/sites/:siteId/export-workbook`, `test:web-workbook-roundtrip` |
+| 5.7 | `[ ]` Workbook Integrity upload reports Desktop reader validation plus VBA/pivot/chart/drawing/image package evidence | `POST /api/v1/integrity/workbook`, `test:web-workbook-integrity` |
+| 5.8 | `[ ]` Import retains Desktop Rack Capacity History rows and legacy image-history bytes with SHA-256 metadata | `005_rack_history_and_images.sql`, `test:rack-capacity-history`, `test:rack-unit-capacity-image-history`, `test:rack-capacity-image-migration` |
+| 5.9 | `[-]` Live Excel import re-run against Production - **do not do this casually**; use an approved workbook and change window, not a routine verification step | Release/change-window control |
 
 ## 6. Reporting
 
-**Scope note:** report generation (PDF/HTML/Excel export) is a Desktop-only
-capability today (`src/reports/`, `src/reporting/`); the web API has no
-`/reports` or `/export` route (confirmed against `server/http/app.ts`).
-Nothing in this section applies to Production sign-off for Web v3 unless a
-reporting feature actually ships in a route list before that sign-off — if
-so, add its own checklist rows here before relying on this section. Until
-then:
+**Scope note:** Web report generation now has a server-side Chromium artifact
+path for PDF/PNG/ZIP. Preview/Production must still verify hosted Chromium
+availability, report rendering against Desktop screenshots, and the complete
+ZIP contents.
 
 | # | Check | Ref |
 |---|---|---|
-| 6.1 | `[-]` Web report generation — not applicable, feature not present in web build |
-| 6.2 | `[ ]` If the desktop reporting pipeline itself changed in this release cycle, re-run `npm run test:all-report` and `test:report-image-pipeline` before claiming "reports match Desktop" in the release notes | Desktop-only, listed for completeness |
+| 6.1 | `[ ]` `/reports` preview HTML matches the Desktop renderer for an authenticated populated month | `GET /api/v1/reports/all`, `npm run test:web-reporting` |
+| 6.2 | `[ ]` `format=pdf` returns a valid saved PDF artifact and `format=png` returns a valid PNG artifact without a print dialog | `GET /api/v1/reports/all/export`, `test:web-chromium-renderer` |
+| 6.3 | `[ ]` `format=zip` contains the Desktop member contract: PDF, XLSX, Dashboard.png, section CSVs, IntegrityReport.txt and README.txt | `test:web-report-artifacts` |
+| 6.4 | `[ ]` If the Desktop reporting pipeline itself changes in this release cycle, re-run `npm run test:all-report` and `test:report-image-pipeline` before claiming "reports match Desktop" in the release notes | Desktop renderer source |
+| 6.5 | `[ ]` Selected-month Rack Unit Capacity image loads from the authenticated Web route and matches the Desktop image metadata; no other month's image is substituted | `GET /api/v1/rack-unit-capacity-image`, `test:rack-unit-capacity-image-history` |
+
+## 6A. Google Sheets synchronization
+
+| # | Check | Ref |
+|---|---|---|
+| 6A.1 | `[ ]` Server-side OAuth uses PKCE, state is bound to the authenticated Web session, and refresh tokens are encrypted at rest | `/api/v1/google-sheets/auth/*`, `004_google_sheets_oauth.sql` |
+| 6A.2 | `[ ]` Active-month sync, export-all and import-and-persist use the same four-tab diff/patch/read-back verification as Desktop | `/settings/google-sheets`, `src/sheetsService.ts` |
+| 6A.3 | `[ ]` A real approved Google account and test spreadsheet complete OAuth, duplicate guard, sync, import and reconciliation | external Google Cloud OAuth/test spreadsheet |
 
 ## 7. Read-only mode (Preview safety gate)
 
@@ -107,7 +127,7 @@ then:
 |---|---|---|
 | 8.1 | `[ ]` `npm run vercel-build`'s chunk-size warning (`App-*.js` ~900KB gzip ~231KB, as of the last local build) hasn't grown further; if it has, that's worth a note even though it isn't a hard gate | Vite build output |
 | 8.2 | `[ ]` Time-to-interactive for `/dashboard` on a throttled connection (Chrome DevTools "Slow 4G") is reviewed at least once, not assumed acceptable | manual |
-| 8.3 | `[ ]` `/api/v1/health` and `/api/v1/readiness` respond in well under 1s from the deployed region | |
+| 8.3 | `[ ]` `/api/v1/health` and `/api/v1/health/ready` respond in well under 1s from the deployed region | |
 | 8.4 | `[ ]` No N+1-looking pattern when switching months/sites rapidly (watch the Network tab, not just "it feels fine") | manual |
 
 ## 9. Browser / responsive validation
@@ -134,7 +154,7 @@ then:
 
 | # | Check | Ref |
 |---|---|---|
-| 11.1 | `[!]` **Pending External Credentials** — `scripts/test-preview-http.ts` (the closest thing to an automated version of sections 1-7 above) requires `DEV_ADMIN_PASSWORD`/`PREVIEW_UAT_PASSWORD` for the deployed Preview's accounts. Not a code or environment defect: `/api/v1/health`, `/api/v1/readiness` (confirms DB connectivity), and unauthenticated-401 behavior were all confirmed manually against the live Preview without credentials. A human with these passwords must run it per `docs/web-v3/PREVIEW_VERIFICATION.md` and report the result before this item can close. | `npm run test:preview-http`, `docs/web-v3/PREVIEW_VERIFICATION.md` |
+| 11.1 | `[!]` **Pending External Runtime Configuration and Credentials** — `scripts/test-preview-http.ts` requires `DEV_ADMIN_PASSWORD`/`PREVIEW_UAT_PASSWORD` for the deployed Preview's accounts, and the current Preview runtime also fails closed before authentication: `/api/v1/health` returns 200, but `/api/v1/health/ready` and `/api/v1/auth/session` return 503 `reason=configuration`. A human with valid Vercel/Supabase configuration and approved UAT credentials must correct the runtime, run the script and report the result per `docs/web-v3/PREVIEW_VERIFICATION.md`. | `npm run test:preview-http`, `docs/web-v3/PREVIEW_VERIFICATION.md` |
 | 11.2 | `[ ]` DB connectivity confirmed via the pooled `DATABASE_URL` path actually used at runtime (not just `DIRECT_DATABASE_URL`, which migration scripts use) | `docs/web-v3/PHASE7_1_VERCEL_PREVIEW.md` |
 | 11.3 | `[ ]` TLS to Supabase verified (`SUPABASE_DB_CA_CERT` present and valid, connections not falling back to unverified TLS) | |
 | 11.4 | `[ ]` Vercel function cold-start time is acceptable (check the first request after a deploy, not just a warm one) | |

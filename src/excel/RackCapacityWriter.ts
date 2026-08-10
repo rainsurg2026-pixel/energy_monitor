@@ -23,7 +23,9 @@ import { checkWorkbookLock, createBackup, WorkbookError } from "./WorkbookWriter
 import { readRackCapacityFromBuffer } from "../reports/rackCapacityReader";
 import { calculateRackCapacityMetrics } from "../utils/rackCapacity";
 import { patchRackCapacityHistoryBuffer, readRackCapacityHistoryFromBuffer, RackCapacityHistoryRow } from "./RackCapacityHistoryWriter";
-import { locateSheetXmlPathByName } from "./ExcelZipUtils";
+import { entryText as zipEntryText, locateSheetXmlPathByName, resolveRelationshipTarget } from "./ExcelZipUtils";
+import { ensureRackUnitCapacitySheet } from "./RackUnitCapacityWriter";
+import { EMU_PER_PX, embedRackCapacityImage, RackCapacityImageInput } from "./SheetImageWriter";
 
 export const RACK_CAPACITY_SHEET_NAME = "Rack Capacity";
 export const RACK_CAPACITY_TABLE_NAME = "Table7";
@@ -70,6 +72,7 @@ export interface RackCapacityWriteResult {
   buffer: Buffer;
   outcomes: RackFieldChangeOutcome[];
   changedCount: number;
+  imageEmbedded: boolean;
 }
 
 function xmlEscape(text: string): string {
@@ -288,7 +291,8 @@ function readFieldCellValue(cellMatch: RegExpMatchArray | null, sharedStrings: s
  */
 export async function applyRackCapacityFieldChanges(
   original: Buffer,
-  changes: RackFieldChange[]
+  changes: RackFieldChange[],
+  image?: RackCapacityImageInput
 ): Promise<RackCapacityWriteResult> {
   const zip = await JSZip.loadAsync(original);
   const sheetXmlPath = await locateSheetXmlPathByName(zip, RACK_CAPACITY_SHEET_NAME);
@@ -309,6 +313,7 @@ export async function applyRackCapacityFieldChanges(
 
   const outcomes: RackFieldChangeOutcome[] = [];
   let changedCount = 0;
+  let imageEmbedded = false;
   const FIELDS: RackEditableField[] = ["status", "cabinetSize", "detail", "deviceType", "remarks"];
 
   for (const change of changes) {
@@ -409,12 +414,131 @@ export async function applyRackCapacityFieldChanges(
     }
   }
 
+  // Rack Capacity's old K9 image slot was retired in v2.2.3. New uploads go
+  // to the dedicated Rack Unit Capacity sheet so a status edit never shares
+  // a drawing part with a user-uploaded capacity image.
+  if (image) {
+    const { xmlPath } = await ensureRackUnitCapacitySheet(zip);
+    await embedRackCapacityImage(zip, xmlPath, image);
+    imageEmbedded = true;
+  }
+
   const buffer = (await zip.generateAsync({
     type: "nodebuffer",
     compression: "DEFLATE",
     compressionOptions: { level: 6 }
   })) as Buffer;
-  return { buffer, outcomes, changedCount };
+  return { buffer, outcomes, changedCount, imageEmbedded };
+}
+
+interface LegacyRackCapacityImage {
+  bytes: Buffer;
+  type: "png" | "jpeg";
+  width: number;
+  height: number;
+  drawingPath: string;
+}
+
+function imageDrawingPathTarget(target: string): string {
+  return resolveRelationshipTarget("xl/worksheets", target);
+}
+
+/** Read the retired Rack Capacity!K9 drawing without loading the workbook
+ * through ExcelJS. The migration is intentionally limited to the designated
+ * K9 slot; unrelated drawings are not eligible for migration. */
+async function readLegacyRackCapacityImage(zip: JSZip, sheetXmlPath: string): Promise<LegacyRackCapacityImage | null> {
+  const sheetFile = sheetXmlPath.replace(/^xl\/worksheets\//, "");
+  const relsXml = await zipEntryText(zip, `xl/worksheets/_rels/${sheetFile}.rels`);
+  if (!relsXml) return null;
+  const drawingRel = [...relsXml.matchAll(/<Relationship\b([^>]*)\/>/g)].find(m => getAttr(m[1], "Type")?.endsWith("/drawing"));
+  const drawingTarget = drawingRel ? getAttr(drawingRel[1], "Target") : null;
+  if (!drawingTarget) return null;
+  const drawingPath = imageDrawingPathTarget(drawingTarget);
+  const drawingXml = await zipEntryText(zip, drawingPath);
+  if (!drawingXml) return null;
+  const anchor = [...drawingXml.matchAll(/<xdr:oneCellAnchor>[\s\S]*?<\/xdr:oneCellAnchor>/g)].find(m =>
+    /<xdr:from><xdr:col>10<\/xdr:col><xdr:colOff>0<\/xdr:colOff><xdr:row>8<\/xdr:row>/.test(m[0])
+  );
+  if (!anchor) return null;
+  const embedId = anchor[0].match(/r:embed="([^"]+)"/)?.[1];
+  const extent = anchor[0].match(/<xdr:ext\b[^>]*cx="(\d+)"[^>]*cy="(\d+)"/);
+  if (!embedId || !extent) return null;
+
+  const drawingFile = drawingPath.replace(/^xl\/drawings\//, "");
+  const drawingRelsXml = await zipEntryText(zip, `xl/drawings/_rels/${drawingFile}.rels`);
+  if (!drawingRelsXml) return null;
+  const imageRel = [...drawingRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)].find(m => getAttr(m[1], "Id") === embedId);
+  const mediaTarget = imageRel ? getAttr(imageRel[1], "Target") : null;
+  if (!mediaTarget) return null;
+  const mediaPath = resolveRelationshipTarget("xl/drawings", mediaTarget);
+  const media = zip.file(mediaPath);
+  const extension = mediaPath.match(/\.(png|jpe?g)$/i)?.[1].toLowerCase();
+  if (!media || !extension) return null;
+  return {
+    bytes: await media.async("nodebuffer"),
+    type: extension === "png" ? "png" : "jpeg",
+    width: Math.max(1, Math.round(Number(extent[1]) / EMU_PER_PX)),
+    height: Math.max(1, Math.round(Number(extent[2]) / EMU_PER_PX)),
+    drawingPath
+  };
+}
+
+/** Remove only the drawing relationship and media referenced by the retired
+ * Rack Capacity K9 slot. Other worksheet parts and unrelated drawings remain
+ * byte-for-byte untouched. */
+async function removeRackCapacityDrawing(zip: JSZip, sheetXmlPath: string, drawingPath: string): Promise<void> {
+  const sheetFile = sheetXmlPath.replace(/^xl\/worksheets\//, "");
+  const relsPath = `xl/worksheets/_rels/${sheetFile}.rels`;
+  const relsXml = await zipEntryText(zip, relsPath);
+  if (!relsXml) return;
+  const relationship = [...relsXml.matchAll(/<Relationship\b([^>]*)\/>/g)].find(m => {
+    const target = getAttr(m[1], "Target");
+    return getAttr(m[1], "Type")?.endsWith("/drawing") && target && imageDrawingPathTarget(target) === drawingPath;
+  });
+  if (!relationship) return;
+  const rid = getAttr(relationship[1], "Id");
+  const drawingFile = drawingPath.replace(/^xl\/drawings\//, "");
+  const drawingRelsPath = `xl/drawings/_rels/${drawingFile}.rels`;
+  const drawingRelsXml = await zipEntryText(zip, drawingRelsPath);
+  if (drawingRelsXml) {
+    for (const imageRel of drawingRelsXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
+      const mediaTarget = getAttr(imageRel[1], "Target");
+      if (mediaTarget && getAttr(imageRel[1], "Type")?.endsWith("/image")) {
+        zip.remove(resolveRelationshipTarget("xl/drawings", mediaTarget));
+      }
+    }
+  }
+  zip.remove(drawingPath);
+  zip.remove(drawingRelsPath);
+  zip.file(relsPath, relsXml.replace(relationship[0], ""));
+  const sheetXml = await zipEntryText(zip, sheetXmlPath);
+  if (sheetXml && rid) zip.file(sheetXmlPath, sheetXml.replace(new RegExp(`<drawing\\s+r:id="${rid}"\\s*/>`), ""));
+  const contentTypesXml = await zipEntryText(zip, "[Content_Types].xml");
+  if (contentTypesXml) {
+    const escaped = drawingPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    zip.file("[Content_Types].xml", contentTypesXml.replace(new RegExp(`<Override\\s+PartName="/${escaped}"[^>]*\\s*/>`), ""));
+  }
+}
+
+/** Migrate the v2.2.2 Rack Capacity!K9 image to the dedicated Rack Unit
+ * Capacity sheet. This mutates the supplied JSZip so callers can include the
+ * operation in their existing atomic workbook save. A workbook with no
+ * legacy K9 image is a true no-op. */
+export async function migrateRackCapacityImageToUnitCapacity(zip: JSZip): Promise<boolean> {
+  const oldSheetPath = await locateSheetXmlPathByName(zip, RACK_CAPACITY_SHEET_NAME);
+  if (!oldSheetPath) return false;
+  const legacy = await readLegacyRackCapacityImage(zip, oldSheetPath);
+  if (!legacy) return false;
+
+  const { xmlPath } = await ensureRackUnitCapacitySheet(zip);
+  await embedRackCapacityImage(zip, xmlPath, {
+    bytes: legacy.bytes,
+    type: legacy.type,
+    width: legacy.width,
+    height: legacy.height
+  });
+  await removeRackCapacityDrawing(zip, oldSheetPath, legacy.drawingPath);
+  return true;
 }
 
 export interface RackCapacitySaveResult {

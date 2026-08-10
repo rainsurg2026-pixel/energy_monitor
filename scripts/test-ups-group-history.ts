@@ -3,6 +3,7 @@
  * Run: node node_modules/tsx/dist/cli.mjs scripts/test-ups-group-history.ts
  */
 import { promises as fs } from "fs";
+import path from "path";
 import { createHash } from "crypto";
 import JSZip from "jszip";
 import ExcelJS from "exceljs";
@@ -55,6 +56,12 @@ const SRINAKARIN_GROUPS: UpsGroupConfig[] = [
   { name: "PPC 44", ids: ["PPC 44A", "PPC 44B"], capacity: 400 }
 ];
 
+// Current root workbooks are Desktop v2.3.1 working files and already contain
+// the persisted history sheet. Use preserved v2.2.0 workbooks for legacy
+// backfill tests so the test proves migration from the pre-history format and
+// never depends on, or mutates, the user's current source files.
+const LEGACY_FIXTURE_ROOT = path.resolve("backup/2026-07-31_v2.2.0");
+
 async function main(): Promise<void> {
   console.log("UPS Group History persistence checks");
 
@@ -63,9 +70,10 @@ async function main(): Promise<void> {
     ["DC_Srinakarin.xlsm", "srinakarin", SRINAKARIN_GROUPS]
   ] as const) {
     console.log(`\n-- ${facilityId} --`);
-    const original = await fs.readFile(file);
+    const filePath = path.join(LEGACY_FIXTURE_ROOT, file);
+    const original = await fs.readFile(filePath);
     const before = await partHashes(original);
-    const read = await readWorkbookFromFile(file);
+    const read = await readWorkbookFromFile(filePath);
     const logs = read.logs;
 
     // 1. Fresh workbook: sheet does not exist yet.

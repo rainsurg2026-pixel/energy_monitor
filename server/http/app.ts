@@ -5,6 +5,9 @@ import { isHttpError, HttpError } from "../errors";
 import { ApiService } from "../services/apiService";
 import type { BackendRepository } from "../repositories/contracts";
 import { AuthService } from "../auth/authService";
+import { ReportService, type ReportBuildOptions } from "../services/reportService";
+import { ReportArtifactService, type ReportArtifactFormat } from "../services/reportArtifactService";
+import { IntegrityService } from "../services/integrityService";
 import { authContext, createAuthContextMiddleware } from "../auth/http";
 import { PERMISSIONS } from "../authz/permissions";
 import { requirePermission, type AuthenticatedPrincipal, isAuthorizationError, type Role } from "../authz";
@@ -16,6 +19,9 @@ export interface AppDependencies {
   authService: AuthService;
   rateLimitStore?: RateLimitStore;
   service?: ApiService;
+  reportService?: ReportService;
+  reportArtifactService?: ReportArtifactService;
+  integrityService?: IntegrityService;
 }
 
 function requestId(req: Request, res: Response, next: NextFunction): void {
@@ -46,10 +52,28 @@ function principal(res: Response): AuthenticatedPrincipal { return requirePermis
 function withPermission(res: Response, permission: (typeof PERMISSIONS)[keyof typeof PERMISSIONS]): AuthenticatedPrincipal { return requirePermission(authContext(res).principal, permission); }
 function actorNumber(userId: string): number { const value = Number(userId); if (!Number.isSafeInteger(value) || value < 1) throw new HttpError(500, "INVALID_ACTOR", "Authenticated actor identity is invalid."); return value; }
 function parseRole(value: unknown): Role { if (value !== "admin" && value !== "user") throw new HttpError(400, "INVALID_ROLE", "role must be admin or user."); return value; }
+function parseLimit(value: unknown): number { if (value === undefined) return 100; if (typeof value !== "string" || !/^\d+$/.test(value)) throw new HttpError(400, "INVALID_LIMIT", "limit must be a positive integer."); const limit = Number(value); if (!Number.isSafeInteger(limit) || limit < 1 || limit > 200) throw new HttpError(400, "INVALID_LIMIT", "limit must be between 1 and 200."); return limit; }
+function parseReportOptions(query: Request["query"]): ReportBuildOptions {
+  const period = query.period;
+  if (period !== undefined && period !== "current" && period !== "single" && period !== "range" && period !== "history") throw new HttpError(400, "INVALID_REPORT_PERIOD", "period must be current, single, range or history.");
+  const rawSections = query.sections;
+  if (rawSections !== undefined && typeof rawSections !== "string") throw new HttpError(400, "INVALID_REPORT_SECTIONS", "sections must be a comma-separated list.");
+  const allowed = new Set(["executive", "dashboard", "rack-capacity", "rack-unit-capacity", "ups", "air-conditioning", "dc", "historical", "site-comparison", "appendix"]);
+  const sections = typeof rawSections === "string" ? rawSections.split(",").map(item => item.trim()).filter(Boolean) : undefined;
+  if (sections?.some(section => !allowed.has(section))) throw new HttpError(400, "INVALID_REPORT_SECTIONS", "sections contains an unsupported report section.");
+  return { period: period as ReportBuildOptions["period"] | undefined, from: query.from, to: query.to, sections: sections as ReportBuildOptions["sections"] };
+}
+function parseReportFormat(value: unknown): ReportArtifactFormat {
+  if (value !== "pdf") throw new HttpError(400, "INVALID_REPORT_FORMAT", "format must be pdf.");
+  return value;
+}
 
 export function createApp(dependencies: AppDependencies) {
   const app = express();
   const service = dependencies.service ?? new ApiService(dependencies.repository);
+  const reportService = dependencies.reportService ?? new ReportService(dependencies.repository);
+  const integrityService = dependencies.integrityService ?? new IntegrityService(dependencies.repository);
+  const reportArtifactService = dependencies.reportArtifactService ?? new ReportArtifactService(dependencies.repository, reportService, integrityService);
   const auth = dependencies.authService;
   const originPolicy = createOriginPolicy({ allowedOrigins: dependencies.config.allowedOrigins, allowedPreviewOrigins: dependencies.config.allowedPreviewOrigins });
   if (dependencies.config.nodeEnv === "production" && !dependencies.rateLimitStore) throw new Error("A durable rate-limit store is required in production.");
@@ -60,7 +84,9 @@ export function createApp(dependencies: AppDependencies) {
   app.disable("x-powered-by");
   app.use(requestId);
   app.use(createCorsMiddleware(originPolicy, { credentials: true, maxAgeSeconds: 600 }));
-  app.use(express.json({ limit: "1mb" }));
+  // Core data-entry payloads are small JSON documents. Workbook uploads are
+  // intentionally outside the active Web scope and are not accepted here.
+  app.use(express.json({ limit: "2mb" }));
 
   // Health and readiness remain public so load balancers can probe the API.
   app.get("/api/v1/health", asyncRoute(async (_req, res) => sendOk(res, await service.health())));
@@ -124,16 +150,31 @@ export function createApp(dependencies: AppDependencies) {
   app.get("/api/v1/electrical", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.electricalRead); sendOk(res, await service.getElectrical(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
   app.get("/api/v1/sites/:siteId/periods/:month", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.operationalDataRead); sendOk(res, await service.getMonthlyLog(parseSiteId(req.params.siteId), req.params.month)); }));
   app.get("/api/v1/site-comparison", asyncRoute(async (_req, res) => { withPermission(res, PERMISSIONS.siteComparisonRead); sendOk(res, await service.getSiteComparison()); }));
+  app.get("/api/v1/reports/all", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.reportsExport); sendOk(res, await reportService.buildAllReport(parseSiteId(req.query.siteId), req.query.month, parseReportOptions(req.query))); }));
+  app.get("/api/v1/reports/all/export", asyncRoute(async (req, res) => {
+    withPermission(res, PERMISSIONS.reportsExport);
+    const artifact = await reportArtifactService.build(parseSiteId(req.query.siteId), req.query.month, parseReportFormat(req.query.format), parseReportOptions(req.query));
+    res.setHeader("content-type", artifact.contentType);
+    res.setHeader("content-disposition", `attachment; filename*=UTF-8''${encodeURIComponent(artifact.filename)}`);
+    res.setHeader("cache-control", "no-store");
+    res.end(artifact.buffer);
+  }));
+  app.get("/api/v1/integrity", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.operationalDataRead); sendOk(res, await integrityService.buildReport(parseSiteId(req.query.siteId))); }));
+  app.get("/api/v1/sites/:siteId/export-data", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.reportsExport); sendOk(res, await service.getExportData(parseSiteId(req.params.siteId))); }));
+  app.get("/api/v1/historical", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.operationalDataRead); sendOk(res, await service.getHistorical(parseSiteId(req.query.siteId))); }));
   app.get("/api/v1/racks", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.rackRead); sendOk(res, await service.getRacks(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
+  app.put("/api/v1/sites/:siteId/rack-snapshots/:month", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.operationalDataWrite); sendOk(res, await service.saveRackSnapshot(parseSiteId(req.params.siteId), req.params.month, req.body, res.locals.requestId, actorNumber(actor.userId))); }));
   app.get("/api/v1/rack-unit-capacity", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.rackRead); sendOk(res, await service.getRackUnit(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
+  app.put("/api/v1/sites/:siteId/rack-unit-snapshots/:month", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.operationalDataWrite); sendOk(res, await service.saveRackUnitSnapshot(parseSiteId(req.params.siteId), req.params.month, req.body, res.locals.requestId, actorNumber(actor.userId))); }));
   app.put("/api/v1/sites/:siteId/periods/:month", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.operationalDataWrite); sendOk(res, await service.saveMonthlyLog(parseSiteId(req.params.siteId), req.params.month, req.body, res.locals.requestId, actorNumber(actor.userId))); }));
-
   app.get("/api/v1/admin/users", asyncRoute(async (_req, res) => { const actor = withPermission(res, PERMISSIONS.usersList); sendOk(res, await auth.listUsers(actor)); }));
+  app.get("/api/v1/admin/audit", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.auditHistoryRead); sendOk(res, await auth.listAuditHistory(actor, parseLimit(req.query.limit))); }));
   app.post("/api/v1/admin/users", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.usersCreate); const body = parseObjectBody(req.body); sendOk(res, await auth.createUser(actor, { username: body.username, displayName: body.display_name, password: body.password, role: parseRole(body.role), active: body.active }, res.locals.requestId)); }));
   app.patch("/api/v1/admin/users/:userId/display-name", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.usersUpdate); const body = parseObjectBody(req.body); sendOk(res, await auth.setUserDisplayName(actor, parseUserId(req.params.userId), body.display_name, res.locals.requestId)); }));
   app.patch("/api/v1/admin/users/:userId/active", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.usersActivate); const body = parseObjectBody(req.body); if (typeof body.active !== "boolean") throw new HttpError(400, "INVALID_ACTIVE", "active must be boolean."); sendOk(res, await auth.setUserActive(actor, parseUserId(req.params.userId), body.active, res.locals.requestId)); }));
   app.patch("/api/v1/admin/users/:userId/role", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.rolesAssign); const body = parseObjectBody(req.body); sendOk(res, await auth.setUserRole(actor, parseUserId(req.params.userId), parseRole(body.role), res.locals.requestId)); }));
   app.post("/api/v1/admin/users/:userId/password", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.passwordsReset); const body = parseObjectBody(req.body); sendOk(res, await auth.resetUserPassword(actor, parseUserId(req.params.userId), body.password, res.locals.requestId)); }));
+  app.delete("/api/v1/admin/users/:userId", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.usersDelete); await auth.deleteUser(actor, parseUserId(req.params.userId), res.locals.requestId); sendOk(res, { deleted: true }); }));
 
   app.use((_req, _res, next) => next(new HttpError(404, "NOT_FOUND", "The requested API route was not found.")));
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {

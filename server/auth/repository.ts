@@ -59,6 +59,18 @@ export interface AuditInput {
   correlationId: string;
 }
 
+export interface AuditRecord {
+  id: string;
+  actorUserId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  occurredAt: Date;
+  previousValue: unknown;
+  newValue: unknown;
+  correlationId: string;
+}
+
 export interface AuthRepository {
   findLoginByNormalizedUsername(normalizedUsername: string): Promise<AuthLoginRecord | null>;
   findUserById(userId: string): Promise<AuthAccountRecord | null>;
@@ -73,11 +85,13 @@ export interface AuthRepository {
   replacePasswordHash(userId: string, passwordHash: string, changedAt: Date): Promise<void>;
   changePassword(userId: string, passwordHash: string, changedAt: Date, keepSessionId: string | null, actorUserId: string, correlationId: string): Promise<void>;
   listUsers(): Promise<SafeUserRecord[]>;
+  listAuditHistory(limit: number): Promise<AuditRecord[]>;
   createUser(input: CreateUserInput, correlationId: string): Promise<SafeUserRecord>;
   setUserDisplayName(targetUserId: string, displayName: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord>;
   setUserActive(targetUserId: string, active: boolean, actorUserId: string, correlationId: string): Promise<SafeUserRecord>;
   setUserRole(targetUserId: string, role: Role, actorUserId: string, correlationId: string): Promise<SafeUserRecord>;
   resetUserPassword(targetUserId: string, passwordHash: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord>;
+  deleteUser(targetUserId: string, actorUserId: string, correlationId: string): Promise<void>;
   audit(input: AuditInput): Promise<void>;
   countUsers(): Promise<number>;
   cleanupExpiredSessions(now: Date): Promise<number>;
@@ -249,6 +263,11 @@ export class PostgresAuthRepository implements AuthRepository {
     return result.rows.map(row => safeUserFromAccount(accountFromRow(row)));
   }
 
+  async listAuditHistory(limit: number): Promise<AuditRecord[]> {
+    const result = await query<Record<string, unknown>>(this.executor, "SELECT id::text, actor_user_id::text, action, entity_type, entity_id, occurred_at, previous_value, new_value, correlation_id FROM public.audit_events ORDER BY occurred_at DESC, id DESC LIMIT $1", [limit]);
+    return result.rows.map(row => ({ id: String(row.id), actorUserId: row.actor_user_id === null || row.actor_user_id === undefined ? null : String(row.actor_user_id), action: String(row.action), entityType: String(row.entity_type), entityId: String(row.entity_id), occurredAt: requiredDate(row.occurred_at, "occurred_at"), previousValue: row.previous_value ?? null, newValue: row.new_value ?? null, correlationId: String(row.correlation_id) }));
+  }
+
   async createUser(input: CreateUserInput, correlationId: string): Promise<SafeUserRecord> {
     return this.inTransaction(async repository => {
       try {
@@ -326,6 +345,29 @@ export class PostgresAuthRepository implements AuthRepository {
     });
   }
 
+  async deleteUser(targetUserId: string, actorUserId: string, correlationId: string): Promise<void> {
+    await this.inTransaction(async repository => {
+      await query(repository.executor, "SELECT pg_advisory_xact_lock($1::bigint)", [ADMIN_INVARIANT_LOCK_KEY]);
+      const before = await repository.findUserById(targetUserId);
+      if (!before) throw new HttpError(404, "USER_NOT_FOUND", "User was not found.");
+      if (before.active && before.role === "admin") {
+        const admins = await query<Record<string, unknown>>(repository.executor, "SELECT count(*)::int AS count FROM public.users u JOIN public.user_roles ur ON ur.user_id=u.id JOIN public.roles r ON r.id=ur.role_id WHERE u.active AND r.name='admin' AND u.id <> $1::bigint", [targetUserId]);
+        if (Number(admins.rows[0].count) === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain.");
+      }
+      await repository.revokeAllSessions(targetUserId, "user_deleted");
+      await repository.audit({
+        actorUserId,
+        action: "user_delete",
+        entityType: "user",
+        entityId: targetUserId,
+        previousValue: { username: before.username, display_name: before.displayName, role: before.role, active: before.active },
+        newValue: { deleted: true, sessions_revoked: true },
+        correlationId
+      });
+      await query(repository.executor, "DELETE FROM public.users WHERE id = $1::bigint", [targetUserId]);
+    });
+  }
+
   async audit(input: AuditInput): Promise<void> {
     await query(this.executor, `INSERT INTO public.audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2::bigint,$3,$4,$5,$6::jsonb,$7::jsonb,$8)`, [input.actorUserId ? "user" : "system", input.actorUserId, input.action, input.entityId === "unknown" ? "auth" : input.entityType, input.entityId, input.previousValue === undefined ? null : JSON.stringify(scrubAuditValue(input.previousValue)), input.newValue === undefined ? null : JSON.stringify(scrubAuditValue(input.newValue)), input.correlationId]);
   }
@@ -360,11 +402,13 @@ export class InMemoryAuthRepository implements AuthRepository {
   async replacePasswordHash(userId: string, passwordHash: string, changedAt: Date): Promise<void> { const user = this.users.get(userId); if (user) { user.passwordHash = passwordHash; user.passwordChangedAt = changedAt; } }
   async changePassword(userId: string, passwordHash: string, changedAt: Date, keepSessionId: string | null, actorUserId: string, correlationId: string): Promise<void> { await this.replacePasswordHash(userId, passwordHash, changedAt); await this.revokeOtherSessions(userId, keepSessionId, "password_changed"); await this.audit({ actorUserId, action: "PASSWORD_CHANGED", entityType: "user", entityId: userId, correlationId }); await this.audit({ actorUserId, action: "SESSION_REVOKED", entityType: "user", entityId: userId, newValue: { reason: "password_changed" }, correlationId }); }
   async listUsers(): Promise<SafeUserRecord[]> { return [...this.users.values()].sort((a,b) => a.normalizedUsername.localeCompare(b.normalizedUsername)).map(safeUserFromAccount); }
+  async listAuditHistory(limit: number): Promise<AuditRecord[]> { return this.audits.slice(-limit).reverse().map((audit, index) => ({ id: String(this.audits.length - index), actorUserId: audit.actorUserId, action: audit.action, entityType: audit.entityType, entityId: audit.entityId, occurredAt: new Date(), previousValue: audit.previousValue ?? null, newValue: audit.newValue ?? null, correlationId: audit.correlationId })); }
   async createUser(input: CreateUserInput, correlationId: string): Promise<SafeUserRecord> { if ([...this.users.values()].some(user => user.normalizedUsername === input.normalizedUsername)) throw new HttpError(409, "USER_ALREADY_EXISTS", "A user with that username already exists."); const id = this.seedUser({ username: input.username, normalizedUsername: input.normalizedUsername, displayName: input.displayName, passwordHash: input.passwordHash, role: input.role, active: input.active }); await this.audit({ actorUserId: input.actorUserId, action: "user_create", entityType: "user", entityId: id, newValue: { username: input.username, display_name: input.displayName, role: input.role, active: input.active ?? true }, correlationId }); const user = await this.findUserById(id); if (!user) throw new Error("Created user could not be loaded."); return safeUserFromAccount(user); }
   async setUserDisplayName(targetUserId: string, displayName: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); const before = user.displayName; user.displayName = displayName; await this.audit({ actorUserId, action: "display_name_change", entityType: "user", entityId: targetUserId, previousValue: { display_name: before }, newValue: { display_name: displayName }, correlationId }); return safeUserFromAccount(user); }
   async setUserActive(targetUserId: string, active: boolean, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); if (user.active && user.role === "admin" && !active && [...this.users.values()].filter(item => item.active && item.role === "admin" && item.id !== targetUserId).length === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain."); const before = user.active; user.active = active; if (!active) { await this.revokeAllSessions(targetUserId, "user_deactivated"); await this.audit({ actorUserId, action: "SESSION_REVOKED_ALL", entityType: "user", entityId: targetUserId, newValue: { reason: "user_deactivated" }, correlationId }); } await this.audit({ actorUserId, action: active ? "user_activate" : "user_deactivate", entityType: "user", entityId: targetUserId, previousValue: { active: before }, newValue: { active }, correlationId }); return safeUserFromAccount(user); }
   async setUserRole(targetUserId: string, role: Role, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); const before = user.role; if (before === "admin" && role !== "admin" && [...this.users.values()].filter(item => item.active && item.role === "admin" && item.id !== targetUserId).length === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain."); user.role = role; await this.audit({ actorUserId, action: "role_change", entityType: "user", entityId: targetUserId, previousValue: { role: before }, newValue: { role }, correlationId }); return safeUserFromAccount(user); }
   async resetUserPassword(targetUserId: string, passwordHash: string, actorUserId: string, correlationId: string): Promise<SafeUserRecord> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); await this.replacePasswordHash(targetUserId, passwordHash, new Date()); await this.revokeAllSessions(targetUserId, "admin_password_reset"); await this.audit({ actorUserId, action: "SESSION_REVOKED_ALL", entityType: "user", entityId: targetUserId, newValue: { reason: "admin_password_reset" }, correlationId }); await this.audit({ actorUserId, action: "password_reset", entityType: "user", entityId: targetUserId, newValue: { password_changed: true }, correlationId }); return safeUserFromAccount(user); }
+  async deleteUser(targetUserId: string, actorUserId: string, correlationId: string): Promise<void> { const user = this.users.get(targetUserId); if (!user) throw new HttpError(404, "USER_NOT_FOUND", "User was not found."); if (user.active && user.role === "admin" && [...this.users.values()].filter(item => item.active && item.role === "admin" && item.id !== targetUserId).length === 0) throw new HttpError(409, "LAST_ADMIN", "At least one active admin must remain."); await this.revokeAllSessions(targetUserId, "user_deleted"); await this.audit({ actorUserId, action: "user_delete", entityType: "user", entityId: targetUserId, previousValue: { username: user.username, display_name: user.displayName, role: user.role, active: user.active }, newValue: { deleted: true, sessions_revoked: true }, correlationId }); this.users.delete(targetUserId); for (const [id, session] of this.sessions) if (session.userId === targetUserId) this.sessions.delete(id); }
   async audit(input: AuditInput): Promise<void> { this.audits.push({ ...structuredClone(input), previousValue: scrubAuditValue(input.previousValue), newValue: scrubAuditValue(input.newValue) }); }
   async countUsers(): Promise<number> { return this.users.size; }
   async cleanupExpiredSessions(now: Date): Promise<number> { let count = 0; for (const [id, session] of this.sessions) if (session.expiresAt <= now || session.revokedAt) { this.sessions.delete(id); count++; } return count; }

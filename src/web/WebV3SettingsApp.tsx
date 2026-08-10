@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { Check, LockKeyhole, LogOut, Pencil, Plus, ShieldCheck, UserCog, X } from "lucide-react";
+import { Check, FileSpreadsheet, LockKeyhole, LogOut, Pencil, Plus, ScrollText, ShieldCheck, UserCog, X } from "lucide-react";
 import { apiRequest, ApiError, type Role, type SessionUser } from "./apiClient";
+import { formatTimestamp } from "../utils";
 
 interface ManagedUser {
   id: string;
@@ -20,8 +21,7 @@ interface SettingsResponse {
 
 function formatDate(value: string | null): string {
   if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+  return formatTimestamp(new Date(value));
 }
 
 function LoginView({ onAuthenticated }: { onAuthenticated: (user: SessionUser) => void }) {
@@ -98,10 +98,94 @@ function SettingsNav({ user, onLogout }: { user: SessionUser; onLogout: () => Pr
       <nav aria-label="Settings" className="max-w-7xl mx-auto px-6 pb-4 flex flex-wrap gap-2">
         <a href="/settings" className="rounded-xl bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-semibold">General</a>
         <a href="/settings/display-period" className="rounded-xl bg-slate-800 hover:bg-slate-700 px-3 py-2 text-xs font-semibold">Display Period</a>
+        {user.role === "admin" && <a href="/settings/audit" data-testid="settings-audit-nav" className="rounded-xl bg-indigo-600 hover:bg-indigo-500 px-3 py-2 text-xs font-semibold inline-flex items-center gap-1.5"><ScrollText className="w-3.5 h-3.5" /> Audit History</a>}
         {user.role === "admin" && <a href="/settings/users" data-testid="settings-users-nav" className="rounded-xl bg-indigo-600 hover:bg-indigo-500 px-3 py-2 text-xs font-semibold inline-flex items-center gap-1.5"><UserCog className="w-3.5 h-3.5" /> User Management</a>}
       </nav>
     </header>
   );
+}
+
+interface GoogleStatusResponse { connected: boolean; email: string | null; updatedAt: string | null; }
+interface GoogleBootstrap { sites: Array<{ site: { id: number; name: string }; availableMonths: string[]; latestAvailableMonth: string | null }>; }
+
+function GoogleSheetsSettings() {
+  const [status, setStatus] = useState<GoogleStatusResponse | null>(null);
+  const [bootstrap, setBootstrap] = useState<GoogleBootstrap | null>(null);
+  const [spreadsheetId, setSpreadsheetId] = useState(() => localStorage.getItem("energy_monitor_google_spreadsheet_id") ?? "11ODydrVtRwjL3i2MWX6XEw6GSBo_s2guDZsRrVGqBhA");
+  const [siteId, setSiteId] = useState(0);
+  const [month, setMonth] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [nextStatus, nextBootstrap] = await Promise.all([apiRequest<GoogleStatusResponse>("/google-sheets/status"), apiRequest<GoogleBootstrap>("/bootstrap")]);
+      setStatus(nextStatus); setBootstrap(nextBootstrap);
+      const first = nextBootstrap.sites[0];
+      setSiteId(current => current || first?.site.id || 0);
+      setMonth(current => current || first?.latestAvailableMonth || first?.availableMonths.at(-1) || "");
+    } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Google Sheets status could not be loaded."); }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get("googleSheets");
+    if (!result) return;
+    setMessage(result === "connected" ? "Google account connected. Refreshing authorization status." : "Google sign-in did not complete.");
+    window.history.replaceState({}, "", "/settings/google-sheets");
+    void load();
+  }, [load]);
+
+  const selectedSite = bootstrap?.sites.find(item => item.site.id === siteId) ?? bootstrap?.sites[0];
+  const saveSpreadsheetId = (value: string) => { setSpreadsheetId(value); localStorage.setItem("energy_monitor_google_spreadsheet_id", value); };
+  const run = async (name: string, task: () => Promise<string>) => { setBusy(name); setError(null); setMessage(null); try { setMessage(await task()); } catch (cause) { setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : "Google Sheets operation failed."); } finally { setBusy(null); } };
+  const syncMonth = () => run("sync", async () => {
+    const data = await apiRequest<{ log: unknown | null }>(`/sites/${siteId}/periods/${encodeURIComponent(month)}`);
+    if (!data.log) throw new Error("The selected month has no local data to synchronize.");
+    await apiRequest("/google-sheets/sync-month", { method: "POST", body: JSON.stringify({ spreadsheet_id: spreadsheetId, log: data.log }) });
+    return `Google Sheets synchronized for ${month}.`;
+  });
+  const exportAll = () => run("export", async () => {
+    const data = await apiRequest<{ logs: unknown[] }>(`/sites/${siteId}/export-data`);
+    const result = await apiRequest<{ report: unknown | null }>("/google-sheets/export-all", { method: "POST", body: JSON.stringify({ spreadsheet_id: spreadsheetId, logs: data.logs }) });
+    return `Exported ${data.logs.length} month(s) to Google Sheets${result.report ? "; integrity report returned." : "."}`;
+  });
+  const importAll = () => run("import", async () => {
+    const result = await apiRequest<{ logs: unknown[]; persisted: boolean }>("/google-sheets/import-all", { method: "POST", body: JSON.stringify({ spreadsheet_id: spreadsheetId, site_id: siteId, persist: true }) });
+    return `Imported and persisted ${result.logs.length} month(s) from Google Sheets.`;
+  });
+
+  return <section className="max-w-7xl mx-auto px-6 py-8 space-y-6" data-testid="settings-google-sheets"><div><p className="text-xs uppercase tracking-[0.2em] text-indigo-400 font-bold">Settings / Google Sheets</p><h1 className="text-3xl font-semibold mt-2">Google Sheets Core Sync</h1><p className="text-slate-400 mt-2">Server-side OAuth with Desktop-compatible four-tab diff, upload and read-back verification. OAuth tokens never enter the browser.</p></div>{error && <p role="alert" className="text-sm text-rose-200 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3">{error}</p>}{message && <p role="status" className="text-sm text-emerald-200 bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3">{message}</p>}<div className="grid lg:grid-cols-2 gap-5"><article className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4"><div className="flex items-center gap-3"><FileSpreadsheet className="w-6 h-6 text-emerald-300" /><div><h2 className="font-semibold">Connection</h2><p className="text-xs text-slate-500 mt-1">{status?.connected ? `Connected as ${status.email ?? "Google account"}` : "Not connected"}</p></div></div>{status?.connected ? <button type="button" disabled={busy !== null} onClick={() => void run("signout", async () => { await apiRequest("/google-sheets/sign-out", { method: "POST" }); await load(); return "Google account disconnected."; })} className="rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 px-4 py-2.5 text-sm font-semibold">{busy === "signout" ? "Disconnecting…" : "Disconnect"}</button> : <button type="button" onClick={() => { window.location.href = "/api/v1/google-sheets/auth/start"; }} className="rounded-xl bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 text-sm font-semibold">Sign in with Google</button>}</article><article className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4"><h2 className="font-semibold">Spreadsheet and scope</h2><label className="block text-xs text-slate-400">Spreadsheet ID<input value={spreadsheetId} onChange={event => saveSpreadsheetId(event.target.value)} className="field mt-1 w-full" placeholder="Google Spreadsheet ID" /></label><div className="grid sm:grid-cols-2 gap-3"><label className="block text-xs text-slate-400">Site<select value={siteId} onChange={event => { setSiteId(Number(event.target.value)); setMonth(""); }} className="field mt-1 w-full">{bootstrap?.sites.map(item => <option key={item.site.id} value={item.site.id}>{item.site.name}</option>)}</select></label><label className="block text-xs text-slate-400">Month<select value={month} onChange={event => setMonth(event.target.value)} className="field mt-1 w-full"><option value="">Select month</option>{selectedSite?.availableMonths.map(item => <option key={item} value={item}>{item}</option>)}</select></label></div></article></div><article className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-4"><h2 className="font-semibold">Synchronization</h2><p className="text-sm text-slate-400">The selected operation uses the same sheet discovery, duplicate guard, targeted patch and post-write verification as the Desktop application.</p><div className="flex flex-wrap gap-3"><button type="button" disabled={!status?.connected || !siteId || !month || busy !== null} onClick={() => void syncMonth()} className="rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2.5 text-sm font-semibold">{busy === "sync" ? "Syncing…" : "Sync Active Month"}</button><button type="button" disabled={!status?.connected || !siteId || busy !== null} onClick={() => void exportAll()} className="rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-4 py-2.5 text-sm font-semibold">{busy === "export" ? "Exporting…" : "Export All Months"}</button><button type="button" disabled={!status?.connected || !siteId || busy !== null} onClick={() => void importAll()} className="rounded-xl bg-amber-600 hover:bg-amber-500 disabled:opacity-50 px-4 py-2.5 text-sm font-semibold">{busy === "import" ? "Importing…" : "Import and Persist All"}</button></div><p className="text-xs text-slate-500">Import writes through the Web transaction boundary and records Google Sheets provenance. A duplicate or failed read-back stops the operation.</p></article></section>;
+}
+
+interface WorkbookBackup { id: number; sourceFileName: string; sourceFileHash: string; contentType: string; byteSize: number; importedAt: string; isCurrent: boolean; }
+function WorkbookBackupsSettings() {
+  const [siteId, setSiteId] = useState(0);
+  const [sites, setSites] = useState<Array<{ id: number; name: string }>>([]);
+  const [backups, setBackups] = useState<WorkbookBackup[]>([]);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const load = useCallback(async (nextSiteId = 0) => {
+    try {
+      const bootstrap = await apiRequest<{ sites: Array<{ site: { id: number; name: string } }> }>("/bootstrap");
+      const nextSites = bootstrap.sites.map(item => item.site); setSites(nextSites);
+      const activeSiteId = nextSiteId || nextSites[0]?.id || 0; setSiteId(activeSiteId);
+      if (activeSiteId) setBackups(await apiRequest<WorkbookBackup[]>(`/sites/${activeSiteId}/workbook-backups`));
+      setError(null);
+    } catch (cause) { setError(cause instanceof ApiError ? cause.message : "Workbook backups could not be loaded."); }
+  }, []);
+  useEffect(() => { void load(0); }, [load]);
+  const restore = async (backup: WorkbookBackup) => {
+    if (!window.confirm(`Restore ${backup.sourceFileName}? Current workbook data will be replaced transactionally.`)) return;
+    setBusy(backup.id); setError(null); setMessage(null);
+    try { await apiRequest(`/sites/${siteId}/workbook-backups/${backup.id}/restore`, { method: "POST", body: JSON.stringify({}) }); setMessage(`Restored ${backup.sourceFileName} and revalidated the workbook.`); await load(siteId); }
+    catch (cause) { setError(cause instanceof ApiError ? cause.message : "Workbook restore failed."); }
+    finally { setBusy(null); }
+  };
+  return <section className="max-w-7xl mx-auto px-6 py-8 space-y-6" data-testid="settings-workbook-backups"><div><p className="text-xs uppercase tracking-[0.2em] text-indigo-400 font-bold">Settings / Workbook Backups</p><h1 className="text-3xl font-semibold mt-2">Workbook Backup and Recovery</h1><p className="text-slate-400 mt-2">Retained source workbooks are immutable, SHA-256 verified and restorable through the same validation and transaction pipeline as import.</p></div>{error && <p role="alert" className="text-sm text-rose-200 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3">{error}</p>}{message && <p role="status" className="text-sm text-emerald-200 bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3">{message}</p>}<div className="flex flex-wrap items-end gap-3"><label className="text-xs text-slate-400">Site<select value={siteId} onChange={event => { const next = Number(event.target.value); setSiteId(next); void load(next); }} className="field mt-1"><option value={0}>Select site</option>{sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label><button type="button" onClick={() => void load(siteId)} className="rounded-xl bg-slate-800 hover:bg-slate-700 px-4 py-2.5 text-sm font-semibold">Refresh</button></div><div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden"><div className="overflow-x-auto"><table className="min-w-[900px] w-full text-sm"><thead className="bg-slate-950/80 text-left text-xs text-slate-400 uppercase tracking-wider"><tr><th className="px-4 py-3">Workbook</th><th className="px-4 py-3">Imported</th><th className="px-4 py-3">SHA-256</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Action</th></tr></thead><tbody className="divide-y divide-slate-800">{backups.map(backup => <tr key={backup.id}><td className="px-4 py-4 font-semibold">{backup.sourceFileName}<p className="text-xs text-slate-500 mt-1">{backup.byteSize.toLocaleString()} bytes</p></td><td className="px-4 py-4 text-slate-400">{formatDate(backup.importedAt)}</td><td className="px-4 py-4 text-xs text-slate-500 font-mono">{backup.sourceFileHash}</td><td className="px-4 py-4">{backup.isCurrent ? <span className="text-emerald-300 font-semibold">Current</span> : <span className="text-slate-400">Retained</span>}</td><td className="px-4 py-4"><button type="button" disabled={busy !== null || backup.isCurrent} onClick={() => void restore(backup)} className="rounded-lg bg-amber-600 hover:bg-amber-500 disabled:opacity-50 px-3 py-1.5 text-xs font-semibold">{busy === backup.id ? "Restoring…" : "Restore"}</button></td></tr>)}{backups.length === 0 && <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-500">No retained workbook versions found.</td></tr>}</tbody></table></div></div><p className="text-xs text-slate-500">This application-level recovery is separate from Supabase PITR/database disaster recovery; the Production gate still requires an approved restore drill and measured RPO/RTO.</p></section>;
 }
 
 function SettingsHome({ user }: { user: SessionUser }) {
@@ -156,7 +240,7 @@ function SettingsHome({ user }: { user: SessionUser }) {
   );
 }
 
-function UserManagementPage() {
+function UserManagementPage({ currentUserId }: { currentUserId: string }) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -165,6 +249,7 @@ function UserManagementPage() {
   const [displayNameDraft, setDisplayNameDraft] = useState("");
   const [resetId, setResetId] = useState<string | null>(null);
   const [resetPassword, setResetPassword] = useState("");
+  const [deleteId, setDeleteId] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const loadUsers = useCallback(async () => {
@@ -252,6 +337,21 @@ function UserManagementPage() {
     }
   };
 
+  const deleteUser = async (user: ManagedUser) => {
+    if (user.id === currentUserId) return;
+    if (deleteId !== user.id) { setDeleteId(user.id); setError(null); return; }
+    setBusyKey(`delete:${user.id}`);
+    try {
+      await apiRequest(`/admin/users/${encodeURIComponent(user.id)}`, { method: "DELETE" });
+      setDeleteId(null);
+      await loadUsers();
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "User could not be deleted.");
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
   const orderedUsers = useMemo(() => [...users].sort((a, b) => a.username.localeCompare(b.username)), [users]);
 
   return (
@@ -295,8 +395,9 @@ function UserManagementPage() {
                   <td className="px-4 py-4"><button type="button" onClick={() => void changeActive(user)} disabled={busyKey === `active:${user.id}`} className={`rounded-full px-2.5 py-1 text-xs font-bold ${user.active ? "bg-emerald-500/15 text-emerald-300" : "bg-slate-800 text-slate-400"}`}>{user.active ? "Active" : "Inactive"}</button></td>
                   <td className="px-4 py-4 text-slate-400">{formatDate(user.lastLoginAt)}</td>
                   <td className="px-4 py-4 text-slate-400">{formatDate(user.createdAt)}</td>
-                  <td className="px-4 py-4">
+                  <td className="px-4 py-4 space-y-2">
                     {resetId === user.id ? <form onSubmit={event => void submitReset(event, user.id)} className="flex gap-2"><input aria-label={`New password for ${user.username}`} type="password" autoComplete="new-password" placeholder="New password" value={resetPassword} onChange={event => setResetPassword(event.target.value)} className="field w-40" required /><button disabled={busyKey === `reset:${user.id}`} className="rounded-lg bg-amber-600 hover:bg-amber-500 px-2.5 py-1.5 text-xs font-semibold">Set</button><button type="button" onClick={() => { setResetId(null); setResetPassword(""); }} className="icon-button text-slate-400"><X className="w-4 h-4" /></button></form> : <button type="button" onClick={() => setResetId(user.id)} className="rounded-lg bg-slate-800 hover:bg-slate-700 px-2.5 py-1.5 text-xs font-semibold">Reset Password</button>}
+                    {deleteId === user.id ? <div className="flex items-center gap-2"><span className="text-[11px] text-rose-300">Delete user?</span><button type="button" disabled={busyKey === `delete:${user.id}`} onClick={() => void deleteUser(user)} className="rounded-lg bg-rose-700 hover:bg-rose-600 disabled:opacity-50 px-2.5 py-1.5 text-xs font-semibold">Confirm</button><button type="button" onClick={() => setDeleteId(null)} className="icon-button text-slate-400"><X className="w-4 h-4" /></button></div> : <button type="button" disabled={user.id === currentUserId} title={user.id === currentUserId ? "The current administrator cannot be deleted." : "Delete this user and revoke active sessions."} onClick={() => void deleteUser(user)} className="rounded-lg border border-rose-500/40 text-rose-300 hover:bg-rose-500/10 disabled:cursor-not-allowed disabled:opacity-40 px-2.5 py-1.5 text-xs font-semibold">Delete User</button>}
                   </td>
                 </tr>
               ))}
@@ -309,11 +410,28 @@ function UserManagementPage() {
   );
 }
 
+interface AuditRecordResponse { id: string; actorUserId: string | null; action: string; entityType: string; entityId: string; occurredAt: string; previousValue: unknown; newValue: unknown; correlationId: string; }
+
+function AuditHistoryPage() {
+  const [records, setRecords] = useState<AuditRecordResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    setLoading(true); setError(null);
+    try { setRecords(await apiRequest<AuditRecordResponse[]>("/admin/audit?limit=100")); }
+    catch (cause) { setError(cause instanceof ApiError ? cause.message : "Audit history could not be loaded."); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  return <section className="max-w-7xl mx-auto px-6 py-8 space-y-6"><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-[0.2em] text-indigo-400 font-bold">Settings / Audit History</p><h1 className="text-3xl font-semibold mt-2">Audit History</h1><p className="text-slate-400 mt-2">Read-only operational and authentication events. Secrets are scrubbed at the server boundary.</p></div><button type="button" onClick={() => void load()} disabled={loading} className="rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-50 px-3 py-2 text-sm font-semibold">Refresh</button></div>{error && <p role="alert" className="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded-xl p-3">{error}</p>}<div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden"><div className="overflow-x-auto"><table className="min-w-[1000px] w-full text-sm"><thead className="bg-slate-950/80 text-left text-xs text-slate-400 uppercase tracking-wider"><tr><th className="px-4 py-3">Time</th><th className="px-4 py-3">Action</th><th className="px-4 py-3">Entity</th><th className="px-4 py-3">Actor</th><th className="px-4 py-3">Correlation</th><th className="px-4 py-3">Change</th></tr></thead><tbody className="divide-y divide-slate-800">{loading && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">Loading audit history…</td></tr>}{!loading && records.map(record => <tr key={record.id} className="align-top"><td className="px-4 py-3 text-slate-400 whitespace-nowrap">{formatDate(record.occurredAt)}</td><td className="px-4 py-3 font-semibold text-slate-200">{record.action}</td><td className="px-4 py-3 text-slate-300">{record.entityType} / {record.entityId}</td><td className="px-4 py-3 text-slate-400">{record.actorUserId ?? "system"}</td><td className="px-4 py-3 text-xs text-slate-500 font-mono">{record.correlationId}</td><td className="px-4 py-3 text-xs text-slate-400"><pre className="max-w-[360px] whitespace-pre-wrap">{JSON.stringify({ previous: record.previousValue, next: record.newValue })}</pre></td></tr>)}{!loading && records.length === 0 && <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-500">No audit events found.</td></tr>}</tbody></table></div></div></section>;
+}
+
 export default function WebV3SettingsApp() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
   const route = window.location.pathname.replace(/\/+$/, "") || "/settings";
   const usersRoute = route === "/settings/users";
+  const auditRoute = route === "/settings/audit";
 
   useEffect(() => {
     void apiRequest<{ authenticated: boolean; user: SessionUser | null }>("/auth/session")
@@ -328,7 +446,8 @@ export default function WebV3SettingsApp() {
 
   if (loading) return <main className="min-h-screen bg-slate-950 text-slate-400 flex items-center justify-center">Loading…</main>;
   if (!user) return <LoginView onAuthenticated={setUser} />;
-  if (usersRoute && user.role !== "admin") return <AccessDenied />;
+  if ((usersRoute || auditRoute) && user.role !== "admin") return <AccessDenied />;
+  if (auditRoute && user.role !== "admin") return <AccessDenied />;
 
-  return <div className="min-h-screen bg-slate-950 text-slate-100"><SettingsNav user={user} onLogout={logout} />{usersRoute ? <UserManagementPage /> : <SettingsHome user={user} />}</div>;
+  return <div className="min-h-screen bg-slate-950 text-slate-100"><SettingsNav user={user} onLogout={logout} />{usersRoute ? <UserManagementPage currentUserId={user.id} /> : auditRoute ? <AuditHistoryPage /> : <SettingsHome user={user} />}</div>;
 }

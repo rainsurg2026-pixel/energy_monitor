@@ -122,20 +122,21 @@ export function parseMonthYearDisplay(displayStr: string): string | null {
   return `${fullYear}-${monthPart}`;
 }
 
-// Format Date object to nice readable Thai/English timestamp e.g. "29-Jun-2026 07:51:56"
+// Format Date object to a deterministic GMT+7 timestamp e.g. "29-Jun-2026 07:51:56".
 export function formatTimestamp(date: Date): string {
-  const months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
-  ];
-  const day = date.getDate().toString().padStart(2, "0");
-  const month = months[date.getMonth()];
-  const year = date.getFullYear();
-  const hours = date.getHours().toString().padStart(2, "0");
-  const minutes = date.getMinutes().toString().padStart(2, "0");
-  const seconds = date.getSeconds().toString().padStart(2, "0");
-  
-  return `${day}-${month}-${year} ${hours}:${minutes}:${seconds}`;
+  if (Number.isNaN(date.getTime())) return "—";
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Bangkok",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? "";
+  return `${value("day")}-${value("month")}-${value("year")} ${value("hour")}:${value("minute")}:${value("second")}`;
 }
 
 // Storage helpers

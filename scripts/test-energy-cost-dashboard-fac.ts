@@ -16,7 +16,6 @@ import {
 
 const workbookPath = "DC_Rangsit.xlsm";
 const srinakarinWorkbookPath = "DC_Srinakarin.xlsm";
-const month = "2026-01";
 const tolerance = 1e-8;
 
 function assert(name: string, condition: boolean): void {
@@ -48,13 +47,15 @@ function monthValue(value: ExcelJS.CellValue): string | null {
 }
 
 const parsed = await readWorkbookFromFile(workbookPath);
-const calculation = calculateEnergyCostForMonth(parsed.logs, month);
 const workbook = new ExcelJS.Workbook();
 await workbook.xlsx.readFile(workbookPath);
 const dashboard = workbook.getWorksheet("Dashboard-FAC");
 if (!dashboard) throw new Error("Dashboard-FAC is missing.");
 
-assert("Dashboard-FAC active month is the regression month", monthValue(dashboard.getCell("A32").value) === month);
+const month = monthValue(dashboard.getCell("A32").value);
+if (!month) throw new Error("Dashboard-FAC active month is missing.");
+const calculation = calculateEnergyCostForMonth(parsed.logs, month);
+assert("Dashboard-FAC active month is read from the source workbook", monthValue(dashboard.getCell("A32").value) === month);
 const dashboardAverageRate = formulaResult(dashboard.getCell("F32").value);
 const dashboardFloorEnergy = formulaResult(dashboard.getCell("D32").value);
 const dashboardFloorCost = formulaResult(dashboard.getCell("E32").value);

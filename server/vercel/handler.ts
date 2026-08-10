@@ -36,7 +36,7 @@ function unavailablePayload(error: unknown, environment: NodeJS.ProcessEnv): unk
     else if (["CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "ERR_TLS_CERT_ALTNAME_INVALID", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"].includes(code)) payload.error.reason = "database-tls";
     else if (["ECONNREFUSED", "ECONNRESET", "ENETUNREACH", "ENOTFOUND", "ETIMEDOUT", "EHOSTUNREACH"].includes(code)) payload.error.reason = "database-network";
     else if (["08P01", "53300", "53400", "57P01", "XX000"].includes(code)) payload.error.reason = "database-pooler";
-    else if (["42501", "0LP01"].includes(code)) payload.error.reason = "database-role-grant";
+    else if (["42501", "0LP01", "RUNTIME_DB_ROLE_INVALID"].includes(code)) payload.error.reason = "database-role-grant";
     else if (code === "3D000") payload.error.reason = "database-target";
     else payload.error.reason = "database-connection";
   }

@@ -22,6 +22,7 @@
 /assets/
 /docs/
 /tests/
+/.tmp-e2e-*/
 *.xls
 *.xlsx
 *.xlsm

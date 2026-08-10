@@ -16,7 +16,9 @@ const config: ServerConfig = {
   databaseUrl: null, directDatabaseUrl: null, nodeEnv: "test", port: 0,
   appOrigin: "http://test", allowedOrigins: ["http://test"], allowedPreviewOrigins: [], trustProxy: false,
   sessionSecret: "phase6-session-secret-phase6-session-secret-1234",
-  csrfSecret: "phase6-csrf-secret-phase6-csrf-secret-1234", sessionLifetimeMs: 8 * 60 * 60 * 1000, poolMax: 3, readOnlyMode: false
+  csrfSecret: "phase6-csrf-secret-phase6-csrf-secret-1234", sessionLifetimeMs: 8 * 60 * 60 * 1000, poolMax: 3, readOnlyMode: false,
+  googleClientId: null, googleClientSecret: null, googleRedirectUri: null, googleTokenEncryptionKey: null,
+  googleSuccessRedirect: "http://test/settings/google-sheets"
 };
 
 let assertions = 0;
