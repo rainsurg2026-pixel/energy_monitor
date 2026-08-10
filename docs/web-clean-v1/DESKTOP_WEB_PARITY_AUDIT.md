@@ -13,14 +13,16 @@ Authoritative Desktop package:
 Authoritative Web source:
 
 - branch: feat/web-clean-v1
-- committed baseline audited: bc6e087
-- current worktree includes the Admin UI fix that is pending commit/deployment
+- committed baseline audited: 130c9d4
+- Admin UI parity fix is committed and deployed through the Git-connected Preview
+  deployment
 - Web entry point: src/main.tsx selects src/web-clean-v1/CleanWebApp.tsx for HTTP(S) runtime
 - Vercel build: npm run vercel-build, with server/vercel/handler.ts bundled to api/runtime.js
 
 Preview evidence:
 
-- https://energy-monitor-i168yu5dk-dcm15.vercel.app/
+- https://energy-monitor-aiw8z6xlu-dcm15.vercel.app/
+- branch alias: https://energy-monitor-git-feat-web-clean-v1-dcm15.vercel.app
 - /api/v1/health 200
 - /api/v1/readiness 200
 - anonymous /api/v1/auth/session 200 with authenticated:false
@@ -79,9 +81,9 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
 | Current facility export | Desktop report/CSV/XLSX/PDF renderer | Clean CSV/XLSX/PDF print path and export test (7 assertions) | PASS | Browser download/print requires authenticated UAT |
 | All facilities export | one report per facility with independent workbook data | Clean loads each facility history and emits separated CSV/XLSX/PDF sections | PASS | Verify every facility returned by bootstrap |
 | Comparison export | comparison KPIs and trend values | Clean comparison CSV/XLSX/PDF print path | PASS | Verify same reference month and numeric formatting |
-| Admin role assignment | Desktop user management scope | API supports role; pending UI fix adds visible Role selector and sends role | GAP (P1) | Commit and redeploy pending worktree fix |
-| Admin active state | Desktop user management scope | API supports active flag; pending UI fix adds checkbox and enable/disable guards | GAP (P1) | Commit and redeploy pending worktree fix |
-| Delete safeguards | no destructive action without confirmation | pending UI fix adds confirmation for delete and disable; backend protects last active admin | GAP (P1) | Commit and redeploy; never test against previewuat |
+| Admin role assignment | Desktop user management scope | API supports role; deployed Clean UI exposes Role selector and sends role | PASS | Authenticated UAT still required |
+| Admin active state | Desktop user management scope | API supports active flag; deployed Clean UI exposes checkbox and enable/disable guards | PASS | Authenticated UAT still required |
+| Delete safeguards | no destructive action without confirmation | deployed Clean UI confirms delete/disable; backend protects last active admin | PASS | Never test against previewuat |
 | Reset password | server policy, session revocation, audit | API tests cover reset, old password/session revocation | PASS | Real UAT needs owner-controlled credentials |
 | Theme | Desktop light/dark setting | Settings-only theme controls, semantic tokens, dark/light visual audit and theme test | PASS | No header theme switcher |
 | Security/RBAC | authenticated workbook operations | auth/security/API tests pass; no service-role key in Clean source | PASS | Supabase connector permission prevents remote RLS audit |
@@ -97,8 +99,6 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
 
 ### P1
 
-- Deploy current Admin UI fix (visible Role and Active controls plus
-  Delete/Disable confirmation).
 - Complete owner-driven authenticated Preview UAT:
   login, save/refresh, history, comparison, all export formats, logout/login,
   and Admin add/disable/enable/reset/delete using a clearly named temporary
@@ -117,8 +117,7 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
 
 Preview is not Production-ready yet. Remaining blockers:
 
-1. pending Admin UI commit/deployment and UAT;
-2. Supabase connector permission for actual project verification;
-3. owner-controlled credentials/browser actions for authenticated UAT.
+1. Supabase connector permission for actual project verification;
+2. owner-controlled credentials/browser actions for authenticated UAT.
 
 Production remains untouched.
