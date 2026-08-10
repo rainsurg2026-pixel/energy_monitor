@@ -39,8 +39,8 @@ function download(content: BlobPart, fileName: string, type: string): void {
   URL.revokeObjectURL(url);
 }
 
-export function exportCsv(logs: MonthlyLog[], siteName: string): void {
-  download(buildCombinedCsv(logs), `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.csv`, "text/csv;charset=utf-8");
+export function exportCsv(logs: MonthlyLog[], siteName: string, fileName?: string): void {
+  download(buildCombinedCsv(logs), fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.csv`, "text/csv;charset=utf-8");
 }
 
 function parseCsvLine(line: string): string[] {
@@ -63,7 +63,7 @@ function sheetName(prefix: string, name: string): string {
   return `${prefix}-${name.replace(".csv", "")}`.replace(/[\\/*?:\[\]]/g, "-").slice(0, 31);
 }
 
-async function workbookForFacilities(facilities: ExportFacility[]) {
+export async function workbookForFacilities(facilities: ExportFacility[]) {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
   for (const facility of facilities) {
@@ -81,10 +81,10 @@ async function workbookForFacilities(facilities: ExportFacility[]) {
   return workbook;
 }
 
-export async function exportExcel(logs: MonthlyLog[], siteName: string): Promise<void> {
+export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string): Promise<void> {
   const workbook = await workbookForFacilities([{ siteName, logs }]);
   const data = await workbook.xlsx.writeBuffer();
-  download(data, `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  download(data, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
 export function buildAllFacilitiesCsv(facilities: ExportFacility[]): string {
@@ -150,7 +150,7 @@ function reportRows(logs: MonthlyLog[]): ReportMonthlyRow[] {
   });
 }
 
-function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string): ReportData {
+export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string): ReportData {
   const rows = reportRows(logs);
   const current = rows.find(row => row.month === selectedMonth) ?? null;
   return {
@@ -178,14 +178,17 @@ function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth:
   };
 }
 
-/** Desktop's print HTML, populated only with the selected facility's API DTOs. */
-export function printDesktopPdf(logs: MonthlyLog[], siteName: string, selectedMonth: string): void {
+/** Desktop's print HTML, populated only with the selected facility's API DTOs.
+ *  fileName (without extension) becomes the print dialog's suggested "Save
+ *  as PDF" name, via document.title - the browser convention for print-to-PDF. */
+export function printDesktopPdf(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string): void {
   const data = facilityReportData(logs, siteName, selectedMonth);
   const popup = window.open("", "energy-monitor-report", "noopener,noreferrer");
   if (!popup) throw new Error("The report window was blocked by the browser.");
   popup.document.open();
   popup.document.write(buildReportHtml(data));
   popup.document.close();
+  if (fileName) popup.document.title = fileName;
   popup.addEventListener("load", () => popup.print(), { once: true });
 }
 

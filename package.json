@@ -48,6 +48,7 @@
     "test:preview-http": "node node_modules/tsx/dist/cli.mjs scripts/test-preview-http.ts",
     "test:vercel-adapter": "node node_modules/tsx/dist/cli.mjs scripts/test-vercel-adapter.ts",
     "test:web-clean-v1-exports": "node node_modules/tsx/dist/cli.mjs scripts/test-web-clean-v1-exports.ts",
+    "test:web-clean-v1-report-filename": "node node_modules/tsx/dist/cli.mjs scripts/test-web-clean-v1-report-filename.ts",
     "test:web-clean-v1-facility-context": "node node_modules/tsx/dist/cli.mjs scripts/test-web-clean-v1-facility-context.ts",
     "test:web-clean-v1-theme": "node node_modules/tsx/dist/cli.mjs scripts/test-web-clean-v1-theme.ts",
     "test:web-clean-v1-admin-ui": "node node_modules/tsx/dist/cli.mjs scripts/test-web-clean-v1-admin-ui.ts",

@@ -20,6 +20,8 @@ import RackCapacitySummaryCard from "../components/rack/RackCapacitySummaryCard"
 import { formatRatioPercent } from "../utils/rackCapacity";
 import { api, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportCsv, exportExcel, exportSiteComparisonCsv, exportSiteComparisonExcel, printAllFacilitiesPdf, printDesktopPdf, printSiteComparisonPdf, type ComparisonMetric, type SiteComparisonExport } from "./exports";
+import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
+import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodSelection } from "./reportPeriod";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 import { facilityStorageKey, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
 import { applyTheme, normalizeTheme, themeStorageKey, type Theme } from "./theme";
@@ -265,13 +267,51 @@ function Login({ onLogin, notice }: { onLogin: () => Promise<void>; notice: stri
   return <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-100"><form onSubmit={submit} className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-7 shadow-2xl"><h1 className="font-display text-3xl font-bold">Energy Monitor</h1><p className="mt-2 text-sm text-slate-400">Sign in to continue to the v2.3.1 operations workspace.</p><label className="mt-6 block text-sm">Username<input required autoComplete="username" value={username} onChange={event => setUsername(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5" /></label><label className="mt-4 block text-sm">Password<input required type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5" /></label>{(error ?? notice) && <p role="alert" className="mt-4 text-sm text-rose-300">{error ?? notice}</p>}<button disabled={busy} className="mt-6 w-full rounded-lg bg-teal-500 px-4 py-2.5 font-semibold text-slate-950 disabled:opacity-60">{busy ? "Signing in…" : "Login"}</button></form></main>;
 }
 
+const PERIOD_MODE_OPTIONS: Array<{ value: ReportingPeriodMode; label: string }> = [
+  { value: "current", label: "Current Month" },
+  { value: "single", label: "Single Month" },
+  { value: "range", label: "Month Range" },
+  { value: "full", label: "Full History" }
+];
+
+/** Reports & Export ("Current Facility" scope): Reporting Period and
+ *  Reporting Month are real, functional controls - changing them filters
+ *  which already-fetched months are handed to the existing, unmodified
+ *  CSV/Excel/PDF builders (see reportPeriod.ts), so Excel/CSV/PDF always
+ *  reflect the current selection, never a stale earlier one. Matches
+ *  Desktop's four Reporting Period modes, confirmed by direct inspection. */
 function Reports({ siteName, logs, month, sites }: { siteName: string; logs: MonthlyLog[]; month: string; sites: Site[] }) {
   const [message, setMessage] = useState<string | null>(null);
+  const [period, setPeriod] = useState<ReportingPeriodSelection>(() => defaultReportingPeriod(month));
+  const [fileNameInput, setFileNameInput] = useState(() => defaultReportFilename(siteName, month));
+  const [fileNameCustomized, setFileNameCustomized] = useState(false);
   const loadAll = useCallback(async () => Promise.all(sites.map(async site => ({ siteName: site.name, logs: (await api<HistoryData>(`/sites/${site.id}/history`)).logs }))), [sites]);
   const loadComparison = useCallback(async () => api<SiteComparisonExport>("/site-comparison"), []);
   const run = (action: () => void | Promise<void>, success: string) => { void Promise.resolve(action()).then(() => setMessage(success)).catch(error => setMessage(readError(error))); };
+
+  const contextMonth = effectiveMonth(period, month);
+  useEffect(() => { if (!fileNameCustomized) setFileNameInput(defaultReportFilename(siteName, contextMonth)); }, [siteName, contextMonth, fileNameCustomized]);
+  const resolvedFileName = resolveFilename(fileNameInput, siteName, contextMonth);
+  const scopedLogs = useMemo(() => filterLogsByPeriod(logs, period, month), [logs, period, month]);
+  const availableMonths = useMemo(() => [...new Set(logs.map(log => log.month))].sort(), [logs]);
+
   const cards = (title: string, description: string, onCsv: () => void | Promise<void>, onExcel: () => void | Promise<void>, onPdf: () => void | Promise<void>) => <div className="rounded-xl border border-slate-800 bg-slate-900 p-5"><h3 className="font-semibold">{title}</h3><p className="mt-1 min-h-10 text-sm text-slate-400">{description}</p><div className="mt-4 grid gap-2 sm:grid-cols-3"><button onClick={() => run(onCsv, "CSV download started.")} className="rounded-lg border border-slate-700 px-3 py-2 text-sm hover:border-teal-500"><Download className="mr-2 inline h-4 w-4 text-teal-400" />CSV</button><button onClick={() => run(onExcel, "Excel download started.")} className="rounded-lg border border-slate-700 px-3 py-2 text-sm hover:border-teal-500"><FileSpreadsheet className="mr-2 inline h-4 w-4 text-emerald-400" />Excel</button><button onClick={() => run(onPdf, "PDF print dialog opened.")} className="rounded-lg border border-slate-700 px-3 py-2 text-sm hover:border-teal-500"><Printer className="mr-2 inline h-4 w-4 text-amber-400" />PDF</button></div></div>;
-  return <section><h2 className="font-display text-2xl font-bold">Exports & PDF Report</h2><p className="mt-1 text-sm text-slate-400">Every export uses stored inputs and Desktop v2.3.1 calculations within Global Display Period.</p><div className="mt-6 grid gap-4 xl:grid-cols-3">{cards("Current Facility", `${siteName} for visible reporting months.`, () => exportCsv(logs, siteName), () => exportExcel(logs, siteName), () => printDesktopPdf(logs, siteName, month))}{cards("All Facilities", "Each facility stays isolated in its own CSV block, Excel sheets, and full PDF section.", async () => exportAllFacilitiesCsv(await loadAll()), async () => exportAllFacilitiesExcel(await loadAll()), async () => printAllFacilitiesPdf(await loadAll(), month))}{cards("Site Comparison", `Comparison KPI snapshot for ${month}; no values are fabricated for missing records.`, async () => exportSiteComparisonCsv(await loadComparison(), month), async () => exportSiteComparisonExcel(await loadComparison(), month), async () => printSiteComparisonPdf(await loadComparison(), month))}</div>{message && <p className="mt-4 text-sm text-teal-300">{message}</p>}</section>;
+
+  return <section><h2 className="font-display text-2xl font-bold">Exports & PDF Report</h2><p className="mt-1 text-sm text-slate-400">Every export uses stored inputs and Desktop v2.3.1 calculations within Global Display Period.</p>
+
+    <div className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-5">
+      <h3 className="font-semibold">Report Context</h3>
+      <p className="mt-1 text-sm text-slate-400">Applies to the Current Facility export below. Facility: <b className="text-slate-200">{siteName}</b>.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <label className="text-sm">Reporting Period<select value={period.mode} onChange={event => setPeriod({ ...period, mode: event.target.value as ReportingPeriodMode })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{PERIOD_MODE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}</select></label>
+        {period.mode === "single" && <label className="text-sm">Reporting Month<select value={period.singleMonth} onChange={event => setPeriod({ ...period, singleMonth: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label>}
+        {period.mode === "range" && <><label className="text-sm">From<select value={period.rangeStart} onChange={event => setPeriod({ ...period, rangeStart: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label><label className="text-sm">To<select value={period.rangeEnd} onChange={event => setPeriod({ ...period, rangeEnd: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label></>}
+        <label className="text-sm sm:col-span-2 lg:col-span-2">File name<div className="mt-1 flex gap-2"><input value={fileNameInput} onChange={event => { setFileNameInput(event.target.value); setFileNameCustomized(true); }} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm" /><button type="button" onClick={() => setFileNameCustomized(false)} className="shrink-0 rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:border-teal-500" title="Reset to Standard Name">Reset</button></div></label>
+      </div>
+      <p className="mt-3 text-xs text-slate-500">Scope: {reportingPeriodLabel(period, "en")}. Files: <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "csv")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "xlsx")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "pdf")}</span></p>
+    </div>
+
+    <div className="mt-4 grid gap-4 xl:grid-cols-3">{cards("Current Facility", `${siteName}, ${reportingPeriodLabel(period, "en")}.`, () => exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv")), () => exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx")), () => printDesktopPdf(scopedLogs, siteName, contextMonth, resolvedFileName))}{cards("All Facilities", "Each facility stays isolated in its own CSV block, Excel sheets, and full PDF section.", async () => exportAllFacilitiesCsv(await loadAll()), async () => exportAllFacilitiesExcel(await loadAll()), async () => printAllFacilitiesPdf(await loadAll(), month))}{cards("Site Comparison", `Comparison KPI snapshot for ${month}; no values are fabricated for missing records.`, async () => exportSiteComparisonCsv(await loadComparison(), month), async () => exportSiteComparisonExcel(await loadComparison(), month), async () => printSiteComparisonPdf(await loadComparison(), month))}</div>{message && <p className="mt-4 text-sm text-teal-300">{message}</p>}</section>;
 }
 
 const metric = (value: number | null | undefined, suffix = "") => value === null || value === undefined || !Number.isFinite(value) ? "—" : `${formatNumber2(value)}${suffix}`;
