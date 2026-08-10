@@ -13,7 +13,7 @@ Authoritative Desktop package:
 Authoritative Web source:
 
 - branch: feat/web-clean-v1
-- committed baseline audited: 130c9d4
+- committed baseline audited: d10a058
 - Admin UI parity fix is committed and deployed through the Git-connected Preview
   deployment
 - Web entry point: src/main.tsx selects src/web-clean-v1/CleanWebApp.tsx for HTTP(S) runtime
@@ -21,11 +21,12 @@ Authoritative Web source:
 
 Preview evidence:
 
-- https://energy-monitor-6lbhqtrt0-dcm15.vercel.app/
+- https://energy-monitor-recnrdyld-dcm15.vercel.app/
 - branch alias: https://energy-monitor-git-feat-web-clean-v1-dcm15.vercel.app
 - /api/v1/health 200
 - /api/v1/readiness 200
 - anonymous /api/v1/auth/session 200 with authenticated:false
+- deployment metadata: Git commit d10a058 on feat/web-clean-v1, state READY
 - direct Preview asset inspection confirms deployed source is Clean-v1 and write-enabled
 
 Supabase evidence is currently blocked. Every read-only connector call for
