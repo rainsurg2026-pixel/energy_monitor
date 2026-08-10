@@ -2,6 +2,60 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Reports & Export
+
+**Desktop source of truth** (from direct inspection this session via CDP
+against the isolated Desktop copy, not assumed): Desktop's "Reports & Export"
+screen is a full "Reporting Center" with a Report Builder (Report Type:
+"All Report"; Reporting Period: **Current Month / Single Month / Month
+Range / Full History**; a month picker; a 10-item custom-section checklist
+- Executive, Dashboard, Rack Capacity, Rack Unit Capacity, UPS, Air
+Conditioning, DC, Historical, Site Comparison, Appendix), a Live Preview
+pane, Export Options (Format: Pdf, Excel, HTML, **Powerpoint marked "COMING
+SOON"** - not actually available even on Desktop), a Filename field, and a
+persistent Recent Reports history. The Recent Reports table gave the real
+filename convention directly: `Energy_Report_Rangsit_2026-06.pdf`,
+`Energy_Report_Srinakarin_2026-06.pdf` - i.e.
+**`Energy_Report_<Facility>_<YYYY-MM>.<ext>`**, not the
+`Energy_Monitor_...` example given in the instructions (explicitly flagged
+there as "example only, do not assume").
+
+| Area | Desktop | Web (this session) | Status |
+| --- | --- | --- | --- |
+| Reporting Period | Current Month / Single Month / Month Range / Full History | Same 4 modes implemented; `filterLogsByPeriod` scopes already-fetched logs before handing off to the unmodified CSV/Excel/PDF builders - no new calculation | STATIC/API VERIFIED |
+| Reporting Month | Month picker, scopes the report | Implemented for Single Month mode; From/To pickers for Month Range | STATIC/API VERIFIED |
+| Facility context | Report is scoped to one facility ("Context: Rangsit") | Reuses the existing shared facility selector; no second facility state added | VERIFIED |
+| Stale-data prevention | (implicit in a correctly-built report tool) | Explicit real-content test: app starts on a later month, user selects an earlier month, all 3 formats regenerated and verified to contain only that month; switching months again verified to update all 3 - tested against real XLSX bytes (re-read with ExcelJS), the real CSV string, and the real PDF HTML, not mocks | VERIFIED |
+| Filename | Desktop-standard default, user-editable, shown in Recent Reports | `Energy_Report_<Facility>_<Month>` default (confirmed matches Desktop); user-editable; auto-updates with context unless customized; Reset to Standard Name; extension normalized per format (no `.xlsx.xlsx`); empty input falls back to the standard name; invalid Windows characters (`< > : " / \ \| ? *`) sanitized, not silently broken | VERIFIED |
+| Excel | Structured workbook, Desktop-derived sections | Reuses existing `workbookForFacilities`/`buildSectionCsvs` (UPS/Air/DC/Energy sheets), now respecting the selected period scope; content re-verified via ExcelJS read-back | STATIC/API VERIFIED |
+| CSV | Structured data | Reuses existing `buildCombinedCsv`, now period-scoped; content verified | STATIC/API VERIFIED |
+| PDF | Primary human-readable report; title, facility, reporting month, KPIs, tables | Reuses the existing Desktop-compatible `buildReportHtml` renderer unchanged; now period-scoped; filename reaches the print dialog via `document.title` (the browser print-to-PDF convention); content verified (human-readable "Mon YYYY" month label, matching Desktop, confirmed correct after an initial wrong test assumption was caught and fixed) | STATIC/API VERIFIED |
+| Current Facility / All Facilities / Site Comparison | Report is single-facility-scoped; Site Comparison is one of the 10 checkable sections, not evidence of a separate "All Facilities" mode | Web's pre-existing 3-card structure (Current Facility / All Facilities / Site Comparison) predates this session and was not restructured - each already keeps facility data cleanly isolated (verified by the existing `test:web-clean-v1-exports` assertions) | PARTIALLY VERIFIED - Desktop's exact report-type taxonomy (one configurable report vs. 3 fixed cards) was not reproduced 1:1; not restructured this pass to avoid scope creep beyond the stated gate criteria |
+| Rack Report (`rack` field in the PDF DTO) | Rack Capacity is one of the 10 checkable sections | **NOT IMPLEMENTED** - `rack: null` remains. The API/calculation data needed now exists (built earlier this session for the Rack Capacity view), but `RackCapacityReport`'s full type needs `byCabinetSize`/`byDeviceType`/`validation` fields and a dedicated per-export fetch not yet wired up | NOT VERIFIED - explicitly scoped out, documented rather than silently omitted |
+| Number formatting | kWh/THB/%, Desktop precision | Unchanged - reuses the existing centralized `formatNumber2`; no competing formatting logic added | VERIFIED (pre-existing) |
+| Section ordering | Cover -> Dashboard -> Trends -> Monthly table -> Comparison -> Rack -> ... | Unchanged - `buildReportHtml`'s existing order was not touched | VERIFIED (pre-existing, not modified) |
+| HTML / PowerPoint formats, Live Preview, custom section picker, Recent Reports history | Present on Desktop's fuller Reporting Center | Not implemented | INTENTIONAL DIFFERENCE for this pass - PowerPoint is "coming soon" even on Desktop (not a real gap); the others are real Desktop capabilities not reproduced, out of scope for the stated Export gate criteria (Reporting Period/Month, facility, 3 existing formats, filename, no stale data) |
+| Forecast / Energy Benchmarking exports | N/A | Not added | INTENTIONAL DIFFERENCE - explicitly excluded scope, not a defect |
+
+**Regression tests**: `test:web-clean-v1-exports` (7 pre-existing + 31 new =
+38 assertions, including the full stale-data critical-path test against
+real generated bytes), `test:web-clean-v1-report-filename` (14 assertions).
+Full battery re-run fresh: `domain-parity`, `display-period`,
+`facility-context`, `facility-isolation`, `facility-comparison`,
+`dashboard-facility-isolation`, rack tests, `air-validation`, `theme`,
+`admin-ui`, `api` - all pass, zero regressions. `npm run lint` and
+`npm run build` both clean.
+
+**Browser UAT: NOT VERIFIED - EXTERNAL BLOCKER.** Chrome extension still
+not connected this session; no live click-through of Report Context ->
+Generate -> inspect-downloaded-file was performed. All verification above
+is real generated-content evidence (actual XLSX bytes, actual CSV/PDF
+strings), not a substitute for seeing it render and download in an actual
+browser.
+
+**Supabase: NOT VERIFIED - EXTERNAL BLOCKER.** Unchanged; MCP still cannot
+see `tofdgndrrpnnyhbuurbx`.
+
 ## 2026-08-11 Final non-Export verification gate
 
 Full regression battery re-run fresh for this gate (not cited from
