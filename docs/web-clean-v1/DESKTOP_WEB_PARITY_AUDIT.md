@@ -2,6 +2,63 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Data storage, backup, and Role management
+
+Full detail: `docs/web-clean-v1/DATA_BACKUP_AND_RECOVERY.md`.
+
+**Database/audit (items 1-3 of the task)**: inspected, not rebuilt. The
+normalized schema for user-entered operational data (`sites`,
+`monthly_periods`, `ups_readings`, `air_meter_readings`, `dc_readings`,
+`energy_cost_inputs`, rack tables) and the `audit_events` WHO/WHAT/WHEN
+trail already existed, complete, before this session - `saveMonthlyLog`
+already writes a full audit row with actor, previous/new value, and
+correlation ID on every save. No duplicate tables or second audit system
+were created. **VERIFIED (pre-existing, confirmed by code inspection).**
+
+**Google Sheets backup**: new (`server/backup/`). Server-side only,
+service-account JWT auth via the already-installed `jose` dependency (no
+new dependency added), reading data through the existing
+`BackendRepository` (no duplicate queries). Distinct from, and does not
+touch, the existing unrelated per-user-OAuth Google Sheets Desktop feature
+(`sheetsService.ts` et al.). New `backup_log` table + admin API routes
+(`GET/POST /api/v1/admin/backup/*`, reusing the pre-existing
+`backupRestoreManage` permission) + a `POST /api/v1/cron/backup` route for
+Vercel's daily cron, authenticated by `CRON_SECRET` and explicitly exempted
+from the global CSRF/read-only-mode gates (a real bug found and fixed
+during this work - the cron route would otherwise have been rejected by
+CSRF before reaching its own auth check). Snapshot-per-run backup format,
+not append-only - documented rationale in `DATA_BACKUP_AND_RECOVERY.md`
+Section 9, given live data volume was not inspectable this session
+(Supabase blocked). **STATIC/API VERIFIED**: 23 backup-service assertions
+with mocked Google API responses (real JWT signing against a
+locally-generated throwaway RSA key, real request-sequence verification,
+real sensitive-data-exclusion check), 8 new API-route assertions (RBAC,
+CSRF exemption). **Google Sheets integration: NOT VERIFIED - EXTERNAL
+CREDENTIAL BLOCKER** (no real service-account credentials available).
+**Migration `008_backup_log.sql`: not applied to any live database**
+(Supabase blocked; no local Docker available to validate against a
+throwaway Postgres either) - written by hand-matching
+`007_ups_group_history.sql`'s exact structure.
+
+**Role management**: Add User's Role selector and safe `user` default
+already existed. **Edit Role for an existing user was a real, confirmed
+gap** - the backend (`PATCH /admin/users/:id/role`, with last-admin
+protection, audit logging) already worked and was already tested, but no
+frontend control existed to reach it. Added a per-row Role `<select>` in
+the User Management table. Last-admin protection, session revocation on
+deactivation/password-reset, and role-change audit logging were all
+re-verified as already correct via `test:api` (63 assertions total,
+including a fresh RBAC check for the new backup routes). **VERIFIED.**
+
+Full regression re-run fresh: all pre-existing suites (domain-parity,
+display-period, facility-context/isolation/comparison, dashboard-isolation,
+rack, air-validation, theme, admin-ui, exports, report-filename) plus the
+two new suites (backup-service, extended api) - zero regressions. Lint and
+build clean.
+
+**Browser UAT: NOT VERIFIED - EXTERNAL BLOCKER** (Chrome extension still
+not connected). **Supabase: NOT VERIFIED - EXTERNAL BLOCKER** (unchanged).
+
 ## 2026-08-11 Reports & Export
 
 **Desktop source of truth** (from direct inspection this session via CDP
