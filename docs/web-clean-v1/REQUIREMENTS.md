@@ -30,6 +30,7 @@ must adapt storage and session handling without changing those contracts.
 4. Enable or disable a user.
 5. Delete a user subject to self-protection and session revocation rules.
 6. Reset a user password.
+7. Configure the Global Display Period without altering historical records.
 
 ## Desktop data contract
 
@@ -90,10 +91,18 @@ Explorer must preserve its search/filter/sort/status workflow and show the raw
 monthly sections plus calculated energy/cost values. The Dashboard and export
 builder must receive the same calculation snapshot for the selected month.
 
-Rack Capacity, Rack Unit Capacity, Site Comparison, advanced forecasting,
-Google Sheets, and workbook integrity/round-trip surfaces are deferred from
-clean v1 unless a Desktop-core acceptance test proves one is required for the
-workflow above.
+Global Display Period is an admin-only setting. It constrains Dashboard, Data
+Entry, History, Site Comparison, and every export through the server-owned
+visibility rule. Updating it changes visibility only; it must never delete or
+rewrite historical monthly records.
+
+Site Comparison reads the scoped server DTO for every active facility. It uses
+the Desktop comparison metrics, a common/reference month, and 3/6/12-month
+energy trends. Missing facility-month data remains unavailable rather than
+being converted to zero.
+
+Rack Capacity, Rack Unit Capacity, advanced forecasting, Google Sheets, and
+workbook integrity/round-trip surfaces remain deferred from clean v1.
 
 ## Export requirements
 
@@ -118,6 +127,13 @@ Provide a browser download with Desktop-compatible section blocks for UPS,
 Air, DC, and Energy/Cost. Escape commas, quotes, and newlines correctly;
 format calculated numeric values with the shared number formatter; keep nulls
 blank.
+
+### Export scopes
+
+Excel, CSV, and PDF must each support the current facility, all facilities,
+and the Site Comparison KPI snapshot. All-facilities files preserve a clear
+facility boundary; Site Comparison files use the same scoped API metrics shown
+on-screen. No export may enumerate data outside the Global Display Period.
 
 ### PDF
 
@@ -159,4 +175,3 @@ The release is not accepted until automated and browser evidence proves:
 - modern-browser rendering and Desktop visual/functional parity at the target
   desktop viewport;
 - Preview UAT, Production deployment, smoke test, and rollback drill.
-
