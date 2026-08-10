@@ -1,6 +1,127 @@
 # Desktop v2.3.1 - Clean-v1 parity audit
 
-Audit date: 2026-08-10 (Asia/Bangkok)
+Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
+
+## 2026-08-11 follow-up verification
+
+Independently re-verified (not blindly trusted) against current repository
+state, per a fresh audit request. Findings:
+
+- **Root-caused the "Role selector / Active checkbox missing" report from the
+  prior session**: not a build/deployment defect. Commit `130c9d4` ("fix:
+  close clean v1 admin parity gap", 2026-08-10 21:13 +0700) added both
+  controls plus `window.confirm()` guards for Disable/Delete in one diff.
+  The specific Preview URL that prior session tested
+  (`...i168yu5dk-dcm15.vercel.app`) was built from commit `bc6e087`, deployed
+  57 minutes *before* that fix landed — a stale, superseded deployment
+  snapshot, not a pipeline bug. Confirmed via three independent evidence
+  layers: (1) `git show 130c9d4` diff, (2) `vercel inspect` deployment
+  metadata for both the stale URL and current HEAD, (3) downloading and
+  grepping the actual JS chunk (`CleanWebApp-*.js`) served by the live branch
+  alias — it contains ` Active"` checkbox text, `aria-label:"Role"`, and both
+  `window.confirm(\`Disable user...` / `window.confirm(\`Delete user...`
+  strings verbatim. **Action for future sessions: always test against the
+  branch alias (`energy-monitor-git-feat-web-clean-v1-dcm15.vercel.app`) or
+  the newest deployment, never a pinned old preview URL.**
+- **Repo hygiene / worktree consistency finding (new)**: the main repo
+  worktree is checked out on `feat/web-v3` (a superseded branch — see below),
+  and `.worktrees/web-clean-v1` is registered in that branch's tree as a git
+  submodule gitlink pinned at commit `932395e`, 5 commits stale versus the
+  actual `feat/web-clean-v1` HEAD (`db15dc0`). Does not affect the live
+  Vercel deployment (Vercel builds straight from the GitHub branch, not
+  through this gitlink), but a fresh clone of `feat/web-v3` would see the
+  submodule 5 commits behind reality. Recommended fix: commit the updated
+  gitlink on `feat/web-v3`. Not done automatically — requires explicit
+  Product Owner instruction per `.claude/rules/git.md` ("commit unless
+  explicitly instructed for that specific change").
+- **Branch relationship clarified**: `feat/web-clean-v1` is not a divergent
+  experiment. It equals `feat/web-v3` HEAD minus one trivial commit
+  (`19b78b9`, env/docs only — note: that commit also accidentally committed
+  Electron e2e cache junk, `.tmp-e2e-electron-data3/...`, a separate minor
+  hygiene defect on `feat/web-v3`) plus 10 commits that fully replace the old
+  dual `WebV3App`/`WebV3SettingsApp` routing with the single unified
+  `CleanWebApp`. `feat/web-clean-v1` is the current leading implementation.
+  `main` (and Production, `energy-monitor-dcm15.vercel.app`) remains on the
+  Desktop-only baseline (`12fcdc7`) — correctly untouched.
+- **Desktop GUI verified for real** (previously "no GUI automation was
+  available"). Launched the packaged `Energy Monitor-v2.3.1.exe` from an
+  isolated scratch copy (never the authoritative release folder — its
+  `config/config.json` had `lastWorkbookPath` pointing at the real file with
+  `startupBehavior: "last"`; packaged builds resolve their app root to
+  `path.dirname(process.execPath)` and ignore `ENERGY_MONITOR_APP_ROOT`
+  entirely, so isolation required copying the whole folder and repointing
+  the copy's own config before launch). Connected via Chrome DevTools
+  Protocol (`--remote-debugging-port`): the app renders fully — Dashboard
+  Summary, Data Entry Sheet, Rack Capacity, Historical Logs, Site Comparison,
+  Reports & Export, Settings nav all present; Rangsit facility loaded with
+  correct UPS groups; zero JS exceptions.
+- **XLSM inventory independently re-derived** (not just cited from the prior
+  audit) against the same isolated release-folder copies, using the app's
+  own `readWorkbookFromFile()` reader plus a structural ExcelJS inspection.
+  Sheet counts (12/22), hidden-sheet counts (2/2), and log-row counts (67/67)
+  are **exact matches** to the prior audit. Table counts (6 vs. reported 4 on
+  Rangsit; 15 vs. reported 17 on Srinakarin) and formula-cell counts (141 vs.
+  122; 550 vs. 530) differ — most likely counting-methodology differences
+  (how each tool enumerates Excel Tables / detects formula vs. cached-value
+  cells), not evidence of a different or corrupted workbook, since sheet
+  names/hidden state/log counts match exactly. Also got a genuine
+  calculation-parity data point: the app's `calculateEnergyCostForMonth()`
+  output matches Srinakarin's cached Dashboard-FAC Excel formula values
+  within 0.01 for month 2026-07.
+- **Theme (Phase 15) confirmed at the token level, not just visually
+  asserted**: `src/index.css`'s `html.theme-light` block matches the given
+  spec exactly, byte-for-byte — `--color-bg:#f6f1e8`, `--color-surface:
+  #ffffff`, `--color-surface-elevated:#faf7f1`, `--color-text:#333333`,
+  `--color-text-muted:#666666`, `--color-border:#e3ded5`,
+  `--color-primary:#e00000`, `--color-secondary:#007ad0`. The app uses
+  Tailwind v4's CSS-variable-based palette (no separate `tailwind.config.ts`
+  — colors defined via `@theme`/`:root` in `index.css`), so utility classes
+  like `bg-slate-950`/`text-slate-100` used throughout the authenticated app
+  shell are theme-reactive, not hardcoded-dark. The Login screen legitimately
+  always renders the dark `:root` defaults because theme is only ever
+  applied in a `useEffect` gated on `[user]` (theme storage key is
+  per-authenticated-user) — confirming the prior audit's "Login contrast not
+  actually broken" conclusion at the mechanism level, not just by visual
+  spot-check. `npm run test:web-clean-v1-theme` passes.
+- **User Management backend (Phase 14) code-reviewed**: `setUserActive`,
+  `setUserRole`, and `deleteUser` in `server/auth/repository.ts` all take an
+  advisory Postgres lock and check the remaining active-admin count before
+  proceeding, throwing `HttpError(409, "LAST_ADMIN", ...)` if the action
+  would leave zero active admins. `setUserActive(false)` and
+  `resetUserPassword` both call `revokeAllSessions()` and write an
+  `SESSION_REVOKED_ALL` audit row. All five admin mutations write an audit
+  row. **Minor gap found**: `deleteUser` does not explicitly call
+  `revokeAllSessions()` before deleting the row (unlike deactivate/reset) —
+  likely harmless since a deleted user's session lookup will fail on the
+  next request regardless, but it means no explicit `SESSION_REVOKED_ALL`
+  audit entry is written on delete. Worth a defense-in-depth fix; not a
+  security hole today. See Priority gates below.
+- **Calculation-parity regression suites re-run for real** (not just cited):
+  all pass against the current worktree, none require Supabase or a browser.
+  - `test:domain-parity` — 24 assertions against
+    `tests/golden/desktop-v2.3.1.expected.json`, covering
+    `buildEngineeringDashboardSnapshot`, `calculateEnergyCostForMonth`,
+    `buildFacilityComparisonMetrics`, `calculateRackCapacityMetrics`,
+    `computeUpsGroupSummary` — the shared calculation engine explicitly
+    declares `formula=desktop-v2.3.1` compatibility.
+  - `test:rack-capacity-metrics`, `test:rack-unit-capacity`,
+    `test:rack-status-config` — all pass; `test:rack-unit-capacity`
+    self-asserts the real `DC_Rangsit.xlsm`/`DC_Srinakarin.xlsm` at repo
+    root were untouched by the run.
+  - `test:display-period` — 10 assertions on the display-period policy
+    (`allowedMonths`, `enumerateMonths`, `isAllowedMonth`, etc.).
+  - `test:air-validation` — confirms Rangsit's EB41-only fields and
+    Srinakarin's EB43/EB44 meters persist correctly and stale keys are
+    ignored, matching the per-facility air-field counts found in
+    `config/rangsit/profile.json` (4 fields) and
+    `config/srinakarin/profile.json` (6 fields) inside the Desktop release.
+- **New external blockers found this session** (in addition to the
+  pre-existing Supabase one): the Chrome browser extension (`claude-in-chrome`)
+  is not connected in this session, blocking all live/interactive browser
+  UAT (Phases 9-14, 19). The Supabase MCP connector in this session exposes
+  only two unrelated projects (`lhlzzxjayywqhqtjzfiu`,
+  `rohmbjqnyekvxpyydjbn`), not `tofdgndrrpnnyhbuurbx` — same blocker as the
+  prior audit, not yet resolved despite a request to connect it.
 
 ## Scope and evidence
 
@@ -98,9 +219,13 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
 
 ### P0
 
-- Restore read access for Supabase project tofdgndrrpnnyhbuurbx.
-- Verify remote migrations, tables, RLS, policies, display-period row, sites,
+- Restore Supabase MCP access scoped to project tofdgndrrpnnyhbuurbx (as of
+  2026-08-11 the connector exposes two unrelated projects instead).
+  Verify remote migrations, tables, RLS, policies, display-period row, sites,
   and historical data. Do not apply migrations while access is unresolved.
+- Reconnect the Chrome browser extension (`claude-in-chrome`) for this
+  session — required for any live/interactive Preview UAT (login, facility
+  isolation click-through, save/refresh, exports, Admin CRUD).
 
 ### P1
 
@@ -113,11 +238,24 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
 - Resolve packaged Srinakarin 2026-07 PPC43 source completeness with valid
   owner-provided readings, or explicitly accept that source limitation. Do not
   synthesize readings.
+- Commit the corrected `.worktrees/web-clean-v1` submodule gitlink on
+  `feat/web-v3` (currently pinned 5 commits stale at `932395e` vs. actual
+  HEAD `db15dc0`). Requires explicit Product Owner instruction to commit,
+  per `.claude/rules/git.md`.
 
 ### P2
 
-- Obtain Desktop GUI screenshots for layout-level comparison if the owner
-  can provide an interactive session.
+- `deleteUser` in `server/auth/repository.ts` does not explicitly call
+  `revokeAllSessions()` / write a `SESSION_REVOKED_ALL` audit row before
+  deleting a user, unlike deactivate and password-reset. Likely harmless
+  (session lookup fails once the user row is gone) but inconsistent with the
+  other two mutations' explicit revoke-and-audit pattern.
+- Clean up the Electron e2e cache junk (`.tmp-e2e-electron-data3/...`)
+  accidentally committed on `feat/web-v3` in `19b78b9`.
+- Reconcile the table-count/formula-cell-count methodology difference
+  between this session's ExcelJS-based inventory and the prior audit's
+  numbers (see 2026-08-11 section above) if an exact canonical count is
+  ever needed.
 - Reconcile any source-data completeness differences found by the remote
   historical audit; never invent missing readings.
 
@@ -125,7 +263,10 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
 
 Preview is not Production-ready yet. Remaining blockers:
 
-1. Supabase connector permission for actual project verification;
-2. owner-controlled credentials/browser actions for authenticated UAT.
+1. Supabase connector access scoped to the actual project
+   (tofdgndrrpnnyhbuurbx) for schema/RLS/data-completeness verification;
+2. Chrome browser extension connection, for live authenticated Preview UAT;
+3. owner-controlled credentials for a temporary UAT account (never
+   previewuat).
 
 Production remains untouched.
