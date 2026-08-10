@@ -17,6 +17,10 @@ coverage/
 # Vercel project/account binding metadata is workstation-local.
 .vercel/
 
+# Local git worktrees (git worktree add) are workstation-local checkouts,
+# not application source. Never track them - each is its own branch/repo.
+.worktrees/
+
 # Workstation-local skills and packaged skill archives. These remain available
 # locally but are not application source.
 .claude/skills/
