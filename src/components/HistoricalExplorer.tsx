@@ -357,7 +357,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
         <div className="py-10 text-center text-slate-500 italic text-xs">
           {lang === "th"
             ? "ยังไม่มีประวัติกลุ่ม UPS ในเวิร์กบุ๊ก - จะถูกสร้างขึ้นโดยอัตโนมัติเมื่อบันทึกข้อมูลครั้งถัดไป"
-            : "No UPS Group History in the workbook yet - it will be created automatically on the next save."}
+            : "No UPS Group History is available for this facility in the selected display period."}
         </div>
       );
     }
@@ -600,7 +600,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
           </div>
           {sortedUnitRows.length === 0 ? (
             <p className="text-sm text-slate-500">
-              {lang === "th" ? "ยังไม่มีข้อมูลความจุหน่วย U ในเวิร์กบุ๊ก" : "No Rack Unit Capacity history in this workbook yet."}
+              {lang === "th" ? "ยังไม่มีข้อมูลความจุหน่วย U สำหรับไซต์นี้" : "No Rack Unit Capacity history is available for this facility."}
             </p>
           ) : (
             <div className="overflow-x-auto">

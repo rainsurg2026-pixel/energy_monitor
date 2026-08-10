@@ -14,10 +14,12 @@ import type { MonthlyLog } from "../types";
 import { api, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportCsv, exportExcel, exportSiteComparisonCsv, exportSiteComparisonExcel, printAllFacilitiesPdf, printDesktopPdf, printSiteComparisonPdf, type ComparisonMetric, type SiteComparisonExport } from "./exports";
 import { formatNumber2 } from "../utils/numberFormatBridge";
+import { facilityStorageKey, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
 
 type View = "dashboard" | "entry" | "history" | "comparison" | "reports" | "settings" | "admin";
-type Site = { id: number; code: string; name: string; active: boolean; availableMonths: string[]; latestAvailableMonth: string | null };
-type Bootstrap = { displayPeriod: { startMonth: string; endMonth: string }; sites: Site[] };
+type Site = FacilitySite;
+type Bootstrap = BootstrapState;
+type BootstrapApi = Omit<Bootstrap, "sites"> & { sites: Array<{ site: Omit<Site, "availableMonths" | "latestAvailableMonth">; availableMonths: string[]; latestAvailableMonth: string | null }> };
 type HistoryData = { months: string[]; logs: MonthlyLog[] };
 type MonthData = { rowVersion: number | null; log: MonthlyLog | null };
 type AdminUser = { id: string; username: string; displayName: string; role: Role; active: boolean; createdAt: string; lastLoginAt: string | null };
@@ -25,6 +27,8 @@ type DisplayPeriod = { startMonth: string; endMonth: string; rowVersion: number 
 
 const todayMonth = () => new Date().toISOString().slice(0, 7);
 const readError = (error: unknown) => error instanceof Error ? error.message : "The request could not be completed.";
+const readStoredFacility = (userId: string) => { try { return sessionStorage.getItem(facilityStorageKey(userId)); } catch { return null; } };
+const storeFacility = (userId: string, siteId: number) => { try { sessionStorage.setItem(facilityStorageKey(userId), String(siteId)); } catch { /* facility remains selected in memory when storage is unavailable */ } };
 
 function AppNotice({ message }: { message: string | null }) {
   return message ? <div role="status" className="fixed bottom-5 right-5 z-50 max-w-sm rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-100 shadow-2xl">{message}</div> : null;
@@ -41,6 +45,8 @@ export default function CleanWebApp() {
   const [rowVersion, setRowVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [facilityLoading, setFacilityLoading] = useState(false);
+  const [facilityError, setFacilityError] = useState<string | null>(null);
   const site = useMemo(() => bootstrap?.sites.find(item => item.id === siteId) ?? null, [bootstrap, siteId]);
 
   const loadHistory = useCallback(async (id: number) => {
@@ -62,18 +68,22 @@ export default function CleanWebApp() {
     const user = session.authenticated ? session.user : null;
     setUser(user);
     if (!user) return;
-    const result = await api<Bootstrap>("/bootstrap");
-    const first = result.sites[0] ?? null;
-    setBootstrap(result); setSiteId(first?.id ?? null);
-    if (first) {
+    setFacilityLoading(true); setFacilityError(null);
+    try {
+      const result = normalizeBootstrap(await api<BootstrapApi>("/bootstrap"));
+      const stored = readStoredFacility(user.id);
+      const first = selectedFacility(result.sites, stored);
+      setBootstrap(result); setSiteId(first?.id ?? null);
+      if (!first) { setFacilityError("No facility is available for this account."); return; }
       const records = await loadHistory(first.id);
-      await loadMonth(first.id, first.latestAvailableMonth ?? todayMonth(), records);
-    }
+      await loadMonth(first.id, first.latestAvailableMonth ?? result.displayPeriod.endMonth, records);
+    } catch (error) { setFacilityError(`Unable to load facilities: ${readError(error)}`); throw error; }
+    finally { setFacilityLoading(false); }
   }, [loadHistory, loadMonth]);
   useEffect(() => { void initialize().catch(error => setNotice(readError(error))); }, [initialize]);
   useEffect(() => { if (notice) { const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); } }, [notice]);
 
-  const selectSite = async (id: number) => { setBusy(true); try { setSiteId(id); const records = await loadHistory(id); const nextSite = bootstrap?.sites.find(item => item.id === id); await loadMonth(id, nextSite?.latestAvailableMonth ?? todayMonth(), records); } catch (error) { setNotice(readError(error)); } finally { setBusy(false); } };
+  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user) return; setBusy(true); setFacilityError(null); try { setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id); await loadMonth(id, nextSite.latestAvailableMonth ?? bootstrap?.displayPeriod.endMonth ?? todayMonth(), records); } catch (error) { setFacilityError(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setBusy(false); } };
   const selectMonth = async (selected: string) => { if (!siteId) return; setBusy(true); try { await loadMonth(siteId, selected, history); } catch (error) { setNotice(readError(error)); } finally { setBusy(false); } };
   const save = async (patch: Partial<MonthlyLog> = {}) => {
     if (!siteId || !draft) return;
@@ -86,7 +96,7 @@ export default function CleanWebApp() {
   };
   const logout = async () => { try { await api<void>("/auth/logout", { method: "POST" }); } finally { setUser(null); setBootstrap(null); setDraft(null); } };
   const refreshAfterSettings = async () => {
-    const result = await api<Bootstrap>("/bootstrap");
+    const result = normalizeBootstrap(await api<BootstrapApi>("/bootstrap"));
     const current = result.sites.find(item => item.id === siteId) ?? result.sites[0] ?? null;
     setBootstrap(result); setSiteId(current?.id ?? null);
     if (current) {
@@ -102,17 +112,18 @@ export default function CleanWebApp() {
   ];
   return <ReportProvider syncedLogs={history.logs} displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)}>
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 backdrop-blur"><div className="mx-auto flex max-w-[1600px] items-center gap-4 px-4 py-3"><div className="min-w-0 flex-1"><h1 className="font-display text-lg font-bold tracking-tight">Energy Monitor <span className="text-teal-400">v2.3.1</span></h1><p className="truncate text-xs text-slate-400">{site?.name ?? "Loading facility…"} · {user.displayName}</p></div><select aria-label="Facility" value={siteId ?? ""} onChange={event => void selectSite(Number(event.target.value))} className="rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm">{bootstrap?.sites.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button onClick={() => void logout()} className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800" title="Logout"><LogOut className="h-4 w-4" /></button></div></header>
+      <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 backdrop-blur"><div className="mx-auto flex max-w-[1600px] items-center gap-4 px-4 py-3"><div className="min-w-0 flex-1"><h1 className="font-display text-lg font-bold tracking-tight">Energy Monitor <span className="text-teal-400">v2.3.1</span></h1><p className="truncate text-xs text-slate-400">{facilityLoading ? "Loading facilities…" : site?.name ?? "No facility available"} · {user.displayName}</p></div><label className="sr-only" htmlFor="facility-selector">Selected facility</label><select id="facility-selector" aria-label="Facility" disabled={facilityLoading || !bootstrap || bootstrap.sites.length === 0} value={siteId ?? ""} onChange={event => void selectSite(Number(event.target.value))} className="min-w-44 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm disabled:opacity-60"><option value="">{facilityLoading ? "Loading facilities…" : bootstrap?.sites.length ? "Select facility" : "No facility available"}</option>{bootstrap?.sites.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button onClick={() => void logout()} className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800" title="Logout"><LogOut className="h-4 w-4" /></button></div></header>
       <div className="mx-auto flex max-w-[1600px]"><aside className="hidden w-56 shrink-0 border-r border-slate-800 p-3 md:block">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm ${view === item.id ? "bg-teal-500/15 text-teal-300" : "text-slate-400 hover:bg-slate-900 hover:text-slate-100"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</aside>
         <main className="min-w-0 flex-1 p-4 md:p-6"><div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">Reporting month</span><div className="text-lg font-semibold">{month}</div></div><input aria-label="Reporting month" type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">Display period {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />Completion <b className="text-teal-300">{completion.overall.percent}%</b></div></div>
           {busy && <div className="mb-4 text-sm text-teal-300">Working…</div>}
-          {view === "dashboard" && <DashboardSummary logs={history.logs} selectedMonth={month} lang="en" />}
+          {facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">Facility context unavailable</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">Retry facility load</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">Loading facility context…</section> : <>{view === "dashboard" && <DashboardSummary logs={history.logs} selectedMonth={month} lang="en" />}
           {view === "entry" && draft && <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">Monthly Data Entry</h2><p className="mt-1 text-sm text-slate-400">Enter validated operating readings for {month}; calculations remain Desktop v2.3.1-compatible.</p></div><UpsTable monthStr={month} initialRecords={draft.ups} lastSaved={draft.lastSavedUps} onSave={records => void save({ ups: records })} /><AirTable monthStr={month} initialRecord={draft.air} lastSaved={draft.lastSavedAir} meterFields={draft.energyCalculation?.airFields} onSave={air => void save({ air })} /><DcTable monthStr={month} initialRecords={draft.dc} lastSaved={draft.lastSavedDc} onSave={dc => void save({ dc })} /><EnergyCostTable monthStr={month} initialRecord={draft.energyCost} lastSaved={draft.lastSavedEnergyCost} onSave={energyCost => void save({ energyCost })} /></section>}
           {view === "history" && <HistoricalExplorer logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} onEditMonth={selected => { setView("entry"); void selectMonth(selected); }} />}
           {view === "comparison" && <SiteComparison />}
           {view === "reports" && <Reports siteName={site?.name ?? "energy-monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} />}
           {view === "settings" && user.role === "admin" && bootstrap && <AdminSettings displayPeriod={bootstrap.displayPeriod} onSaved={async () => { try { await refreshAfterSettings(); setNotice("Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} />}
           {view === "admin" && user.role === "admin" && <Admin />}
+          </>}
         </main></div>
       <nav className="fixed bottom-0 left-0 right-0 z-30 flex border-t border-slate-800 bg-slate-950 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`flex flex-1 flex-col items-center gap-1 py-2 text-[10px] ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
       <AppNotice message={notice} />
