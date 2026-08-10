@@ -247,10 +247,35 @@ html.theme-light {
   --color-danger: #e00000;
   --color-shadow: 0 1px 3px rgb(0 0 0 / 0.10);
   --ui-text: #2f2923;
+  --color-indigo-300: #c8102e;
   --color-indigo-400: #c8102e;
   --color-indigo-500: #e60012;
   --color-indigo-600: #d50018;
   --color-indigo-700: #a20f29;
+  /* Dashboard accent families (amber/emerald/purple/rose/sky/teal): dark
+   * theme uses light 200-500 shades for legibility against a near-black
+   * background (measured 1.1-2.8:1 against #f6f1e8 - effectively invisible
+   * on this warm-beige page). Light theme needs the ramp inverted to dark
+   * 700-950 shades of the SAME hue for WCAG AA text contrast - every value
+   * below is >=6.3:1 against both #f6f1e8 and #ffffff (computed, not
+   * guessed). Never used for primary actions (that's --color-primary), so
+   * these keep their own hue rather than following indigo's red reassignment. */
+  --color-amber-200: #461901;
+  --color-amber-300: #7b3306;
+  --color-amber-400: #973c00;
+  --color-amber-500: #973c00;
+  --color-emerald-400: #006045;
+  --color-emerald-500: #006045;
+  --color-purple-400: #6e11b0;
+  --color-rose-100: #4d0218;
+  --color-rose-200: #8b0836;
+  --color-rose-300: #a50036;
+  --color-rose-400: #a50036;
+  --color-rose-500: #c70036;
+  --color-sky-400: #00598a;
+  --color-teal-300: #0b4f4a;
+  --color-teal-400: #005f5a;
+  --color-teal-500: #005f5a;
   --color-slate-950: #f6f1e8;
   --color-slate-900: #ffffff;
   --color-slate-800: #e3ded5;
