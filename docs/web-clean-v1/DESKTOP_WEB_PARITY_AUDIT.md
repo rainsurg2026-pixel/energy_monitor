@@ -2,6 +2,54 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Final non-Export verification gate
+
+Full regression battery re-run fresh for this gate (not cited from
+earlier in the session): `test:domain-parity` (24), `test:rack-capacity-metrics`
+(6), `test:rack-unit-capacity` (6), `test:rack-status-config` (6),
+`test:display-period` (10), `test:air-validation` (8), `test:web-clean-v1-theme`
+(1 suite incl. computed-contrast assertions), `test:web-clean-v1-facility-context`
+(8), `test:web-clean-v1-admin-ui` (1 suite), `test:facility-isolation` (15),
+`test:facility-comparison` (54), `test:dashboard-facility-isolation` (13),
+`test:phase3` (127 authz + 25 unit tests), `test:api` (55). All pass, zero
+regressions from the Dashboard/Rack Capacity work. `npm run lint` and
+`npm run build` both clean.
+
+Both external blockers re-checked and confirmed unchanged: Supabase MCP
+still exposes only `lhlzzxjayywqhqtjzfiu`/`rohmbjqnyekvxpyydjbn`, not
+`tofdgndrrpnnyhbuurbx`; the Chrome browser extension is still not
+connected in this session.
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Dashboard - Executive View | STATIC/API VERIFIED | Reused `ExecutiveDashboard` component; build clean |
+| Dashboard - Engineering View | STATIC/API VERIFIED | Pre-existing `DashboardSummary`, unchanged |
+| Dashboard - Year/Period/Trend/Category/UPS Group/Compare | STATIC VERIFIED | `UniversalFilterBar` wired to shared `ReportContext`; no dedicated UI test exists for this component (pre-existing gap, not introduced here) |
+| Dashboard - Forecast/Benchmark | INTENTIONAL DIFFERENCE | `reportViews` prop restricts Web's tab switcher; not present anywhere in the Web bundle |
+| Dashboard - chart numeric labels | STATIC VERIFIED | `TrendLineChart` draws direct SVG labels; `DashboardSummary` has no chart library (tables/cards only) |
+| Dashboard - Light/Dark theme | STATIC VERIFIED | Computed WCAG contrast, `test:web-clean-v1-theme` passes |
+| Rack Capacity - view/facility/zone/status/unit | STATIC/API VERIFIED | `test:rack-capacity-metrics`, `test:rack-unit-capacity`, `test:rack-status-config`, new API assertions all pass |
+| Rack Capacity - calculation reuse | VERIFIED | `calculateRackCapacityMetrics`/`usagePercent` called directly, not reimplemented |
+| Rack Capacity - facility isolation | STATIC/API VERIFIED | API test: site with no snapshot returns null, never another site's data |
+| UPS Group / UPS History | STATIC/API VERIFIED | Root-caused and fixed 2026-08-11 (see below); `test:api` covers mapping, DTO fields, Display Period filtering, facility isolation, empty case |
+| Data Entry (fields, Rangsit=4/Srinakarin=6 EB fields, save/persist) | VERIFIED | `test:air-validation`, `test:facility-isolation` (15 checks) |
+| History (UPS/Air/DC/Energy/Rack tabs, filters, facility/month context) | STATIC VERIFIED | `HistoricalExplorer`'s 5-tab structure confirmed in source; UPS tab data flow fixed this session |
+| Site Comparison (facility, reference month, 3/6/12-month trend, isolation) | VERIFIED | `test:facility-comparison` (54 checks) |
+| User Management (add/role/active/enable/disable/delete/last-admin/session revocation/audit) | STATIC/API VERIFIED | `test:web-clean-v1-admin-ui`, `test:api` (55, incl. `SELF_DEACTIVATION_NOT_ALLOWED`/`LAST_ADMIN`/audit-action assertions), `test:phase3` (127 authz assertions) |
+| Facility context (bootstrap adapter, propagation to all views, no hardcoded IDs) | VERIFIED | `test:web-clean-v1-facility-context` (8), `test:facility-isolation` (15), `test:dashboard-facility-isolation` (13) |
+| Theme (Light warm-beige, Dark contrast, all control types) | VERIFIED | Computed contrast test; Login's fixed-dark rationale confirmed at the mechanism level (theme only applies post-auth) |
+| Responsive | STATIC VERIFIED | `sm:`/`md:`/`lg:`/`xl:` breakpoints present in `UniversalFilterBar`, `DashboardView`, `RackCapacityView` (mobile-first: base styles first, breakpoint overrides after, per project convention) |
+| Live Supabase schema/RLS/row counts | NOT VERIFIED - EXTERNAL BLOCKER | MCP connector still cannot see `tofdgndrrpnnyhbuurbx` |
+| Live browser UAT (all areas) | NOT VERIFIED - EXTERNAL BLOCKER | Chrome extension still not connected this session |
+
+**Gate result: NON-EXPORT READY FOR EXPORT PHASE.**
+
+Every non-Export area has real static/API/test evidence and zero known
+open defects; the only remaining gaps (live Supabase state, live browser
+rendering) are genuine external blockers explicitly carved out by this
+gate's own instructions, not implementation gaps. No code changes were
+made in this verification pass - it found no regression to fix.
+
 ## 2026-08-11 Dashboard + Rack Capacity implementation
 
 Implemented per explicit instruction, Reports & Export explicitly excluded
