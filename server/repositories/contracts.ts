@@ -22,6 +22,22 @@ export interface UpsGroupHistoryRecord {
   generatedAt: string | null;
   dataVersion: number | null;
 }
+export type BackupType = "scheduled" | "manual";
+export type BackupStatus = "running" | "success" | "partial" | "failed";
+export interface BackupLogRecord {
+  id: number;
+  backupType: BackupType;
+  status: BackupStatus;
+  startedAt: string;
+  completedAt: string | null;
+  recordsProcessed: number;
+  recordsSuccess: number;
+  recordsFailed: number;
+  errorSummary: string | null;
+  initiatedBy: number | null;
+}
+export interface StartBackupInput { backupType: BackupType; initiatedBy: number | null; }
+export interface CompleteBackupInput { id: number; status: BackupStatus; recordsProcessed: number; recordsSuccess: number; recordsFailed: number; errorSummary: string | null; }
 export interface UpdateSettingsInput { startMonth: string; endMonth: string; expectedRowVersion: number; actorUserId?: number | null; }
 export interface SaveMonthlyLogInput { siteId: number; log: MonthlyLog; expectedRowVersion: number | null; correlationId: string; actorUserId?: number | null; provenance?: { sourceType: string; sourceFileHash?: string | null; sourceFileName?: string | null; sourceSheet?: string | null; sourceLocation?: string | null }; }
 
@@ -37,5 +53,9 @@ export interface BackendRepository {
   getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null>;
   getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null>;
   getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]>;
+  startBackupRun(input: StartBackupInput): Promise<BackupLogRecord>;
+  completeBackupRun(input: CompleteBackupInput): Promise<BackupLogRecord>;
+  latestBackupRun(): Promise<BackupLogRecord | null>;
+  listBackupRuns(limit: number): Promise<BackupLogRecord[]>;
   withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T>;
 }

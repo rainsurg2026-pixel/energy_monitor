@@ -1,6 +1,6 @@
 import type { MonthlyLog } from "../../src/types";
 import { HttpError } from "../errors";
-import type { BackendRepository, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord } from "./contracts";
+import type { BackendRepository, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "./contracts";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 export interface InMemoryRepositoryOptions {
@@ -34,6 +34,8 @@ export class InMemoryRepository implements BackendRepository {
   private readonly upsGroupHistory: Record<number, UpsGroupHistoryRecord[]>;
   private readonly databaseReady: boolean;
   private readonly auditFailure: boolean;
+  private readonly backupRuns: BackupLogRecord[] = [];
+  private nextBackupId = 1;
   readonly auditEvents: InMemoryAuditEvent[] = [];
 
   constructor(options: InMemoryRepositoryOptions = {}) {
@@ -126,6 +128,33 @@ export class InMemoryRepository implements BackendRepository {
   async getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null> { return this.rackSnapshots[`${siteId}:${month}`] ?? null; }
   async getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null> { return this.rackUnitSnapshots[`${siteId}:${month}`] ?? null; }
   async getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]> { return this.upsGroupHistory[siteId] ?? []; }
+
+  async startBackupRun(input: StartBackupInput): Promise<BackupLogRecord> {
+    const record: BackupLogRecord = { id: this.nextBackupId++, backupType: input.backupType, status: "running", startedAt: new Date().toISOString(), completedAt: null, recordsProcessed: 0, recordsSuccess: 0, recordsFailed: 0, errorSummary: null, initiatedBy: input.initiatedBy };
+    this.backupRuns.push(record);
+    return { ...record };
+  }
+
+  async completeBackupRun(input: CompleteBackupInput): Promise<BackupLogRecord> {
+    const record = this.backupRuns.find(run => run.id === input.id);
+    if (!record) throw new HttpError(404, "BACKUP_RUN_NOT_FOUND", "Backup run was not found.");
+    record.status = input.status;
+    record.completedAt = new Date().toISOString();
+    record.recordsProcessed = input.recordsProcessed;
+    record.recordsSuccess = input.recordsSuccess;
+    record.recordsFailed = input.recordsFailed;
+    record.errorSummary = input.errorSummary;
+    return { ...record };
+  }
+
+  async latestBackupRun(): Promise<BackupLogRecord | null> {
+    const sorted = [...this.backupRuns].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    return sorted[0] ? { ...sorted[0] } : null;
+  }
+
+  async listBackupRuns(limit: number): Promise<BackupLogRecord[]> {
+    return [...this.backupRuns].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, limit).map(run => ({ ...run }));
+  }
 
   async withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T> {
     const previous = this.settings ? { ...this.settings } : null;

@@ -10,6 +10,8 @@ import { authContext, createAuthContextMiddleware } from "../auth/http";
 import { PERMISSIONS } from "../authz/permissions";
 import { requirePermission, type AuthenticatedPrincipal, isAuthorizationError, type Role } from "../authz";
 import { createCorsMiddleware, createOriginPolicy, createCsrfMiddleware, csrfCookieOptions, issueCsrfCookie, clearCookie, parseCookieHeader, serializeCookie, SESSION_COOKIE_NAME, CSRF_COOKIE_NAME, sessionCookieOptions, createRateLimitMiddleware, InMemoryRateLimitStore, type RateLimitStore } from "./security";
+import { loadBackupConfig, isAuthorizedCronRequest } from "../backup/backupConfig";
+import { runBackup } from "../backup/backupService";
 
 export interface AppDependencies {
   repository: BackendRepository;
@@ -29,7 +31,11 @@ function requestId(req: Request, res: Response, next: NextFunction): void {
 
 function readOnlyMutationGuard(config: ServerConfig, req: Request, res: Response, next: NextFunction): void {
   const mutation = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
-  const securityExceptions = req.path === "/auth/login" || req.path === "/auth/logout";
+  // Backup reads operational data and writes only to Sheets/backup_log, never
+  // to operational tables - READ_ONLY_MODE exists to block operational
+  // writes, not to disable backups during exactly the kind of maintenance
+  // window READ_ONLY_MODE is used for.
+  const securityExceptions = req.path === "/auth/login" || req.path === "/auth/logout" || req.path === "/cron/backup" || req.path === "/admin/backup/run";
   if (config.readOnlyMode && mutation && !securityExceptions) {
     res.status(423).json({ ok: false, error: { code: "READ_ONLY_MODE", message: "Mutations are disabled while READ_ONLY_MODE is enabled.", requestId: res.locals.requestId } });
     return;
@@ -89,8 +95,12 @@ export function createApp(dependencies: AppDependencies) {
   }));
 
   // All remaining mutation routes, including logout and password change, must
-  // present the session-bound CSRF token.
-  app.use("/api/v1", (req, res, next) => csrf(req, res, next));
+  // present the session-bound CSRF token. /cron/backup is the one exception:
+  // Vercel Cron calls it with no session/cookies at all, authenticated
+  // instead by its own CRON_SECRET bearer check inside the route handler -
+  // the same shape as the existing /auth/login CSRF exception below, just
+  // for a machine-to-machine caller instead of a not-yet-authenticated one.
+  app.use("/api/v1", (req, res, next) => { if (req.path === "/cron/backup") { next(); return; } csrf(req, res, next); });
 
   app.post("/api/v1/auth/logout", asyncRoute(async (req, res) => {
     const token = authContext(res).sessionToken;
@@ -137,6 +147,29 @@ export function createApp(dependencies: AppDependencies) {
   app.patch("/api/v1/admin/users/:userId/role", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.rolesAssign); const body = parseObjectBody(req.body); sendOk(res, await auth.setUserRole(actor, parseUserId(req.params.userId), parseRole(body.role), res.locals.requestId)); }));
   app.post("/api/v1/admin/users/:userId/password", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.passwordsReset); const body = parseObjectBody(req.body); sendOk(res, await auth.resetUserPassword(actor, parseUserId(req.params.userId), body.password, res.locals.requestId)); }));
   app.delete("/api/v1/admin/users/:userId", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.usersDelete); await auth.deleteUser(actor, parseUserId(req.params.userId), res.locals.requestId); res.status(204).end(); }));
+
+  app.get("/api/v1/admin/backup/status", asyncRoute(async (_req, res) => {
+    withPermission(res, PERMISSIONS.backupRestoreManage);
+    const [configured, latest, recent] = await Promise.all([
+      Promise.resolve(loadBackupConfig() !== null),
+      dependencies.repository.latestBackupRun(),
+      dependencies.repository.listBackupRuns(10)
+    ]);
+    sendOk(res, { configured, schedule: "Daily", latest, recent });
+  }));
+  app.post("/api/v1/admin/backup/run", asyncRoute(async (_req, res) => {
+    const actor = withPermission(res, PERMISSIONS.backupRestoreManage);
+    const result = await runBackup(dependencies.repository, "manual", actorNumber(actor.userId));
+    sendOk(res, result.log);
+  }));
+  // Vercel Cron authenticates via a shared-secret bearer header (Vercel's
+  // documented convention for securing cron endpoints), never a user
+  // session - this route is intentionally outside the session/CSRF stack.
+  app.post("/api/v1/cron/backup", asyncRoute(async (req, res) => {
+    if (!isAuthorizedCronRequest(req.header("authorization"))) throw new HttpError(401, "UNAUTHORIZED", "Invalid or missing cron authorization.");
+    const result = await runBackup(dependencies.repository, "scheduled", null);
+    sendOk(res, result.log);
+  }));
 
   app.use((_req, _res, next) => next(new HttpError(404, "NOT_FOUND", "The requested API route was not found.")));
   const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {

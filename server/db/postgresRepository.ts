@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import type { MonthlyLog, UpsRecord } from "../../src/types";
 import { withTransaction, type DbExecutor, query } from "./pool";
 import { HttpError } from "../errors";
-import type { BackendRepository, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord } from "../repositories/contracts";
+import type { BackendRepository, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "../repositories/contracts";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 function numberOrNull(value: unknown): number | null { return value === null || value === undefined ? null : Number(value); }
@@ -279,6 +279,57 @@ export class PostgresRepository implements BackendRepository {
       generatedAt: row.generated_at,
       dataVersion: row.data_version
     }));
+  }
+
+  private mapBackupRow(row: { id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null }): BackupLogRecord {
+    return {
+      id: Number(row.id),
+      backupType: row.backup_type as BackupLogRecord["backupType"],
+      status: row.status as BackupLogRecord["status"],
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      recordsProcessed: row.records_processed,
+      recordsSuccess: row.records_success,
+      recordsFailed: row.records_failed,
+      errorSummary: row.error_summary,
+      initiatedBy: row.initiated_by === null ? null : Number(row.initiated_by)
+    };
+  }
+
+  async startBackupRun(input: StartBackupInput): Promise<BackupLogRecord> {
+    const result = await query<{ id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null }>(
+      this.executor,
+      "INSERT INTO public.backup_log(backup_type, status, initiated_by) VALUES ($1, 'running', $2) RETURNING id, backup_type, status, started_at, completed_at, records_processed, records_success, records_failed, error_summary, initiated_by",
+      [input.backupType, input.initiatedBy]
+    );
+    return this.mapBackupRow(result.rows[0]);
+  }
+
+  async completeBackupRun(input: CompleteBackupInput): Promise<BackupLogRecord> {
+    const result = await query<{ id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null }>(
+      this.executor,
+      "UPDATE public.backup_log SET status = $2, completed_at = now(), records_processed = $3, records_success = $4, records_failed = $5, error_summary = $6 WHERE id = $1 RETURNING id, backup_type, status, started_at, completed_at, records_processed, records_success, records_failed, error_summary, initiated_by",
+      [input.id, input.status, input.recordsProcessed, input.recordsSuccess, input.recordsFailed, input.errorSummary]
+    );
+    if (!result.rows[0]) throw new HttpError(404, "BACKUP_RUN_NOT_FOUND", "Backup run was not found.");
+    return this.mapBackupRow(result.rows[0]);
+  }
+
+  async latestBackupRun(): Promise<BackupLogRecord | null> {
+    const result = await query<{ id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null }>(
+      this.executor,
+      "SELECT id, backup_type, status, started_at, completed_at, records_processed, records_success, records_failed, error_summary, initiated_by FROM public.backup_log ORDER BY started_at DESC LIMIT 1"
+    );
+    return result.rows[0] ? this.mapBackupRow(result.rows[0]) : null;
+  }
+
+  async listBackupRuns(limit: number): Promise<BackupLogRecord[]> {
+    const result = await query<{ id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null }>(
+      this.executor,
+      "SELECT id, backup_type, status, started_at, completed_at, records_processed, records_success, records_failed, error_summary, initiated_by FROM public.backup_log ORDER BY started_at DESC LIMIT $1",
+      [limit]
+    );
+    return result.rows.map(row => this.mapBackupRow(row));
   }
 
   async withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T> {

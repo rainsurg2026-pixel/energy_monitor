@@ -67,7 +67,11 @@ release/
 # Backups and generated exports
 *.bak
 *.backup
-backup/
+# Anchored to the repo root: the Desktop app's local workbook-backup folder
+# (D:\...\Energy_Monitor\backup\), not source code. An unanchored "backup/"
+# would also match server/backup/ (the new Google Sheets backup service
+# source, which must be tracked).
+/backup/
 exports/
 *.export.*
 *.test.pdf

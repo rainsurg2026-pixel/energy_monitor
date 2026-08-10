@@ -159,6 +159,32 @@ await withApi(false, async (base, authentication) => {
   const auditedActions = authentication.repository.audits.map(audit => audit.action);
   check("admin user-management actions are audited", ["user_create", "display_name_change", "user_deactivate", "user_activate", "password_reset", "role_change"].every(action => auditedActions.includes(action)));
   check("test auth fixture uses the expected admin identity", authentication.admin.username === "admin");
+
+  // Backup: RBAC reuses the existing backupRestoreManage permission (no new
+  // permission was invented). Not configured in this test environment, so
+  // "success" here means the routes are reachable and correctly gated -
+  // configured-and-working behavior is covered by test:backup-service with
+  // mocked Google responses.
+  const backupStatus = await client.request("/api/v1/admin/backup/status");
+  check("admin can read backup status", backupStatus.status === 200 && backupStatus.body.data.configured === false && Array.isArray(backupStatus.body.data.recent));
+  const backupRun = await client.request("/api/v1/admin/backup/run", { method: "POST" });
+  check("admin-triggered backup run is logged even when not configured", backupRun.status === 200 && backupRun.body.data.status === "failed" && backupRun.body.data.backupType === "manual");
+  const createdViewer = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "viewer", display_name: "Viewer", password: "Correct Horse Battery Staple 000!", role: "user", active: true }) });
+  check("temporary user for backup RBAC check was created", createdViewer.status === 200);
+  const viewerClient = await login(base, { username: "viewer", password: "Correct Horse Battery Staple 000!" });
+  const forbiddenBackupStatus = await viewerClient.request("/api/v1/admin/backup/status");
+  check("a non-admin user cannot read backup status", forbiddenBackupStatus.status === 403 && forbiddenBackupStatus.body.error?.code === "FORBIDDEN");
+  const forbiddenBackupRun = await viewerClient.request("/api/v1/admin/backup/run", { method: "POST" });
+  check("a non-admin user cannot trigger a backup run", forbiddenBackupRun.status === 403 && forbiddenBackupRun.body.error?.code === "FORBIDDEN");
+
+  // Cron endpoint: authenticated by CRON_SECRET only, never a session -
+  // must be reachable with no cookies/CSRF token at all (that's the whole
+  // point - Vercel Cron has none), and must reject a wrong/missing secret.
+  const cronNoSecret = await fetch(`${base}/api/v1/cron/backup`, { method: "POST", headers: { origin: "http://test" } });
+  check("cron endpoint rejects a request with no bearer secret", cronNoSecret.status === 401);
+  const cronWrongSecret = await fetch(`${base}/api/v1/cron/backup`, { method: "POST", headers: { origin: "http://test", authorization: "Bearer wrong-secret" } });
+  check("cron endpoint rejects the wrong bearer secret", cronWrongSecret.status === 401);
+  check("cron endpoint was reachable at all (not blocked by the global CSRF gate meant for session-based routes)", cronNoSecret.status !== 403 && cronWrongSecret.status !== 403);
 });
 
 await withApi(true, async base => {
