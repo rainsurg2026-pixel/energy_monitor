@@ -356,7 +356,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       return (
         <div className="py-10 text-center text-slate-500 italic text-xs">
           {lang === "th"
-            ? "ยังไม่มีประวัติกลุ่ม UPS ในเวิร์กบุ๊ก - จะถูกสร้างขึ้นโดยอัตโนมัติเมื่อบันทึกข้อมูลครั้งถัดไป"
+            ? "ไม่มีประวัติกลุ่ม UPS สำหรับไซต์และช่วงเวลานี้"
             : "No UPS Group History is available for this facility in the selected display period."}
         </div>
       );

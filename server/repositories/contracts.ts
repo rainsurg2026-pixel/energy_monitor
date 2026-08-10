@@ -9,6 +9,19 @@ export interface RackSnapshotRecord {
   records: Array<{ rowNumber: number | null; rackZone: string | null; rackId: string | null; status: string | null; cabinetSize: string | null; detail: string | null; deviceType: string | null; remarks: string | null }>;
 }
 export interface RackUnitSnapshotRecord { month: string; rowVersion: number; totalU: number; usedU: number; }
+export interface UpsGroupHistoryRecord {
+  facility: string;
+  month: string;
+  group: string;
+  totalLoadKw: number;
+  totalLoadKva: number;
+  capacity: number | null;
+  loadPercent: number | null;
+  availablePercent: number | null;
+  monthlyEnergyKwh: number;
+  generatedAt: string | null;
+  dataVersion: number | null;
+}
 export interface UpdateSettingsInput { startMonth: string; endMonth: string; expectedRowVersion: number; actorUserId?: number | null; }
 export interface SaveMonthlyLogInput { siteId: number; log: MonthlyLog; expectedRowVersion: number | null; correlationId: string; actorUserId?: number | null; provenance?: { sourceType: string; sourceFileHash?: string | null; sourceFileName?: string | null; sourceSheet?: string | null; sourceLocation?: string | null }; }
 
@@ -23,5 +36,6 @@ export interface BackendRepository {
   saveMonthlyLog(input: SaveMonthlyLogInput): Promise<PeriodRecord>;
   getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null>;
   getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null>;
+  getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]>;
   withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T>;
 }

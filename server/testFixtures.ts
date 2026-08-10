@@ -35,6 +35,17 @@ export function apiTestRepository(readOnly = false): InMemoryRepository {
       2: [fixtureLog("2026-02", 20, 120000, 600000)]
     },
     settings: { startMonth: "2026-01", endMonth: "2026-12", rowVersion: 1 },
-    rackUnitSnapshots: { "1:2026-01": { month: "2026-01", rowVersion: 1, totalU: 400, usedU: 350 } }
+    rackUnitSnapshots: { "1:2026-01": { month: "2026-01", rowVersion: 1, totalU: 400, usedU: 350 } },
+    upsGroupHistory: {
+      1: [
+        // Outside the configured Display Period (starts 2026-01) - must be
+        // filtered out of the API response, not treated as missing data.
+        { facility: "site-a", month: "2025-12", group: "UPS 11", totalLoadKw: 25, totalLoadKva: 28, capacity: 400, loadPercent: 6.25, availablePercent: 93.75, monthlyEnergyKwh: 18000, generatedAt: "2025-12-31T00:00:00.000Z", dataVersion: 1 },
+        { facility: "site-a", month: "2026-01", group: "UPS 11", totalLoadKw: 30, totalLoadKva: 34, capacity: 400, loadPercent: 7.5, availablePercent: 92.5, monthlyEnergyKwh: 21600, generatedAt: "2026-01-31T00:00:00.000Z", dataVersion: 1 }
+      ]
+      // Site 2 deliberately has no UPS Group History rows - covers the
+      // genuinely-empty-history case and (combined with site 1's rows)
+      // facility isolation.
+    }
   });
 }

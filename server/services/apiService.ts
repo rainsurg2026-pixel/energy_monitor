@@ -149,13 +149,21 @@ export class ApiService {
     await this.requireSite(siteId);
     const period = await this.requirePeriod();
     const availability = await this.availableForSite(siteId, period);
-    const logs = await this.repository.getMonthlyLogs(siteId, availability.availableMonths);
+    const [logs, upsGroupHistoryRows] = await Promise.all([
+      this.repository.getMonthlyLogs(siteId, availability.availableMonths),
+      this.repository.getUpsGroupHistory(siteId)
+    ]);
+    const visibleMonths = new Set(availability.availableMonths);
     return {
       siteId,
       displayPeriod: period,
       formulaVersion: DESKTOP_FORMULA_VERSION,
       months: availability.availableMonths,
-      logs: logs.sort((left, right) => left.month.localeCompare(right.month))
+      logs: logs.sort((left, right) => left.month.localeCompare(right.month)),
+      upsGroupHistory: {
+        sourceSheet: "2. UPS Group History",
+        rows: upsGroupHistoryRows.filter(row => visibleMonths.has(row.month))
+      }
     };
   }
 

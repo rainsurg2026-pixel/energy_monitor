@@ -11,6 +11,7 @@ import EnergyCostTable from "../components/EnergyCostTable";
 import { createEmptyLog } from "../utils";
 import { computeCompletion } from "../utils/completion";
 import type { MonthlyLog } from "../types";
+import type { UpsGroupHistoryReport } from "../reports/reportTypes";
 import { api, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportCsv, exportExcel, exportSiteComparisonCsv, exportSiteComparisonExcel, printAllFacilitiesPdf, printDesktopPdf, printSiteComparisonPdf, type ComparisonMetric, type SiteComparisonExport } from "./exports";
 import { formatNumber2 } from "../utils/numberFormatBridge";
@@ -21,7 +22,7 @@ type View = "dashboard" | "entry" | "history" | "comparison" | "reports" | "sett
 type Site = FacilitySite;
 type Bootstrap = BootstrapState;
 type BootstrapApi = Omit<Bootstrap, "sites"> & { sites: Array<{ site: Omit<Site, "availableMonths" | "latestAvailableMonth">; availableMonths: string[]; latestAvailableMonth: string | null }> };
-type HistoryData = { months: string[]; logs: MonthlyLog[] };
+type HistoryData = { months: string[]; logs: MonthlyLog[]; upsGroupHistory?: UpsGroupHistoryReport };
 type MonthData = { rowVersion: number | null; log: MonthlyLog | null };
 type AdminUser = { id: string; username: string; displayName: string; role: Role; active: boolean; createdAt: string; lastLoginAt: string | null };
 type DisplayPeriod = { startMonth: string; endMonth: string; rowVersion: number };
@@ -124,7 +125,7 @@ export default function CleanWebApp() {
           {busy && <div className="mb-4 text-sm text-teal-300">Working…</div>}
           {facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">Facility context unavailable</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">Retry facility load</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">Loading facility context…</section> : <>{view === "dashboard" && <DashboardSummary logs={history.logs} selectedMonth={month} lang="en" />}
           {view === "entry" && draft && <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">Monthly Data Entry</h2><p className="mt-1 text-sm text-slate-400">Enter validated operating readings for {month}; calculations remain Desktop v2.3.1-compatible.</p></div><UpsTable monthStr={month} initialRecords={draft.ups} lastSaved={draft.lastSavedUps} onSave={records => void save({ ups: records })} /><AirTable monthStr={month} initialRecord={draft.air} lastSaved={draft.lastSavedAir} meterFields={draft.energyCalculation?.airFields} onSave={air => void save({ air })} /><DcTable monthStr={month} initialRecords={draft.dc} lastSaved={draft.lastSavedDc} onSave={dc => void save({ dc })} /><EnergyCostTable monthStr={month} initialRecord={draft.energyCost} lastSaved={draft.lastSavedEnergyCost} onSave={energyCost => void save({ energyCost })} /></section>}
-          {view === "history" && <HistoricalExplorer logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} onEditMonth={selected => { setView("entry"); void selectMonth(selected); }} />}
+          {view === "history" && <HistoricalExplorer logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} upsGroupHistory={history.upsGroupHistory ?? null} onEditMonth={selected => { setView("entry"); void selectMonth(selected); }} />}
           {view === "comparison" && <SiteComparison />}
           {view === "reports" && <Reports siteName={site?.name ?? "energy-monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} />}
           {view === "settings" && bootstrap && <SettingsPage displayPeriod={bootstrap.displayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice("Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} />}

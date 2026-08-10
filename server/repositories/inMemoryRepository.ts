@@ -1,6 +1,6 @@
 import type { MonthlyLog } from "../../src/types";
 import { HttpError } from "../errors";
-import type { BackendRepository, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, UpdateSettingsInput } from "./contracts";
+import type { BackendRepository, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord } from "./contracts";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 export interface InMemoryRepositoryOptions {
@@ -9,6 +9,7 @@ export interface InMemoryRepositoryOptions {
   settings?: DisplayPeriod | null;
   rackSnapshots?: Record<string, RackSnapshotRecord>;
   rackUnitSnapshots?: Record<string, RackUnitSnapshotRecord>;
+  upsGroupHistory?: Record<number, UpsGroupHistoryRecord[]>;
   databaseReady?: boolean;
   auditFailure?: boolean;
 }
@@ -30,6 +31,7 @@ export class InMemoryRepository implements BackendRepository {
   private settings: DisplayPeriod | null;
   private readonly rackSnapshots: Record<string, RackSnapshotRecord>;
   private readonly rackUnitSnapshots: Record<string, RackUnitSnapshotRecord>;
+  private readonly upsGroupHistory: Record<number, UpsGroupHistoryRecord[]>;
   private readonly databaseReady: boolean;
   private readonly auditFailure: boolean;
   readonly auditEvents: InMemoryAuditEvent[] = [];
@@ -40,6 +42,7 @@ export class InMemoryRepository implements BackendRepository {
     this.settings = options.settings ?? null;
     this.rackSnapshots = options.rackSnapshots ?? {};
     this.rackUnitSnapshots = options.rackUnitSnapshots ?? {};
+    this.upsGroupHistory = options.upsGroupHistory ?? {};
     this.databaseReady = options.databaseReady ?? true;
     this.auditFailure = options.auditFailure ?? false;
   }
@@ -122,6 +125,7 @@ export class InMemoryRepository implements BackendRepository {
 
   async getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null> { return this.rackSnapshots[`${siteId}:${month}`] ?? null; }
   async getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null> { return this.rackUnitSnapshots[`${siteId}:${month}`] ?? null; }
+  async getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]> { return this.upsGroupHistory[siteId] ?? []; }
 
   async withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T> {
     const previous = this.settings ? { ...this.settings } : null;

@@ -104,6 +104,18 @@ await withApi(false, async (base, authentication) => {
   const energy = await client.request("/api/v1/energy?siteId=1&month=2026-01"); const energyText = JSON.stringify(energy.body); check("hidden previous is used internally", energy.status === 200 && energy.body.data.calculation.airEnergyKwh === 16000000); check("hidden previous is not in DTO", !energyText.includes("2025-12"));
   const rackUnit = await client.request("/api/v1/rack-unit-capacity?siteId=1&month=2026-01"); check("rack unit raw snapshot is exposed with derived metrics", rackUnit.status === 200 && rackUnit.body.data.snapshot.availableU === 50 && rackUnit.body.data.snapshot.usagePercent === 87.5);
   const comparison = await client.request("/api/v1/site-comparison"); check("comparison excludes hidden period", comparison.status === 200 && comparison.body.data.months.join(",") === "2026-01,2026-02" && !JSON.stringify(comparison.body).includes("2025-12"));
+  // UPS Group History: was previously never fetched at all (no repository
+  // method/route existed), so the History screen's UPS tab always showed
+  // "no data" regardless of what the database held. These assertions cover
+  // the fix end to end: valid mapping, DTO field names, display-period
+  // filtering, facility isolation, and the genuinely-empty case.
+  const site1History = await client.request("/api/v1/sites/1/history");
+  check("UPS Group History reaches the history DTO", site1History.status === 200 && site1History.body.data.upsGroupHistory.sourceSheet === "2. UPS Group History");
+  check("UPS Group History exposes the visible-month row with correctly mapped fields", site1History.body.data.upsGroupHistory.rows.length === 1 && site1History.body.data.upsGroupHistory.rows[0].month === "2026-01" && site1History.body.data.upsGroupHistory.rows[0].group === "UPS 11" && site1History.body.data.upsGroupHistory.rows[0].totalLoadKw === 30 && site1History.body.data.upsGroupHistory.rows[0].loadPercent === 7.5);
+  check("UPS Group History rows outside the Display Period are filtered, not fabricated as missing", !site1History.body.data.upsGroupHistory.rows.some((row: { month: string }) => row.month === "2025-12"));
+  const site2History = await client.request("/api/v1/sites/2/history");
+  check("a site with genuinely no UPS Group History rows returns an empty array, not an error", site2History.status === 200 && Array.isArray(site2History.body.data.upsGroupHistory.rows) && site2History.body.data.upsGroupHistory.rows.length === 0);
+  check("UPS Group History is scoped per site (no cross-facility contamination)", !JSON.stringify(site2History.body.data.upsGroupHistory).includes("UPS 11"));
   const invalid = await client.request("/api/v1/energy?siteId=1&month=2026/01"); check("strict month validation", invalid.status === 404 || invalid.status === 400);
   const outside = await client.request("/api/v1/energy?siteId=1&month=2025-12"); check("outside period rejected", outside.status === 404 && outside.body.error?.code === "MONTH_OUTSIDE_DISPLAY_PERIOD");
   const future = await client.request("/api/v1/energy?siteId=1&month=2026-12"); check("future month rejected", future.status === 404 && future.body.error?.code === "MONTH_NOT_AVAILABLE");

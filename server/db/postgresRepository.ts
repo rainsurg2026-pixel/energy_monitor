@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import type { MonthlyLog, UpsRecord } from "../../src/types";
 import { withTransaction, type DbExecutor, query } from "./pool";
 import { HttpError } from "../errors";
-import type { BackendRepository, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, UpdateSettingsInput } from "../repositories/contracts";
+import type { BackendRepository, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord } from "../repositories/contracts";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 function numberOrNull(value: unknown): number | null { return value === null || value === undefined ? null : Number(value); }
@@ -254,6 +254,31 @@ export class PostgresRepository implements BackendRepository {
     const result = await query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown }>(this.executor, "SELECT period_month, row_version, total_u, used_u FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = $2::date", [siteId, `${month}-01`]);
     const row = result.rows[0];
     return row ? { month: monthString(row.period_month), rowVersion: row.row_version, totalU: Number(row.total_u), usedU: Number(row.used_u) } : null;
+  }
+
+  async getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]> {
+    const result = await query<{
+      facility: string; history_month: string; group_name: string; total_load_kw: unknown; total_load_kva: unknown;
+      capacity: unknown; load_percent: unknown; available_percent: unknown; monthly_energy_kwh: unknown;
+      generated_at: string | null; data_version: number | null;
+    }>(
+      this.executor,
+      "SELECT facility, history_month, group_name, total_load_kw, total_load_kva, capacity, load_percent, available_percent, monthly_energy_kwh, generated_at, data_version FROM public.ups_group_history WHERE site_id = $1 ORDER BY history_month, group_name",
+      [siteId]
+    );
+    return result.rows.map(row => ({
+      facility: row.facility,
+      month: monthString(row.history_month),
+      group: row.group_name,
+      totalLoadKw: Number(row.total_load_kw),
+      totalLoadKva: Number(row.total_load_kva),
+      capacity: numberOrNull(row.capacity),
+      loadPercent: numberOrNull(row.load_percent),
+      availablePercent: numberOrNull(row.available_percent),
+      monthlyEnergyKwh: Number(row.monthly_energy_kwh),
+      generatedAt: row.generated_at,
+      dataVersion: row.data_version
+    }));
   }
 
   async withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T> {
