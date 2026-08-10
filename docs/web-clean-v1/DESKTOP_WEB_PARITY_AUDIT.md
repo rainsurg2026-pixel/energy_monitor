@@ -216,6 +216,52 @@ through the same `buildReportHtml()` Desktop-compatible renderer via a
 rendered PDF content/print-dialog behavior remains NOT VERIFIED (requires
 a live browser).
 
+## 2026-08-11 UPS Group History fix (P1)
+
+**Symptom**: History > UPS tab always showed an empty state
+("No UPS Group History is available..."), regardless of actual data.
+
+**Root cause**: NOT a naming/mapping mismatch. The Postgres table
+`public.ups_group_history` (migration `007_ups_group_history.sql`) was
+created with correct RLS/grants, but nothing else in the stack ever read
+it - `BackendRepository` had no method for it, `server/http/app.ts` had no
+route/field exposing it, and `CleanWebApp.tsx` never passed the optional
+`upsGroupHistory` prop to the shared `HistoricalExplorer` component at
+all. The empty-state branch (`!upsGroupHistory || rows.length === 0`) was
+therefore always taken, independent of what the database actually held.
+
+**Desktop/XLSM evidence**: both workbooks have a real "2. UPS Group
+History" sheet (Rangsit 269 rows, Srinakarin 346 rows, per this session's
+inventory) that Desktop persists and reads via
+`src/reports/upsGroupHistoryReader.ts`; the DB table was explicitly
+created to retain this same data ("Desktop v2.3.1 parity: retain the
+workbook's persisted '2. UPS Group History' rows").
+
+**Fix**: added `getUpsGroupHistory(siteId)` to `BackendRepository`
+(Postgres: real query against `public.ups_group_history`; in-memory: test
+double), folded the result into the existing `GET /sites/:id/history`
+response scoped to the same visible-months set as `logs` (so Display
+Period filtering applies identically - a row outside the period is
+filtered, not reported as missing), and wired `CleanWebApp.tsx` to pass it
+through. Fixed a leftover workbook-specific Thai string (English was
+already fixed previously). Deliberately did not pass `activeFacilityId` -
+the query already scopes by `site_id` server-side; guessing a
+facility-string risked silently re-hiding correctly-scoped data.
+
+**Regression tests** (`scripts/test-api-foundation.ts`): valid group
+mapping, exact DTO field names, Display-Period filtering, facility
+isolation (site 2 fixture has zero UPS Group History rows and never sees
+site 1's), and the genuinely-empty case. 53/53 API assertions pass (up
+from 48). `npm run lint` and `npm run build` both clean.
+
+**Remaining - NOT VERIFIED / EXTERNAL BLOCKER**: whether
+`public.ups_group_history` actually contains migrated production rows
+today is unknown (Supabase MCP access still blocked); live browser UAT of
+the History > UPS tab rendering is unverified (Chrome extension still not
+connected). The fix makes the read path correct either way - if the table
+is empty, the UI will now correctly say so for the right reason, instead
+of unconditionally.
+
 ## Scope and evidence
 
 Authoritative Desktop package:
