@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { normalizeTheme, themeStorageKey } from "../src/web-clean-v1/theme";
 
 assert.equal(normalizeTheme("light"), "light");
@@ -7,4 +8,14 @@ assert.equal(normalizeTheme("system"), "dark");
 assert.equal(normalizeTheme(null), "dark");
 assert.equal(themeStorageKey("8"), "energy-monitor:theme:8");
 assert.notEqual(themeStorageKey("8"), themeStorageKey("9"));
-console.log("web-clean-v1 theme: 6 assertions passed");
+const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
+const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
+for (const token of ["--color-bg", "--color-surface", "--color-surface-elevated", "--color-text", "--color-text-secondary", "--color-text-muted", "--color-text-disabled", "--color-border", "--color-input-bg", "--color-input-text", "--color-input-placeholder", "--color-primary", "--color-secondary", "--color-danger", "--color-success", "--color-warning"]) assert.match(css, new RegExp(`${token}:`));
+assert.match(css, /body\s*\{[^}]*background: var\(--color-bg\);[^}]*color: var\(--color-text\);/s);
+assert.match(css, /input::placeholder,[\s\S]*?color: var\(--color-input-placeholder\);/);
+assert.match(css, /html\.theme-light\s*\{[\s\S]*?--color-bg: #f6f1e8;[\s\S]*?--color-text: #333333;[\s\S]*?--color-border: #e3ded5;/);
+assert.match(css, /--color-input-bg: #071a30;[\s\S]*?--color-input-text: #f4f7fb;[\s\S]*?--color-input-placeholder: #b9c9da;/);
+assert.match(app, /function Login[\s\S]*?bg-slate-950 px-4 text-slate-100/);
+assert.match(app, /PASSWORD_MIN_LENGTH = 12/);
+assert.match(app, /passwordHelp/);
+console.log("web-clean-v1 theme: semantic token and readability assertions passed");

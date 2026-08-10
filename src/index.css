@@ -18,8 +18,13 @@
   --color-surface: #0b1f3a;
   --color-surface-elevated: #193253;
   --color-text: #f4f7fb;
+  --color-text-secondary: #d7e1ec;
   --color-text-muted: #b9c9da;
+  --color-text-disabled: #87a0bc;
   --color-border: #2a4568;
+  --color-input-bg: #071a30;
+  --color-input-text: #f4f7fb;
+  --color-input-placeholder: #b9c9da;
   --color-primary: #e00000;
   --color-secondary: #007ad0;
   --color-success: #16a34a;
@@ -61,6 +66,34 @@ textarea {
 
 body {
   letter-spacing: 0.005em;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+input,
+select,
+textarea {
+  background-color: var(--color-input-bg) !important;
+  border-color: var(--color-border) !important;
+  color: var(--color-input-text) !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-input-placeholder);
+  opacity: 1;
+}
+
+option {
+  background-color: var(--color-input-bg);
+  color: var(--color-input-text);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled,
+button:disabled {
+  color: var(--color-text-disabled);
 }
 
 /* Data-heavy surfaces use one predictable text colour per theme. This keeps
@@ -69,8 +102,8 @@ body {
 html:not(.theme-light) table,
 html:not(.theme-light) table *,
 html:not(.theme-light) .recharts-wrapper text {
-  color: #ffffff !important;
-  fill: #ffffff !important;
+  color: var(--color-text) !important;
+  fill: var(--color-text) !important;
   font-weight: 400 !important;
 }
 
@@ -200,8 +233,13 @@ html.theme-light {
   --color-surface: #ffffff;
   --color-surface-elevated: #faf7f1;
   --color-text: #333333;
+  --color-text-secondary: #505050;
   --color-text-muted: #666666;
+  --color-text-disabled: #8b8378;
   --color-border: #e3ded5;
+  --color-input-bg: #ffffff;
+  --color-input-text: #333333;
+  --color-input-placeholder: #666666;
   --color-primary: #e00000;
   --color-secondary: #007ad0;
   --color-success: #16a34a;
@@ -232,14 +270,14 @@ html.theme-light {
 html.theme-light input,
 html.theme-light select,
 html.theme-light textarea {
-  color: var(--ui-text);
-  background-color: #fffaf3;
-  border-color: #cdbba7;
+  color: var(--color-input-text);
+  background-color: var(--color-input-bg);
+  border-color: var(--color-border);
 }
 
 html.theme-light option {
-  color: var(--ui-text);
-  background-color: #fffaf3;
+  color: var(--color-input-text);
+  background-color: var(--color-input-bg);
 }
 
 html.theme-light .bg-white {

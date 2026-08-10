@@ -5,6 +5,7 @@ import { isHttpError, HttpError } from "../errors";
 import { ApiService } from "../services/apiService";
 import type { BackendRepository } from "../repositories/contracts";
 import { AuthService } from "../auth/authService";
+import { PasswordPolicyError } from "../auth/passwordPolicy";
 import { authContext, createAuthContextMiddleware } from "../auth/http";
 import { PERMISSIONS } from "../authz/permissions";
 import { requirePermission, type AuthenticatedPrincipal, isAuthorizationError, type Role } from "../authz";
@@ -142,6 +143,7 @@ export function createApp(dependencies: AppDependencies) {
     const request = res.locals.requestId ?? crypto.randomUUID();
     if (isAuthorizationError(error)) { res.status(error.status).json({ ok: false, error: { code: error.code, message: error.message, requestId: request } }); return; }
     if (isHttpError(error)) { res.status(error.status).json({ ok: false, error: { code: error.code, message: error.message, requestId: request } }); return; }
+    if (error instanceof PasswordPolicyError) { res.status(400).json({ ok: false, error: { code: error.code, message: error.message, requestId: request } }); return; }
     if (error && typeof error === "object" && (("type" in error && (error as { type?: unknown }).type === "entity.too.large") || ("status" in error && (error as { status?: unknown }).status === 413))) { res.status(413).json({ ok: false, error: { code: "PAYLOAD_TOO_LARGE", message: "Request body exceeds the permitted size.", requestId: request } }); return; }
     if (error instanceof SyntaxError) { res.status(400).json({ ok: false, error: { code: "INVALID_JSON", message: "Request body is not valid JSON.", requestId: request } }); return; }
     console.error(`[${request}] API error`, error instanceof Error ? error.name : "UNKNOWN_ERROR");

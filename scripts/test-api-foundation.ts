@@ -114,7 +114,9 @@ await withApi(false, async (base, authentication) => {
   const createdUser = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "operator", display_name: "Test Operator", password: "Correct Horse Battery Staple 456!", role: "user", active: true }) });
   const createdUserJson = JSON.stringify(createdUser.body);
   const operatorId = String(createdUser.body.data?.id ?? "");
-  check("admin can create active user", createdUser.status === 200 && createdUser.body.data.role === "user" && createdUser.body.data.active === true);
+  check("admin can create active user", createdUser.status === 200 && createdUser.body.data.id && createdUser.body.data.username === "operator" && createdUser.body.data.role === "user" && createdUser.body.data.active === true);
+  const shortPassword = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "invalid-password", display_name: "Invalid Password", password: "short", role: "user" }) });
+  check("password policy rejection is a safe validation response", shortPassword.status === 400 && shortPassword.body.error?.code === "PASSWORD_TOO_SHORT");
   check("user management response excludes credential internals", !createdUserJson.includes("passwordHash") && !createdUserJson.includes("failedAttemptCount") && !createdUserJson.includes("lockedUntil"));
   const displayName = await client.request(`/api/v1/admin/users/${operatorId}/display-name`, { method: "PATCH", body: JSON.stringify({ display_name: "Renamed Operator" }) }); check("admin can edit display name", displayName.status === 200 && displayName.body.data.displayName === "Renamed Operator");
   const userClient = await login(base, { username: "operator", password: "Correct Horse Battery Staple 456!" });
