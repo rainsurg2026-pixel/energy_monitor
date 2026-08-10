@@ -58,6 +58,10 @@ Notable source structures:
 - The Rangsit reader reports historical UPS rows missing for months
   2020-12 through 2025-12; this is recorded as source-data completeness,
   not filled or inferred.
+- The packaged Srinakarin workbook loads and reads, but the save-formatting
+  regression cannot complete because its 2026-07 PPC43 average/current cache is
+  incomplete. The writer rejects this explicitly. No value was invented or
+  written to the release workbook.
 
 The packaged executable was launched in a controlled diagnostic run. It
 remained responsive and logged startup plus Rangsit workbook open; no GUI
@@ -75,7 +79,7 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
 | Facility context | packaged facilities.json and per-facility profiles/workbooks | bootstrap returns scoped sites; facility-context test (8 assertions) | PASS | Keep site id in every history/month/save request |
 | Display period | Desktop globalDataDisplayPeriod defaults to 2026 | Admin-only settings UI and policy/API tests; no historical rows deleted | PASS | Do not change shared period during UAT |
 | Dashboard | Dashboard-FAC, profile-driven UPS groups/mapping | DashboardSummary + domain parity test (24 assertions) | PASS | Remote data parity still needs Supabase read access |
-| Data entry/save | workbook section readers/writer and row validation | Clean form writes PUT /sites/:id/periods/:month; API tests cover row version and validation | PASS | Authenticated real-user save still owner-driven |
+| Data entry/save | workbook section readers/writer and row validation | Clean form writes PUT /sites/:id/periods/:month; API tests cover row version and validation | PARTIAL | Authenticated real-user save still owner-driven; packaged Srinakarin 2026-07 source cache needs valid PPC43 readings before Desktop save parity can be called complete |
 | History | workbook monthly logs and group history | HistoricalExplorer consumes scoped history DTO | PARTIAL | Verify exact remote months after connector access restored |
 | Site comparison | Desktop comparison uses each facility workbook independently | /site-comparison, SiteComparison, comparison export helpers and facility isolation tests | PASS | Verify values against remote DB and Desktop sample month |
 | Current facility export | Desktop report/CSV/XLSX/PDF renderer | Clean CSV/XLSX/PDF print path and export test (7 assertions) | PASS | Browser download/print requires authenticated UAT |
@@ -105,6 +109,9 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
   account. Do not use or modify previewuat.
 - Compare one identical facility/month across XLSM, API, Web dashboard, and
   each export.
+- Resolve packaged Srinakarin 2026-07 PPC43 source completeness with valid
+  owner-provided readings, or explicitly accept that source limitation. Do not
+  synthesize readings.
 
 ### P2
 
