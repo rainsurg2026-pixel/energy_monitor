@@ -31,6 +31,9 @@ must adapt storage and session handling without changing those contracts.
 5. Delete a user subject to self-protection and session revocation rules.
 6. Reset a user password.
 7. Configure the Global Display Period without altering historical records.
+8. Choose a personal Light or Dark appearance preference from Settings. The
+   preference is browser/user-specific, applies immediately, and does not alter
+   shared application settings or another user's view.
 
 ## Desktop data contract
 

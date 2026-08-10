@@ -14,6 +14,18 @@
  * restrained red primary accent. Semantic success/warning colours remain
  * separate so status meaning is not lost. */
 :root {
+  --color-bg: #071426;
+  --color-surface: #0b1f3a;
+  --color-surface-elevated: #193253;
+  --color-text: #f4f7fb;
+  --color-text-muted: #b9c9da;
+  --color-border: #2a4568;
+  --color-primary: #e00000;
+  --color-secondary: #007ad0;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #e00000;
+  --color-shadow: 0 1px 3px rgb(0 0 0 / 0.10);
   --ui-text: #ffffff;
   --color-indigo-50: #fff1f2;
   --color-indigo-100: #ffe4e6;
@@ -184,22 +196,34 @@ html.theme-light .recharts-default-tooltip {
 
 html.theme-light {
   /* Warm, low-saturation beige hierarchy: page -> cards -> controls. */
+  --color-bg: #f6f1e8;
+  --color-surface: #ffffff;
+  --color-surface-elevated: #faf7f1;
+  --color-text: #333333;
+  --color-text-muted: #666666;
+  --color-border: #e3ded5;
+  --color-primary: #e00000;
+  --color-secondary: #007ad0;
+  --color-success: #16a34a;
+  --color-warning: #d97706;
+  --color-danger: #e00000;
+  --color-shadow: 0 1px 3px rgb(0 0 0 / 0.10);
   --ui-text: #2f2923;
   --color-indigo-400: #c8102e;
   --color-indigo-500: #e60012;
   --color-indigo-600: #d50018;
   --color-indigo-700: #a20f29;
-  --color-slate-950: #eee5d9;
-  --color-slate-900: #f8f3eb;
-  --color-slate-800: #e5d9ca;
-  --color-slate-700: #d2c1ae;
-  --color-slate-600: #b19d88;
-  --color-slate-500: #766659;
-  --color-slate-400: #5d4f44;
-  --color-slate-300: #493d34;
-  --color-slate-200: #382f28;
-  --color-slate-100: #2d261f;
-  --color-slate-50: #211b17;
+  --color-slate-950: #f6f1e8;
+  --color-slate-900: #ffffff;
+  --color-slate-800: #e3ded5;
+  --color-slate-700: #d0c9be;
+  --color-slate-600: #8b8378;
+  --color-slate-500: #666666;
+  --color-slate-400: #666666;
+  --color-slate-300: #505050;
+  --color-slate-200: #444444;
+  --color-slate-100: #333333;
+  --color-slate-50: #333333;
   color-scheme: light;
 }
 
@@ -221,4 +245,24 @@ html.theme-light option {
 html.theme-light .bg-white {
   background-color: #fffaf3 !important;
   color: var(--ui-text) !important;
+}
+
+html[data-theme="dark"] { color-scheme: dark; }
+
+html[data-theme="light"] { color-scheme: light; }
+
+:where(button, input, select, textarea, a):focus-visible {
+  outline: 3px solid var(--color-secondary);
+  outline-offset: 3px;
+}
+
+.em-shell {
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.em-surface {
+  background: var(--color-surface);
+  border-color: var(--color-border);
+  box-shadow: var(--color-shadow);
 }
