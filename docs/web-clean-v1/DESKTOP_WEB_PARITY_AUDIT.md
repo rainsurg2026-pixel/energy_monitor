@@ -123,6 +123,99 @@ state, per a fresh audit request. Findings:
   `rohmbjqnyekvxpyydjbn`), not `tofdgndrrpnnyhbuurbx` — same blocker as the
   prior audit, not yet resolved despite a request to connect it.
 
+## 2026-08-11 repository consolidation + API/export parity pass
+
+Per explicit instruction, the repository was consolidated to a single
+canonical line before continuing parity work:
+
+- **Canonical branch determined**: `feat/web-clean-v1`. Confirmed (again)
+  via `vercel inspect` that every recent Preview deployment and the stable
+  branch alias build from `feat/web-clean-v1`, never `feat/web-v3`.
+- **`.worktrees/web-clean-v1` gitlink fully untracked** (not just
+  repointed): it was an accidental artifact of `19b78b9`'s broad `git add`
+  (no `.gitmodules`, didn't exist on `feat/web-clean-v1` or `main`), not an
+  intentional submodule. `git rm --cached` + `.gitignore` entry, on both
+  branches before consolidation.
+- **`feat/web-v3` retired**: its one unique commit (`19b78b9`) contained two
+  substantive, non-junk changes - a `.claude/workflow.md` Desktop-release
+  workflow doc, and an `.env.example` clarification about the correct
+  Supabase Transaction Pooler (6543) / NOBYPASSRLS role configuration for
+  `DATABASE_URL`. Both were manually ported to `feat/web-clean-v1` (not
+  cherry-picked, since the source commit also carried accidentally-committed
+  Electron e2e cache junk). The gitlink-fix commits were superseded by the
+  untrack fix and carried no other value. Local `feat/web-v3` branch deleted
+  after verifying zero unique work remained (`git merge-base
+  --is-ancestor` confirmed divergence; content review confirmed nothing
+  else was unique). Remote `origin/feat/web-v3` left untouched, per
+  instruction. The `.worktrees/web-clean-v1` linked worktree was removed and
+  `feat/web-clean-v1` checked out directly in the main working directory -
+  one branch, one working tree, no worktree split. `npm run lint` and
+  `npm run build` both pass cleanly post-reorg. All local commits from this
+  consolidation remain unpushed pending review.
+
+**API contract / DTO parity review** (static, source-level):
+
+- The previously-fixed bootstrap adapter is intact and verified
+  server-to-client end to end: `apiService.bootstrap()` returns
+  `sites: [{ site, availableMonths, latestAvailableMonth }, ...]`;
+  `facilityContext.ts`'s `normalizeBootstrap()` flattens exactly that shape
+  into `FacilitySite[]`. No regression.
+- Full server route inventory (`server/http/app.ts`) cross-referenced
+  against every `api()` call actually made in `CleanWebApp.tsx` (the entire
+  frontend). CleanWebApp only ever calls: `/auth/*`, `/bootstrap`,
+  `/sites/:id/history`, `/sites/:id/periods/:month` (GET+PUT),
+  `/site-comparison`, `/settings/display-period`, `/admin/users` (+
+  subpaths). **8 server routes are never called by CleanWebApp**:
+  `/dashboard`, `/energy`, `/cost`, `/electrical`, `/periods`, `/sites`,
+  `/racks`, `/rack-unit-capacity`. Not a defect by itself (CleanWebApp
+  fetches full history and aggregates client-side via
+  `buildEngineeringDashboardSnapshot`/`DashboardSummary` instead), but see
+  the Rack Capacity finding below - two of those unused routes are exactly
+  the ones a Rack Capacity screen would need.
+- All read/write handlers route through the same domain calculation
+  functions already verified against the Desktop v2.3.1 golden fixture
+  (`calculateEnergyCostForMonth`, `buildFacilityComparisonMetrics`,
+  `calculateRackCapacityMetrics`, `usagePercent`) - real structural evidence
+  for calculation parity at the API layer, not just the fixture-test layer.
+
+**Major finding - Rack Capacity and Utilization is entirely absent from
+the Web UI** (P1, cross-verified at four independent layers):
+
+1. Desktop's nav has a dedicated "Rack Capacity and Utilization" section
+   (confirmed live via CDP in this session).
+2. The XLSM has dedicated sheets for it (Rangsit: Rack Capacity, 382 rows;
+   Srinakarin: Rack Capacity 261 rows + Rack Unit Capacity 8 rows + Rack
+   Capacity History 5 rows - all independently inventoried this session).
+3. The calculation engine already has `calculateRackCapacityMetrics()` and
+   `usagePercent()`, both passing their regression tests this session
+   (`test:rack-capacity-metrics`, `test:rack-unit-capacity`), and the API
+   already exposes working `/api/v1/racks` and `/api/v1/rack-unit-capacity`
+   endpoints.
+4. `CleanWebApp.tsx`'s nav has exactly 7 views (dashboard, entry, history,
+   comparison, reports, settings, admin) - no rack view, confirmed by
+   reading the full 193-line file (the only "rack" substring hits were
+   false positives on `tracking-wide`/`tracking-tight` CSS classes). The
+   shared PDF report type (`ReportData`, used by the Desktop-compatible
+   `buildReportHtml()` renderer) has typed fields for `rack`, `rackHistory`,
+   `rackUnitCapacity`, `rackComparison` - `exports.ts` always populates them
+   with `null`/`[]` because there's no UI screen feeding real data in.
+
+Every layer below the UI is ready; only the CleanWebApp screen (and its
+data-fetching wiring to the already-working `/racks`/`/rack-unit-capacity`
+endpoints) is missing. This is the single largest functional gap found in
+this audit.
+
+**Export architecture review**: sound. `exportCsv`/`exportExcel` (current
+facility), `exportAllFacilitiesCsv`/`exportAllFacilitiesExcel` (all
+facilities, independent sections per facility), and the comparison
+exports all reuse `buildCombinedCsv`/`buildSectionCsvs` and the same
+verified `calculateEnergyCostForMonth` engine. All three PDF paths
+(`printDesktopPdf`, `printSiteComparisonPdf`, `printAllFacilitiesPdf`) go
+through the same `buildReportHtml()` Desktop-compatible renderer via a
+`window.open()` + `print()` popup pattern - structurally sound, but actual
+rendered PDF content/print-dialog behavior remains NOT VERIFIED (requires
+a live browser).
+
 ## Scope and evidence
 
 Authoritative Desktop package:
@@ -214,6 +307,8 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
 | Theme | Desktop light/dark setting | Settings-only theme controls, semantic tokens, dark/light visual audit and theme test | PASS | No header theme switcher |
 | Security/RBAC | authenticated workbook operations | auth/security/API tests pass; no service-role key in Clean source | PASS | Supabase connector permission prevents remote RLS audit |
 | Database schema/RLS | workbook data migrated to actual project | local migrations and repository contracts available | BLOCKED | Restore Supabase MCP read permission before schema claims |
+| Rack Capacity/Utilization | dedicated Desktop nav section; XLSM Rack Capacity/Rack Unit Capacity/Rack Capacity History sheets | no nav entry, no view, in CleanWebApp; API routes and calc engine (`calculateRackCapacityMetrics`, `usagePercent`) exist and pass tests but are never called by the frontend; export DTO fields always null | GAP (DESKTOP ONLY) | P1 - build a Rack view wired to the existing `/racks`/`/rack-unit-capacity` endpoints; wire exports once the view exists |
+| API surface | Desktop's per-metric drilldown (Energy/Cost/Electrical pages) | `/dashboard`, `/energy`, `/cost`, `/electrical`, `/periods`, `/sites` are implemented server-side but never called by CleanWebApp (it fetches full history and aggregates client-side instead) | NOT APPLICABLE | Likely legacy from the superseded WebV3App; confirm intentional before ever deleting - not a defect for CleanWebApp today |
 
 ## Priority gates
 
@@ -238,10 +333,17 @@ external permission or owner-driven UAT; GAP = defect requiring a fix.
 - Resolve packaged Srinakarin 2026-07 PPC43 source completeness with valid
   owner-provided readings, or explicitly accept that source limitation. Do not
   synthesize readings.
-- Commit the corrected `.worktrees/web-clean-v1` submodule gitlink on
-  `feat/web-v3` (currently pinned 5 commits stale at `932395e` vs. actual
-  HEAD `db15dc0`). Requires explicit Product Owner instruction to commit,
-  per `.claude/rules/git.md`.
+- ~~Commit the corrected `.worktrees/web-clean-v1` submodule gitlink on
+  `feat/web-v3`~~ Done 2026-08-11: fully untracked (not just repointed) on
+  both branches; `feat/web-v3` retired entirely after its two substantive
+  changes were ported. See the 2026-08-11 consolidation section above.
+- **Build a Rack Capacity/Utilization view in CleanWebApp**, wired to the
+  already-working `/api/v1/racks` and `/api/v1/rack-unit-capacity`
+  endpoints and the already-tested `calculateRackCapacityMetrics`/
+  `usagePercent` functions. This is the single largest confirmed functional
+  gap versus Desktop. Once built, wire the `rack`/`rackHistory`/
+  `rackUnitCapacity`/`rackComparison` fields in `exports.ts` (currently
+  always null/empty).
 
 ### P2
 
