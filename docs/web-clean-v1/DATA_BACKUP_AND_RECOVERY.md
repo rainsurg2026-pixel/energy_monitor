@@ -1,9 +1,24 @@
 # Data Storage, Backup, and Recovery
 
 Written 2026-08-11, updated 2026-08-11 (Admin-configurable backup
-destination). Covers the CleanWebApp (`feat/web-clean-v1`) data
-architecture: where user-entered data lives, how it is backed up, and how
-to recover it. Read alongside `docs/web-clean-v1/DESKTOP_WEB_PARITY_AUDIT.md`.
+destination), updated 2026-08-11 (Preview/real-Google verification pass).
+Covers the CleanWebApp (`feat/web-clean-v1`) data architecture: where
+user-entered data lives, how it is backed up, and how to recover it. Read
+alongside `docs/web-clean-v1/DESKTOP_WEB_PARITY_AUDIT.md`.
+
+## 0. Verification status matrix (2026-08-11)
+
+These are five genuinely different claims. Do not read any one of them as
+implying another - each is verified independently, and the table states
+exactly what was and was not checked.
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| **Code** | **VERIFIED** | Migration 009 hand-inspected: additive only (`ADD COLUMN IF NOT EXISTS` on `backup_log`, new `CREATE TABLE IF NOT EXISTS backup_config`), never modifies migration 008, contains exactly `spreadsheet_id`/`sheet_url`/`enabled`/`updated_by`/`updated_at` - no credential field. RLS/grant pattern hand-matched against 008 (`energy_monitor_runtime`-only, `anon`/`authenticated`/`service_role` explicitly revoked). Static scan of `server/backup/*`, `server/http/app.ts`, and the built `dist/` bundle for `private_key`/`client_secret`/`access_token`/`refresh_token`/`GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON`/`backupRestoreManage` found no leak into any API response or the frontend bundle - the only backup-related string in `dist/assets/CleanWebApp-*.js` is `spreadsheetIdMasked` used as a property read. |
+| **Automated tests** | **VERIFIED** | `test:backup-service` (38 assertions) and `test:api` (75 assertions), both against a locally-generated throwaway RSA key with `fetch` fully mocked - re-run fresh this pass, all passing. Full regression battery (domain-parity, display-period, facility-context/isolation/comparison, dashboard-isolation, rack x3, air-validation, theme, admin-ui, report-filename, exports, phase3) re-run fresh, zero regressions. `npm run lint` and `npm run build` both clean. |
+| **Preview database** | **NOT VERIFIED - EXTERNAL BLOCKER** | The authoritative project is documented in `SUPABASE_PROJECT_AUDIT.md` as `tofdgndrrpnnyhbuurbx` (name `energy_monitor`, region `ap-southeast-1`). The Supabase MCP connector available this session exposes only `lhlzzxjayywqhqtjzfiu` ("patamin-lab's Project", region `ap-northeast-2`, unrelated name) and `rohmbjqnyekvxpyydjbn` (inactive, unrelated name `masp-sec-e1a-identity-poc`) - neither matches. Per that document's own precedent (an ambiguous local `.phase7-db-url` artifact was deliberately left unread rather than guessed at), migration 009 was **not** applied to any database this pass, and no live `backup_config` schema state was inspected. |
+| **Real Google integration** | **NOT VERIFIED - EXTERNAL CREDENTIAL BLOCKER** | `GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON` and `CRON_SECRET` are unset in this session's environment; `.env.local` contains only an unrelated `PHASE3_LIVE_DATABASE_URL` entry. No real service-account credential, real spreadsheet, or real Test Connection/Backup Now call against Google was performed. Everything currently labeled "backup" behavior beyond code inspection is mock-verified only. |
+| **Production** | **UNTOUCHED (by design)** | No migration applied to any database this session, no deploy triggered, no Production env var read or written, no Production Google credential configured. All work remains 3 local, unpushed commits on `feat/web-clean-v1`. |
 
 ## 1. Database as Source of Truth
 

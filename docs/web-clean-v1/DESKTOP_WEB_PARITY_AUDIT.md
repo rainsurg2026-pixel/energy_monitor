@@ -117,6 +117,51 @@ UAT: NOT VERIFIED - EXTERNAL BLOCKER** (Chrome extension still not
 connected; the new form fields have not been seen rendering or clicked in
 an actual browser).
 
+## 2026-08-11 Backup: Preview/real-Google verification pass
+
+Follow-up task specifically to close the Preview-DB and real-Google gaps
+left open above. Full detail and evidence in
+`DATA_BACKUP_AND_RECOVERY.md` Section 0 (verification status matrix).
+**No code was changed in this pass** - this was verification-only, per
+the task's own "do not rebuild, close remaining gaps" instruction.
+
+**Code: VERIFIED** - migration 009 re-inspected by hand (additive only,
+exact intended field set, no credential field, RLS/grant pattern matches
+008). Static scan of `server/backup/*`, `server/http/app.ts`, and the
+built `dist/` bundle for `private_key`/`client_secret`/`access_token`/
+`refresh_token`/`GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON`/`backupRestoreManage`
+- none found leaking into an API response or the frontend bundle. The one
+`refresh_token`-shaped string in `dist/assets/App-*.js` is generic OAuth2
+client-library code from the pre-existing, unrelated per-user Google
+Sheets OAuth feature (`sheetsService.ts`), not this backup system.
+
+**Automated tests: VERIFIED (re-run fresh)** - `test:backup-service` (38
+assertions) and `test:api` (75 assertions) re-run clean; full regression
+battery (domain-parity, display-period, facility-context/isolation/
+comparison, dashboard-isolation, rack x3, air-validation, theme,
+admin-ui, report-filename, exports, phase3) re-run clean, zero
+regressions; lint and build re-run clean.
+
+**Preview database: NOT VERIFIED - EXTERNAL BLOCKER (confirmed again,
+with fresh evidence).** `SUPABASE_PROJECT_AUDIT.md` names the
+authoritative project as `tofdgndrrpnnyhbuurbx` (`energy_monitor`,
+`ap-southeast-1`). The Supabase MCP connector available this session
+lists exactly two projects - `lhlzzxjayywqhqtjzfiu` ("patamin-lab's
+Project", `ap-northeast-2`) and `rohmbjqnyekvxpyydjbn` (inactive,
+`masp-sec-e1a-identity-poc`) - neither matches by ref, name, or region.
+Migration 009 was **not** applied anywhere this pass. An ambiguous
+`.env.local` entry (`PHASE3_LIVE_DATABASE_URL`) exists but its value was
+deliberately not read (matches the existing "don't guess at an unverified
+local secret artifact" precedent already set in `SUPABASE_PROJECT_AUDIT.md`
+for `.phase7-db-url`).
+
+**Real Google integration: NOT VERIFIED - EXTERNAL CREDENTIAL BLOCKER
+(confirmed again).** `GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON` and
+`CRON_SECRET` are both unset in this session's environment.
+
+**Production: UNTOUCHED.** No migration applied anywhere, no deploy, no
+Production env var read or written.
+
 ## 2026-08-11 Reports & Export
 
 **Desktop source of truth** (from direct inspection this session via CDP
