@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import type { MonthlyLog, UpsRecord } from "../../src/types";
 import { withTransaction, type DbExecutor, query } from "./pool";
 import { HttpError } from "../errors";
-import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "../repositories/contracts";
+import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "../repositories/contracts";
 import { maskSpreadsheetId } from "../backup/googleSheetsUrl";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
@@ -255,6 +255,45 @@ export class PostgresRepository implements BackendRepository {
     const result = await query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown }>(this.executor, "SELECT period_month, row_version, total_u, used_u FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = $2::date", [siteId, `${month}-01`]);
     const row = result.rows[0];
     return row ? { month: monthString(row.period_month), rowVersion: row.row_version, totalU: Number(row.total_u), usedU: Number(row.used_u) } : null;
+  }
+
+  async listRackCapacityHistory(siteId: number): Promise<RackCapacityHistoryRecord[]> {
+    const result = await query<{
+      snapshot_month: string; facility: string; rack_zone: string; total_racks: number; in_use: number; available: number;
+      reserved: number; pending_dismantle: number; other: number; usage_pct: unknown; availability_pct: unknown;
+      reserved_pct: unknown; pending_dismantle_pct: unknown; other_pct: unknown; generated_at: string; data_version: number;
+    }>(
+      this.executor,
+      "SELECT snapshot_month, facility, rack_zone, total_racks, in_use, available, reserved, pending_dismantle, other, usage_pct, availability_pct, reserved_pct, pending_dismantle_pct, other_pct, generated_at, data_version FROM public.rack_capacity_history WHERE site_id = $1 ORDER BY snapshot_month, rack_zone",
+      [siteId]
+    );
+    return result.rows.map(row => ({
+      month: monthString(row.snapshot_month),
+      facility: row.facility,
+      rackZone: row.rack_zone,
+      totalRacks: row.total_racks,
+      inUse: row.in_use,
+      available: row.available,
+      reserved: row.reserved,
+      pendingDismantle: row.pending_dismantle,
+      other: row.other,
+      usagePct: numberOrNull(row.usage_pct),
+      availabilityPct: numberOrNull(row.availability_pct),
+      reservedPct: numberOrNull(row.reserved_pct),
+      pendingDismantlePct: numberOrNull(row.pending_dismantle_pct),
+      otherPct: numberOrNull(row.other_pct),
+      generatedAt: row.generated_at,
+      dataVersion: row.data_version
+    }));
+  }
+
+  async listRackUnitCapacityHistory(siteId: number): Promise<RackUnitSnapshotRecord[]> {
+    const result = await query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown }>(
+      this.executor,
+      "SELECT period_month, row_version, total_u, used_u FROM rack_unit_capacity_snapshots WHERE site_id = $1 ORDER BY period_month",
+      [siteId]
+    );
+    return result.rows.map(row => ({ month: monthString(row.period_month), rowVersion: row.row_version, totalU: Number(row.total_u), usedU: Number(row.used_u) }));
   }
 
   async getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]> {

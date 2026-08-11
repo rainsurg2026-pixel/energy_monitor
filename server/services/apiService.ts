@@ -149,9 +149,11 @@ export class ApiService {
     await this.requireSite(siteId);
     const period = await this.requirePeriod();
     const availability = await this.availableForSite(siteId, period);
-    const [logs, upsGroupHistoryRows] = await Promise.all([
+    const [logs, upsGroupHistoryRows, rackCapacityHistoryRows, rackUnitCapacityRows] = await Promise.all([
       this.repository.getMonthlyLogs(siteId, availability.availableMonths),
-      this.repository.getUpsGroupHistory(siteId)
+      this.repository.getUpsGroupHistory(siteId),
+      this.repository.listRackCapacityHistory(siteId),
+      this.repository.listRackUnitCapacityHistory(siteId)
     ]);
     const visibleMonths = new Set(availability.availableMonths);
     return {
@@ -163,7 +165,13 @@ export class ApiService {
       upsGroupHistory: {
         sourceSheet: "2. UPS Group History",
         rows: upsGroupHistoryRows.filter(row => visibleMonths.has(row.month))
-      }
+      },
+      rackCapacityHistory: rackCapacityHistoryRows
+        .filter(row => visibleMonths.has(row.month))
+        .map(row => ({ snapshotMonth: row.month, facility: row.facility, rackZone: row.rackZone, totalRacks: row.totalRacks, inUse: row.inUse, available: row.available, reserved: row.reserved, pendingDismantle: row.pendingDismantle, other: row.other, usagePct: row.usagePct, availabilityPct: row.availabilityPct, reservedPct: row.reservedPct, pendingDismantlePct: row.pendingDismantlePct, otherPct: row.otherPct, generatedAt: row.generatedAt, dataVersion: row.dataVersion })),
+      rackUnitCapacity: rackUnitCapacityRows
+        .filter(row => visibleMonths.has(row.month))
+        .map(row => ({ month: row.month, totalU: row.totalU, usedU: row.usedU, availableU: row.totalU - row.usedU, availabilityPct: row.totalU > 0 ? (row.totalU - row.usedU) / row.totalU : null }))
     };
   }
 

@@ -51,6 +51,7 @@
     "test:web-clean-v1-report-filename": "node node_modules/tsx/dist/cli.mjs scripts/test-web-clean-v1-report-filename.ts",
     "test:backup-service": "node node_modules/tsx/dist/cli.mjs scripts/test-backup-service.ts",
     "test:web-clean-v1-facility-context": "node node_modules/tsx/dist/cli.mjs scripts/test-web-clean-v1-facility-context.ts",
+    "test:web-clean-v1-dashboard-ups-mapping": "node node_modules/tsx/dist/cli.mjs scripts/test-web-clean-v1-dashboard-ups-mapping.ts",
     "test:web-clean-v1-theme": "node node_modules/tsx/dist/cli.mjs scripts/test-web-clean-v1-theme.ts",
     "test:web-clean-v1-admin-ui": "node node_modules/tsx/dist/cli.mjs scripts/test-web-clean-v1-admin-ui.ts",
     "test:display-period": "node node_modules/tsx/dist/cli.mjs scripts/test-display-period-policy.ts",

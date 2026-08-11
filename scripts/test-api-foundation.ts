@@ -82,7 +82,8 @@ async function login(base: string, credentials: { username: string; password: st
       headers.set("origin", "http://test");
       if (["POST", "PUT", "PATCH", "DELETE"].includes(init.method?.toUpperCase() ?? "GET")) headers.set("x-csrf-token", csrf);
       const response = await fetch(`${base}${path}`, { ...init, headers });
-      return { status: response.status, body: await response.json() };
+      const text = await response.text();
+      return { status: response.status, body: text ? JSON.parse(text) : null };
     }
   };
 }
@@ -125,6 +126,19 @@ await withApi(false, async (base, authentication) => {
   const site2History = await client.request("/api/v1/sites/2/history");
   check("a site with genuinely no UPS Group History rows returns an empty array, not an error", site2History.status === 200 && Array.isArray(site2History.body.data.upsGroupHistory.rows) && site2History.body.data.upsGroupHistory.rows.length === 0);
   check("UPS Group History is scoped per site (no cross-facility contamination)", !JSON.stringify(site2History.body.data.upsGroupHistory).includes("UPS 11"));
+  // Rack Capacity History / Rack Unit Capacity history: the History screen's
+  // Rack tab always rendered empty regardless of real data, because
+  // CleanWebApp never fetched or passed rackCapacityHistory/rackUnitCapacity
+  // to HistoricalExplorer (rack_capacity_history had a table, migration, and
+  // Desktop writer, but zero repository/API/frontend wiring) - the same
+  // class of bug as the UPS Group History gap above.
+  check("Rack Capacity History exposes the visible-month rows with correctly mapped fields", site1History.body.data.rackCapacityHistory.length === 2 && site1History.body.data.rackCapacityHistory.every((row: { snapshotMonth: string }) => row.snapshotMonth === "2026-01") && site1History.body.data.rackCapacityHistory.some((row: { rackZone: string; totalRacks: number; inUse: number }) => row.rackZone === "Zone A" && row.totalRacks === 2 && row.inUse === 1));
+  check("Rack Capacity History rows outside the Display Period are filtered, not fabricated as missing", !site1History.body.data.rackCapacityHistory.some((row: { snapshotMonth: string }) => row.snapshotMonth === "2025-12"));
+  check("a site with genuinely no Rack Capacity History rows returns an empty array, not an error", Array.isArray(site2History.body.data.rackCapacityHistory) && site2History.body.data.rackCapacityHistory.length === 0);
+  check("Rack Capacity History is scoped per site (no cross-facility contamination)", !JSON.stringify(site2History.body.data.rackCapacityHistory).includes("Zone A"));
+  check("Rack Unit Capacity history exposes the visible-month row with derived availableU/availabilityPct", site1History.body.data.rackUnitCapacity.length === 1 && site1History.body.data.rackUnitCapacity[0].month === "2026-01" && site1History.body.data.rackUnitCapacity[0].availableU === 50 && Math.abs(site1History.body.data.rackUnitCapacity[0].availabilityPct - 0.125) < 1e-9);
+  check("Rack Unit Capacity history rows outside the Display Period are filtered, not fabricated as missing", !site1History.body.data.rackUnitCapacity.some((row: { month: string }) => row.month === "2025-12"));
+  check("a site with genuinely no Rack Unit Capacity history returns an empty array, not an error", Array.isArray(site2History.body.data.rackUnitCapacity) && site2History.body.data.rackUnitCapacity.length === 0);
   const invalid = await client.request("/api/v1/energy?siteId=1&month=2026/01"); check("strict month validation", invalid.status === 404 || invalid.status === 400);
   const outside = await client.request("/api/v1/energy?siteId=1&month=2025-12"); check("outside period rejected", outside.status === 404 && outside.body.error?.code === "MONTH_OUTSIDE_DISPLAY_PERIOD");
   const future = await client.request("/api/v1/energy?siteId=1&month=2026-12"); check("future month rejected", future.status === 404 && future.body.error?.code === "MONTH_NOT_AVAILABLE");
@@ -160,6 +174,30 @@ await withApi(false, async (base, authentication) => {
   const auditedActions = authentication.repository.audits.map(audit => audit.action);
   check("admin user-management actions are audited", ["user_create", "display_name_change", "user_deactivate", "user_activate", "password_reset", "role_change"].every(action => auditedActions.includes(action)));
   check("test auth fixture uses the expected admin identity", authentication.admin.username === "admin");
+
+  // Delete user: previously untested at the API layer. Verifies RBAC,
+  // self-deletion protection, and that deletion writes both a
+  // SESSION_REVOKED_ALL and a user_delete audit row (mirroring the
+  // deactivate/password-reset pattern - added because deleteUser did not
+  // previously record an explicit session-revocation audit entry, even
+  // though the sessions FK is ON DELETE CASCADE and removes the rows
+  // regardless).
+  const disposableUser = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "disposable", display_name: "Disposable", password: "Correct Horse Battery Staple 321!", role: "user", active: true }) });
+  check("temporary user for delete-route testing was created", disposableUser.status === 200);
+  const disposableUserId = disposableUser.body.data.id;
+  const disposableClient = await login(base, { username: "disposable", password: "Correct Horse Battery Staple 321!" });
+  const forbiddenDelete = await disposableClient.request(`/api/v1/admin/users/${disposableUserId}`, { method: "DELETE" });
+  check("a non-admin user cannot delete a user", forbiddenDelete.status === 403 && forbiddenDelete.body.error?.code === "FORBIDDEN");
+  const selfDelete = await client.request("/api/v1/admin/users/1", { method: "DELETE" });
+  check("admin cannot delete the current account", selfDelete.status === 409 && selfDelete.body.error?.code === "SELF_DELETION_NOT_ALLOWED");
+  const deleted = await client.request(`/api/v1/admin/users/${disposableUserId}`, { method: "DELETE" });
+  check("admin can delete another user", deleted.status === 204);
+  const deletedUserGone = await client.request("/api/v1/admin/users");
+  check("deleted user no longer appears in the user list", deletedUserGone.status === 200 && !deletedUserGone.body.data.some((user: { id: string }) => user.id === disposableUserId));
+  const deletedSessionRevoked = await disposableClient.request("/api/v1/settings");
+  check("deletion revokes the deleted user's existing session", deletedSessionRevoked.status === 401);
+  const auditedActionsAfterDelete = authentication.repository.audits.filter(audit => audit.entityId === disposableUserId).map(audit => audit.action);
+  check("deleting a user is audited with both SESSION_REVOKED_ALL and user_delete", auditedActionsAfterDelete.includes("SESSION_REVOKED_ALL") && auditedActionsAfterDelete.includes("user_delete"));
 
   // Backup: RBAC reuses the existing backupRestoreManage permission (no new
   // permission was invented). Not configured in this test environment, so

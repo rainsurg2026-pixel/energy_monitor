@@ -9,6 +9,24 @@ export interface RackSnapshotRecord {
   records: Array<{ rowNumber: number | null; rackZone: string | null; rackId: string | null; status: string | null; cabinetSize: string | null; detail: string | null; deviceType: string | null; remarks: string | null }>;
 }
 export interface RackUnitSnapshotRecord { month: string; rowVersion: number; totalU: number; usedU: number; }
+export interface RackCapacityHistoryRecord {
+  month: string;
+  facility: string;
+  rackZone: string;
+  totalRacks: number;
+  inUse: number;
+  available: number;
+  reserved: number;
+  pendingDismantle: number;
+  other: number;
+  usagePct: number | null;
+  availabilityPct: number | null;
+  reservedPct: number | null;
+  pendingDismantlePct: number | null;
+  otherPct: number | null;
+  generatedAt: string;
+  dataVersion: number;
+}
 export interface UpsGroupHistoryRecord {
   facility: string;
   month: string;
@@ -58,6 +76,8 @@ export interface BackendRepository {
   saveMonthlyLog(input: SaveMonthlyLogInput): Promise<PeriodRecord>;
   getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null>;
   getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null>;
+  listRackCapacityHistory(siteId: number): Promise<RackCapacityHistoryRecord[]>;
+  listRackUnitCapacityHistory(siteId: number): Promise<RackUnitSnapshotRecord[]>;
   getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]>;
   startBackupRun(input: StartBackupInput): Promise<BackupLogRecord>;
   completeBackupRun(input: CompleteBackupInput): Promise<BackupLogRecord>;

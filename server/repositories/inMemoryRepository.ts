@@ -1,6 +1,6 @@
 import type { MonthlyLog } from "../../src/types";
 import { HttpError } from "../errors";
-import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "./contracts";
+import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "./contracts";
 import { maskSpreadsheetId } from "../backup/googleSheetsUrl";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
@@ -10,6 +10,7 @@ export interface InMemoryRepositoryOptions {
   settings?: DisplayPeriod | null;
   rackSnapshots?: Record<string, RackSnapshotRecord>;
   rackUnitSnapshots?: Record<string, RackUnitSnapshotRecord>;
+  rackCapacityHistory?: Record<number, RackCapacityHistoryRecord[]>;
   upsGroupHistory?: Record<number, UpsGroupHistoryRecord[]>;
   databaseReady?: boolean;
   auditFailure?: boolean;
@@ -33,6 +34,7 @@ export class InMemoryRepository implements BackendRepository {
   private settings: DisplayPeriod | null;
   private readonly rackSnapshots: Record<string, RackSnapshotRecord>;
   private readonly rackUnitSnapshots: Record<string, RackUnitSnapshotRecord>;
+  private readonly rackCapacityHistory: Record<number, RackCapacityHistoryRecord[]>;
   private readonly upsGroupHistory: Record<number, UpsGroupHistoryRecord[]>;
   private readonly databaseReady: boolean;
   private readonly auditFailure: boolean;
@@ -47,6 +49,7 @@ export class InMemoryRepository implements BackendRepository {
     this.settings = options.settings ?? null;
     this.rackSnapshots = options.rackSnapshots ?? {};
     this.rackUnitSnapshots = options.rackUnitSnapshots ?? {};
+    this.rackCapacityHistory = options.rackCapacityHistory ?? {};
     this.upsGroupHistory = options.upsGroupHistory ?? {};
     this.databaseReady = options.databaseReady ?? true;
     this.auditFailure = options.auditFailure ?? false;
@@ -131,6 +134,13 @@ export class InMemoryRepository implements BackendRepository {
 
   async getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null> { return this.rackSnapshots[`${siteId}:${month}`] ?? null; }
   async getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null> { return this.rackUnitSnapshots[`${siteId}:${month}`] ?? null; }
+  async listRackCapacityHistory(siteId: number): Promise<RackCapacityHistoryRecord[]> { return (this.rackCapacityHistory[siteId] ?? []).map(row => ({ ...row })).sort((a, b) => a.month === b.month ? a.rackZone.localeCompare(b.rackZone) : a.month.localeCompare(b.month)); }
+  async listRackUnitCapacityHistory(siteId: number): Promise<RackUnitSnapshotRecord[]> {
+    return Object.entries(this.rackUnitSnapshots)
+      .filter(([key]) => key.startsWith(`${siteId}:`))
+      .map(([, record]) => ({ ...record }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+  }
   async getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]> { return this.upsGroupHistory[siteId] ?? []; }
 
   async startBackupRun(input: StartBackupInput): Promise<BackupLogRecord> {

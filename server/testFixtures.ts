@@ -35,7 +35,14 @@ export function apiTestRepository(readOnly = false): InMemoryRepository {
       2: [fixtureLog("2026-02", 20, 120000, 600000)]
     },
     settings: { startMonth: "2026-01", endMonth: "2026-12", rowVersion: 1 },
-    rackUnitSnapshots: { "1:2026-01": { month: "2026-01", rowVersion: 1, totalU: 400, usedU: 350 } },
+    rackUnitSnapshots: {
+      // Outside the configured Display Period (starts 2026-01) - must be
+      // filtered out of the bulk history response, same as fixtureLog's
+      // hidden 2025-12 month.
+      "1:2025-12": { month: "2025-12", rowVersion: 1, totalU: 400, usedU: 300 },
+      "1:2026-01": { month: "2026-01", rowVersion: 1, totalU: 400, usedU: 350 }
+      // Site 2 deliberately has no Rack Unit Capacity snapshot at all.
+    },
     rackSnapshots: {
       "1:2026-01": {
         month: "2026-01",
@@ -57,6 +64,18 @@ export function apiTestRepository(readOnly = false): InMemoryRepository {
         { facility: "site-a", month: "2026-01", group: "UPS 11", totalLoadKw: 30, totalLoadKva: 34, capacity: 400, loadPercent: 7.5, availablePercent: 92.5, monthlyEnergyKwh: 21600, generatedAt: "2026-01-31T00:00:00.000Z", dataVersion: 1 }
       ]
       // Site 2 deliberately has no UPS Group History rows - covers the
+      // genuinely-empty-history case and (combined with site 1's rows)
+      // facility isolation.
+    },
+    rackCapacityHistory: {
+      1: [
+        // Outside the configured Display Period - must be filtered out,
+        // same as the other history fixtures above.
+        { month: "2025-12", facility: "site-a", rackZone: "(Total)", totalRacks: 3, inUse: 1, available: 1, reserved: 1, pendingDismantle: 0, other: 0, usagePct: 0.3333, availabilityPct: 0.3333, reservedPct: 0.3333, pendingDismantlePct: 0, otherPct: 0, generatedAt: "2025-12-31T00:00:00.000Z", dataVersion: 1 },
+        { month: "2026-01", facility: "site-a", rackZone: "Zone A", totalRacks: 2, inUse: 1, available: 1, reserved: 0, pendingDismantle: 0, other: 0, usagePct: 0.5, availabilityPct: 0.5, reservedPct: 0, pendingDismantlePct: 0, otherPct: 0, generatedAt: "2026-01-31T00:00:00.000Z", dataVersion: 1 },
+        { month: "2026-01", facility: "site-a", rackZone: "(Total)", totalRacks: 3, inUse: 1, available: 1, reserved: 1, pendingDismantle: 0, other: 0, usagePct: 0.3333, availabilityPct: 0.3333, reservedPct: 0.3333, pendingDismantlePct: 0, otherPct: 0, generatedAt: "2026-01-31T00:00:00.000Z", dataVersion: 1 }
+      ]
+      // Site 2 deliberately has no Rack Capacity History rows - covers the
       // genuinely-empty-history case and (combined with site 1's rows)
       // facility isolation.
     }
