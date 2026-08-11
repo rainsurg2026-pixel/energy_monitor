@@ -2,6 +2,161 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Non-Export completion pass: three real gaps found and fixed
+
+Per explicit instruction to work through the remaining non-Export priority
+list (Dashboard, Reporting Period/Month, UPS Group/History, Rack Capacity,
+Data Entry, History, Site Comparison, User Management, Facility isolation,
+Theme, Responsive, remaining functional gaps) and root-cause/fix any real
+P0/P1 gaps found, rather than re-trust prior "READY FOR EXPORT PHASE"
+sign-off blindly. Found three genuine, previously-undetected defects by
+systematically comparing each reused Desktop component's prop interface
+against what CleanWebApp actually supplies (the same technique that
+originally found the UPS History bug) - not by re-deriving already-solid
+ground. All three are now fixed, tested, and regression-verified.
+
+**1. History screen's Rack tab was permanently empty, regardless of real
+data (Rack Capacity + Data Entry + History priorities).** `HistoricalExplorer`
+needs `rackCapacityHistory`/`rackUnitCapacity` props to render its Rack tab;
+both default to `[]` when omitted, and CleanWebApp never passed either.
+Root cause: `public.rack_capacity_history` (migration `005_rack_history_and_images.sql`)
+has a table, an RLS policy, and a Desktop writer (`RackCapacityHistoryWriter.ts`)
+- but zero repository method, zero API wiring, and zero frontend prop, ever.
+`rack_unit_capacity_snapshots` had per-month data but only a single-month
+getter (`getRackUnitSnapshot`), never a "list all months" method. Same root-
+cause class as the earlier UPS Group History bug (a real table with no
+plumbing to the browser), just not caught until now.
+- Fix: added `listRackCapacityHistory(siteId)`/`listRackUnitCapacityHistory(siteId)`
+  to `BackendRepository` (implemented in both `postgresRepository.ts` and
+  `inMemoryRepository.ts`, mirroring `getUpsGroupHistory`'s existing
+  all-months pattern exactly); folded both into `apiService.ts`'s existing
+  `getHistory()` response (same Display-Period-visibility filtering as
+  `upsGroupHistory`); wired `CleanWebApp.tsx`'s `HistoricalExplorer` call
+  site to pass both through instead of defaulting to `[]`.
+- **STATIC/API VERIFIED**: 8 new `test:api` assertions (field mapping,
+  Display Period filtering, facility isolation, genuinely-empty-site case,
+  derived `availableU`/`availabilityPct` correctness) - `test:api` now 89
+  assertions (was 82 before this pass).
+
+**2. Dashboard's Engineering View UPS Groups section was always empty on
+Web, for every facility, every month (Dashboard priority #1).**
+`DashboardSummary`'s UPS group totals come from either a Desktop
+file-based `facility.profile.dashboard` topology (`config/<id>/profile.json`,
+Electron-filesystem-only, no Web/Supabase equivalent) or an
+`upsMapping.summary` report; CleanWebApp supplied neither, so
+`buildEngineeringDashboardSnapshot`'s `upsGroups` array was unconditionally
+`[]`. **This was previously undetected because `test:dashboard-facility-isolation`
+- despite its name and despite being cited throughout this session's
+regression battery as covering Web dashboard rendering - reads and greps
+`src/App.tsx` (Desktop's own entry point) to verify the facility prop is
+wired, never `src/web-clean-v1/CleanWebApp.tsx`.** It correctly proves
+Desktop's own wiring and the underlying XLSM data layer are sound, but
+proves nothing about whether CleanWebApp does the same - it does not.
+`UniversalFilterBar` has the identical gap for the same reason
+(`<UniversalFilterBar lang={lang} facility={null} .../>` - hardcoded, not
+merely omitted) - its UPS Group filter dropdown has zero options.
+- Fix (Dashboard UPS group totals): CleanWebApp already fetches
+  `upsGroupHistory` (server-computed, already facility/Display-Period-scoped,
+  now further verified above) for the History screen. Added
+  `src/web-clean-v1/dashboardUpsMapping.ts`'s `buildDashboardUpsMapping()`
+  - a small pure function that filters those already-correct rows to the
+  Dashboard's currently selected month and reshapes them into
+  `upsMapping.summary`, reusing real, already-audited data rather than
+  inventing a new source. Wired into `DashboardView`'s `DashboardSummary`
+  call. The detailed per-UPS UMDB/STS/OUDB hardware mapping table
+  (`upsMapping.mapping`) has no Web/DB equivalent at all (Desktop-only
+  busbar wiring data) and is deliberately left empty rather than fabricated.
+- **NOT fixed, documented instead**: `UniversalFilterBar`'s UPS Group
+  filter *dropdown* (distinct from the KPI totals above) needs a topology
+  with real device-ID arrays per group (`{name, ids: string[]}[]`), which
+  the Web/DB layer does not store anywhere retrievable server-side without
+  new schema. Reusing `ups_group_history`'s group *names* alone would let
+  the dropdown list group names but could not correctly filter underlying
+  per-UPS rows without genuine ID data - attempting that would have meant
+  guessing at a name-to-IDs mapping. Left as a known, narrower, honestly-
+  documented gap (a non-functional filter control, not missing data) rather
+  than risk fabricating an incorrect filter.
+- **STATIC/API VERIFIED**: new dedicated test
+  `scripts/test-web-clean-v1-dashboard-ups-mapping.ts`
+  (`npm run test:web-clean-v1-dashboard-ups-mapping`), 13 assertions against
+  the extracted pure function directly (null-history case, month-with-no-rows
+  case, correct field mapping, month filtering, sequential row numbers,
+  empty `mapping`) - not a source-grep substitute, real input/output
+  assertions this time.
+
+**3. User Management: `deleteUser` never wrote a session-revocation audit
+entry, and the delete route (`DELETE /admin/users/:id`) had zero API-level
+test coverage at all (User Management priority #8).** `setUserActive(false)`
+and `resetUserPassword` both call `revokeAllSessions()` and write a
+`SESSION_REVOKED_ALL` audit row; `deleteUser` did neither - a gap already
+flagged (but never fixed) in this session's earlier follow-up verification
+pass. Not a security hole (`sessions.user_id` is `ON DELETE CASCADE`, so
+the row-delete already removes every session regardless), but a real
+audit-trail inconsistency, and the route itself had never been exercised by
+any test (`test-api-foundation.ts` had no DELETE-route assertions at all).
+- Fix: `deleteUser` (both `PostgresAuthRepository` and
+  `InMemoryAuthRepository` in `server/auth/repository.ts`) now calls
+  `revokeAllSessions()` and writes `SESSION_REVOKED_ALL` before the
+  `user_delete` audit row and the delete itself, matching the
+  deactivate/reset pattern exactly.
+- Also fixed a latent bug in the test harness itself while adding this
+  coverage: `test-api-foundation.ts`'s `request()` helper unconditionally
+  called `response.json()`, which throws on a `204 No Content` body - this
+  is why the DELETE route had never been tested (the harness itself
+  couldn't have handled it). Now reads the body as text first and only
+  parses non-empty responses.
+- **STATIC/API VERIFIED**: 7 new assertions (non-admin 403, self-deletion
+  409 `SELF_DELETION_NOT_ALLOWED`, successful delete removes the user,
+  deletion revokes the deleted user's own active session, both audit
+  actions present).
+
+**Also checked and found clean** (no fix needed): Data Entry's four table
+components (`UpsTable`/`AirTable`/`DcTable`/`EnergyCostTable`) - every
+required prop is correctly supplied by CleanWebApp; `AirTable`'s optional
+`meterLabels` is unset but degrades to a reasonable computed default
+(`"EB41A (GWh)"`-style), not an empty render. `ExecutiveDashboard`/
+`SmartInsightPanel` take only `logs`/`lang`, both supplied. Site Comparison
+is a Web-native implementation (not a reused Desktop component with hidden
+props), already covered by 54 existing assertions.
+
+**Separately discovered, out of scope for this pass, not caused by
+anything in this pass's diff**: `test:ups-group-history`,
+`test:ups-group-history-migration`, and `test:production-stress-fault`
+(Desktop XLSM-writer byte-level stress tests, exercising
+`WorkbookReader`/`WorkbookWriter`/`upsGroupHistoryReader`/
+`upsGroupHistoryMigration` - none of which this pass's changes touch) have
+pre-existing failures (row-count/duplicate-row assertions in "Scenario 2"
+and "Scenario 5", and two `generatedAt`-timestamp assertions). Confirmed
+unrelated to this pass: none of these three scripts import any file this
+pass modified, and neither `DC_Rangsit.xlsm` nor `DC_Srinakarin.xlsm` (both
+untracked/gitignored, so no git history to diff against) show a
+modification timestamp from today. These three scripts were also never
+part of this session's routinely-re-run "full regression battery" citations
+earlier in this document (which consistently lists domain-parity,
+display-period, facility-*, dashboard-isolation, rack tests, air-validation,
+theme, admin-ui, api, report-filename, exports, backup-service, phase3) -
+so this is a pre-existing gap in test-suite coverage that simply was never
+re-checked, not a regression introduced now. Not fixed here: root-causing a
+Desktop XLSM zip-surgery stress-test failure is a materially different,
+larger investigation than this pass's Web-parity scope, and the task's own
+priority list does not include it.
+
+Full regression re-run fresh for this pass: `test:api` (89, up from 82),
+`test:web-clean-v1-dashboard-ups-mapping` (13, new), `test:domain-parity`
+(24), `test:display-period` (10), `test:web-clean-v1-facility-context` (8),
+`test:facility-isolation` (15), `test:facility-comparison` (54),
+`test:dashboard-facility-isolation` (13 - Desktop-side, see finding #2
+above for what this suite does and does not prove), rack tests (3 suites),
+`test:air-validation`, `test:web-clean-v1-theme`, `test:web-clean-v1-admin-ui`,
+`test:web-clean-v1-report-filename`, `test:web-clean-v1-exports`,
+`test:backup-service`, `test:phase3` - all pass, zero regressions. `npm run
+lint` and `npm run build` both clean.
+
+**Browser UAT: NOT VERIFIED - EXTERNAL BLOCKER** (Chrome extension still
+not connected). **Supabase: NOT VERIFIED - EXTERNAL BLOCKER** (unchanged;
+this pass did not require live DB access - all three fixes verified against
+the in-memory repository test double and static source inspection).
+
 ## 2026-08-11 Data storage, backup, and Role management
 
 Full detail: `docs/web-clean-v1/DATA_BACKUP_AND_RECOVERY.md`.
