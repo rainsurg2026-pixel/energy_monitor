@@ -331,30 +331,90 @@ function SiteComparison() {
 }
 
 interface BackupLogEntry { id: number; backupType: "scheduled" | "manual"; status: "running" | "success" | "partial" | "failed"; startedAt: string; completedAt: string | null; recordsProcessed: number; recordsSuccess: number; recordsFailed: number; errorSummary: string | null; }
-interface BackupStatus { configured: boolean; schedule: string; latest: BackupLogEntry | null; recent: BackupLogEntry[] }
+interface BackupDestination { sheetUrl: string | null; spreadsheetIdMasked: string; enabled: boolean; updatedAt: string | null }
+interface BackupStatus { configured: boolean; serviceAccountConfigured: boolean; destination: BackupDestination; schedule: string; latest: BackupLogEntry | null; recent: BackupLogEntry[] }
+type ConnectionTestResult = { ok: true; spreadsheetTitle: string; sheetsReady: boolean } | { ok: false; reason: string };
 
 /** Supabase/PostgreSQL is the Source of Truth; this panel only shows the
  *  status of the separate Google Sheets BACKUP/RECOVERY layer - a save
  *  already succeeded in the database before any backup ever runs, so a
  *  failed/unconfigured backup is shown as an observable status here, never
- *  as something that blocked or rolled back a Data Entry save. */
+ *  as something that blocked or rolled back a Data Entry save. The Google
+ *  service-account credential never reaches this component - the browser
+ *  only ever sees connection status and a masked spreadsheet reference. */
 function DataBackupPanel() {
   const [status, setStatus] = useState<BackupStatus | null>(null);
+  const [sheetUrlInput, setSheetUrlInput] = useState("");
+  const [enabledInput, setEnabledInput] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [testBusy, setTestBusy] = useState(false);
+  const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async () => { try { setStatus(await api<BackupStatus>("/admin/backup/status")); setError(null); } catch (reason) { setError(readError(reason)); } }, []);
+  const [message, setMessage] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const result = await api<BackupStatus>("/admin/backup/status");
+      setStatus(result);
+      setSheetUrlInput(result.destination.sheetUrl ?? "");
+      setEnabledInput(result.destination.enabled);
+      setError(null);
+    } catch (reason) { setError(readError(reason)); }
+  }, []);
   useEffect(() => { void load(); }, [load]);
-  const runNow = async () => { setBusy(true); try { await api("/admin/backup/run", { method: "POST" }); await load(); } catch (reason) { setError(readError(reason)); } finally { setBusy(false); } };
+  const runNow = async () => { setBusy(true); setMessage(null); try { await api("/admin/backup/run", { method: "POST" }); await load(); setMessage("Backup Now finished. See Status below."); } catch (reason) { setError(readError(reason)); } finally { setBusy(false); } };
+  const testConnection = async () => {
+    if (!sheetUrlInput.trim()) { setTestResult({ ok: false, reason: "Enter a Google Sheet URL first." }); return; }
+    setTestBusy(true); setTestResult(null); setError(null);
+    try { setTestResult(await api<ConnectionTestResult>("/admin/backup/test-connection", { method: "POST", body: JSON.stringify({ google_sheet_url: sheetUrlInput }) })); }
+    catch (reason) { setTestResult({ ok: false, reason: readError(reason) }); }
+    finally { setTestBusy(false); }
+  };
+  const saveSettings = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!sheetUrlInput.trim()) { setError("Enter a Google Sheet URL before saving."); return; }
+    setBusy(true); setError(null); setMessage(null);
+    try { await api("/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: sheetUrlInput, enabled: enabledInput }) }); await load(); setMessage("Backup settings saved."); }
+    catch (reason) { setError(readError(reason)); }
+    finally { setBusy(false); }
+  };
   const statusLabel = (entry: BackupLogEntry | null) => !entry ? "No backup has run yet" : entry.status === "success" ? "SUCCESS" : entry.status === "running" ? "RUNNING" : entry.status === "partial" ? "PARTIAL" : "FAILED";
   const statusColor = (entry: BackupLogEntry | null) => !entry ? "text-slate-400" : entry.status === "success" ? "text-teal-300" : entry.status === "running" ? "text-amber-300" : "text-rose-300";
   return <section className="max-w-2xl rounded-2xl border border-slate-800 bg-slate-900 p-5">
     <h3 className="font-semibold">Data Backup</h3>
     <p className="mt-1 text-sm text-slate-400">Google Sheets is a backup/recovery copy only - Supabase remains the source of truth. A backup failure never affects Data Entry saves.</p>
     {error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
-    {status && <div className="mt-4 space-y-2 text-sm">
-      <div className="flex justify-between"><span className="text-slate-400">Google Sheets Backup</span><span>{status.configured ? "Enabled" : "Not configured"}</span></div>
+    {message && <p className="mt-3 text-sm text-teal-300">{message}</p>}
+
+    <form onSubmit={saveSettings} className="mt-4 space-y-3 border-t border-slate-800 pt-4">
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={enabledInput} onChange={event => setEnabledInput(event.target.checked)} />
+        <span>Enabled (include this destination in the daily scheduled backup)</span>
+      </label>
+      <label className="block text-sm">
+        Google Sheet URL
+        <input
+          type="url"
+          required
+          placeholder="https://docs.google.com/spreadsheets/d/…/edit"
+          value={sheetUrlInput}
+          onChange={event => { setSheetUrlInput(event.target.value); setTestResult(null); }}
+          className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-xs"
+        />
+      </label>
+      <p className="text-xs text-slate-500">Currently configured: <span className="font-mono">{status?.destination.spreadsheetIdMasked ?? "(none)"}</span>{status?.destination.updatedAt && <> · saved {new Date(status.destination.updatedAt).toLocaleString()}</>}</p>
+      <div className="flex flex-wrap gap-3">
+        <button type="button" onClick={() => void testConnection()} disabled={testBusy} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:border-teal-500 disabled:opacity-60">{testBusy ? "Testing…" : "Test Connection"}</button>
+        <button type="submit" disabled={busy} className="rounded-xl bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60">{busy ? "Saving…" : "Save Settings"}</button>
+      </div>
+      {testResult && (testResult.ok
+        ? <p className="rounded-lg border border-teal-500/30 bg-teal-500/5 p-3 text-xs text-teal-200">✓ Connected — "{testResult.spreadsheetTitle}"</p>
+        : <p className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-200">✕ {testResult.reason}</p>)}
+    </form>
+
+    {status && <div className="mt-5 space-y-2 border-t border-slate-800 pt-4 text-sm">
+      <div className="flex justify-between"><span className="text-slate-400">Connection Status</span><span>{status.destination.enabled ? "Enabled" : "Disabled"}{!status.serviceAccountConfigured && " (server credential not configured)"}</span></div>
       <div className="flex justify-between"><span className="text-slate-400">Last Backup</span><span>{status.latest ? new Date(status.latest.startedAt).toLocaleString() : "—"}</span></div>
-      <div className="flex justify-between"><span className="text-slate-400">Status</span><span className={statusColor(status.latest)}>{statusLabel(status.latest)}</span></div>
+      <div className="flex justify-between"><span className="text-slate-400">Backup Status</span><span className={statusColor(status.latest)}>{statusLabel(status.latest)}</span></div>
       <div className="flex justify-between"><span className="text-slate-400">Records</span><span>{status.latest ? status.latest.recordsProcessed.toLocaleString() : "—"}</span></div>
       <div className="flex justify-between"><span className="text-slate-400">Schedule</span><span>{status.schedule}</span></div>
       {status.latest?.status === "failed" && status.latest.errorSummary && <p className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3 text-xs text-rose-200">Reason: {status.latest.errorSummary}</p>}
