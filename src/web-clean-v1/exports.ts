@@ -210,13 +210,29 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
   };
 }
 
+/**
+ * Opens the print popup - must be called synchronously, in the same event
+ * loop turn as the triggering click, before any `await`. Browsers key
+ * window.open()'s popup-blocker permission off the original user gesture;
+ * once an async gap (e.g. an awaited API fetch for rack data) has elapsed,
+ * that gesture has expired and window.open() gets silently blocked. The
+ * caller opens the (initially blank) window immediately on click, then
+ * writes the real report into it once any async data has loaded, via
+ * printDesktopPdf/printSiteComparisonPdf/printAllFacilitiesPdf below.
+ */
+export function openReportPopup(name: string): Window {
+  const popup = window.open("", name, "noopener,noreferrer");
+  if (!popup) throw new Error("The report window was blocked by the browser.");
+  popup.document.title = "Preparing report…";
+  return popup;
+}
+
 /** Desktop's print HTML, populated only with the selected facility's API DTOs.
  *  fileName (without extension) becomes the print dialog's suggested "Save
- *  as PDF" name, via document.title - the browser convention for print-to-PDF. */
-export function printDesktopPdf(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = []): void {
+ *  as PDF" name, via document.title - the browser convention for print-to-PDF.
+ *  `popup` must come from openReportPopup(), called synchronously on click. */
+export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = []): void {
   const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity);
-  const popup = window.open("", "energy-monitor-report", "noopener,noreferrer");
-  if (!popup) throw new Error("The report window was blocked by the browser.");
   popup.document.open();
   popup.document.write(buildReportHtml(data));
   popup.document.close();
@@ -262,7 +278,7 @@ function comparisonTrend(site: ComparisonSite, months: string[]): ReportMonthlyR
  *  Comparison" page (rackComparisonPage in reportHtml.ts) - the same
  *  reused RackCapacityReport shape as the main facility report, never a
  *  second comparison calculation. */
-export function printSiteComparisonPdf(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): void {
+export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): void {
   const [primary, secondary] = data.sites;
   if (!primary) throw new Error("No facilities are available for comparison.");
   const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
@@ -295,23 +311,20 @@ export function printSiteComparisonPdf(data: SiteComparisonExport, referenceMont
     },
     rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
   };
-  const popup = window.open("", "energy-monitor-site-comparison", "noopener,noreferrer");
-  if (!popup) throw new Error("The report window was blocked by the browser.");
   popup.document.open();
   popup.document.write(buildReportHtml(report));
   popup.document.close();
   popup.addEventListener("load", () => popup.print(), { once: true });
 }
 
-/** Prints one full Desktop-compatible report per facility in one document. */
-export function printAllFacilitiesPdf(facilities: ExportFacility[], selectedMonth: string): void {
+/** Prints one full Desktop-compatible report per facility in one document.
+ *  `popup` must come from openReportPopup(), called synchronously on click. */
+export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[], selectedMonth: string): void {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
   const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [])));
   const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
   const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
   const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
-  const popup = window.open("", "energy-monitor-all-facilities", "noopener,noreferrer");
-  if (!popup) throw new Error("The report window was blocked by the browser.");
   popup.document.open();
   popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Energy Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`);
   popup.document.close();
