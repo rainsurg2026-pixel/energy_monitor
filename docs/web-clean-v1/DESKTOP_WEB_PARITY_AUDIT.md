@@ -2,6 +2,179 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Final release-readiness audit: NOT PRODUCTION READY
+
+Verification-only pass, no code changes. Re-verified from fresh evidence
+(not cited from earlier in this document) rather than trusting prior PASS
+claims, per explicit instruction. Full detail/evidence for each claim
+below is in this session's own tool output; summarized here.
+
+**Repository state - VERIFIED.** `git status` clean, `feat/web-clean-v1`
+checked out, single worktree, no gitlinks/submodules, `feat/web-v3`
+retired locally (remote left untouched, per standing instruction). Local
+HEAD (`0ae237e`) is 24 commits ahead of `origin/feat/web-clean-v1`
+(`db15dc0`) - all local, all unpushed, nothing pushed this pass.
+
+**Security/secret scan - VERIFIED, clean.** Diffed the full unpushed
+range (`origin/feat/web-clean-v1..HEAD`, 38 files) and the `dist/` build
+output for private-key/credential/token-shaped strings - none found; the
+only regex hits were the pre-existing test-fixture password string
+("Correct Horse Battery Staple ..."), not a real secret. No `.env` files
+tracked besides `.env.example`.
+
+**P0/P1 sweep - VERIFIED, clean.** Systematic search (TODO/FIXME/HACK,
+hard-coded facility IDs/months in application logic, mock data reachable
+in production paths, dead/unauthorized API routes, silent fallbacks,
+`READ_ONLY_MODE` exemption scope, frontend-only authorization) found
+**zero P0/P1 issues**. Every mutating route has a matching
+`withPermission()` call. `READ_ONLY_MODE`'s exemption list
+(`/auth/login`, `/auth/logout`, `/cron/backup`, `/admin/backup/run`,
+`/admin/backup/test-connection`) is correctly narrow - the real
+settings-mutation route (`PUT /admin/backup/config`) is correctly *not*
+exempted. One P2, non-blocking observation: a handful of API routes
+(`/sites`, `/settings`, `/periods`, `/dashboard`, `/energy`, `/cost`,
+`/electrical` - already documented elsewhere in this file as orphaned
+`WebV3App` leftovers; plus `/auth/change-password` and
+`PATCH /admin/users/:id/display-name`, newly noted here) have no caller
+in the shipped `CleanWebApp` frontend, and `src/web-clean-v1/api.ts`'s
+`downloadPdf()` calls a `/sites/:id/reports/pdf` route that does not
+exist in `app.ts` - but `downloadPdf` itself is never called from
+anywhere in `CleanWebApp.tsx` (PDF export happens client-side via
+`buildReportHtml`), so this is dead code with zero runtime impact, not a
+defect. Not fixed - it's a P2 cleanup, not a P0/P1, and out of scope for
+a release-verification pass ("do not create unnecessary refactors").
+
+**Regression/lint/build - VERIFIED, re-run fresh, zero regressions.**
+Full battery (`test:api` 89, `test:domain-parity` 24,
+`test:display-period` 10, `test:web-clean-v1-facility-context` 8,
+`test:facility-isolation` 15, `test:facility-comparison` 54,
+`test:dashboard-facility-isolation` 13,
+`test:web-clean-v1-dashboard-ups-mapping` 13, `test:rack-capacity-metrics`,
+`test:rack-unit-capacity`, `test:rack-status-config`,
+`test:rack-capacity-write`, `test:rack-capacity-history`,
+`test:air-validation`, `test:web-clean-v1-theme`,
+`test:web-clean-v1-admin-ui`, `test:web-clean-v1-report-filename`,
+`test:web-clean-v1-exports` 7+52, `test:backup-service` 38, `test:phase3`)
+- all pass. `npm run lint` and `npm run build` both clean.
+
+**Preview deployment - STALE, confirmed with direct evidence, not just a
+timestamp.** The live deployment behind the branch alias
+(`energy-monitor-git-feat-web-clean-v1-dcm15.vercel.app`) was created
+2026-08-10 21:40 +0700, matching `origin/feat/web-clean-v1`'s HEAD
+timestamp exactly. Confirmed structurally, not just by timestamp:
+`POST /api/v1/cron/backup` on the live deployment returns
+`403 CSRF_FAILED` - because the deployed code (`origin` HEAD) predates
+the entire Backup feature and its CSRF exemption
+(`origin`'s `server/http/app.ts` has no `/cron/backup` route or
+exemption at all; local HEAD does). **The live Preview does not contain
+any of this session's work**: the admin-configurable backup destination,
+all three non-Export parity fixes (Rack Capacity History wiring,
+Dashboard UPS Groups fix, User Management deletion audit fix), or the
+Rack Report/Site Comparison Export fix. Preview health/readiness below
+reflects the OLD, pre-session deployment only.
+
+**Preview health/readiness - VERIFIED (for the currently-deployed old
+commit only).** `GET /api/v1/health` -> `200 {"status":"ok"}`;
+`GET /api/v1/readiness` -> `200 {"status":"ready"}` (readiness calls
+`repository.ping()`, so this also confirms the deployed instance's own
+Supabase connectivity works from Vercel's side - a genuinely different
+claim from "the MCP connector in this session can reach Supabase", which
+remains blocked). Auth boundary confirmed live:
+unauthenticated `GET /api/v1/settings` and `/api/v1/admin/users` both
+return `401`; a CSRF-missing mutating request returns `403 CSRF_FAILED`.
+
+**Supabase Preview - NOT VERIFIED, EXTERNAL ACCESS BLOCKER, re-confirmed
+fresh.** `list_projects` (re-called this pass) still returns only
+`lhlzzxjayywqhqtjzfiu` ("patamin-lab's Project", `ap-northeast-2`) and
+`rohmbjqnyekvxpyydjbn` (inactive) - neither is `tofdgndrrpnnyhbuurbx`
+(`energy_monitor`, `ap-southeast-1`). No schema/RLS/grants/migration-009
+live-state claim is made. Migration `009_backup_config.sql` remains
+unapplied anywhere.
+
+**Browser UAT - NOT VERIFIED, EXTERNAL BLOCKER, re-confirmed fresh.**
+`tabs_context_mcp` called again this pass: "Browser extension is not
+connected." No click-through of any kind was performed. Separately, even
+if the extension connected, `READ_ONLY_MODE=true` is configured for
+`Preview (feat/web-clean-v1)` in Vercel (confirmed via
+`vercel env ls preview`), which would block write/admin actions in that
+environment regardless - a pre-existing, documented constraint
+(`SUPABASE_PROJECT_AUDIT.md`), not new.
+
+**Backup real integration - EXTERNAL BLOCKER, stronger evidence than
+before.** Beyond this session's own environment lacking
+`GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON`/`CRON_SECRET`, `vercel env ls
+preview` confirms **neither variable is configured in any Vercel Preview
+environment at all** - this is not merely inaccessible to this session,
+it is not yet provisioned anywhere. Code/automated-test/security
+verification for Backup remains valid (unchanged, not re-litigated here).
+
+**Rollback plan - VERIFIED realistic, not just "exists".**
+`docs/web-v3/ROLLBACK_PLAN.md` (Vercel instant-rollback + additive-only-schema
+rationale + secret-rotation guidance) was read and cross-checked against
+the actual repository: independently re-verified that all 9 migrations
+(`001`-`009`) contain zero `DROP TABLE`/`DROP COLUMN`/`DROP CONSTRAINT`
+statements, confirming the plan's "an older build is forward-compatible
+by construction" claim is actually true of this codebase, not just
+asserted. Plan was not exercised (no incident, nothing deployed to roll
+back).
+
+**Desktop/XLSM parity, Dashboard/UPS/Rack/Data Entry/History/Site
+Comparison/User Management/Theme/Export - not re-driven from scratch this
+pass** (would reopen already-completed, already-evidenced work with no
+new information - the Desktop app and XLSM files have not changed since
+their direct CDP/byte-level inspection earlier in this session). Re-verified
+indirectly and sufficiently via the fresh, zero-regression full test
+battery above, which includes the exact suites that assert Desktop
+calculation parity (`test:domain-parity` against the golden fixture) and
+real-file byte-safety (`test:rack-capacity-write`/`-history`'s own
+"Production DC_*.xlsm untouched" self-checks).
+
+### Production Readiness Matrix
+
+| Area | Status | Evidence | Blocker |
+| --- | --- | --- | --- |
+| Code | PASS | P0/P1 sweep: zero real findings | none |
+| Architecture | PASS | Reuse-not-duplicate confirmed (rack calc extraction, shared renderer); dead routes are pre-existing/documented P2 | none blocking |
+| Desktop parity | PASS | `test:domain-parity` vs golden fixture + full rack/air/ups suites, all fresh | none |
+| Data integrity / facility isolation | PASS | 15+13+8+54+21 facility-isolation assertions across suites, zero cross-contamination | none |
+| Authentication | PASS | 401 confirmed live on deployed Preview; session+CSRF tested (`test:phase3`) | none |
+| Authorization | PASS | Every mutating route permission-checked (fresh sweep); `test:api` 89 RBAC assertions | none |
+| Security | PASS | Fresh secret scan clean; CSRF enforced live; credentials never in DB/browser | none |
+| Database (migrations) | PARTIAL | Additive-only confirmed (no DROPs); migration 009 not applied anywhere | Supabase Preview access |
+| RLS | NOT VERIFIED | Written correctly per migration (code-reviewed); live enforcement unconfirmed | Supabase Preview access |
+| Preview deployment | STALE | Live deployment = `origin` HEAD, 24 commits behind; confirmed structurally (missing `/cron/backup` route) | Nothing pushed (by design) |
+| Preview health/readiness | PASS (old code only) | `/health`=200, `/readiness`=200, live-curled | Reflects pre-session code |
+| Browser UAT | NOT VERIFIED | Extension not connected (checked fresh) | Chrome extension unavailable |
+| Dashboard/UPS/Rack/Data Entry/History/Site Comparison/User Mgmt/Theme | PASS (code+test only) | This session's fixes + full regression, fresh | Browser UAT not verified |
+| Backup | PARTIAL | Code/tests/security VERIFIED; real Google integration + Preview DB confirmed unprovisioned | Google credential + Supabase access, both external |
+| Export | PASS (code+test only) | 52 assertions incl. real content verification | Browser UAT not verified |
+| Regression/Lint/Build | PASS | Full battery re-run fresh, zero regressions | none |
+| Deployment | BLOCKED | Not pushed - no push/deploy authorization given this pass | Awaiting explicit authorization |
+| Rollback | PASS (plan verified) | `ROLLBACK_PLAN.md` reviewed + additive-only claim independently re-verified | Not exercised (no incident) |
+
+### Production decision: **NOT PRODUCTION READY**
+
+Exact blockers, all external or by-design (none are code defects):
+
+1. **Preview deployment is stale** - none of this session's work (Backup
+   feature, 3 non-Export fixes, Export Rack Report fix) has been pushed
+   or deployed. Pushing requires explicit authorization not given this
+   pass.
+2. **Supabase Preview access** - MCP connector cannot reach
+   `tofdgndrrpnnyhbuurbx`; schema/RLS/migration-009 live state remains
+   unconfirmed.
+3. **Browser UAT** - Chrome extension not connected; no click-through of
+   any workflow has ever been performed this session.
+4. **Backup real Google integration** - no credential provisioned
+   anywhere (confirmed via Vercel env listing, not just this session's
+   shell).
+
+Recommended next action: push the 24 local commits to
+`origin/feat/web-clean-v1` (only with explicit authorization), let Vercel
+redeploy Preview, then resolve the Supabase/Browser-UAT access blockers
+before re-attempting this gate - none of the remaining blockers are
+resolvable from within this session without that external access.
+
 ## 2026-08-11 Final Reports & Export phase: Rack Report + Rack Site Comparison
 
 Closes the one gap the prior Export phase explicitly deferred and
