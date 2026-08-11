@@ -35,9 +35,15 @@ export interface BackupLogRecord {
   recordsFailed: number;
   errorSummary: string | null;
   initiatedBy: number | null;
+  spreadsheetId: string | null;
 }
 export interface StartBackupInput { backupType: BackupType; initiatedBy: number | null; }
-export interface CompleteBackupInput { id: number; status: BackupStatus; recordsProcessed: number; recordsSuccess: number; recordsFailed: number; errorSummary: string | null; }
+export interface CompleteBackupInput { id: number; status: BackupStatus; recordsProcessed: number; recordsSuccess: number; recordsFailed: number; errorSummary: string | null; spreadsheetId: string | null; }
+/** Non-secret backup destination configuration only - never a credential.
+ *  The Google service-account key stays env-var-only and is never stored
+ *  here or in any other table. */
+export interface BackupConfigRecord { spreadsheetId: string | null; sheetUrl: string | null; enabled: boolean; updatedBy: number | null; updatedAt: string | null; }
+export interface UpdateBackupConfigInput { spreadsheetId: string; sheetUrl: string; enabled: boolean; updatedBy: number | null; correlationId: string; }
 export interface UpdateSettingsInput { startMonth: string; endMonth: string; expectedRowVersion: number; actorUserId?: number | null; }
 export interface SaveMonthlyLogInput { siteId: number; log: MonthlyLog; expectedRowVersion: number | null; correlationId: string; actorUserId?: number | null; provenance?: { sourceType: string; sourceFileHash?: string | null; sourceFileName?: string | null; sourceSheet?: string | null; sourceLocation?: string | null }; }
 
@@ -57,5 +63,7 @@ export interface BackendRepository {
   completeBackupRun(input: CompleteBackupInput): Promise<BackupLogRecord>;
   latestBackupRun(): Promise<BackupLogRecord | null>;
   listBackupRuns(limit: number): Promise<BackupLogRecord[]>;
+  getBackupConfig(): Promise<BackupConfigRecord>;
+  updateBackupConfig(input: UpdateBackupConfigInput): Promise<BackupConfigRecord>;
   withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T>;
 }

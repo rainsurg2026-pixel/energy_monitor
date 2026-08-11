@@ -1,6 +1,7 @@
 import type { MonthlyLog } from "../../src/types";
 import { HttpError } from "../errors";
-import type { BackendRepository, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "./contracts";
+import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "./contracts";
+import { maskSpreadsheetId } from "../backup/googleSheetsUrl";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 export interface InMemoryRepositoryOptions {
@@ -12,6 +13,7 @@ export interface InMemoryRepositoryOptions {
   upsGroupHistory?: Record<number, UpsGroupHistoryRecord[]>;
   databaseReady?: boolean;
   auditFailure?: boolean;
+  backupConfig?: BackupConfigRecord;
 }
 
 export interface InMemoryAuditEvent {
@@ -36,6 +38,7 @@ export class InMemoryRepository implements BackendRepository {
   private readonly auditFailure: boolean;
   private readonly backupRuns: BackupLogRecord[] = [];
   private nextBackupId = 1;
+  private backupConfig: BackupConfigRecord;
   readonly auditEvents: InMemoryAuditEvent[] = [];
 
   constructor(options: InMemoryRepositoryOptions = {}) {
@@ -47,6 +50,7 @@ export class InMemoryRepository implements BackendRepository {
     this.upsGroupHistory = options.upsGroupHistory ?? {};
     this.databaseReady = options.databaseReady ?? true;
     this.auditFailure = options.auditFailure ?? false;
+    this.backupConfig = options.backupConfig ?? { spreadsheetId: null, sheetUrl: null, enabled: false, updatedBy: null, updatedAt: null };
   }
 
   async ping(): Promise<void> { if (!this.databaseReady) throw new Error("in-memory repository is not ready"); }
@@ -130,7 +134,7 @@ export class InMemoryRepository implements BackendRepository {
   async getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]> { return this.upsGroupHistory[siteId] ?? []; }
 
   async startBackupRun(input: StartBackupInput): Promise<BackupLogRecord> {
-    const record: BackupLogRecord = { id: this.nextBackupId++, backupType: input.backupType, status: "running", startedAt: new Date().toISOString(), completedAt: null, recordsProcessed: 0, recordsSuccess: 0, recordsFailed: 0, errorSummary: null, initiatedBy: input.initiatedBy };
+    const record: BackupLogRecord = { id: this.nextBackupId++, backupType: input.backupType, status: "running", startedAt: new Date().toISOString(), completedAt: null, recordsProcessed: 0, recordsSuccess: 0, recordsFailed: 0, errorSummary: null, initiatedBy: input.initiatedBy, spreadsheetId: null };
     this.backupRuns.push(record);
     return { ...record };
   }
@@ -144,7 +148,25 @@ export class InMemoryRepository implements BackendRepository {
     record.recordsSuccess = input.recordsSuccess;
     record.recordsFailed = input.recordsFailed;
     record.errorSummary = input.errorSummary;
+    record.spreadsheetId = input.spreadsheetId;
     return { ...record };
+  }
+
+  async getBackupConfig(): Promise<BackupConfigRecord> { return { ...this.backupConfig }; }
+
+  async updateBackupConfig(input: UpdateBackupConfigInput): Promise<BackupConfigRecord> {
+    const before = { ...this.backupConfig };
+    this.backupConfig = { spreadsheetId: input.spreadsheetId, sheetUrl: input.sheetUrl, enabled: input.enabled, updatedBy: input.updatedBy, updatedAt: new Date().toISOString() };
+    this.recordAudit({
+      actorUserId: input.updatedBy,
+      action: "backup_destination_change",
+      entityType: "backup_config",
+      entityId: "1",
+      previousValue: { spreadsheetIdMasked: maskSpreadsheetId(before.spreadsheetId), enabled: before.enabled },
+      newValue: { spreadsheetIdMasked: maskSpreadsheetId(this.backupConfig.spreadsheetId), enabled: this.backupConfig.enabled },
+      correlationId: input.correlationId
+    });
+    return { ...this.backupConfig };
   }
 
   async latestBackupRun(): Promise<BackupLogRecord | null> {

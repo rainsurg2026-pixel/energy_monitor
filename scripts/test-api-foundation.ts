@@ -92,6 +92,7 @@ async function json(base: string, path: string, init?: RequestInit): Promise<{ s
   return { status: response.status, body: await response.json() };
 }
 
+const mainTestRepository = apiTestRepository();
 await withApi(false, async (base, authentication) => {
   const unauthenticated = await json(base, "/api/v1/settings"); check("protected reads require authentication", unauthenticated.status === 401 && unauthenticated.body.error?.code === "UNAUTHORIZED");
   const disallowedOrigin = await fetch(`${base}/api/v1/auth/login`, { method: "POST", headers: { "content-type": "application/json", origin: "http://evil.example" }, body: JSON.stringify({ username: "admin", password: "Correct Horse Battery Staple 123!" }) }); check("login rejects unapproved origin", disallowedOrigin.status === 403);
@@ -177,6 +178,31 @@ await withApi(false, async (base, authentication) => {
   const forbiddenBackupRun = await viewerClient.request("/api/v1/admin/backup/run", { method: "POST" });
   check("a non-admin user cannot trigger a backup run", forbiddenBackupRun.status === 403 && forbiddenBackupRun.body.error?.code === "FORBIDDEN");
 
+  // Backup destination config: Admin-configurable Google Sheet URL, stored
+  // as a non-secret DB row (server extracts+validates the spreadsheet ID -
+  // the client never gets to assert one directly). No Google credential
+  // ever appears in any of these responses.
+  const invalidUrl = await client.request("/api/v1/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: "https://example.com/not-a-sheet", enabled: false }) });
+  check("an unrelated URL is rejected as an invalid Google Sheets URL", invalidUrl.status === 400 && invalidUrl.body.error?.code === "INVALID_SHEET_URL");
+  const validSpreadsheetId = "a".repeat(44);
+  const savedConfig = await client.request("/api/v1/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit#gid=0`, enabled: true }) });
+  check("admin can save a valid Google Sheet URL", savedConfig.status === 200 && savedConfig.body.data.sheetUrl === `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit` && savedConfig.body.data.enabled === true);
+  check("the saved config response returns a masked spreadsheet reference, not the raw ID", savedConfig.body.data.spreadsheetIdMasked !== validSpreadsheetId && savedConfig.body.data.spreadsheetIdMasked.includes("…"));
+  const savedConfigJson = JSON.stringify(savedConfig.body);
+  check("the saved config response never contains credential-shaped fields", !/private_key|client_secret|access_token|refresh_token/i.test(savedConfigJson));
+  const statusAfterSave = await client.request("/api/v1/admin/backup/status");
+  check("status reflects the newly configured destination", statusAfterSave.status === 200 && statusAfterSave.body.data.destination.spreadsheetIdMasked === savedConfig.body.data.spreadsheetIdMasked && statusAfterSave.body.data.destination.enabled === true);
+  const configChangeAudit = mainTestRepository.auditEvents.find(audit => audit.action === "backup_destination_change");
+  check("changing the backup destination is audited with a masked reference, not the raw ID or a credential", Boolean(configChangeAudit) && !JSON.stringify(configChangeAudit).includes(validSpreadsheetId));
+  const missingEnabled = await client.request("/api/v1/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit` }) });
+  check("saving without the required enabled flag is rejected", missingEnabled.status === 400);
+  const testConnectionResult = await client.request("/api/v1/admin/backup/test-connection", { method: "POST", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit` }) });
+  check("Test Connection is reachable for an admin and reports a structured result without a live Google credential configured in this test environment", testConnectionResult.status === 200 && testConnectionResult.body.data.ok === false && typeof testConnectionResult.body.data.reason === "string");
+  const forbiddenConfigWrite = await viewerClient.request("/api/v1/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit`, enabled: true }) });
+  check("a non-admin user cannot change the backup destination", forbiddenConfigWrite.status === 403 && forbiddenConfigWrite.body.error?.code === "FORBIDDEN");
+  const forbiddenTestConnection = await viewerClient.request("/api/v1/admin/backup/test-connection", { method: "POST", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit` }) });
+  check("a non-admin user cannot call Test Connection", forbiddenTestConnection.status === 403 && forbiddenTestConnection.body.error?.code === "FORBIDDEN");
+
   // Cron endpoint: authenticated by CRON_SECRET only, never a session -
   // must be reachable with no cookies/CSRF token at all (that's the whole
   // point - Vercel Cron has none), and must reject a wrong/missing secret.
@@ -185,13 +211,18 @@ await withApi(false, async (base, authentication) => {
   const cronWrongSecret = await fetch(`${base}/api/v1/cron/backup`, { method: "POST", headers: { origin: "http://test", authorization: "Bearer wrong-secret" } });
   check("cron endpoint rejects the wrong bearer secret", cronWrongSecret.status === 401);
   check("cron endpoint was reachable at all (not blocked by the global CSRF gate meant for session-based routes)", cronNoSecret.status !== 403 && cronWrongSecret.status !== 403);
-});
+}, mainTestRepository);
 
 await withApi(true, async base => {
   const client = await login(base, { username: "admin", password: "Correct Horse Battery Staple 123!" });
   const get = await client.request("/api/v1/settings"); check("read-only GET allowed", get.status === 200);
   const put = await client.request("/api/v1/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: "2026-01", end_month: "2026-03", expected_row_version: 1 }) }); check("read-only mutation rejected server-side", put.status === 423 && put.body.error?.code === "READ_ONLY_MODE");
   const userMutation = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "blocked", display_name: "Blocked", password: "Correct Horse Battery Staple 999!", role: "user" }) }); check("read-only blocks user management mutation", userMutation.status === 423 && userMutation.body.error?.code === "READ_ONLY_MODE");
+  const readOnlySpreadsheetId = "b".repeat(44);
+  const configWriteBlocked = await client.request("/api/v1/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${readOnlySpreadsheetId}/edit`, enabled: true }) });
+  check("read-only blocks changing the backup destination (a real settings write)", configWriteBlocked.status === 423 && configWriteBlocked.body.error?.code === "READ_ONLY_MODE");
+  const testConnectionAllowed = await client.request("/api/v1/admin/backup/test-connection", { method: "POST", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${readOnlySpreadsheetId}/edit` }) });
+  check("read-only still allows Test Connection (a diagnostic read against Google, not an operational-table write)", testConnectionAllowed.status === 200);
 });
 
 const transactionRepository = new InMemoryRepository({ settings: { startMonth: "2026-01", endMonth: "2026-03", rowVersion: 1 } });

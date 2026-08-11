@@ -2,7 +2,8 @@ import type { Pool, PoolClient } from "pg";
 import type { MonthlyLog, UpsRecord } from "../../src/types";
 import { withTransaction, type DbExecutor, query } from "./pool";
 import { HttpError } from "../errors";
-import type { BackendRepository, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "../repositories/contracts";
+import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "../repositories/contracts";
+import { maskSpreadsheetId } from "../backup/googleSheetsUrl";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 function numberOrNull(value: unknown): number | null { return value === null || value === undefined ? null : Number(value); }
@@ -281,7 +282,7 @@ export class PostgresRepository implements BackendRepository {
     }));
   }
 
-  private mapBackupRow(row: { id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null }): BackupLogRecord {
+  private mapBackupRow(row: { id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null; spreadsheet_id: string | null }): BackupLogRecord {
     return {
       id: Number(row.id),
       backupType: row.backup_type as BackupLogRecord["backupType"],
@@ -292,44 +293,77 @@ export class PostgresRepository implements BackendRepository {
       recordsSuccess: row.records_success,
       recordsFailed: row.records_failed,
       errorSummary: row.error_summary,
-      initiatedBy: row.initiated_by === null ? null : Number(row.initiated_by)
+      initiatedBy: row.initiated_by === null ? null : Number(row.initiated_by),
+      spreadsheetId: row.spreadsheet_id
     };
   }
 
+  private static readonly BACKUP_LOG_COLUMNS = "id, backup_type, status, started_at, completed_at, records_processed, records_success, records_failed, error_summary, initiated_by, spreadsheet_id";
+
   async startBackupRun(input: StartBackupInput): Promise<BackupLogRecord> {
-    const result = await query<{ id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null }>(
+    const result = await query<Parameters<typeof this.mapBackupRow>[0]>(
       this.executor,
-      "INSERT INTO public.backup_log(backup_type, status, initiated_by) VALUES ($1, 'running', $2) RETURNING id, backup_type, status, started_at, completed_at, records_processed, records_success, records_failed, error_summary, initiated_by",
+      `INSERT INTO public.backup_log(backup_type, status, initiated_by) VALUES ($1, 'running', $2) RETURNING ${PostgresRepository.BACKUP_LOG_COLUMNS}`,
       [input.backupType, input.initiatedBy]
     );
     return this.mapBackupRow(result.rows[0]);
   }
 
   async completeBackupRun(input: CompleteBackupInput): Promise<BackupLogRecord> {
-    const result = await query<{ id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null }>(
+    const result = await query<Parameters<typeof this.mapBackupRow>[0]>(
       this.executor,
-      "UPDATE public.backup_log SET status = $2, completed_at = now(), records_processed = $3, records_success = $4, records_failed = $5, error_summary = $6 WHERE id = $1 RETURNING id, backup_type, status, started_at, completed_at, records_processed, records_success, records_failed, error_summary, initiated_by",
-      [input.id, input.status, input.recordsProcessed, input.recordsSuccess, input.recordsFailed, input.errorSummary]
+      `UPDATE public.backup_log SET status = $2, completed_at = now(), records_processed = $3, records_success = $4, records_failed = $5, error_summary = $6, spreadsheet_id = $7 WHERE id = $1 RETURNING ${PostgresRepository.BACKUP_LOG_COLUMNS}`,
+      [input.id, input.status, input.recordsProcessed, input.recordsSuccess, input.recordsFailed, input.errorSummary, input.spreadsheetId]
     );
     if (!result.rows[0]) throw new HttpError(404, "BACKUP_RUN_NOT_FOUND", "Backup run was not found.");
     return this.mapBackupRow(result.rows[0]);
   }
 
   async latestBackupRun(): Promise<BackupLogRecord | null> {
-    const result = await query<{ id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null }>(
+    const result = await query<Parameters<typeof this.mapBackupRow>[0]>(
       this.executor,
-      "SELECT id, backup_type, status, started_at, completed_at, records_processed, records_success, records_failed, error_summary, initiated_by FROM public.backup_log ORDER BY started_at DESC LIMIT 1"
+      `SELECT ${PostgresRepository.BACKUP_LOG_COLUMNS} FROM public.backup_log ORDER BY started_at DESC LIMIT 1`
     );
     return result.rows[0] ? this.mapBackupRow(result.rows[0]) : null;
   }
 
   async listBackupRuns(limit: number): Promise<BackupLogRecord[]> {
-    const result = await query<{ id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null }>(
+    const result = await query<Parameters<typeof this.mapBackupRow>[0]>(
       this.executor,
-      "SELECT id, backup_type, status, started_at, completed_at, records_processed, records_success, records_failed, error_summary, initiated_by FROM public.backup_log ORDER BY started_at DESC LIMIT $1",
+      `SELECT ${PostgresRepository.BACKUP_LOG_COLUMNS} FROM public.backup_log ORDER BY started_at DESC LIMIT $1`,
       [limit]
     );
     return result.rows.map(row => this.mapBackupRow(row));
+  }
+
+  async getBackupConfig(): Promise<BackupConfigRecord> {
+    const result = await query<{ spreadsheet_id: string | null; sheet_url: string | null; enabled: boolean; updated_by: string | null; updated_at: string | null }>(
+      this.executor,
+      "SELECT spreadsheet_id, sheet_url, enabled, updated_by, updated_at FROM public.backup_config WHERE id = 1"
+    );
+    const row = result.rows[0];
+    if (!row) return { spreadsheetId: null, sheetUrl: null, enabled: false, updatedBy: null, updatedAt: null };
+    return { spreadsheetId: row.spreadsheet_id, sheetUrl: row.sheet_url, enabled: row.enabled, updatedBy: row.updated_by === null ? null : Number(row.updated_by), updatedAt: row.updated_at };
+  }
+
+  async updateBackupConfig(input: UpdateBackupConfigInput): Promise<BackupConfigRecord> {
+    if (!this.pool) throw new Error("A transaction-bound repository cannot start a nested transaction.");
+    return withTransaction(this.pool, async client => {
+      const before = await client.query<{ spreadsheet_id: string | null; enabled: boolean }>("SELECT spreadsheet_id, enabled FROM public.backup_config WHERE id = 1");
+      const result = await client.query<{ spreadsheet_id: string | null; sheet_url: string | null; enabled: boolean; updated_by: string | null; updated_at: string | null }>(
+        "INSERT INTO public.backup_config(id, spreadsheet_id, sheet_url, enabled, updated_by, updated_at) VALUES (1, $1, $2, $3, $4, now()) ON CONFLICT (id) DO UPDATE SET spreadsheet_id = EXCLUDED.spreadsheet_id, sheet_url = EXCLUDED.sheet_url, enabled = EXCLUDED.enabled, updated_by = EXCLUDED.updated_by, updated_at = now() RETURNING spreadsheet_id, sheet_url, enabled, updated_by, updated_at",
+        [input.spreadsheetId, input.sheetUrl, input.enabled, input.updatedBy]
+      );
+      const row = result.rows[0];
+      // Masked (never the full spreadsheet ID) - never a credential, but
+      // still not spelled out in full in an audit trail per the task's
+      // own instruction to avoid exposing the full URL/ID where not needed.
+      await client.query(
+        "INSERT INTO audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        ["user", input.updatedBy, "backup_destination_change", "backup_config", "1", JSON.stringify({ spreadsheetIdMasked: maskSpreadsheetId(before.rows[0]?.spreadsheet_id ?? null), enabled: before.rows[0]?.enabled ?? false }), JSON.stringify({ spreadsheetIdMasked: maskSpreadsheetId(row.spreadsheet_id), enabled: row.enabled }), input.correlationId]
+      );
+      return { spreadsheetId: row.spreadsheet_id, sheetUrl: row.sheet_url, enabled: row.enabled, updatedBy: row.updated_by === null ? null : Number(row.updated_by), updatedAt: row.updated_at };
+    });
   }
 
   async withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T> {

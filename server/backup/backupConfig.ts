@@ -1,17 +1,18 @@
-/** Backup config is deliberately separate from ServerConfig/loadServerConfig:
- *  it must NEVER block server startup or block a normal Data Entry save if
- *  absent or invalid - per DATA_BACKUP_AND_RECOVERY.md, a failed/unconfigured
- *  backup is an observable, non-fatal condition, not a boot-time error. */
-export interface BackupConfig {
+/** The Google service-account credential is env-var-only, always - never
+ *  stored in the database, never sent to the browser, never editable via
+ *  the Admin UI. The Admin-configurable piece is only the destination
+ *  (which spreadsheet, enabled/disabled) - see backupService.ts's use of
+ *  BackendRepository.getBackupConfig() for that. Deliberately separate
+ *  from ServerConfig/loadServerConfig: it must never block server startup
+ *  or a normal Data Entry save if absent or invalid. */
+export interface ServiceAccountCredential {
   serviceAccountJson: string;
-  spreadsheetId: string;
 }
 
-export function loadBackupConfig(environment: NodeJS.ProcessEnv = process.env): BackupConfig | null {
+export function loadServiceAccountCredential(environment: NodeJS.ProcessEnv = process.env): ServiceAccountCredential | null {
   const serviceAccountJson = environment.GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON?.trim();
-  const spreadsheetId = environment.GOOGLE_BACKUP_SPREADSHEET_ID?.trim();
-  if (!serviceAccountJson || !spreadsheetId) return null;
-  return { serviceAccountJson, spreadsheetId };
+  if (!serviceAccountJson) return null;
+  return { serviceAccountJson };
 }
 
 /** Vercel Cron sends this exact header/value convention (a shared secret,

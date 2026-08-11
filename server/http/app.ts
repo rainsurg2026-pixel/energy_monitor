@@ -10,8 +10,9 @@ import { authContext, createAuthContextMiddleware } from "../auth/http";
 import { PERMISSIONS } from "../authz/permissions";
 import { requirePermission, type AuthenticatedPrincipal, isAuthorizationError, type Role } from "../authz";
 import { createCorsMiddleware, createOriginPolicy, createCsrfMiddleware, csrfCookieOptions, issueCsrfCookie, clearCookie, parseCookieHeader, serializeCookie, SESSION_COOKIE_NAME, CSRF_COOKIE_NAME, sessionCookieOptions, createRateLimitMiddleware, InMemoryRateLimitStore, type RateLimitStore } from "./security";
-import { loadBackupConfig, isAuthorizedCronRequest } from "../backup/backupConfig";
-import { runBackup } from "../backup/backupService";
+import { loadServiceAccountCredential, isAuthorizedCronRequest } from "../backup/backupConfig";
+import { runBackup, testBackupConnection } from "../backup/backupService";
+import { canonicalSheetUrl, extractSpreadsheetId, maskSpreadsheetId } from "../backup/googleSheetsUrl";
 
 export interface AppDependencies {
   repository: BackendRepository;
@@ -35,7 +36,7 @@ function readOnlyMutationGuard(config: ServerConfig, req: Request, res: Response
   // to operational tables - READ_ONLY_MODE exists to block operational
   // writes, not to disable backups during exactly the kind of maintenance
   // window READ_ONLY_MODE is used for.
-  const securityExceptions = req.path === "/auth/login" || req.path === "/auth/logout" || req.path === "/cron/backup" || req.path === "/admin/backup/run";
+  const securityExceptions = req.path === "/auth/login" || req.path === "/auth/logout" || req.path === "/cron/backup" || req.path === "/admin/backup/run" || req.path === "/admin/backup/test-connection";
   if (config.readOnlyMode && mutation && !securityExceptions) {
     res.status(423).json({ ok: false, error: { code: "READ_ONLY_MODE", message: "Mutations are disabled while READ_ONLY_MODE is enabled.", requestId: res.locals.requestId } });
     return;
@@ -150,12 +151,38 @@ export function createApp(dependencies: AppDependencies) {
 
   app.get("/api/v1/admin/backup/status", asyncRoute(async (_req, res) => {
     withPermission(res, PERMISSIONS.backupRestoreManage);
-    const [configured, latest, recent] = await Promise.all([
-      Promise.resolve(loadBackupConfig() !== null),
+    const [serviceAccountConfigured, destination, latest, recent] = await Promise.all([
+      Promise.resolve(loadServiceAccountCredential() !== null),
+      dependencies.repository.getBackupConfig(),
       dependencies.repository.latestBackupRun(),
       dependencies.repository.listBackupRuns(10)
     ]);
-    sendOk(res, { configured, schedule: "Daily", latest, recent });
+    sendOk(res, {
+      configured: serviceAccountConfigured && Boolean(destination.spreadsheetId),
+      serviceAccountConfigured,
+      destination: { sheetUrl: destination.sheetUrl, spreadsheetIdMasked: maskSpreadsheetId(destination.spreadsheetId), enabled: destination.enabled, updatedAt: destination.updatedAt },
+      schedule: "Daily",
+      latest,
+      recent
+    });
+  }));
+  app.put("/api/v1/admin/backup/config", asyncRoute(async (req, res) => {
+    const actor = withPermission(res, PERMISSIONS.backupRestoreManage);
+    const body = parseObjectBody(req.body);
+    if (typeof body.google_sheet_url !== "string" || !body.google_sheet_url.trim()) throw new HttpError(400, "INVALID_SHEET_URL", "google_sheet_url is required.");
+    if (typeof body.enabled !== "boolean") throw new HttpError(400, "INVALID_ENABLED", "enabled must be a boolean.");
+    let spreadsheetId: string;
+    try { spreadsheetId = extractSpreadsheetId(body.google_sheet_url); } catch (error) { throw new HttpError(400, "INVALID_SHEET_URL", error instanceof Error ? error.message : "Invalid Google Sheets URL."); }
+    const sheetUrl = canonicalSheetUrl(spreadsheetId);
+    const updated = await dependencies.repository.updateBackupConfig({ spreadsheetId, sheetUrl, enabled: body.enabled, updatedBy: actorNumber(actor.userId), correlationId: res.locals.requestId });
+    sendOk(res, { sheetUrl: updated.sheetUrl, spreadsheetIdMasked: maskSpreadsheetId(updated.spreadsheetId), enabled: updated.enabled, updatedAt: updated.updatedAt });
+  }));
+  app.post("/api/v1/admin/backup/test-connection", asyncRoute(async (req, res) => {
+    withPermission(res, PERMISSIONS.backupRestoreManage);
+    const body = parseObjectBody(req.body);
+    if (typeof body.google_sheet_url !== "string" || !body.google_sheet_url.trim()) throw new HttpError(400, "INVALID_SHEET_URL", "google_sheet_url is required.");
+    const result = await testBackupConnection(body.google_sheet_url);
+    sendOk(res, result);
   }));
   app.post("/api/v1/admin/backup/run", asyncRoute(async (_req, res) => {
     const actor = withPermission(res, PERMISSIONS.backupRestoreManage);
