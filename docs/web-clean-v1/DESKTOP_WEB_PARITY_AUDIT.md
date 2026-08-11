@@ -2,6 +2,163 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Final Reports & Export phase: Rack Report + Rack Site Comparison
+
+Closes the one gap the prior Export phase explicitly deferred and
+documented (`rack: null`, see the "2026-08-11 Reports & Export" entry
+below for the full Desktop workflow inspection - not repeated here, since
+the workflow itself did not change and re-inspecting it would produce no
+new information). Non-Export work (Dashboard, UPS History, Rack Capacity
+UI, Data Entry, User Management, Theme, Site Comparison module) was **not
+reopened** - no regression in any of it was found or required reopening it.
+
+**Desktop source of truth for the rack section specifically**: rather than
+re-driving the Desktop app's UI (the report *workflow* was already
+directly inspected via CDP in the prior phase), this pass read
+`src/reports/pdf/reportHtml.ts` - the literal shared renderer both Desktop
+and Web call to build a report - to determine exactly what Desktop's Rack
+Capacity page, Capacity Health/Zone Heatmap page, and Rack Capacity Site
+Comparison page require (`data.rack`/`data.rackComparison`). This is
+authoritative by construction: whatever behavior reading non-null rack
+data produces IS Desktop's behavior, since it is the same function.
+
+**Root cause of `rack: null`**: `facilityReportData()` (`src/web-clean-v1/exports.ts`)
+took only `(logs, siteName, selectedMonth)` and never fetched rack data at
+all - not a wiring gap in an existing fetch (like the earlier UPS/Rack
+History gaps), but a function that structurally couldn't reach the
+`GET /racks` endpoint the live Rack Capacity view already uses.
+
+**Fix - reused, did not duplicate, the rack calculation:**
+
+- Extracted `deriveRackCapacityReport()` out of
+  `src/reports/rackCapacityReader.ts` (Desktop's Excel-based rack reader)
+  into a new dependency-free module, `src/reports/rackCapacityReportBuilder.ts`
+  (no ExcelJS import, so importing it into the Web bundle never pulls in
+  the Excel library into the main chunk). `rackCapacityReader.ts` now
+  calls this shared function instead of duplicating the grouping/
+  validation logic inline - confirmed byte-identical output via
+  `test:rack-capacity-write`/`test:rack-capacity-history` (both re-run
+  fresh, all passing, including their own "Production DC_*.xlsm untouched"
+  self-checks).
+- Added `rackReportFromSnapshot()` (`exports.ts`) - converts the existing
+  `GET /racks` API response (`RackSnapshotRecord`, already used by the
+  live Rack Capacity view) into the same `RackCapacityReport` shape via
+  `deriveRackCapacityReport`, so the grouping/validation *rules* are
+  Desktop's own rules, just applied to a DB-sourced record list instead of
+  an Excel buffer. A null source `rowNumber` (optional metadata on a real
+  row) falls back to the row's 1-based position - never fabricated data,
+  and the renderer never uses `rowNumber` for a calculation, only display.
+- `facilityReportData()`/`printDesktopPdf()`/`printAllFacilitiesPdf()` all
+  gained optional `rack`/`rackHistory`/`rackUnitCapacity` parameters
+  (default `null`/`[]`, so every existing call site and test stayed
+  source-compatible). "Current Facility" fetches its own site's rack
+  snapshot for the Reporting Month; "All Facilities" fetches each site's
+  own snapshot independently (never one facility's data reused for
+  another). A facility with no rack snapshot for the selected month
+  degrades to `rack: null` for that facility only (the existing
+  `"Rack capacity data is unavailable in this workbook."` message,
+  matching Desktop's own message for a missing/absent sheet) - the export
+  as a whole still succeeds.
+- `rackHistory`/`rackUnitCapacity` (plural, month-over-month arrays) are
+  populated from `GET /sites/:id/history`'s `rackCapacityHistory`/
+  `rackUnitCapacity` fields - the exact same wiring built in the non-Export
+  pass for the History screen's Rack tab, reused here rather than a
+  second fetch or a second calculation.
+- **Also implemented, beyond the literal `rack: null` finding**: Site
+  Comparison's "Rack Capacity Site Comparison" page
+  (`rackComparisonPage()` in the shared renderer) was previously always
+  empty too (`rackComparison: null`, unconditionally, in
+  `printSiteComparisonPdf`). Since the shared renderer already has this
+  page and Desktop is the one producing that renderer function, this is
+  Desktop-supported functionality, not an invented one. Fixed the same
+  way: fetch each of the two compared facilities' rack snapshot for the
+  reference month (`loadRack`, already built for the fix above),
+  reuse `rackReportFromSnapshot`, no new calculation.
+
+**Rack Report - STATIC VERIFIED (via real generated HTML, not a smoke
+test)**: extended `scripts/test-web-clean-v1-exports.ts` with 21 new
+assertions (52 total, up from 31): `rackReportFromSnapshot` unit behavior
+(null/empty snapshot -> null; a null source `rowNumber` falls back
+correctly; an already-present `rowNumber` is preserved; zone grouping and
+duplicate-ID detection reuse Desktop's exact rules); PDF content checks
+(`rack: null` -> the real "Rack capacity data is unavailable in this
+workbook." message, not a blank/fabricated table; `rack: <real data>` ->
+the "Rack Capacity and Utilization" heading with a Total Racks KPI value
+that matches `calculateRackCapacityMetrics()` - the *same* function the
+live Rack Capacity view calls - exactly, proving reuse rather than a
+second computation); facility isolation (two facilities with distinctly
+named rack zones never leak into each other's report, mirroring every
+other facility-isolation test in this codebase); and the Rack Capacity
+Site Comparison page (renders with both facility labels when populated,
+absent - not an empty section - when not).
+
+**Reporting Period / Reporting Month - re-verified, not re-derived from
+scratch**: `test:web-clean-v1-exports`'s existing `assertExportsShowOnlyMonth`
+critical-path test (build was not touched by this pass, but its
+dependency graph now includes the new rack code, so it was re-run to
+confirm no regression) already performs exactly the scenario this task's
+own instructions specify - app starts on 2026-08, user selects Single
+Month = 2026-06, all three formats (real CSV string, real re-read XLSX
+bytes, real PDF HTML string) are asserted to contain only June and none
+of July/August; then the same for 2026-07 - still passing, unchanged.
+Current Month / Month Range / Full History modes are separately asserted.
+This flow is scoped to "Current Facility" (the only card with a Reporting
+Period/Month selector - the UI's own copy already discloses "Applies to
+the Current Facility export below", an intentional, pre-existing
+difference from "All Facilities"/"Site Comparison", not something this
+pass restructured).
+
+**Facility context**: `Reports()` gained a `siteId` prop (previously
+absent - it received only `siteName`) specifically so the new rack fetch
+could target the correct site; "All Facilities"/Site-Comparison rack
+fetches use each facility's own `site.id` from the already-scoped API
+responses, never a hardcoded or reused ID. Verified via the new
+facility-isolation assertions above.
+
+**Excel/CSV**: unchanged - rack data was never part of the Excel/CSV
+structure (`workbookForFacilities`/`buildCombinedCsv`) on either Desktop
+or Web; only the PDF renders a Rack Capacity section. No new column/sheet
+was added, matching Desktop (Desktop's Excel export likewise has no rack
+sheet).
+
+**Number formatting**: unchanged - the rack KPIs/zone tiles reuse
+`formatRatioPercent`/the existing `kpi()`/`table()` HTML helpers already
+used by every other report section; no competing formatting logic added.
+
+**Regression**: full battery re-run fresh - `test:api` (89), `test:domain-parity`
+(24), `test:display-period` (10), `test:web-clean-v1-facility-context` (8),
+`test:facility-isolation` (15), `test:facility-comparison` (54),
+`test:dashboard-facility-isolation` (13), `test:web-clean-v1-dashboard-ups-mapping`
+(13), `test:rack-capacity-metrics`, `test:rack-unit-capacity`,
+`test:rack-status-config`, `test:rack-capacity-write`, `test:rack-capacity-history`
+(all 5 rack suites, including their "Production DC_*.xlsm untouched"
+self-checks), `test:air-validation`, `test:web-clean-v1-theme`,
+`test:web-clean-v1-admin-ui`, `test:web-clean-v1-report-filename`,
+`test:web-clean-v1-exports` (7 + 52), `test:backup-service`, `test:phase3`
+- all pass, zero regressions. `npm run lint` and `npm run build` both
+clean; the Web bundle's `CleanWebApp-*.js` chunk grew only ~2.3 kB
+(82.76 kB vs. 80.45 kB before this pass) and `exceljs.min-*.js` remains
+its own separate lazy chunk, confirming the ExcelJS-avoidance refactor
+worked as intended.
+
+**Browser UAT: NOT VERIFIED - EXTERNAL BLOCKER.** Re-checked this pass
+(not assumed carried over): `tabs_context_mcp` was called fresh and
+returned "Browser extension is not connected" - the Chrome extension has
+not been connected at any point in this session. No live click-through
+(open Reports & Export -> select report/facility/period/month -> generate
+Excel/CSV/PDF -> inspect -> change month -> regenerate -> verify) was
+performed. All verification above is real generated-content evidence
+(actual HTML strings, actual re-read XLSX bytes, actual CSV strings), not
+a substitute for seeing it render and download in an actual browser.
+
+**Supabase: NOT VERIFIED - EXTERNAL BLOCKER.** Unchanged; this pass
+required no live DB access - the rack fetch reuses the already-existing,
+already-tested `GET /racks` endpoint and repository methods, none of
+which were modified.
+
+**Production: UNTOUCHED.** No migration, no deploy, no Production env var
+read or written.
+
 ## 2026-08-11 Non-Export completion pass: three real gaps found and fixed
 
 Per explicit instruction to work through the remaining non-Export priority
