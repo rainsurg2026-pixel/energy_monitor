@@ -1,8 +1,7 @@
 import type { MonthlyLog } from "../../src/types";
 import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
 import { HttpError } from "../errors";
-import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, CreateGoogleOAuthStateInput, GoogleOAuthStateRecord, GoogleSheetsConnectionRecord, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsertGoogleSheetsConnectionInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "./contracts";
-import { maskSpreadsheetId } from "../backup/googleSheetsUrl";
+import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "./contracts";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 export interface InMemoryRepositoryOptions {
@@ -15,7 +14,6 @@ export interface InMemoryRepositoryOptions {
   upsGroupHistory?: Record<number, UpsGroupHistoryRecord[]>;
   databaseReady?: boolean;
   auditFailure?: boolean;
-  backupConfig?: BackupConfigRecord;
 }
 
 export interface InMemoryAuditEvent {
@@ -39,11 +37,6 @@ export class InMemoryRepository implements BackendRepository {
   private readonly upsGroupHistory: Record<number, UpsGroupHistoryRecord[]>;
   private readonly databaseReady: boolean;
   private readonly auditFailure: boolean;
-  private readonly backupRuns: BackupLogRecord[] = [];
-  private nextBackupId = 1;
-  private backupConfig: BackupConfigRecord;
-  private readonly googleOAuthStates = new Map<string, GoogleOAuthStateRecord>();
-  private readonly googleSheetsConnections = new Map<number, { record: GoogleSheetsConnectionRecord; encryptedRefreshToken: string }>();
   readonly auditEvents: InMemoryAuditEvent[] = [];
 
   constructor(options: InMemoryRepositoryOptions = {}) {
@@ -56,7 +49,6 @@ export class InMemoryRepository implements BackendRepository {
     this.upsGroupHistory = options.upsGroupHistory ?? {};
     this.databaseReady = options.databaseReady ?? true;
     this.auditFailure = options.auditFailure ?? false;
-    this.backupConfig = options.backupConfig ?? { spreadsheetId: null, sheetUrl: null, enabled: false, updatedBy: null, updatedAt: null, connectedGoogleUserId: null };
   }
 
   async ping(): Promise<void> { if (!this.databaseReady) throw new Error("in-memory repository is not ready"); }
@@ -163,95 +155,6 @@ export class InMemoryRepository implements BackendRepository {
         existing.push({ facility, month: row.month, group: row.group, totalLoadKw: row.totalLoadKw, totalLoadKva: row.totalLoadKva, capacity: row.capacity, loadPercent: row.loadPercent, availablePercent: row.availablePercent, monthlyEnergyKwh: row.monthlyEnergyKwh, generatedAt, dataVersion: 1 });
       }
     }
-  }
-
-  async startBackupRun(input: StartBackupInput): Promise<BackupLogRecord> {
-    const record: BackupLogRecord = { id: this.nextBackupId++, backupType: input.backupType, status: "running", startedAt: new Date().toISOString(), completedAt: null, recordsProcessed: 0, recordsSuccess: 0, recordsFailed: 0, errorSummary: null, initiatedBy: input.initiatedBy, spreadsheetId: null };
-    this.backupRuns.push(record);
-    return { ...record };
-  }
-
-  async completeBackupRun(input: CompleteBackupInput): Promise<BackupLogRecord> {
-    const record = this.backupRuns.find(run => run.id === input.id);
-    if (!record) throw new HttpError(404, "BACKUP_RUN_NOT_FOUND", "Backup run was not found.");
-    record.status = input.status;
-    record.completedAt = new Date().toISOString();
-    record.recordsProcessed = input.recordsProcessed;
-    record.recordsSuccess = input.recordsSuccess;
-    record.recordsFailed = input.recordsFailed;
-    record.errorSummary = input.errorSummary;
-    record.spreadsheetId = input.spreadsheetId;
-    return { ...record };
-  }
-
-  async getBackupConfig(): Promise<BackupConfigRecord> { return { ...this.backupConfig }; }
-
-  async updateBackupConfig(input: UpdateBackupConfigInput): Promise<BackupConfigRecord> {
-    const before = { ...this.backupConfig };
-    this.backupConfig = { ...this.backupConfig, spreadsheetId: input.spreadsheetId, sheetUrl: input.sheetUrl, enabled: input.enabled, updatedBy: input.updatedBy, updatedAt: new Date().toISOString() };
-    this.recordAudit({
-      actorUserId: input.updatedBy,
-      action: "backup_destination_change",
-      entityType: "backup_config",
-      entityId: "1",
-      previousValue: { spreadsheetIdMasked: maskSpreadsheetId(before.spreadsheetId), enabled: before.enabled },
-      newValue: { spreadsheetIdMasked: maskSpreadsheetId(this.backupConfig.spreadsheetId), enabled: this.backupConfig.enabled },
-      correlationId: input.correlationId
-    });
-    return { ...this.backupConfig };
-  }
-
-  async setBackupConnectedGoogleUser(userId: number | null, actorUserId: number | null, correlationId: string): Promise<void> {
-    const before = this.backupConfig.connectedGoogleUserId;
-    this.backupConfig = { ...this.backupConfig, connectedGoogleUserId: userId, updatedAt: new Date().toISOString() };
-    this.recordAudit({
-      actorUserId,
-      action: userId === null ? "backup_google_disconnected" : "backup_google_connected",
-      entityType: "backup_config",
-      entityId: "1",
-      previousValue: { connectedGoogleUserId: before },
-      newValue: { connectedGoogleUserId: userId },
-      correlationId
-    });
-  }
-
-  async createGoogleOAuthState(input: CreateGoogleOAuthStateInput): Promise<void> {
-    this.googleOAuthStates.set(input.stateHash, { stateHash: input.stateHash, userId: input.userId, sessionId: input.sessionId, encryptedCodeVerifier: input.encryptedCodeVerifier, expiresAt: input.expiresAt });
-  }
-
-  async consumeGoogleOAuthState(stateHash: string): Promise<GoogleOAuthStateRecord | null> {
-    const record = this.googleOAuthStates.get(stateHash);
-    if (!record) return null;
-    this.googleOAuthStates.delete(stateHash);
-    return { ...record };
-  }
-
-  async upsertGoogleSheetsConnection(input: UpsertGoogleSheetsConnectionInput): Promise<GoogleSheetsConnectionRecord> {
-    const record: GoogleSheetsConnectionRecord = { userId: input.userId, email: input.email, updatedAt: new Date().toISOString() };
-    this.googleSheetsConnections.set(input.userId, { record, encryptedRefreshToken: input.encryptedRefreshToken });
-    return { ...record };
-  }
-
-  async getGoogleSheetsConnection(userId: number): Promise<GoogleSheetsConnectionRecord | null> {
-    const entry = this.googleSheetsConnections.get(userId);
-    return entry ? { ...entry.record } : null;
-  }
-
-  async getGoogleSheetsConnectionSecret(userId: number): Promise<string | null> {
-    return this.googleSheetsConnections.get(userId)?.encryptedRefreshToken ?? null;
-  }
-
-  async deleteGoogleSheetsConnection(userId: number): Promise<void> {
-    this.googleSheetsConnections.delete(userId);
-  }
-
-  async latestBackupRun(): Promise<BackupLogRecord | null> {
-    const sorted = [...this.backupRuns].sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-    return sorted[0] ? { ...sorted[0] } : null;
-  }
-
-  async listBackupRuns(limit: number): Promise<BackupLogRecord[]> {
-    return [...this.backupRuns].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, limit).map(run => ({ ...run }));
   }
 
   async withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T> {

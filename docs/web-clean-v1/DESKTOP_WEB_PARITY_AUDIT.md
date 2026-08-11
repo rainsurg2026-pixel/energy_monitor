@@ -2,6 +2,124 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Google Backup: removed from product scope
+
+**Decision**: Google Sheets Backup is permanently out of scope for
+Energy Monitor. Not a technical failure, not a deferred fix - a product
+decision. Superseded and does not reopen the completed/closed UPS
+History or Dashboard UPS Groups work above.
+
+**1. Google OAuth: REMOVED/UNUSED.** `server/backup/` (all six files -
+`googleOAuthClient.ts`, `googleOAuthCrypto.ts`, `googleSheetsClient.ts`,
+`googleSheetsUrl.ts`, `backupConfig.ts`, `backupService.ts`) deleted
+entirely. No code anywhere in the product now reads
+`GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`/
+`GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON`/`CRON_SECRET` (grep-confirmed
+after removal, zero hits outside historical docs). Whatever value was
+manually entered into Vercel's `GOOGLE_OAUTH_CLIENT_ID`/
+`GOOGLE_OAUTH_CLIENT_SECRET` (per the prior turn) is now simply inert -
+never read by any code path - and was never displayed or logged by
+this session at any point.
+
+**2. Google Backup UI: REMOVED.** `DataBackupPanel` and its interfaces
+(`BackupStatus`, `BackupDestination`, `GoogleBackupAccount`,
+`BackupLogEntry`, `ConnectionTestResult`) deleted from `CleanWebApp.tsx`
+entirely - not disabled, not replaced with a placeholder. Settings ->
+Application Settings now shows only Appearance and Global Display
+Period; the "Data Backup" section (Google Account status, Connect/
+Test Connection/Backup Now buttons, destination form) no longer exists
+in the DOM at all. No dead/misleading control of any kind remains.
+
+**3. Google Backup API: REMOVED.** All eight routes deleted from
+`server/http/app.ts`: `GET/PUT /admin/backup/status|config`, `POST
+/admin/backup/test-connection|run`, `POST /admin/backup/google/
+connect|disconnect`, `GET /admin/backup/google/callback`, `POST
+/cron/backup` - plus their CSRF exemption and `READ_ONLY_MODE`
+exemption entries. Every one of these paths now falls through to the
+existing generic `404 NOT_FOUND` handler - verified live (see Browser
+UAT below) and by a new regression assertion
+(`scripts/test-api-foundation.ts`) that all eight now 404 for an
+authenticated admin, so the removal itself is test-covered, not just
+asserted in prose.
+
+**4. Credential requirements: REMOVED.** The application no longer
+requires or reads `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`,
+or `GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON` anywhere. No replacement
+credential was introduced. `vercel.json`'s `crons` entry for
+`/api/v1/cron/backup` removed (no other cron job existed, so the whole
+`crons` key was removed). The `backupRestoreManage`/`backup-restore.manage`
+permission (RBAC) and its `READ_ONLY_OPERATIONS.backupRestore` mirror
+were removed from `server/authz/permissions.ts`, `scope.ts`, and
+`readOnly.ts` - both were exclusively used to gate the now-removed
+routes (confirmed via grep before removal), so nothing else references
+them.
+
+**5. Database objects: DEPRECATED, not dropped.** `backup_config`,
+`backup_log`, `google_oauth_states`, `google_sheets_connections`
+(Supabase `tofdgndrrpnnyhbuurbx`) are left in place exactly as they
+were. Live-verified row counts: `backup_config` 0, `google_oauth_states`
+0, `google_sheets_connections` 0, `backup_log` 1 (a single honest
+"failed - not configured" row from an earlier live UAT click this
+session). No migration was written, no `DROP`, no data touched -
+retained for audit/history compatibility per the task's own guidance
+that this is the safer option when either is acceptable. Documented as
+deprecated at the top of `DATA_BACKUP_AND_RECOVERY.md`.
+
+**6. Unrelated Google functionality: VERIFIED UNCHANGED.** Desktop's own
+per-user Google Sheets sync (`src/electron/googleAuth.ts`,
+`googleAuthPure.ts`, `src/electron/ipc/googleSheets.ts`) uses a
+completely separate "Desktop app" OAuth client type and was never part
+of `server/backup/` - confirmed untouched by this removal (grep sweep
+of all `*.ts`/`*.tsx` for "backup" after removal shows only Desktop's
+own, unrelated local-XLSM-file-backup mechanism -
+`src/electron/sync/BackupManager.ts`, `createBackup`/`backupDir`/
+`backupKeep` in the Excel writers - a pre-existing, different feature
+entirely, never touched).
+
+**7. Regression: PASS.** Full battery re-run fresh after removal
+(`test:api` including the new route-removal assertion, `test:phase3`
+including `authz.test.ts`'s updated permission table, `test:domain-parity`,
+`test:display-period`, facility-context/isolation/comparison,
+dashboard-isolation, `test:ups-group-history-sync`, all 5 rack suites,
+`test:air-validation`, theme, admin-ui, report-filename, exports) - all
+pass, zero regressions. `test:backup-service` deleted (tested only the
+removed feature) along with its `package.json` script.
+
+**8. Build: PASS.** `npm run lint` and `npm run build` both clean.
+`CleanWebApp` bundle shrank from 85.01kB to 76.53kB, a real, measurable
+confirmation the panel code is actually gone, not just hidden.
+
+**9. Browser UAT: PASS.** Verified live on Preview, authenticated as
+Admin: Settings -> Application Settings shows Appearance and Global
+Display Period only - no "Data Backup" section, no Google Account
+status, no Connect/Test Connection/Backup Now controls anywhere on the
+page. No Google OAuth flow was attempted or performed.
+
+**10. Production Readiness Gate: Google Backup no longer a blocker.**
+Superseding every earlier matrix's "Google OAuth real consent: BLOCKED"
+row - that row is deleted, not resolved, because the feature it
+described no longer exists in the product.
+
+### Production Readiness Matrix (2026-08-11, current - supersedes all earlier matrices)
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| UPS History | PASS | Root-caused, fixed, live Browser UAT both facilities |
+| Dashboard UPS Groups | PASS | Verified transitively fixed, live Browser UAT both facilities |
+| Google Sheets Backup | OUT OF SCOPE | Feature removed from product entirely; not a blocker |
+| Export - CSV/Excel | PASS | Live browser download + byte-level content verification |
+| Export - PDF | PASS (code) / NOT VERIFIED (popup, automation limitation) | Root cause fixed; popup blocked specifically under this session's CDP-driven clicks |
+| Regression/Lint/Build | PASS | Full battery re-run fresh after every change this session |
+| Preview deployment | PASS | Pushed, deployed, health/readiness live-verified |
+| Production | UNTOUCHED | No deploy, no Production env read/written |
+
+### Production decision: pending final push/deploy/UAT confirmation for this pass (see Final Report)
+
+No remaining Google Backup blocker. The only open item carried forward
+is the PDF popup mechanism's browser-automation-specific verification
+gap, already flagged as non-blocking (root cause fixed; a real human
+click was never proven to fail, only this session's CDP-driven clicks).
+
 ## 2026-08-11 Google OAuth Browser UAT + Export verification + PDF popup fix
 
 Follow-up to the completed/closed UPS History and Dashboard UPS Groups

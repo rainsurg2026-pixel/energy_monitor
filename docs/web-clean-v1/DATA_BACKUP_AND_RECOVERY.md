@@ -1,5 +1,24 @@
 # Data Storage, Backup, and Recovery
 
+> **REMOVED / OUT OF SCOPE (2026-08-11).** Google Sheets Backup is
+> permanently out of product scope for Energy Monitor - a deliberate
+> product decision, not an unresolved blocker. All Google Backup code
+> (OAuth routes, service, UI, cron job) has been removed from
+> `feat/web-clean-v1`. `backup_config`/`backup_log` and the
+> `google_oauth_states`/`google_sheets_connections` tables (Supabase
+> project `tofdgndrrpnnyhbuurbx`) are left in place, unused, for audit/
+> history - not dropped, no data destroyed. See
+> `DESKTOP_WEB_PARITY_AUDIT.md`'s "Google Backup: removed from product
+> scope" section for the current state and reasoning. Supabase's own
+> `google_oauth_states`/`google_sheets_connections` tables were created
+> by migration 004 specifically for this now-removed feature - they are
+> unrelated to Desktop's separate, still-active, Electron-only per-user
+> Google Sheets sync feature (`src/electron/googleAuth.ts`), which this
+> removal did not touch.
+>
+> Everything below this notice is historical - it describes a feature
+> that no longer exists in the product. Kept for audit trail only.
+
 Written 2026-08-11, updated 2026-08-11 (Admin-configurable backup
 destination), updated 2026-08-11 (Preview/real-Google verification pass).
 Covers the CleanWebApp (`feat/web-clean-v1`) data architecture: where

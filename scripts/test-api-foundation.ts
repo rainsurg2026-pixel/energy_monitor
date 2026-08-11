@@ -200,79 +200,6 @@ await withApi(false, async (base, authentication) => {
   const auditedActionsAfterDelete = authentication.repository.audits.filter(audit => audit.entityId === disposableUserId).map(audit => audit.action);
   check("deleting a user is audited with both SESSION_REVOKED_ALL and user_delete", auditedActionsAfterDelete.includes("SESSION_REVOKED_ALL") && auditedActionsAfterDelete.includes("user_delete"));
 
-  // Backup: RBAC reuses the existing backupRestoreManage permission (no new
-  // permission was invented). Not configured in this test environment, so
-  // "success" here means the routes are reachable and correctly gated -
-  // configured-and-working behavior is covered by test:backup-service with
-  // mocked Google responses.
-  const backupStatus = await client.request("/api/v1/admin/backup/status");
-  check("admin can read backup status", backupStatus.status === 200 && backupStatus.body.data.configured === false && Array.isArray(backupStatus.body.data.recent));
-  const backupRun = await client.request("/api/v1/admin/backup/run", { method: "POST" });
-  check("admin-triggered backup run is logged even when not configured", backupRun.status === 200 && backupRun.body.data.status === "failed" && backupRun.body.data.backupType === "manual");
-  const createdViewer = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "viewer", display_name: "Viewer", password: "Correct Horse Battery Staple 000!", role: "user", active: true }) });
-  check("temporary user for backup RBAC check was created", createdViewer.status === 200);
-  const viewerClient = await login(base, { username: "viewer", password: "Correct Horse Battery Staple 000!" });
-  const forbiddenBackupStatus = await viewerClient.request("/api/v1/admin/backup/status");
-  check("a non-admin user cannot read backup status", forbiddenBackupStatus.status === 403 && forbiddenBackupStatus.body.error?.code === "FORBIDDEN");
-  const forbiddenBackupRun = await viewerClient.request("/api/v1/admin/backup/run", { method: "POST" });
-  check("a non-admin user cannot trigger a backup run", forbiddenBackupRun.status === 403 && forbiddenBackupRun.body.error?.code === "FORBIDDEN");
-
-  // Backup destination config: Admin-configurable Google Sheet URL, stored
-  // as a non-secret DB row (server extracts+validates the spreadsheet ID -
-  // the client never gets to assert one directly). No Google credential
-  // ever appears in any of these responses.
-  const invalidUrl = await client.request("/api/v1/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: "https://example.com/not-a-sheet", enabled: false }) });
-  check("an unrelated URL is rejected as an invalid Google Sheets URL", invalidUrl.status === 400 && invalidUrl.body.error?.code === "INVALID_SHEET_URL");
-  const validSpreadsheetId = "a".repeat(44);
-  const savedConfig = await client.request("/api/v1/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit#gid=0`, enabled: true }) });
-  check("admin can save a valid Google Sheet URL", savedConfig.status === 200 && savedConfig.body.data.sheetUrl === `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit` && savedConfig.body.data.enabled === true);
-  check("the saved config response returns a masked spreadsheet reference, not the raw ID", savedConfig.body.data.spreadsheetIdMasked !== validSpreadsheetId && savedConfig.body.data.spreadsheetIdMasked.includes("…"));
-  const savedConfigJson = JSON.stringify(savedConfig.body);
-  check("the saved config response never contains credential-shaped fields", !/private_key|client_secret|access_token|refresh_token/i.test(savedConfigJson));
-  const statusAfterSave = await client.request("/api/v1/admin/backup/status");
-  check("status reflects the newly configured destination", statusAfterSave.status === 200 && statusAfterSave.body.data.destination.spreadsheetIdMasked === savedConfig.body.data.spreadsheetIdMasked && statusAfterSave.body.data.destination.enabled === true);
-  const configChangeAudit = mainTestRepository.auditEvents.find(audit => audit.action === "backup_destination_change");
-  check("changing the backup destination is audited with a masked reference, not the raw ID or a credential", Boolean(configChangeAudit) && !JSON.stringify(configChangeAudit).includes(validSpreadsheetId));
-  const missingEnabled = await client.request("/api/v1/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit` }) });
-  check("saving without the required enabled flag is rejected", missingEnabled.status === 400);
-  const testConnectionResult = await client.request("/api/v1/admin/backup/test-connection", { method: "POST", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit` }) });
-  check("Test Connection is reachable for an admin and reports a structured result without a live Google credential configured in this test environment", testConnectionResult.status === 200 && testConnectionResult.body.data.ok === false && typeof testConnectionResult.body.data.reason === "string");
-  const forbiddenConfigWrite = await viewerClient.request("/api/v1/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit`, enabled: true }) });
-  check("a non-admin user cannot change the backup destination", forbiddenConfigWrite.status === 403 && forbiddenConfigWrite.body.error?.code === "FORBIDDEN");
-  const forbiddenTestConnection = await viewerClient.request("/api/v1/admin/backup/test-connection", { method: "POST", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit` }) });
-  check("a non-admin user cannot call Test Connection", forbiddenTestConnection.status === 403 && forbiddenTestConnection.body.error?.code === "FORBIDDEN");
-
-  // Google OAuth backup connection: interactive Admin-connected account,
-  // replacing the prior service-account credential entirely. No live
-  // Google OAuth client is configured in this test environment (no
-  // GOOGLE_OAUTH_CLIENT_ID/SECRET set) - "reachable and correctly gated,
-  // reports its own not-configured state honestly" is the real, valuable
-  // claim here; real Google sign-in is covered by test:backup-service's
-  // mocked-fetch assertions and (when available) real Browser UAT.
-  const statusBeforeConnect = await client.request("/api/v1/admin/backup/status");
-  check("status exposes oauthConfigured and a google.connected/email shape, never a token field", statusBeforeConnect.status === 200 && typeof statusBeforeConnect.body.data.oauthConfigured === "boolean" && typeof statusBeforeConnect.body.data.google?.connected === "boolean");
-  check("the status response never contains credential-shaped fields anywhere", !/access_token|refresh_token|client_secret|private_key/i.test(JSON.stringify(statusBeforeConnect.body)));
-  const connectAttempt = await client.request("/api/v1/admin/backup/google/connect", { method: "POST" });
-  check("connect honestly reports Google OAuth is not configured on the server, rather than pretending to start a flow", connectAttempt.status === 503 && connectAttempt.body.error?.code === "GOOGLE_OAUTH_NOT_CONFIGURED");
-  const forbiddenConnect = await viewerClient.request("/api/v1/admin/backup/google/connect", { method: "POST" });
-  check("a non-admin user cannot start a Google OAuth connect flow", forbiddenConnect.status === 403 && forbiddenConnect.body.error?.code === "FORBIDDEN");
-  const forbiddenDisconnect = await viewerClient.request("/api/v1/admin/backup/google/disconnect", { method: "POST" });
-  check("a non-admin user cannot disconnect the Google account", forbiddenDisconnect.status === 403 && forbiddenDisconnect.body.error?.code === "FORBIDDEN");
-  const adminDisconnectNoop = await client.request("/api/v1/admin/backup/google/disconnect", { method: "POST" });
-  check("an admin can call disconnect even when nothing is connected (idempotent, not an error)", adminDisconnectNoop.status === 200 && adminDisconnectNoop.body.data.connected === false);
-  const callbackMissingParams = await fetch(`${base}/api/v1/admin/backup/google/callback`, { redirect: "manual", headers: { cookie: client.cookie, origin: "http://test" } });
-  check("the OAuth callback redirects back into the app on failure rather than returning raw JSON", callbackMissingParams.status === 302 && (callbackMissingParams.headers.get("location") ?? "").includes("google_backup=error"));
-  const callbackUnknownState = await fetch(`${base}/api/v1/admin/backup/google/callback?state=unknown-state&code=fake-code`, { redirect: "manual", headers: { cookie: client.cookie, origin: "http://test" } });
-  check("an unrecognized/expired state redirects with an error, never a raw 500", callbackUnknownState.status === 302 && (callbackUnknownState.headers.get("location") ?? "").includes("google_backup=error"));
-
-  // Cron endpoint: authenticated by CRON_SECRET only, never a session -
-  // must be reachable with no cookies/CSRF token at all (that's the whole
-  // point - Vercel Cron has none), and must reject a wrong/missing secret.
-  const cronNoSecret = await fetch(`${base}/api/v1/cron/backup`, { method: "POST", headers: { origin: "http://test" } });
-  check("cron endpoint rejects a request with no bearer secret", cronNoSecret.status === 401);
-  const cronWrongSecret = await fetch(`${base}/api/v1/cron/backup`, { method: "POST", headers: { origin: "http://test", authorization: "Bearer wrong-secret" } });
-  check("cron endpoint rejects the wrong bearer secret", cronWrongSecret.status === 401);
-  check("cron endpoint was reachable at all (not blocked by the global CSRF gate meant for session-based routes)", cronNoSecret.status !== 403 && cronWrongSecret.status !== 403);
 }, mainTestRepository);
 
 await withApi(true, async base => {
@@ -280,12 +207,22 @@ await withApi(true, async base => {
   const get = await client.request("/api/v1/settings"); check("read-only GET allowed", get.status === 200);
   const put = await client.request("/api/v1/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: "2026-01", end_month: "2026-03", expected_row_version: 1 }) }); check("read-only mutation rejected server-side", put.status === 423 && put.body.error?.code === "READ_ONLY_MODE");
   const userMutation = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "blocked", display_name: "Blocked", password: "Correct Horse Battery Staple 999!", role: "user" }) }); check("read-only blocks user management mutation", userMutation.status === 423 && userMutation.body.error?.code === "READ_ONLY_MODE");
-  const readOnlySpreadsheetId = "b".repeat(44);
-  const configWriteBlocked = await client.request("/api/v1/admin/backup/config", { method: "PUT", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${readOnlySpreadsheetId}/edit`, enabled: true }) });
-  check("read-only blocks changing the backup destination (a real settings write)", configWriteBlocked.status === 423 && configWriteBlocked.body.error?.code === "READ_ONLY_MODE");
-  const testConnectionAllowed = await client.request("/api/v1/admin/backup/test-connection", { method: "POST", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${readOnlySpreadsheetId}/edit` }) });
-  check("read-only still allows Test Connection (a diagnostic read against Google, not an operational-table write)", testConnectionAllowed.status === 200);
 });
+
+await withApi(false, async base => {
+  const client = await login(base, { username: "admin", password: "Correct Horse Battery Staple 123!" });
+  const removedBackupRoutes = await Promise.all([
+    "/api/v1/admin/backup/status",
+    "/api/v1/admin/backup/config",
+    "/api/v1/admin/backup/test-connection",
+    "/api/v1/admin/backup/run",
+    "/api/v1/admin/backup/google/connect",
+    "/api/v1/admin/backup/google/callback",
+    "/api/v1/admin/backup/google/disconnect",
+    "/api/v1/cron/backup"
+  ].map(path => client.request(path)));
+  check("Google Sheets Backup is out of product scope - every former backup route now 404s, never a stale/misleading response", removedBackupRoutes.every(response => response.status === 404));
+}, mainTestRepository);
 
 const transactionRepository = new InMemoryRepository({ settings: { startMonth: "2026-01", endMonth: "2026-03", rowVersion: 1 } });
 await assert.rejects(() => transactionRepository.withTransaction(async repository => { await repository.updateGlobalSettings({ startMonth: "2026-02", endMonth: "2026-03", expectedRowVersion: 1 }, "rollback-test"); throw new Error("force rollback"); }));

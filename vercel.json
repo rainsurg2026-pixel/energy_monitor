@@ -4,8 +4,5 @@
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/[...path]" },
     { "source": "/((?!api/|api$|assets/|assets$).*)", "destination": "/index.html" }
-  ],
-  "crons": [
-    { "path": "/api/v1/cron/backup", "schedule": "0 17 * * *" }
   ]
 }

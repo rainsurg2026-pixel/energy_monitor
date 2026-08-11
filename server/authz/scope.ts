@@ -41,6 +41,5 @@ export const canAssignRoles = (role: Role) => roleHasPermission(role, PERMISSION
 export const canResetPasswords = (role: Role) => roleHasPermission(role, PERMISSIONS.passwordsReset);
 
 export const canReadAuditHistory = (role: Role) => roleHasPermission(role, PERMISSIONS.auditHistoryRead);
-export const canManageBackupRestore = (role: Role) => roleHasPermission(role, PERMISSIONS.backupRestoreManage);
 export const canManageMigration = (role: Role) => roleHasPermission(role, PERMISSIONS.migrationManage);
 export const canAlterAuditRecords = (role: Role) => roleHasPermission(role, PERMISSIONS.auditRecordsAlter);

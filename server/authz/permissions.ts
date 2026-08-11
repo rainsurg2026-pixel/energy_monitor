@@ -22,7 +22,6 @@ export const PERMISSIONS = Object.freeze({
   rolesAssign: "roles.assign",
   passwordsReset: "passwords.reset",
   auditHistoryRead: "audit-history.read",
-  backupRestoreManage: "backup-restore.manage",
   migrationManage: "migration.manage",
   auditRecordsAlter: "audit-records.alter"
 } as const);
@@ -54,7 +53,6 @@ const ADMIN_ONLY_PERMISSIONS = Object.freeze([
   PERMISSIONS.rolesAssign,
   PERMISSIONS.passwordsReset,
   PERMISSIONS.auditHistoryRead,
-  PERMISSIONS.backupRestoreManage,
   PERMISSIONS.migrationManage
 ] as const satisfies readonly Permission[]);
 

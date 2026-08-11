@@ -21,7 +21,6 @@ export const READ_ONLY_OPERATIONS = {
   adminUserManagement: "admin.user-management",
   auditHistoryRead: "audit-history.read",
   auditRecordsAlter: "audit-records.alter",
-  backupRestore: "backup-restore.manage",
   migrationControl: "migration.manage"
 } as const;
 

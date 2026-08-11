@@ -21,7 +21,6 @@ import {
   canAssignRoles,
   canResetPasswords,
   canReadAuditHistory,
-  canManageBackupRestore,
   canManageMigration,
   canAlterAuditRecords,
   canManageGlobalSettings,
@@ -80,7 +79,6 @@ check("read-only user management blocked", !isOperationAllowedInReadOnlyMode(REA
 check("read-only operational writes blocked", !isOperationAllowedInReadOnlyMode(READ_ONLY_OPERATIONS.operationalDataWrite, true));
 check("read-only settings writes blocked", !isOperationAllowedInReadOnlyMode(READ_ONLY_OPERATIONS.globalSettingsWrite, true));
 check("read-only display-period writes blocked", !isOperationAllowedInReadOnlyMode(READ_ONLY_OPERATIONS.displayPeriodWrite, true));
-check("read-only backup/restore blocked", !isOperationAllowedInReadOnlyMode(READ_ONLY_OPERATIONS.backupRestore, true));
 check("read-only migration control blocked", !isOperationAllowedInReadOnlyMode(READ_ONLY_OPERATIONS.migrationControl, true));
 check("admin does not affect read-only decision", evaluateReadOnlyOperation(READ_ONLY_OPERATIONS.operationalDataWrite, true).allowed === false);
 check("normal mode allows mutations", isOperationAllowedInReadOnlyMode(READ_ONLY_OPERATIONS.operationalDataWrite, false));
@@ -103,7 +101,6 @@ for (const [predicate, name] of [
   [canAssignRoles, "canAssignRoles"],
   [canResetPasswords, "canResetPasswords"],
   [canReadAuditHistory, "canReadAuditHistory"],
-  [canManageBackupRestore, "canManageBackupRestore"],
   [canManageMigration, "canManageMigration"]
 ] as const) {
   check(`${name} denies user`, !predicate("user"));
