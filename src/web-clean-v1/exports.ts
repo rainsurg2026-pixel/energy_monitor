@@ -3,11 +3,40 @@ import { buildCombinedCsv, buildSectionCsvs } from "../utils/exportData";
 import { calculateEnergyCostForMonth } from "../domain/energyCost";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
 import { buildReportHtml } from "../reports/pdf/reportHtml";
-import type { ReportData, ReportMonthlyRow } from "../reports/reportTypes";
+import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord } from "../reports/reportTypes";
+import { deriveRackCapacityReport } from "../reports/rackCapacityReportBuilder";
+import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
+import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 
 export interface ExportFacility {
   siteName: string;
   logs: MonthlyLog[];
+  rack?: RackCapacityReport | null;
+  rackHistory?: RackCapacityHistoryRow[];
+  rackUnitCapacity?: RackUnitCapacityRow[];
+}
+
+/** The GET /racks API response shape (server/services/apiService.ts's
+ *  getRacks) - a local mirror, not an import from server/ code, matching
+ *  this file's existing convention (no server-type imports into the
+ *  frontend bundle). source_row_number can be null on a real row (it is
+ *  optional metadata, never authoritative data); RackRecord.rowNumber is
+ *  non-nullable, so a missing value falls back to the row's position in
+ *  the snapshot (1-based) - the shared PDF renderer never reads
+ *  rowNumber for a calculation, only for display, so this is a safe,
+ *  honest ordinal, never fabricated data. */
+export interface RackSnapshotApiRecord { rowNumber: number | null; rackZone: string | null; rackId: string | null; status: string | null; cabinetSize: string | null; detail: string | null; deviceType: string | null; remarks: string | null }
+export interface RackSnapshotApiResponse { siteId: number; month: string; snapshot: { month: string; rowVersion: number; records: RackSnapshotApiRecord[] } | null }
+
+/** Reuses the same grouping/validation rules Desktop's Excel-based rack
+ *  reader uses (deriveRackCapacityReport, extracted from
+ *  rackCapacityReader.ts specifically so this file never needs to import
+ *  ExcelJS) - never a second, Web-only rack calculation. */
+export function rackReportFromSnapshot(response: RackSnapshotApiResponse | null): RackCapacityReport | null {
+  const snapshot = response?.snapshot;
+  if (!snapshot || snapshot.records.length === 0) return null;
+  const records: RackRecord[] = snapshot.records.map((record, index) => ({ ...record, rowNumber: record.rowNumber ?? index + 1 }));
+  return deriveRackCapacityReport(records, "Rack Capacity", "Table7", snapshot.month, []);
 }
 
 export interface ComparisonMetric {
@@ -150,7 +179,7 @@ function reportRows(logs: MonthlyLog[]): ReportMonthlyRow[] {
   });
 }
 
-export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string): ReportData {
+export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = []): ReportData {
   const rows = reportRows(logs);
   const current = rows.find(row => row.month === selectedMonth) ?? null;
   return {
@@ -168,9 +197,12 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
     monthlyRows: rows,
     currentRow: current,
     engineeringDashboard: buildEngineeringDashboardSnapshot(logs, selectedMonth, null),
-    rack: null,
-    rackHistory: [],
-    rackUnitCapacity: [],
+    rack,
+    rackHistory,
+    rackUnitCapacity,
+    // No Web/DB image-storage API exists yet for the Rack Unit Capacity
+    // photo (see docs/web-clean-v1/DESKTOP_WEB_PARITY_AUDIT.md's Rack
+    // Capacity section) - left null rather than fabricated.
     rackUnitCapacityImageDataUri: null,
     rackUnitCapacityImageMeta: null,
     comparison: null,
@@ -181,8 +213,8 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
 /** Desktop's print HTML, populated only with the selected facility's API DTOs.
  *  fileName (without extension) becomes the print dialog's suggested "Save
  *  as PDF" name, via document.title - the browser convention for print-to-PDF. */
-export function printDesktopPdf(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string): void {
-  const data = facilityReportData(logs, siteName, selectedMonth);
+export function printDesktopPdf(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = []): void {
+  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity);
   const popup = window.open("", "energy-monitor-report", "noopener,noreferrer");
   if (!popup) throw new Error("The report window was blocked by the browser.");
   popup.document.open();
@@ -225,8 +257,12 @@ function comparisonTrend(site: ComparisonSite, months: string[]): ReportMonthlyR
   });
 }
 
-/** Uses Desktop report renderer; comparison values come from the scoped API DTO. */
-export function printSiteComparisonPdf(data: SiteComparisonExport, referenceMonth: string): void {
+/** Uses Desktop report renderer; comparison values come from the scoped API DTO.
+ *  selfRack/otherRack feed the shared renderer's "Rack Capacity Site
+ *  Comparison" page (rackComparisonPage in reportHtml.ts) - the same
+ *  reused RackCapacityReport shape as the main facility report, never a
+ *  second comparison calculation. */
+export function printSiteComparisonPdf(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): void {
   const [primary, secondary] = data.sites;
   if (!primary) throw new Error("No facilities are available for comparison.");
   const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
@@ -257,7 +293,7 @@ export function printSiteComparisonPdf(data: SiteComparisonExport, referenceMont
       selfTrend: comparisonTrend(primary, trendMonths),
       otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
     },
-    rackComparison: null
+    rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
   };
   const popup = window.open("", "energy-monitor-site-comparison", "noopener,noreferrer");
   if (!popup) throw new Error("The report window was blocked by the browser.");
@@ -270,7 +306,7 @@ export function printSiteComparisonPdf(data: SiteComparisonExport, referenceMont
 /** Prints one full Desktop-compatible report per facility in one document. */
 export function printAllFacilitiesPdf(facilities: ExportFacility[], selectedMonth: string): void {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth)));
+  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [])));
   const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
   const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
   const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");

@@ -22,7 +22,7 @@ import { RackCapacityProvider, useRackCapacity } from "../components/rack/RackCa
 import RackCapacitySummaryCard from "../components/rack/RackCapacitySummaryCard";
 import { formatRatioPercent } from "../utils/rackCapacity";
 import { api, type SessionUser, type Role } from "./api";
-import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportCsv, exportExcel, exportSiteComparisonCsv, exportSiteComparisonExcel, printAllFacilitiesPdf, printDesktopPdf, printSiteComparisonPdf, type ComparisonMetric, type SiteComparisonExport } from "./exports";
+import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportCsv, exportExcel, exportSiteComparisonCsv, exportSiteComparisonExcel, printAllFacilitiesPdf, printDesktopPdf, printSiteComparisonPdf, rackReportFromSnapshot, type ComparisonMetric, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
 import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodSelection } from "./reportPeriod";
 import { formatNumber2 } from "../utils/numberFormatBridge";
@@ -139,7 +139,7 @@ export default function CleanWebApp() {
           {view === "racks" && siteId && <RackCapacityView siteId={siteId} month={month} lang="en" />}
           {view === "history" && <HistoricalExplorer logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} upsGroupHistory={history.upsGroupHistory ?? null} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onEditMonth={selected => { setView("entry"); void selectMonth(selected); }} />}
           {view === "comparison" && <SiteComparison />}
-          {view === "reports" && <Reports siteName={site?.name ?? "energy-monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} />}
+          {view === "reports" && <Reports siteId={siteId} siteName={site?.name ?? "energy-monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} />}
           {view === "settings" && bootstrap && <SettingsPage displayPeriod={bootstrap.displayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice("Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} />}
           {view === "admin" && user.role === "admin" && <Admin />}
           </>}
@@ -294,12 +294,23 @@ const PERIOD_MODE_OPTIONS: Array<{ value: ReportingPeriodMode; label: string }> 
  *  CSV/Excel/PDF builders (see reportPeriod.ts), so Excel/CSV/PDF always
  *  reflect the current selection, never a stale earlier one. Matches
  *  Desktop's four Reporting Period modes, confirmed by direct inspection. */
-function Reports({ siteName, logs, month, sites }: { siteName: string; logs: MonthlyLog[]; month: string; sites: Site[] }) {
+function Reports({ siteId, siteName, logs, month, sites, rackCapacityHistory, rackUnitCapacity }: { siteId: number | null; siteName: string; logs: MonthlyLog[]; month: string; sites: Site[]; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[] }) {
   const [message, setMessage] = useState<string | null>(null);
   const [period, setPeriod] = useState<ReportingPeriodSelection>(() => defaultReportingPeriod(month));
   const [fileNameInput, setFileNameInput] = useState(() => defaultReportFilename(siteName, month));
   const [fileNameCustomized, setFileNameCustomized] = useState(false);
-  const loadAll = useCallback(async () => Promise.all(sites.map(async site => ({ siteName: site.name, logs: (await api<HistoryData>(`/sites/${site.id}/history`)).logs }))), [sites]);
+  // A facility genuinely may have no Rack Capacity snapshot for the
+  // selected month (same as the live Rack Capacity view's null-snapshot
+  // case) - degrade to no rack section in the PDF rather than failing the
+  // whole export.
+  const loadRack = useCallback(async (targetSiteId: number, targetMonth: string): Promise<RackSnapshotApiResponse | null> => {
+    try { return await api<RackSnapshotApiResponse>(`/racks?siteId=${targetSiteId}&month=${targetMonth}`); }
+    catch { return null; }
+  }, []);
+  const loadAll = useCallback(async () => Promise.all(sites.map(async site => {
+    const [siteHistory, rackResponse] = await Promise.all([api<HistoryData>(`/sites/${site.id}/history`), loadRack(site.id, month)]);
+    return { siteName: site.name, logs: siteHistory.logs, rack: rackReportFromSnapshot(rackResponse), rackHistory: siteHistory.rackCapacityHistory ?? [], rackUnitCapacity: siteHistory.rackUnitCapacity ?? [] };
+  })), [sites, month, loadRack]);
   const loadComparison = useCallback(async () => api<SiteComparisonExport>("/site-comparison"), []);
   const run = (action: () => void | Promise<void>, success: string) => { void Promise.resolve(action()).then(() => setMessage(success)).catch(error => setMessage(readError(error))); };
 
@@ -325,7 +336,7 @@ function Reports({ siteName, logs, month, sites }: { siteName: string; logs: Mon
       <p className="mt-3 text-xs text-slate-500">Scope: {reportingPeriodLabel(period, "en")}. Files: <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "csv")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "xlsx")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "pdf")}</span></p>
     </div>
 
-    <div className="mt-4 grid gap-4 xl:grid-cols-3">{cards("Current Facility", `${siteName}, ${reportingPeriodLabel(period, "en")}.`, () => exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv")), () => exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx")), () => printDesktopPdf(scopedLogs, siteName, contextMonth, resolvedFileName))}{cards("All Facilities", "Each facility stays isolated in its own CSV block, Excel sheets, and full PDF section.", async () => exportAllFacilitiesCsv(await loadAll()), async () => exportAllFacilitiesExcel(await loadAll()), async () => printAllFacilitiesPdf(await loadAll(), month))}{cards("Site Comparison", `Comparison KPI snapshot for ${month}; no values are fabricated for missing records.`, async () => exportSiteComparisonCsv(await loadComparison(), month), async () => exportSiteComparisonExcel(await loadComparison(), month), async () => printSiteComparisonPdf(await loadComparison(), month))}</div>{message && <p className="mt-4 text-sm text-teal-300">{message}</p>}</section>;
+    <div className="mt-4 grid gap-4 xl:grid-cols-3">{cards("Current Facility", `${siteName}, ${reportingPeriodLabel(period, "en")}.`, () => exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv")), () => exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx")), async () => printDesktopPdf(scopedLogs, siteName, contextMonth, resolvedFileName, siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null, rackCapacityHistory, rackUnitCapacity))}{cards("All Facilities", "Each facility stays isolated in its own CSV block, Excel sheets, and full PDF section.", async () => exportAllFacilitiesCsv(await loadAll()), async () => exportAllFacilitiesExcel(await loadAll()), async () => printAllFacilitiesPdf(await loadAll(), month))}{cards("Site Comparison", `Comparison KPI snapshot for ${month}; no values are fabricated for missing records.`, async () => exportSiteComparisonCsv(await loadComparison(), month), async () => exportSiteComparisonExcel(await loadComparison(), month), async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, month) : null, secondary ? loadRack(secondary.site.id, month) : null]); printSiteComparisonPdf(comparison, month, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack)); })}</div>{message && <p className="mt-4 text-sm text-teal-300">{message}</p>}</section>;
 }
 
 const metric = (value: number | null | undefined, suffix = "") => value === null || value === undefined || !Number.isFinite(value) ? "—" : `${formatNumber2(value)}${suffix}`;
