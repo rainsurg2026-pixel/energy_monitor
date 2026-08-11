@@ -59,6 +59,64 @@ build clean.
 **Browser UAT: NOT VERIFIED - EXTERNAL BLOCKER** (Chrome extension still
 not connected). **Supabase: NOT VERIFIED - EXTERNAL BLOCKER** (unchanged).
 
+## 2026-08-11 Backup: Admin-configurable Google Sheet destination
+
+Focused follow-up to the backup system above - full detail in
+`DATA_BACKUP_AND_RECOVERY.md` Section 4.1/7/10.1. The backup
+**destination** (which Google Sheet) was hard-coded via
+`GOOGLE_BACKUP_SPREADSHEET_ID`; it is now stored as a non-secret row in a
+new `backup_config` table (migration `009_backup_config.sql`, extends
+rather than modifies `008_backup_log.sql`) and set by an Admin from
+Settings -> Data Backup. The Google service-account credential itself did
+not move - it remains env-var-only (`GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON`),
+never stored in the DB, never sent to the browser.
+
+New: `server/backup/googleSheetsUrl.ts` (server-side URL parsing/
+validation/spreadsheet-ID extraction/masking - the browser can only submit
+a URL, never assert an ID directly), a real `testBackupConnection()` flow
+(authenticates, confirms the spreadsheet is reachable, creates the two
+required tabs if missing, without writing backup data), `PUT
+/api/v1/admin/backup/config` and `POST /api/v1/admin/backup/test-connection`
+routes (both gated by the same pre-existing `backupRestoreManage`
+permission - no second permission system), and a destination-change audit
+event (`backup_destination_change`, masked spreadsheet reference only).
+`runBackup()` (both manual and scheduled) now reads the destination fresh
+from `backup_config` on every run, so changing it takes effect
+immediately with no code change or redeploy; the previous destination is
+never auto-modified or deleted, and every `backup_log`/`Backup_Log` row
+now records which spreadsheet it was written to.
+
+Frontend: `DataBackupPanel` (Settings -> Data Backup) gained the Enabled
+toggle, Google Sheet URL field, Test Connection button with a
+✓/✕ status message, and Save Settings - reusing the existing design
+system's slate/teal/indigo/rose token classes (already theme-aware via
+`.theme-light`'s CSS-variable remap), no new UI system introduced.
+
+**STATIC/API VERIFIED**: `test:backup-service` extended to 38 assertions
+(destination sourced from a fixture `backup_config`, a full mocked
+successful run against a configured sheet, a destination-switch test
+proving the previous sheet is never touched, scheduled-vs-manual
+`enabled` behavior, 403/404 Google error handling, and `testBackupConnection`
+success/failure cases) - all still against a locally-generated throwaway
+RSA key with `fetch` fully mocked, never real credentials. `test:api`
+extended to 73 assertions: admin can save a valid URL, an unrelated URL is
+rejected (`400 INVALID_SHEET_URL`), the response returns a masked
+reference only (never the raw ID or a credential-shaped field), the
+change is audited, and a `user`-role session gets `403 FORBIDDEN` from
+both the config-write and test-connection routes. Full regression battery
+(all suites above, unchanged) plus lint and build re-run clean with these
+changes.
+
+**Google Sheets integration: NOT VERIFIED - EXTERNAL CREDENTIAL BLOCKER**
+- no real Google service-account credentials were available this session;
+real integration (a real spreadsheet, real sharing/permission errors, a
+real Test Connection success) remains unverified until an approved
+credential is configured. **Migration `009_backup_config.sql`: not applied
+to any live database** (same Supabase/Docker blocker as `008`). **Browser
+UAT: NOT VERIFIED - EXTERNAL BLOCKER** (Chrome extension still not
+connected; the new form fields have not been seen rendering or clicked in
+an actual browser).
+
 ## 2026-08-11 Reports & Export
 
 **Desktop source of truth** (from direct inspection this session via CDP

@@ -1,6 +1,7 @@
 # Data Storage, Backup, and Recovery
 
-Written 2026-08-11. Covers the CleanWebApp (`feat/web-clean-v1`) data
+Written 2026-08-11, updated 2026-08-11 (Admin-configurable backup
+destination). Covers the CleanWebApp (`feat/web-clean-v1`) data
 architecture: where user-entered data lives, how it is backed up, and how
 to recover it. Read alongside `docs/web-clean-v1/DESKTOP_WEB_PARITY_AUDIT.md`.
 
@@ -79,12 +80,39 @@ Google API calls happen exclusively in `server/backup/`, executed
 server-side. The browser never sees a Google credential, access token, or
 service-account key at any point.
 
+### 4.1 Backup destination is Admin-configurable (added 2026-08-11)
+
+The backup **destination** (which Google Sheet) and the backup
+**credential** (the service account that can write to it) are two
+separate concerns, stored two different ways:
+
+| Concern | Where it lives | Who can see/change it |
+| --- | --- | --- |
+| Destination (`spreadsheet_id`, `sheet_url`, `enabled`) | `public.backup_config` (DB, migration `009_backup_config.sql`) - a singleton row, same pattern as `global_settings` | Admin, via Settings -> Data Backup or the API; never a secret, safe to store in the DB |
+| Credential (`GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON`) | Server environment variable only | Never leaves the server process; never read by, or written through, any API route |
+
+`server/backup/googleSheetsUrl.ts` is the single place a pasted Google
+Sheets URL becomes a trusted spreadsheet ID: it requires `https:` and
+`docs.google.com`, matches `/spreadsheets/d/<ID>/...`, and validates the ID
+against the shape of a real Google spreadsheet ID (20-100
+`[a-zA-Z0-9_-]` characters). The browser can only ever submit a URL - the
+ID used for every Google API call is always the one this function
+extracted server-side, never a value read directly off the request body.
+`maskSpreadsheetId()` produces the only spreadsheet-identifying string the
+browser or `audit_events` ever receives (e.g. `1Bx…9Q7z`), never the full
+ID or URL with query parameters.
+
 ## 5. Manual backup vs. scheduled backup
 
 - **Manual**: Admin -> Settings -> Data Backup -> "Backup Now" ->
   `POST /api/v1/admin/backup/run`, gated by the existing
   `backupRestoreManage` permission (already defined in `authz/permissions.ts`
-  before this session - reused, not invented).
+  before this session - reused, not invented). Always runs against
+  whichever destination is currently saved in `backup_config`, read fresh
+  at the start of `runBackup()` - never a value cached from an earlier
+  request. A manual run always attempts to write, even if the destination
+  is currently marked "disabled" (disabled only skips the *scheduled* run,
+  since an Admin clicking "Backup Now" is an explicit, one-off request).
 - **Scheduled**: `vercel.json`'s `crons` entry calls
   `POST /api/v1/cron/backup` daily at `0 17 * * *` UTC (00:00 GMT+7,
   matching the existing daily-at-00:00-GMT+7 scheduling convention already
@@ -93,10 +121,18 @@ service-account key at any point.
   endpoints - never a user session. This route is explicitly exempted from
   the global CSRF middleware and from `READ_ONLY_MODE`'s mutation block
   (backup reads data and writes only to Sheets/backup_log, never to
-  operational tables).
+  operational tables). Like the manual path, it reads `backup_config` fresh
+  on every invocation - changing the destination in Settings -> Data
+  Backup takes effect on the very next scheduled run, with **no code
+  change or redeploy**. If the destination is disabled, the scheduled run
+  logs a `success` entry with 0 records and an explanatory
+  `error_summary` ("Scheduled backup skipped: disabled...") rather than
+  silently doing nothing or reporting a failure.
 
 Default schedule: **daily**, per the task's own recommendation. Not yet
-configurable per-admin; changing it means editing `vercel.json`.
+configurable per-admin; changing the time means editing `vercel.json`. The
+*destination* (Section 4.1), unlike the schedule, is fully Admin-configurable
+without a deploy.
 
 ## 6. Backup does not block Data Entry
 
@@ -107,16 +143,39 @@ completes and returns 200 regardless of whether Google Sheets is reachable,
 configured, or even exists as a concept to that request. Backup status is
 observed later, separately, via the admin panel.
 
-## 7. Backup status (Admin UI)
+## 7. Backup status and configuration (Admin UI)
 
-Settings -> Data Backup (visible only when `isAdmin`) shows: whether backup
-is configured, the last run's timestamp/status/record count, the schedule,
-a "Backup Now" button, and the 10 most recent runs. On failure, the
-recorded `error_summary` is shown (e.g. "Google API unavailable") - never a
-raw stack trace or credential-containing error string, since
-`server/backup/*` truncates and only ever throws `Error` messages built
-from HTTP status + a truncated response body, never a caught credential
-value.
+Settings -> Data Backup (visible only when `isAdmin`) now has two parts:
+
+- **Configuration form**: an Enabled toggle, a Google Sheet URL field
+  (pre-filled from `backup_config`), "Test Connection", and "Save
+  Settings". Saving calls `PUT /api/v1/admin/backup/config`, which
+  re-validates and re-extracts the spreadsheet ID server-side (Section
+  4.1) before ever writing it - an unusable URL is rejected with `400
+  INVALID_SHEET_URL` and never saved. "Test Connection" calls
+  `POST /api/v1/admin/backup/test-connection`, which authenticates with
+  the server-side service account, confirms the spreadsheet is reachable,
+  and ensures the two required tabs (`Data_Backup`, `Backup_Log`) exist or
+  can be created - all without writing any backup data - and reports one
+  of: connected (with the real spreadsheet title, the only Google-supplied
+  string ever shown to the browser), invalid URL, spreadsheet not
+  accessible, service account lacks access ("Please share this Google
+  Sheet with the configured backup service account" - the app never
+  attempts to change Google sharing permissions itself), or Google
+  authentication failed (no server credential configured).
+- **Status display**: whether the destination is enabled, the last run's
+  timestamp/status/record count, the schedule, a "Backup Now" button, and
+  the 10 most recent runs. On failure, the recorded `error_summary` is
+  shown (e.g. "Google API unavailable") - never a raw stack trace or
+  credential-containing error string, since `server/backup/*` truncates
+  and only ever throws `Error` messages built from HTTP status + a
+  truncated response body, never a caught credential value.
+
+Both parts are gated by the same `backupRestoreManage` permission
+server-side (`GET /status`, `PUT /config`, `POST /test-connection`,
+`POST /run` all call `withPermission`) - a `user`-role session gets `403
+FORBIDDEN` from every one of these routes even called directly, not just a
+hidden button in the UI.
 
 ## 8. Backup logging
 
@@ -163,11 +222,33 @@ not a snapshot of mutable current state.
 
 ## 10. Google Sheet structure
 
-A dedicated spreadsheet (its ID is `GOOGLE_BACKUP_SPREADSHEET_ID`), never
-mixed into any operational/user-facing spreadsheet:
+A dedicated spreadsheet, chosen by an Admin via Settings -> Data Backup
+(Section 4.1 - `backup_config.spreadsheet_id`, no longer a fixed env var),
+never mixed into any operational/user-facing spreadsheet:
 
 - `Data_Backup` - current snapshot of authoritative operational data.
 - `Backup_Log` - append-only run history.
+
+`testBackupConnection()` and `runBackup()` both create either sheet if it
+doesn't already exist in the configured spreadsheet (`ensureSheetsExist`),
+so pointing the backup at a brand-new, otherwise-empty Google Sheet works
+without any manual sheet-tab setup - only sharing the spreadsheet with the
+service account is required of the Admin.
+
+### 10.1 Changing the destination (Sheet A -> Sheet B)
+
+Saving a new URL only updates the single `backup_config` row - it never
+touches the previously configured spreadsheet:
+
+- The next "Backup Now" and the next scheduled run both write to B.
+- A is never automatically modified or deleted; its last-written
+  `Data_Backup` snapshot and full `Backup_Log` history remain exactly as
+  they were.
+- Every `backup_log` row (both DB and the `Backup_Log` sheet) records
+  which spreadsheet it was written to (`spreadsheet_id`, added to
+  `backup_log` by migration `009_backup_config.sql`), so the run history
+  makes the A -> B switch point visible after the fact.
+- The change itself is audited (Section 13).
 
 (`Backup_Metadata`, suggested in the task instructions as a third sheet,
 was not created - its content would duplicate `public.backup_log`, which
@@ -242,10 +323,19 @@ saves its own versions on its own cadence).
 - RBAC: both backup endpoints reuse the existing `backupRestoreManage`
   permission (`authz/permissions.ts`) - already defined, admin-only,
   before this session. No new/parallel RBAC system was introduced.
-- RLS on `public.backup_log` follows the exact same
-  `energy_monitor_runtime`-only pattern as every other table added this
-  sprint (`007_ups_group_history.sql`, etc.) - `anon`/`authenticated`/
+- RLS on `public.backup_log` and `public.backup_config` follows the exact
+  same `energy_monitor_runtime`-only pattern as every other table added
+  this sprint (`007_ups_group_history.sql`, etc.) - `anon`/`authenticated`/
   `service_role` are explicitly revoked.
+- `backup_config` never stores a credential field - only
+  `spreadsheet_id`/`sheet_url`/`enabled`/`updated_by`/`updated_at`. A
+  database compromise that exposed this table would reveal which Google
+  Sheet is used for backup, never a way to access it.
+- Changing the destination writes an `audit_events` row
+  (`action: "backup_destination_change"`) with the actor, a masked
+  previous/new spreadsheet reference (`maskSpreadsheetId`, e.g.
+  `1Bx…9Q7z`), the enabled flag, and a timestamp - never the full ID/URL
+  and never a credential.
 
 ## 14. User roles and authorization (verified, largely pre-existing)
 
@@ -288,22 +378,27 @@ saves its own versions on its own cadence).
 - **Google Sheets integration: NOT VERIFIED - EXTERNAL CREDENTIAL BLOCKER.**
   No real Google service-account credentials are available in this
   session (and per this project's credential-handling rules, none would
-  be entered here even if supplied). All backup logic is verified against
+  be entered here even if supplied). All backup logic, including the new
+  destination-configuration and Test Connection flows, is verified against
   a locally-generated, throwaway RSA keypair with `fetch` fully mocked
-  (`test:backup-service`, 23 assertions) - real Google API behavior,
+  (`test:backup-service`, 38 assertions) - real Google API behavior,
   quota limits, and error response shapes beyond what was mocked remain
   unverified until a real service account is configured in an approved
   environment.
-- **Migration `008_backup_log.sql` was not applied to any live database.**
-  Supabase MCP access remains blocked this session; no local Docker was
-  available to validate it against a throwaway Postgres either. It was
-  written by hand-matching the exact structure of `007_ups_group_history.sql`
-  (already live), and should be reviewed before being applied to Preview.
+- **Migrations `008_backup_log.sql` and `009_backup_config.sql` were not
+  applied to any live database.** Supabase MCP access remains blocked this
+  session; no local Docker was available to validate them against a
+  throwaway Postgres either. `009` extends `008` (adds `backup_config` and
+  a `spreadsheet_id` column on `backup_log`) rather than modifying it, and
+  was written by hand-matching the exact structure of the prior
+  migrations; both should be reviewed before being applied to Preview.
 - **No automated restore** (Section 12) - manual procedure only.
-- **Backup schedule is fixed at daily** via `vercel.json`, not
-  admin-configurable through the UI.
+- **Backup schedule (the daily cron time) is fixed** via `vercel.json`;
+  the backup *destination* is now Admin-configurable without a deploy
+  (Section 4.1) - only the time-of-day is not.
 - **Browser UAT: NOT VERIFIED - EXTERNAL BLOCKER.** Chrome extension not
-  connected this session; the Data Backup panel, Backup Now button, and
+  connected this session; the Data Backup configuration form (URL field,
+  Enabled toggle, Test Connection, Save Settings), Backup Now button, and
   Edit Role dropdown have not been seen rendering or clicked in an actual
   browser.
 - **Supabase live verification: NOT VERIFIED - EXTERNAL BLOCKER**, for the
