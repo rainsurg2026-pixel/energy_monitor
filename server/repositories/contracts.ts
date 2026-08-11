@@ -40,6 +40,19 @@ export interface UpsGroupHistoryRecord {
   generatedAt: string | null;
   dataVersion: number | null;
 }
+/** Row shape for writing computed UPS Group History - see
+ *  src/domain/upsGroupHistorySnapshot.ts, the sole producer of these
+ *  values (never fabricated, never simplified from Desktop's formula). */
+export interface UpsGroupHistoryUpsertRow {
+  month: string;
+  group: string;
+  totalLoadKw: number;
+  totalLoadKva: number;
+  capacity: number | null;
+  loadPercent: number | null;
+  availablePercent: number | null;
+  monthlyEnergyKwh: number;
+}
 export type BackupType = "scheduled" | "manual";
 export type BackupStatus = "running" | "success" | "partial" | "failed";
 export interface BackupLogRecord {
@@ -96,6 +109,11 @@ export interface BackendRepository {
   listRackCapacityHistory(siteId: number): Promise<RackCapacityHistoryRecord[]>;
   listRackUnitCapacityHistory(siteId: number): Promise<RackUnitSnapshotRecord[]>;
   getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]>;
+  /** overwrite=false (backfill): inserts only keys that don't already
+   *  exist, never touches existing history. overwrite=true (incremental
+   *  save): inserts or updates exactly the given keys. Mirrors Desktop's
+   *  own backfill-vs-incremental-save distinction in UpsGroupHistoryWriter.ts. */
+  saveUpsGroupHistoryRows(siteId: number, facility: string, rows: UpsGroupHistoryUpsertRow[], overwrite: boolean): Promise<void>;
   startBackupRun(input: StartBackupInput): Promise<BackupLogRecord>;
   completeBackupRun(input: CompleteBackupInput): Promise<BackupLogRecord>;
   latestBackupRun(): Promise<BackupLogRecord | null>;

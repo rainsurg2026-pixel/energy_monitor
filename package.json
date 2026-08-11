@@ -69,6 +69,7 @@
     "test:dashboard-workbook-mapping": "node node_modules/tsx/dist/cli.mjs scripts/test-dashboard-workbook-mapping.ts",
     "test:ups-group-history": "node node_modules/tsx/dist/cli.mjs scripts/test-ups-group-history.ts",
     "test:ups-group-history-migration": "node node_modules/tsx/dist/cli.mjs scripts/test-ups-group-history-migration.ts",
+    "test:ups-group-history-sync": "node node_modules/tsx/dist/cli.mjs scripts/test-ups-group-history-sync.ts",
     "test:production-stress-fault": "node node_modules/tsx/dist/cli.mjs scripts/test-production-stress-fault.ts",
     "test:batch-save-merge": "node node_modules/tsx/dist/cli.mjs scripts/test-batch-save-merge.ts",
     "test:all-report": "node node_modules/tsx/dist/cli.mjs scripts/test-all-report.ts",

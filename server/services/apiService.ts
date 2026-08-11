@@ -3,9 +3,11 @@ import { buildFacilityComparisonMetrics } from "../../src/domain/facilityCompari
 import { calculateRackCapacityMetrics } from "../../src/domain/rackCapacity";
 import { usagePercent } from "../../src/domain/rackUnitCapacity";
 import { DESKTOP_FORMULA_VERSION } from "../../src/domain/formulaVersion";
+import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
+import type { MonthlyLog } from "../../src/types";
 import { HttpError } from "../errors";
 import { assertDisplayPeriod, assertStrictMonth, allowedMonths, isAllowedMonth, latestAvailableMonth, previousCalculationMonth, visibleMonths, type DisplayPeriod } from "../policies/displayPeriod";
-import type { BackendRepository, SiteRecord } from "../repositories/contracts";
+import type { BackendRepository, SiteRecord, UpsGroupHistoryRecord } from "../repositories/contracts";
 import { parseExpectedRowVersion, parseMonthlyLog, parseProvenance } from "./rawInputValidation";
 import { API_HEALTH_RESPONSE } from "../http/health";
 
@@ -141,20 +143,49 @@ export class ApiService {
   }
 
   /**
+   * Backfills any (month, group) key that has no ups_group_history row yet
+   * - computed with the exact same shared formula Desktop uses to generate
+   * its own persisted "2. UPS Group History" sheet (see
+   * computeUpsGroupHistorySnapshot), from that month's real saved readings.
+   * Checked per key, not per month, so a month with partial history (e.g.
+   * one group's row missing) still gets exactly the missing rows filled in
+   * - matching UpsGroupHistoryWriter.ts's own key-level backfill semantics
+   * on the Desktop side, never a coarser "skip the whole month" check.
+   * Never overwrites an existing row (overwrite=false) and never fabricates
+   * data for a facility with no known topology. Mirrors Desktop's own
+   * migrateUpsGroupHistoryIfNeeded: lazy, idempotent, backfill-only.
+   */
+  private async backfillMissingUpsGroupHistory(siteId: number, facility: string, logs: MonthlyLog[], existingRows: UpsGroupHistoryRecord[]): Promise<UpsGroupHistoryRecord[]> {
+    const existingKeys = new Set(existingRows.map(row => `${row.month} ${row.group}`));
+    const generatedAt = this.now().toISOString();
+    const newRows: UpsGroupHistoryRecord[] = [];
+    for (const log of logs) {
+      const rows = computeUpsGroupHistorySnapshot(facility, log);
+      if (!rows) continue;
+      const missing = rows.filter(row => !existingKeys.has(`${row.month} ${row.group}`));
+      if (missing.length === 0) continue;
+      await this.repository.saveUpsGroupHistoryRows(siteId, facility, missing, false);
+      for (const row of missing) newRows.push({ facility, ...row, generatedAt, dataVersion: 1 });
+    }
+    return newRows.length === 0 ? existingRows : [...existingRows, ...newRows];
+  }
+
+  /**
    * Returns only populated, currently-visible rows for the History and export
    * screens.  The server owns the visibility rule so a browser cannot use an
    * editor endpoint to enumerate months outside the configured period.
    */
   async getHistory(siteId: number): Promise<unknown> {
-    await this.requireSite(siteId);
+    const site = await this.requireSite(siteId);
     const period = await this.requirePeriod();
     const availability = await this.availableForSite(siteId, period);
-    const [logs, upsGroupHistoryRows, rackCapacityHistoryRows, rackUnitCapacityRows] = await Promise.all([
+    const [logs, upsGroupHistoryRowsRaw, rackCapacityHistoryRows, rackUnitCapacityRows] = await Promise.all([
       this.repository.getMonthlyLogs(siteId, availability.availableMonths),
       this.repository.getUpsGroupHistory(siteId),
       this.repository.listRackCapacityHistory(siteId),
       this.repository.listRackUnitCapacityHistory(siteId)
     ]);
+    const upsGroupHistoryRows = await this.backfillMissingUpsGroupHistory(siteId, site.code, logs, upsGroupHistoryRowsRaw);
     const visibleMonths = new Set(availability.availableMonths);
     return {
       siteId,

@@ -1,6 +1,7 @@
 import type { MonthlyLog } from "../../src/types";
+import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
 import { HttpError } from "../errors";
-import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, CreateGoogleOAuthStateInput, GoogleOAuthStateRecord, GoogleSheetsConnectionRecord, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsertGoogleSheetsConnectionInput, UpsGroupHistoryRecord } from "./contracts";
+import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, CreateGoogleOAuthStateInput, GoogleOAuthStateRecord, GoogleSheetsConnectionRecord, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsertGoogleSheetsConnectionInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "./contracts";
 import { maskSpreadsheetId } from "../backup/googleSheetsUrl";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
@@ -116,6 +117,11 @@ export class InMemoryRepository implements BackendRepository {
       const cloned = structuredClone(input.log);
       if (index >= 0) logs[index] = cloned; else logs.push(cloned);
       this.periodVersions[key] = rowVersion;
+      const site = this.sites.find(item => item.id === input.siteId);
+      if (site) {
+        const upsGroupHistoryRows = computeUpsGroupHistorySnapshot(site.code, input.log);
+        if (upsGroupHistoryRows) await this.saveUpsGroupHistoryRows(input.siteId, site.code, upsGroupHistoryRows, true);
+      }
       this.recordAudit({
         actorUserId: input.actorUserId ?? null,
         action: "upsert",
@@ -144,6 +150,20 @@ export class InMemoryRepository implements BackendRepository {
       .sort((a, b) => a.month.localeCompare(b.month));
   }
   async getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]> { return this.upsGroupHistory[siteId] ?? []; }
+
+  async saveUpsGroupHistoryRows(siteId: number, facility: string, rows: UpsGroupHistoryUpsertRow[], overwrite: boolean): Promise<void> {
+    const existing = this.upsGroupHistory[siteId] ?? (this.upsGroupHistory[siteId] = []);
+    const generatedAt = new Date().toISOString();
+    for (const row of rows) {
+      const index = existing.findIndex(item => item.month === row.month && item.group === row.group);
+      if (index >= 0) {
+        if (!overwrite) continue;
+        existing[index] = { facility, month: row.month, group: row.group, totalLoadKw: row.totalLoadKw, totalLoadKva: row.totalLoadKva, capacity: row.capacity, loadPercent: row.loadPercent, availablePercent: row.availablePercent, monthlyEnergyKwh: row.monthlyEnergyKwh, generatedAt, dataVersion: 1 };
+      } else {
+        existing.push({ facility, month: row.month, group: row.group, totalLoadKw: row.totalLoadKw, totalLoadKva: row.totalLoadKva, capacity: row.capacity, loadPercent: row.loadPercent, availablePercent: row.availablePercent, monthlyEnergyKwh: row.monthlyEnergyKwh, generatedAt, dataVersion: 1 });
+      }
+    }
+  }
 
   async startBackupRun(input: StartBackupInput): Promise<BackupLogRecord> {
     const record: BackupLogRecord = { id: this.nextBackupId++, backupType: input.backupType, status: "running", startedAt: new Date().toISOString(), completedAt: null, recordsProcessed: 0, recordsSuccess: 0, recordsFailed: 0, errorSummary: null, initiatedBy: input.initiatedBy, spreadsheetId: null };

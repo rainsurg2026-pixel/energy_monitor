@@ -1,13 +1,36 @@
 import type { Pool, PoolClient } from "pg";
 import type { MonthlyLog, UpsRecord } from "../../src/types";
+import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
 import { withTransaction, type DbExecutor, query } from "./pool";
 import { HttpError } from "../errors";
-import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, CreateGoogleOAuthStateInput, GoogleOAuthStateRecord, GoogleSheetsConnectionRecord, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsertGoogleSheetsConnectionInput, UpsGroupHistoryRecord } from "../repositories/contracts";
+import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, CreateGoogleOAuthStateInput, GoogleOAuthStateRecord, GoogleSheetsConnectionRecord, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsertGoogleSheetsConnectionInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "../repositories/contracts";
 import { maskSpreadsheetId } from "../backup/googleSheetsUrl";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 function numberOrNull(value: unknown): number | null { return value === null || value === undefined ? null : Number(value); }
 function monthString(value: unknown): string { return new Date(String(value)).toISOString().slice(0, 7); }
+
+/** Shared by both the standalone saveUpsGroupHistoryRows() method and the
+ *  save-time incremental upsert inside saveMonthlyLogInTransaction() (same
+ *  SQL, different executor - a plain pool connection vs. an open
+ *  transaction's client - DbExecutor accepts both). overwrite=false never
+ *  touches a key that already has a row (backfill); overwrite=true always
+ *  replaces it (incremental save) - mirrors UpsGroupHistoryWriter.ts's own
+ *  backfill-vs-incremental-save distinction on the Desktop side. */
+async function upsertUpsGroupHistoryRowsSql(executor: DbExecutor, siteId: number, facility: string, rows: UpsGroupHistoryUpsertRow[], overwrite: boolean): Promise<void> {
+  for (const row of rows) {
+    await query(
+      executor,
+      `INSERT INTO public.ups_group_history
+         (site_id, source_sheet, facility, history_month, group_name, total_load_kw, total_load_kva, capacity, load_percent, available_percent, monthly_energy_kwh, generated_at, data_version)
+       VALUES ($1, '2. UPS Group History', $2, $3::date, $4, $5, $6, $7, $8, $9, $10, now(), 1)
+       ON CONFLICT (site_id, history_month, group_name) DO ${overwrite
+        ? "UPDATE SET total_load_kw = EXCLUDED.total_load_kw, total_load_kva = EXCLUDED.total_load_kva, capacity = EXCLUDED.capacity, load_percent = EXCLUDED.load_percent, available_percent = EXCLUDED.available_percent, monthly_energy_kwh = EXCLUDED.monthly_energy_kwh, generated_at = EXCLUDED.generated_at, data_version = EXCLUDED.data_version"
+        : "NOTHING"}`,
+      [siteId, facility, `${row.month}-01`, row.group, row.totalLoadKw, row.totalLoadKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh]
+    );
+  }
+}
 
 export class PostgresRepository implements BackendRepository {
   private readonly executor: DbExecutor;
@@ -43,7 +66,7 @@ export class PostgresRepository implements BackendRepository {
   }
 
   protected async saveMonthlyLogInTransaction(client: PoolClient, input: SaveMonthlyLogInput): Promise<PeriodRecord> {
-    const site = await client.query<{ id: string }>("SELECT id FROM sites WHERE id = $1 AND active = true", [input.siteId]);
+    const site = await client.query<{ id: string; code: string }>("SELECT id, code FROM sites WHERE id = $1 AND active = true", [input.siteId]);
     if (!site.rows[0]) throw new HttpError(404, "SITE_NOT_FOUND", "Site was not found.");
 
     const existing = await client.query<{ id: string; row_version: number }>(
@@ -107,6 +130,18 @@ export class PostgresRepository implements BackendRepository {
       for (const [phaseCode, phase] of Object.entries(record.phases ?? {})) {
         await client.query("INSERT INTO ups_readings(period_id, device_id, site_id, phase_code, voltage, current, load_kw, load_kva, raw_inputs) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [periodId, deviceId, input.siteId, phaseCode, phase.voltage, phase.current, phase.loadKw, phase.loadKva, phase]);
       }
+    }
+
+    // Desktop v2.3.1 parity: keep "2. UPS Group History" in sync on every
+    // save, exactly like UpsGroupHistoryWriter.ts's incremental
+    // (overwrite=true) upsert on the Desktop side - same shared formula
+    // (computeUpsGroupHistorySnapshot -> computeUpsGroupSummary), same
+    // transaction as the readings it is derived from. Facilities with no
+    // known topology (see upsGroupTopology.ts) are silently skipped, never
+    // fabricated.
+    const upsGroupHistoryRows = computeUpsGroupHistorySnapshot(site.rows[0].code, input.log);
+    if (upsGroupHistoryRows) {
+      await upsertUpsGroupHistoryRowsSql(client, input.siteId, site.rows[0].code, upsGroupHistoryRows, true);
     }
 
     const airValues: Record<string, number | null> = {};
@@ -319,6 +354,10 @@ export class PostgresRepository implements BackendRepository {
       generatedAt: row.generated_at,
       dataVersion: row.data_version
     }));
+  }
+
+  async saveUpsGroupHistoryRows(siteId: number, facility: string, rows: UpsGroupHistoryUpsertRow[], overwrite: boolean): Promise<void> {
+    await upsertUpsGroupHistoryRowsSql(this.executor, siteId, facility, rows, overwrite);
   }
 
   private mapBackupRow(row: { id: string; backup_type: string; status: string; started_at: string; completed_at: string | null; records_processed: number; records_success: number; records_failed: number; error_summary: string | null; initiated_by: string | null; spreadsheet_id: string | null }): BackupLogRecord {
