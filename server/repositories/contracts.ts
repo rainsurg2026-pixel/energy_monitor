@@ -58,10 +58,27 @@ export interface BackupLogRecord {
 export interface StartBackupInput { backupType: BackupType; initiatedBy: number | null; }
 export interface CompleteBackupInput { id: number; status: BackupStatus; recordsProcessed: number; recordsSuccess: number; recordsFailed: number; errorSummary: string | null; spreadsheetId: string | null; }
 /** Non-secret backup destination configuration only - never a credential.
- *  The Google service-account key stays env-var-only and is never stored
- *  here or in any other table. */
-export interface BackupConfigRecord { spreadsheetId: string | null; sheetUrl: string | null; enabled: boolean; updatedBy: number | null; updatedAt: string | null; }
+ *  connectedGoogleUserId points at whichever admin's google_sheets_connections
+ *  row (if any) is the active backup identity - never a token itself. */
+export interface BackupConfigRecord { spreadsheetId: string | null; sheetUrl: string | null; enabled: boolean; updatedBy: number | null; updatedAt: string | null; connectedGoogleUserId: number | null; }
 export interface UpdateBackupConfigInput { spreadsheetId: string; sheetUrl: string; enabled: boolean; updatedBy: number | null; correlationId: string; }
+
+/** google_oauth_states: single-use, session-bound, short-lived PKCE state -
+ *  this IS the CSRF protection for the OAuth callback (a GET request
+ *  Google issues via redirect, which cannot carry the app's normal
+ *  double-submit CSRF token). encryptedCodeVerifier is encrypted the same
+ *  way a refresh token is - it is a secret-adjacent value for the
+ *  duration of the flow, even though it is discarded after one use. */
+export interface GoogleOAuthStateRecord { stateHash: string; userId: number; sessionId: number; encryptedCodeVerifier: string; expiresAt: string; }
+export interface CreateGoogleOAuthStateInput { stateHash: string; userId: number; sessionId: number; encryptedCodeVerifier: string; expiresAt: string; }
+
+/** The safe, non-secret shape - callers that only need to display "who is
+ *  connected" use this. The encrypted refresh token itself is only ever
+ *  returned by getGoogleSheetsConnectionSecret, a separate, narrower
+ *  accessor used exclusively by the backup service's own token-refresh
+ *  logic - never by any route that serializes a response to the browser. */
+export interface GoogleSheetsConnectionRecord { userId: number; email: string | null; updatedAt: string; }
+export interface UpsertGoogleSheetsConnectionInput { userId: number; encryptedRefreshToken: string; email: string | null; }
 export interface UpdateSettingsInput { startMonth: string; endMonth: string; expectedRowVersion: number; actorUserId?: number | null; }
 export interface SaveMonthlyLogInput { siteId: number; log: MonthlyLog; expectedRowVersion: number | null; correlationId: string; actorUserId?: number | null; provenance?: { sourceType: string; sourceFileHash?: string | null; sourceFileName?: string | null; sourceSheet?: string | null; sourceLocation?: string | null }; }
 
@@ -85,5 +102,12 @@ export interface BackendRepository {
   listBackupRuns(limit: number): Promise<BackupLogRecord[]>;
   getBackupConfig(): Promise<BackupConfigRecord>;
   updateBackupConfig(input: UpdateBackupConfigInput): Promise<BackupConfigRecord>;
+  setBackupConnectedGoogleUser(userId: number | null, actorUserId: number | null, correlationId: string): Promise<void>;
+  createGoogleOAuthState(input: CreateGoogleOAuthStateInput): Promise<void>;
+  consumeGoogleOAuthState(stateHash: string): Promise<GoogleOAuthStateRecord | null>;
+  upsertGoogleSheetsConnection(input: UpsertGoogleSheetsConnectionInput): Promise<GoogleSheetsConnectionRecord>;
+  getGoogleSheetsConnection(userId: number): Promise<GoogleSheetsConnectionRecord | null>;
+  getGoogleSheetsConnectionSecret(userId: number): Promise<string | null>;
+  deleteGoogleSheetsConnection(userId: number): Promise<void>;
   withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T>;
 }

@@ -357,21 +357,25 @@ function SiteComparison() {
 
 interface BackupLogEntry { id: number; backupType: "scheduled" | "manual"; status: "running" | "success" | "partial" | "failed"; startedAt: string; completedAt: string | null; recordsProcessed: number; recordsSuccess: number; recordsFailed: number; errorSummary: string | null; }
 interface BackupDestination { sheetUrl: string | null; spreadsheetIdMasked: string; enabled: boolean; updatedAt: string | null }
-interface BackupStatus { configured: boolean; serviceAccountConfigured: boolean; destination: BackupDestination; schedule: string; latest: BackupLogEntry | null; recent: BackupLogEntry[] }
+interface GoogleBackupAccount { connected: boolean; email: string | null }
+interface BackupStatus { configured: boolean; oauthConfigured: boolean; google: GoogleBackupAccount; destination: BackupDestination; schedule: string; latest: BackupLogEntry | null; recent: BackupLogEntry[] }
 type ConnectionTestResult = { ok: true; spreadsheetTitle: string; sheetsReady: boolean } | { ok: false; reason: string };
 
 /** Supabase/PostgreSQL is the Source of Truth; this panel only shows the
  *  status of the separate Google Sheets BACKUP/RECOVERY layer - a save
  *  already succeeded in the database before any backup ever runs, so a
  *  failed/unconfigured backup is shown as an observable status here, never
- *  as something that blocked or rolled back a Data Entry save. The Google
- *  service-account credential never reaches this component - the browser
- *  only ever sees connection status and a masked spreadsheet reference. */
+ *  as something that blocked or rolled back a Data Entry save. Google
+ *  authentication is the Admin's own interactively-connected Google
+ *  account (OAuth) - the browser never sees an access token, refresh
+ *  token, or client secret at any point; only connection status and a
+ *  masked/plain non-secret identity (email, spreadsheet reference). */
 function DataBackupPanel() {
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [sheetUrlInput, setSheetUrlInput] = useState("");
   const [enabledInput, setEnabledInput] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [connectBusy, setConnectBusy] = useState(false);
   const [testBusy, setTestBusy] = useState(false);
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -386,6 +390,36 @@ function DataBackupPanel() {
     } catch (reason) { setError(readError(reason)); }
   }, []);
   useEffect(() => { void load(); }, [load]);
+
+  // Picks up the redirect landing from GET /admin/backup/google/callback
+  // (?google_backup=connected|error[&google_backup_message=...]) once, then
+  // cleans the URL so a page refresh doesn't re-show the same message.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get("google_backup");
+    if (!result) return;
+    if (result === "connected") { setMessage("Google account connected."); void load(); }
+    else setError(params.get("google_backup_message") ?? "Could not connect the Google account.");
+    params.delete("google_backup"); params.delete("google_backup_message");
+    const remaining = params.toString();
+    window.history.replaceState(null, "", remaining ? `${window.location.pathname}?${remaining}` : window.location.pathname);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const connectGoogle = async () => {
+    setConnectBusy(true); setError(null);
+    try {
+      const result = await api<{ authorizationUrl: string }>("/admin/backup/google/connect", { method: "POST" });
+      window.location.href = result.authorizationUrl;
+    } catch (reason) { setError(readError(reason)); setConnectBusy(false); }
+  };
+  const disconnectGoogle = async () => {
+    if (!window.confirm("Disconnect the Google account used for backups? Scheduled and manual backups will stop working until an admin reconnects.")) return;
+    setBusy(true); setError(null); setMessage(null);
+    try { await api("/admin/backup/google/disconnect", { method: "POST" }); await load(); setMessage("Google account disconnected."); }
+    catch (reason) { setError(readError(reason)); }
+    finally { setBusy(false); }
+  };
   const runNow = async () => { setBusy(true); setMessage(null); try { await api("/admin/backup/run", { method: "POST" }); await load(); setMessage("Backup Now finished. See Status below."); } catch (reason) { setError(readError(reason)); } finally { setBusy(false); } };
   const testConnection = async () => {
     if (!sheetUrlInput.trim()) { setTestResult({ ok: false, reason: "Enter a Google Sheet URL first." }); return; }
@@ -410,13 +444,29 @@ function DataBackupPanel() {
     {error && <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p>}
     {message && <p className="mt-3 text-sm text-teal-300">{message}</p>}
 
+    <div className="mt-4 space-y-3 border-t border-slate-800 pt-4">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold">Google Account</span>
+        <span className={`text-xs font-semibold ${status?.google.connected ? "text-teal-300" : "text-slate-500"}`}>{status?.google.connected ? "Connected" : "Not Connected"}</span>
+      </div>
+      {status?.google.connected
+        ? <>
+            <p className="text-xs text-slate-400">Connected account: <span className="font-mono text-slate-200">{status.google.email ?? "(email unavailable)"}</span></p>
+            <button type="button" onClick={() => void disconnectGoogle()} disabled={busy} className="rounded-xl border border-rose-500/50 px-4 py-2 text-sm font-semibold text-rose-300 hover:bg-rose-500/10 disabled:opacity-60">Disconnect Google Account</button>
+          </>
+        : <>
+            <button type="button" onClick={() => void connectGoogle()} disabled={connectBusy || (status !== null && !status.oauthConfigured)} className="rounded-xl bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60">{connectBusy ? "Redirecting to Google…" : "Connect Google Account"}</button>
+            {status && !status.oauthConfigured && <p className="text-xs text-amber-300">Google OAuth is not configured on the server (GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET missing).</p>}
+          </>}
+    </div>
+
     <form onSubmit={saveSettings} className="mt-4 space-y-3 border-t border-slate-800 pt-4">
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={enabledInput} onChange={event => setEnabledInput(event.target.checked)} />
         <span>Enabled (include this destination in the daily scheduled backup)</span>
       </label>
       <label className="block text-sm">
-        Google Sheet URL
+        Google Sheet
         <input
           type="url"
           required
@@ -429,7 +479,7 @@ function DataBackupPanel() {
       <p className="text-xs text-slate-500">Currently configured: <span className="font-mono">{status?.destination.spreadsheetIdMasked ?? "(none)"}</span>{status?.destination.updatedAt && <> · saved {new Date(status.destination.updatedAt).toLocaleString()}</>}</p>
       <div className="flex flex-wrap gap-3">
         <button type="button" onClick={() => void testConnection()} disabled={testBusy} className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-semibold text-slate-200 hover:border-teal-500 disabled:opacity-60">{testBusy ? "Testing…" : "Test Connection"}</button>
-        <button type="submit" disabled={busy} className="rounded-xl bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60">{busy ? "Saving…" : "Save Settings"}</button>
+        <button type="submit" disabled={busy} className="rounded-xl bg-teal-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60">{busy ? "Saving…" : sheetUrlInput ? "Change Sheet" : "Save Settings"}</button>
       </div>
       {testResult && (testResult.ok
         ? <p className="rounded-lg border border-teal-500/30 bg-teal-500/5 p-3 text-xs text-teal-200">✓ Connected — "{testResult.spreadsheetTitle}"</p>
@@ -437,7 +487,7 @@ function DataBackupPanel() {
     </form>
 
     {status && <div className="mt-5 space-y-2 border-t border-slate-800 pt-4 text-sm">
-      <div className="flex justify-between"><span className="text-slate-400">Connection Status</span><span>{status.destination.enabled ? "Enabled" : "Disabled"}{!status.serviceAccountConfigured && " (server credential not configured)"}</span></div>
+      <div className="flex justify-between"><span className="text-slate-400">Connection Status</span><span>{status.destination.enabled ? "Enabled" : "Disabled"}{!status.google.connected && " (no Google account connected)"}</span></div>
       <div className="flex justify-between"><span className="text-slate-400">Last Backup</span><span>{status.latest ? new Date(status.latest.startedAt).toLocaleString() : "—"}</span></div>
       <div className="flex justify-between"><span className="text-slate-400">Backup Status</span><span className={statusColor(status.latest)}>{statusLabel(status.latest)}</span></div>
       <div className="flex justify-between"><span className="text-slate-400">Records</span><span>{status.latest ? status.latest.recordsProcessed.toLocaleString() : "—"}</span></div>

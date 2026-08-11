@@ -53,7 +53,7 @@ async function withApi(readOnlyMode: boolean, work: (base: string, authenticatio
   try { await work(`http://127.0.0.1:${address.port}`, authentication); } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 }
 
-interface HttpClient { request(path: string, init?: RequestInit): Promise<{ status: number; body: any }>; csrf: string; }
+interface HttpClient { request(path: string, init?: RequestInit): Promise<{ status: number; body: any }>; csrf: string; cookie: string; }
 
 async function login(base: string, credentials: { username: string; password: string }): Promise<HttpClient> {
   let cookie = "";
@@ -75,6 +75,7 @@ async function login(base: string, credentials: { username: string; password: st
   assert.equal(loginResponse.status, 200, "test admin login");
   return {
     csrf,
+    cookie,
     async request(path, init = {}) {
       const headers = new Headers(init.headers);
       headers.set("content-type", "application/json");
@@ -240,6 +241,29 @@ await withApi(false, async (base, authentication) => {
   check("a non-admin user cannot change the backup destination", forbiddenConfigWrite.status === 403 && forbiddenConfigWrite.body.error?.code === "FORBIDDEN");
   const forbiddenTestConnection = await viewerClient.request("/api/v1/admin/backup/test-connection", { method: "POST", body: JSON.stringify({ google_sheet_url: `https://docs.google.com/spreadsheets/d/${validSpreadsheetId}/edit` }) });
   check("a non-admin user cannot call Test Connection", forbiddenTestConnection.status === 403 && forbiddenTestConnection.body.error?.code === "FORBIDDEN");
+
+  // Google OAuth backup connection: interactive Admin-connected account,
+  // replacing the prior service-account credential entirely. No live
+  // Google OAuth client is configured in this test environment (no
+  // GOOGLE_OAUTH_CLIENT_ID/SECRET set) - "reachable and correctly gated,
+  // reports its own not-configured state honestly" is the real, valuable
+  // claim here; real Google sign-in is covered by test:backup-service's
+  // mocked-fetch assertions and (when available) real Browser UAT.
+  const statusBeforeConnect = await client.request("/api/v1/admin/backup/status");
+  check("status exposes oauthConfigured and a google.connected/email shape, never a token field", statusBeforeConnect.status === 200 && typeof statusBeforeConnect.body.data.oauthConfigured === "boolean" && typeof statusBeforeConnect.body.data.google?.connected === "boolean");
+  check("the status response never contains credential-shaped fields anywhere", !/access_token|refresh_token|client_secret|private_key/i.test(JSON.stringify(statusBeforeConnect.body)));
+  const connectAttempt = await client.request("/api/v1/admin/backup/google/connect", { method: "POST" });
+  check("connect honestly reports Google OAuth is not configured on the server, rather than pretending to start a flow", connectAttempt.status === 503 && connectAttempt.body.error?.code === "GOOGLE_OAUTH_NOT_CONFIGURED");
+  const forbiddenConnect = await viewerClient.request("/api/v1/admin/backup/google/connect", { method: "POST" });
+  check("a non-admin user cannot start a Google OAuth connect flow", forbiddenConnect.status === 403 && forbiddenConnect.body.error?.code === "FORBIDDEN");
+  const forbiddenDisconnect = await viewerClient.request("/api/v1/admin/backup/google/disconnect", { method: "POST" });
+  check("a non-admin user cannot disconnect the Google account", forbiddenDisconnect.status === 403 && forbiddenDisconnect.body.error?.code === "FORBIDDEN");
+  const adminDisconnectNoop = await client.request("/api/v1/admin/backup/google/disconnect", { method: "POST" });
+  check("an admin can call disconnect even when nothing is connected (idempotent, not an error)", adminDisconnectNoop.status === 200 && adminDisconnectNoop.body.data.connected === false);
+  const callbackMissingParams = await fetch(`${base}/api/v1/admin/backup/google/callback`, { redirect: "manual", headers: { cookie: client.cookie, origin: "http://test" } });
+  check("the OAuth callback redirects back into the app on failure rather than returning raw JSON", callbackMissingParams.status === 302 && (callbackMissingParams.headers.get("location") ?? "").includes("google_backup=error"));
+  const callbackUnknownState = await fetch(`${base}/api/v1/admin/backup/google/callback?state=unknown-state&code=fake-code`, { redirect: "manual", headers: { cookie: client.cookie, origin: "http://test" } });
+  check("an unrecognized/expired state redirects with an error, never a raw 500", callbackUnknownState.status === 302 && (callbackUnknownState.headers.get("location") ?? "").includes("google_backup=error"));
 
   // Cron endpoint: authenticated by CRON_SECRET only, never a session -
   // must be reachable with no cookies/CSRF token at all (that's the whole

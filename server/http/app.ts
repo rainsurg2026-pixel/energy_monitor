@@ -10,9 +10,11 @@ import { authContext, createAuthContextMiddleware } from "../auth/http";
 import { PERMISSIONS } from "../authz/permissions";
 import { requirePermission, type AuthenticatedPrincipal, isAuthorizationError, type Role } from "../authz";
 import { createCorsMiddleware, createOriginPolicy, createCsrfMiddleware, csrfCookieOptions, issueCsrfCookie, clearCookie, parseCookieHeader, serializeCookie, SESSION_COOKIE_NAME, CSRF_COOKIE_NAME, sessionCookieOptions, createRateLimitMiddleware, InMemoryRateLimitStore, type RateLimitStore } from "./security";
-import { loadServiceAccountCredential, isAuthorizedCronRequest } from "../backup/backupConfig";
+import { isAuthorizedCronRequest } from "../backup/backupConfig";
 import { runBackup, testBackupConnection } from "../backup/backupService";
 import { canonicalSheetUrl, extractSpreadsheetId, maskSpreadsheetId } from "../backup/googleSheetsUrl";
+import { loadGoogleOAuthClientConfig, buildAuthorizationUrl, exchangeCodeForTokens, fetchGoogleAccountEmail, revokeGoogleToken } from "../backup/googleOAuthClient";
+import { makeCodeVerifier, makeCodeChallenge, makeOAuthState, hashState, encryptSecret, decryptSecret } from "../backup/googleOAuthCrypto";
 
 export interface AppDependencies {
   repository: BackendRepository;
@@ -151,15 +153,19 @@ export function createApp(dependencies: AppDependencies) {
 
   app.get("/api/v1/admin/backup/status", asyncRoute(async (_req, res) => {
     withPermission(res, PERMISSIONS.backupRestoreManage);
-    const [serviceAccountConfigured, destination, latest, recent] = await Promise.all([
-      Promise.resolve(loadServiceAccountCredential() !== null),
+    const oauthConfigured = loadGoogleOAuthClientConfig(dependencies.config.appOrigin) !== null;
+    const [destination, latest, recent] = await Promise.all([
       dependencies.repository.getBackupConfig(),
       dependencies.repository.latestBackupRun(),
       dependencies.repository.listBackupRuns(10)
     ]);
+    const connection = destination.connectedGoogleUserId !== null
+      ? await dependencies.repository.getGoogleSheetsConnection(destination.connectedGoogleUserId)
+      : null;
     sendOk(res, {
-      configured: serviceAccountConfigured && Boolean(destination.spreadsheetId),
-      serviceAccountConfigured,
+      configured: oauthConfigured && connection !== null && Boolean(destination.spreadsheetId),
+      oauthConfigured,
+      google: { connected: connection !== null, email: connection?.email ?? null },
       destination: { sheetUrl: destination.sheetUrl, spreadsheetIdMasked: maskSpreadsheetId(destination.spreadsheetId), enabled: destination.enabled, updatedAt: destination.updatedAt },
       schedule: "Daily",
       latest,
@@ -181,20 +187,110 @@ export function createApp(dependencies: AppDependencies) {
     withPermission(res, PERMISSIONS.backupRestoreManage);
     const body = parseObjectBody(req.body);
     if (typeof body.google_sheet_url !== "string" || !body.google_sheet_url.trim()) throw new HttpError(400, "INVALID_SHEET_URL", "google_sheet_url is required.");
-    const result = await testBackupConnection(body.google_sheet_url);
+    const result = await testBackupConnection(body.google_sheet_url, dependencies.repository, dependencies.config.sessionSecret, dependencies.config.appOrigin);
     sendOk(res, result);
   }));
   app.post("/api/v1/admin/backup/run", asyncRoute(async (_req, res) => {
     const actor = withPermission(res, PERMISSIONS.backupRestoreManage);
-    const result = await runBackup(dependencies.repository, "manual", actorNumber(actor.userId));
+    const result = await runBackup(dependencies.repository, "manual", actorNumber(actor.userId), dependencies.config.sessionSecret, dependencies.config.appOrigin);
     sendOk(res, result.log);
   }));
+
+  // --- Google OAuth (Admin-initiated backup account connection) ---
+  // Interactive authorization-code + PKCE flow, replacing the prior
+  // service-account credential entirely. See server/backup/googleOAuthClient.ts
+  // and googleOAuthCrypto.ts for the crypto/HTTP detail; only the route
+  // wiring lives here.
+  app.post("/api/v1/admin/backup/google/connect", asyncRoute(async (_req, res) => {
+    const actor = withPermission(res, PERMISSIONS.backupRestoreManage);
+    const oauthConfig = loadGoogleOAuthClientConfig(dependencies.config.appOrigin);
+    if (!oauthConfig) throw new HttpError(503, "GOOGLE_OAUTH_NOT_CONFIGURED", "Google OAuth is not configured on the server (GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET missing).");
+    const sessionId = Number(actor.sessionId ?? "");
+    if (!Number.isSafeInteger(sessionId) || sessionId < 1) throw new HttpError(500, "INVALID_SESSION", "Current session identity is invalid.");
+    const verifier = makeCodeVerifier();
+    const challenge = makeCodeChallenge(verifier);
+    const state = makeOAuthState();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    await dependencies.repository.createGoogleOAuthState({
+      stateHash: hashState(state),
+      userId: actorNumber(actor.userId),
+      sessionId,
+      encryptedCodeVerifier: encryptSecret(verifier, dependencies.config.sessionSecret),
+      expiresAt
+    });
+    sendOk(res, { authorizationUrl: buildAuthorizationUrl(oauthConfig, state, challenge) });
+  }));
+  // Google redirects the browser here via a top-level GET - it cannot
+  // carry the app's double-submit CSRF token (SAFE_METHODS already
+  // exempts GET from that check), so the single-use, session-bound
+  // `state` parameter IS this route's CSRF protection (RFC 6749 SS10.12).
+  // On any failure this redirects back into the app with a status query
+  // param rather than returning raw JSON - the "caller" here is a full
+  // browser navigation, not a fetch() call.
+  app.get("/api/v1/admin/backup/google/callback", asyncRoute(async (req, res) => {
+    const finish = (status: "connected" | "error", message?: string): void => {
+      const params = new URLSearchParams({ google_backup: status });
+      if (message) params.set("google_backup_message", message);
+      res.redirect(302, `/?${params.toString()}`);
+    };
+    const stateParam = typeof req.query.state === "string" ? req.query.state : null;
+    const code = typeof req.query.code === "string" ? req.query.code : null;
+    const googleError = typeof req.query.error === "string" ? req.query.error : null;
+    if (googleError) { finish("error", "Google sign-in was cancelled or denied."); return; }
+    if (!stateParam || !code) { finish("error", "Invalid Google sign-in response."); return; }
+
+    const stateRecord = await dependencies.repository.consumeGoogleOAuthState(hashState(stateParam));
+    if (!stateRecord || new Date(stateRecord.expiresAt).getTime() < Date.now()) { finish("error", "This Google sign-in link expired or was already used. Please try connecting again."); return; }
+
+    let actor: AuthenticatedPrincipal;
+    try { actor = withPermission(res, PERMISSIONS.backupRestoreManage); }
+    catch { finish("error", "Please sign in as an Admin and try connecting again."); return; }
+    if (Number(actor.sessionId ?? "") !== stateRecord.sessionId || actorNumber(actor.userId) !== stateRecord.userId) {
+      finish("error", "This Google sign-in must be completed in the same admin session that started it. Please try connecting again.");
+      return;
+    }
+    if (dependencies.config.readOnlyMode) { finish("error", "The system is currently in read-only maintenance mode. Please try again later."); return; }
+
+    const oauthConfig = loadGoogleOAuthClientConfig(dependencies.config.appOrigin);
+    if (!oauthConfig) { finish("error", "Google OAuth is not configured on the server."); return; }
+
+    let codeVerifier: string;
+    try { codeVerifier = decryptSecret(stateRecord.encryptedCodeVerifier, dependencies.config.sessionSecret); }
+    catch { finish("error", "This Google sign-in could not be completed. Please try connecting again."); return; }
+
+    try {
+      const tokens = await exchangeCodeForTokens(oauthConfig, code, codeVerifier);
+      if (!tokens.refreshToken) { finish("error", "Google did not grant offline access. Please try connecting again and approve all requested permissions."); return; }
+      const email = await fetchGoogleAccountEmail(tokens.accessToken);
+      const encryptedRefreshToken = encryptSecret(tokens.refreshToken, dependencies.config.sessionSecret);
+      await dependencies.repository.upsertGoogleSheetsConnection({ userId: stateRecord.userId, encryptedRefreshToken, email });
+      await dependencies.repository.setBackupConnectedGoogleUser(stateRecord.userId, stateRecord.userId, res.locals.requestId);
+      finish("connected");
+    } catch {
+      finish("error", "Google sign-in failed. Please try connecting again.");
+    }
+  }));
+  app.post("/api/v1/admin/backup/google/disconnect", asyncRoute(async (_req, res) => {
+    const actor = withPermission(res, PERMISSIONS.backupRestoreManage);
+    const destination = await dependencies.repository.getBackupConfig();
+    if (destination.connectedGoogleUserId !== null) {
+      const encryptedRefreshToken = await dependencies.repository.getGoogleSheetsConnectionSecret(destination.connectedGoogleUserId);
+      if (encryptedRefreshToken) {
+        try { await revokeGoogleToken(decryptSecret(encryptedRefreshToken, dependencies.config.sessionSecret)); }
+        catch { /* best-effort revoke with Google - the local disconnect proceeds regardless, see revokeGoogleToken's own contract */ }
+      }
+      await dependencies.repository.deleteGoogleSheetsConnection(destination.connectedGoogleUserId);
+    }
+    await dependencies.repository.setBackupConnectedGoogleUser(null, actorNumber(actor.userId), res.locals.requestId);
+    sendOk(res, { connected: false });
+  }));
+
   // Vercel Cron authenticates via a shared-secret bearer header (Vercel's
   // documented convention for securing cron endpoints), never a user
   // session - this route is intentionally outside the session/CSRF stack.
   app.post("/api/v1/cron/backup", asyncRoute(async (req, res) => {
     if (!isAuthorizedCronRequest(req.header("authorization"))) throw new HttpError(401, "UNAUTHORIZED", "Invalid or missing cron authorization.");
-    const result = await runBackup(dependencies.repository, "scheduled", null);
+    const result = await runBackup(dependencies.repository, "scheduled", null, dependencies.config.sessionSecret, dependencies.config.appOrigin);
     sendOk(res, result.log);
   }));
 

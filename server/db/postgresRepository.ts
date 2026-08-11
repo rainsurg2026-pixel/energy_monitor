@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import type { MonthlyLog, UpsRecord } from "../../src/types";
 import { withTransaction, type DbExecutor, query } from "./pool";
 import { HttpError } from "../errors";
-import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsGroupHistoryRecord } from "../repositories/contracts";
+import type { BackendRepository, BackupConfigRecord, BackupLogRecord, CompleteBackupInput, CreateGoogleOAuthStateInput, GoogleOAuthStateRecord, GoogleSheetsConnectionRecord, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, StartBackupInput, UpdateBackupConfigInput, UpdateSettingsInput, UpsertGoogleSheetsConnectionInput, UpsGroupHistoryRecord } from "../repositories/contracts";
 import { maskSpreadsheetId } from "../backup/googleSheetsUrl";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
@@ -376,21 +376,21 @@ export class PostgresRepository implements BackendRepository {
   }
 
   async getBackupConfig(): Promise<BackupConfigRecord> {
-    const result = await query<{ spreadsheet_id: string | null; sheet_url: string | null; enabled: boolean; updated_by: string | null; updated_at: string | null }>(
+    const result = await query<{ spreadsheet_id: string | null; sheet_url: string | null; enabled: boolean; updated_by: string | null; updated_at: string | null; connected_google_user_id: string | null }>(
       this.executor,
-      "SELECT spreadsheet_id, sheet_url, enabled, updated_by, updated_at FROM public.backup_config WHERE id = 1"
+      "SELECT spreadsheet_id, sheet_url, enabled, updated_by, updated_at, connected_google_user_id FROM public.backup_config WHERE id = 1"
     );
     const row = result.rows[0];
-    if (!row) return { spreadsheetId: null, sheetUrl: null, enabled: false, updatedBy: null, updatedAt: null };
-    return { spreadsheetId: row.spreadsheet_id, sheetUrl: row.sheet_url, enabled: row.enabled, updatedBy: row.updated_by === null ? null : Number(row.updated_by), updatedAt: row.updated_at };
+    if (!row) return { spreadsheetId: null, sheetUrl: null, enabled: false, updatedBy: null, updatedAt: null, connectedGoogleUserId: null };
+    return { spreadsheetId: row.spreadsheet_id, sheetUrl: row.sheet_url, enabled: row.enabled, updatedBy: row.updated_by === null ? null : Number(row.updated_by), updatedAt: row.updated_at, connectedGoogleUserId: row.connected_google_user_id === null ? null : Number(row.connected_google_user_id) };
   }
 
   async updateBackupConfig(input: UpdateBackupConfigInput): Promise<BackupConfigRecord> {
     if (!this.pool) throw new Error("A transaction-bound repository cannot start a nested transaction.");
     return withTransaction(this.pool, async client => {
       const before = await client.query<{ spreadsheet_id: string | null; enabled: boolean }>("SELECT spreadsheet_id, enabled FROM public.backup_config WHERE id = 1");
-      const result = await client.query<{ spreadsheet_id: string | null; sheet_url: string | null; enabled: boolean; updated_by: string | null; updated_at: string | null }>(
-        "INSERT INTO public.backup_config(id, spreadsheet_id, sheet_url, enabled, updated_by, updated_at) VALUES (1, $1, $2, $3, $4, now()) ON CONFLICT (id) DO UPDATE SET spreadsheet_id = EXCLUDED.spreadsheet_id, sheet_url = EXCLUDED.sheet_url, enabled = EXCLUDED.enabled, updated_by = EXCLUDED.updated_by, updated_at = now() RETURNING spreadsheet_id, sheet_url, enabled, updated_by, updated_at",
+      const result = await client.query<{ spreadsheet_id: string | null; sheet_url: string | null; enabled: boolean; updated_by: string | null; updated_at: string | null; connected_google_user_id: string | null }>(
+        "INSERT INTO public.backup_config(id, spreadsheet_id, sheet_url, enabled, updated_by, updated_at) VALUES (1, $1, $2, $3, $4, now()) ON CONFLICT (id) DO UPDATE SET spreadsheet_id = EXCLUDED.spreadsheet_id, sheet_url = EXCLUDED.sheet_url, enabled = EXCLUDED.enabled, updated_by = EXCLUDED.updated_by, updated_at = now() RETURNING spreadsheet_id, sheet_url, enabled, updated_by, updated_at, connected_google_user_id",
         [input.spreadsheetId, input.sheetUrl, input.enabled, input.updatedBy]
       );
       const row = result.rows[0];
@@ -401,8 +401,75 @@ export class PostgresRepository implements BackendRepository {
         "INSERT INTO audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         ["user", input.updatedBy, "backup_destination_change", "backup_config", "1", JSON.stringify({ spreadsheetIdMasked: maskSpreadsheetId(before.rows[0]?.spreadsheet_id ?? null), enabled: before.rows[0]?.enabled ?? false }), JSON.stringify({ spreadsheetIdMasked: maskSpreadsheetId(row.spreadsheet_id), enabled: row.enabled }), input.correlationId]
       );
-      return { spreadsheetId: row.spreadsheet_id, sheetUrl: row.sheet_url, enabled: row.enabled, updatedBy: row.updated_by === null ? null : Number(row.updated_by), updatedAt: row.updated_at };
+      return { spreadsheetId: row.spreadsheet_id, sheetUrl: row.sheet_url, enabled: row.enabled, updatedBy: row.updated_by === null ? null : Number(row.updated_by), updatedAt: row.updated_at, connectedGoogleUserId: row.connected_google_user_id === null ? null : Number(row.connected_google_user_id) };
     });
+  }
+
+  async setBackupConnectedGoogleUser(userId: number | null, actorUserId: number | null, correlationId: string): Promise<void> {
+    if (!this.pool) throw new Error("A transaction-bound repository cannot start a nested transaction.");
+    await withTransaction(this.pool, async client => {
+      const before = await client.query<{ connected_google_user_id: string | null }>("SELECT connected_google_user_id FROM public.backup_config WHERE id = 1");
+      await client.query(
+        "INSERT INTO public.backup_config(id, connected_google_user_id, updated_at) VALUES (1, $1, now()) ON CONFLICT (id) DO UPDATE SET connected_google_user_id = EXCLUDED.connected_google_user_id, updated_at = now()",
+        [userId]
+      );
+      await client.query(
+        "INSERT INTO audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        ["user", actorUserId, userId === null ? "backup_google_disconnected" : "backup_google_connected", "backup_config", "1", JSON.stringify({ connectedGoogleUserId: before.rows[0]?.connected_google_user_id ?? null }), JSON.stringify({ connectedGoogleUserId: userId }), correlationId]
+      );
+    });
+  }
+
+  async createGoogleOAuthState(input: CreateGoogleOAuthStateInput): Promise<void> {
+    await query(
+      this.executor,
+      "INSERT INTO public.google_oauth_states(state_hash, user_id, session_id, encrypted_code_verifier, expires_at) VALUES ($1,$2,$3,$4,$5)",
+      [input.stateHash, input.userId, input.sessionId, input.encryptedCodeVerifier, input.expiresAt]
+    );
+  }
+
+  async consumeGoogleOAuthState(stateHash: string): Promise<GoogleOAuthStateRecord | null> {
+    const result = await query<{ state_hash: string; user_id: string; session_id: string; encrypted_code_verifier: string; expires_at: string }>(
+      this.executor,
+      "DELETE FROM public.google_oauth_states WHERE state_hash = $1 RETURNING state_hash, user_id, session_id, encrypted_code_verifier, expires_at",
+      [stateHash]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return { stateHash: row.state_hash, userId: Number(row.user_id), sessionId: Number(row.session_id), encryptedCodeVerifier: row.encrypted_code_verifier, expiresAt: row.expires_at };
+  }
+
+  async upsertGoogleSheetsConnection(input: UpsertGoogleSheetsConnectionInput): Promise<GoogleSheetsConnectionRecord> {
+    const result = await query<{ user_id: string; email: string | null; updated_at: string }>(
+      this.executor,
+      "INSERT INTO public.google_sheets_connections(user_id, encrypted_refresh_token, email, updated_at) VALUES ($1,$2,$3,now()) ON CONFLICT (user_id) DO UPDATE SET encrypted_refresh_token = EXCLUDED.encrypted_refresh_token, email = EXCLUDED.email, updated_at = now() RETURNING user_id, email, updated_at",
+      [input.userId, input.encryptedRefreshToken, input.email]
+    );
+    const row = result.rows[0];
+    return { userId: Number(row.user_id), email: row.email, updatedAt: row.updated_at };
+  }
+
+  async getGoogleSheetsConnection(userId: number): Promise<GoogleSheetsConnectionRecord | null> {
+    const result = await query<{ user_id: string; email: string | null; updated_at: string }>(
+      this.executor,
+      "SELECT user_id, email, updated_at FROM public.google_sheets_connections WHERE user_id = $1",
+      [userId]
+    );
+    const row = result.rows[0];
+    return row ? { userId: Number(row.user_id), email: row.email, updatedAt: row.updated_at } : null;
+  }
+
+  async getGoogleSheetsConnectionSecret(userId: number): Promise<string | null> {
+    const result = await query<{ encrypted_refresh_token: string }>(
+      this.executor,
+      "SELECT encrypted_refresh_token FROM public.google_sheets_connections WHERE user_id = $1",
+      [userId]
+    );
+    return result.rows[0]?.encrypted_refresh_token ?? null;
+  }
+
+  async deleteGoogleSheetsConnection(userId: number): Promise<void> {
+    await query(this.executor, "DELETE FROM public.google_sheets_connections WHERE user_id = $1", [userId]);
   }
 
   async withTransaction<T>(work: (repository: BackendRepository) => Promise<T>): Promise<T> {

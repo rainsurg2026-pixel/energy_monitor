@@ -2,6 +2,95 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Backup: Google OAuth (Admin-connected account) replaces service-account credential
+
+Change of requirement: Google Backup no longer uses a service-account
+JSON credential (`GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON`) at all - the Admin
+must connect their own Google account through the app via interactive
+OAuth2 (authorization-code + PKCE, "Web application" client type). This
+is a different Google Cloud OAuth client type from Desktop's own
+Electron-only "Desktop app" client (`src/electron/googleAuth.ts`) - the
+two are not interchangeable, and Desktop's flow was left untouched.
+
+**Reused, not duplicated**: `google_oauth_states` and
+`google_sheets_connections` (created by migration `004` but never
+previously referenced by any server code) are now the actual OAuth
+state/token store. `backup_config` gained one new nullable FK column
+(`connected_google_user_id -> users.id`, migration
+`011_backup_google_oauth_link.sql`, additive/idempotent, does not modify
+001-010) rather than a second config table - it stays config-only, no
+credential column. `deleteUser()`'s existing `ON DELETE SET NULL`-style
+FK pattern is reused for what happens if the connected admin is deleted.
+
+**New code**: `server/backup/googleOAuthCrypto.ts` (PKCE
+verifier/challenge, single-use session-bound `state`, AES-256-GCM token
+encryption with the key HKDF-derived from the already-provisioned
+`SESSION_SECRET` - no new secret to provision) and
+`server/backup/googleOAuthClient.ts` (direct `fetch` calls to Google's
+authorization/token/userinfo/revoke endpoints, no SDK dependency added).
+`backupService.ts` rewritten to resolve an access token from the
+connected account (refreshing via the stored refresh token when
+expired) instead of signing a service-account JWT;
+`server/backup/googleServiceAccountAuth.ts` deleted (zero remaining
+importers, confirmed via grep before deletion). Three new routes in
+`server/http/app.ts`: `POST /admin/backup/google/connect` (starts the
+flow), `GET /admin/backup/google/callback` (Google's redirect target -
+validates `state`, exchanges the code, stores the encrypted token,
+redirects back into the app with a `?google_backup=...` query param
+rather than ever returning raw JSON to a browser navigation), `POST
+/admin/backup/google/disconnect` (deletes the stored connection,
+best-effort revokes the token with Google, audited). All three are
+admin-only via the existing `backupRestoreManage` permission - no second
+authorization system. Frontend `DataBackupPanel` (Settings -> Data
+Backup) gained a Google Account section (Not Connected/Connected badge,
+Connect/Disconnect buttons, masked connected email, an
+OAuth-not-configured warning) matching the existing design system.
+
+**Security properties verified by design/code review**: `state` is
+single-use (`DELETE ... RETURNING` on first read), short-lived (10 min),
+and bound to the initiating session (`Principal.sessionId`, already
+existed, populated by `authService.ts`); `access_type=offline` +
+`prompt=consent` forces Google to issue a refresh token; tokens are
+encrypted at rest and never appear in any API response, log line, or the
+frontend bundle (confirmed by the same static-scan technique used for
+the prior service-account credential:
+`access_token`/`refresh_token`/`client_secret`/`private_key` grepped
+across `server/backup/*`, `server/http/app.ts`, and `dist/`); the
+callback route is a GET (dictated by the OAuth redirect mechanism, not a
+choice) so the generic method-based `READ_ONLY_MODE` guard cannot see
+its write side-effect - an explicit manual check was added inside the
+handler.
+
+**Tests**: `scripts/test-backup-service.ts` fully rewritten around the
+OAuth primitives and mocked Google endpoints (real AES-GCM/HKDF/PKCE
+math, `fetch` fully mocked, only locally-generated synthetic token
+strings) - 64 assertions passing. `scripts/test-api-foundation.ts`
+extended with RBAC coverage for all three new routes (non-admin 403 on
+connect/disconnect, admin gets an honest `503
+GOOGLE_OAUTH_NOT_CONFIGURED` from connect in a credential-less test
+environment rather than a fake success, disconnect is idempotent when
+nothing is connected, the OAuth callback redirects with an error rather
+than a raw 500/JSON on missing params or an unrecognized `state`, and a
+secret-shaped-string scan of `/admin/backup/status`'s response body).
+Full local regression battery (all 20 relevant suites) re-run fresh -
+zero regressions. `npm run lint` and `npm run build` both clean.
+
+**Migration `011_backup_google_oauth_link.sql`: APPLIED to Preview**
+(`tofdgndrrpnnyhbuurbx`) and verified live - `backup_config` now has the
+new nullable `connected_google_user_id bigint` column, `schema_migrations`
+shows 11 rows, existing `backup_config` data (empty table, pre-existing
+state) untouched.
+
+**Real Google OAuth: NOT VERIFIED - EXTERNAL CREDENTIAL BLOCKER.**
+`GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET` are unset both
+locally and in every Vercel Preview environment (re-checked fresh this
+pass, not assumed from the prior service-account-era check). The
+`/admin/backup/google/connect` route correctly reports this rather than
+pretending to start a flow; a real Google sign-in, consent screen, and
+token exchange remain unverified until an approved "Web application"
+OAuth client is provisioned. **Browser UAT: NOT VERIFIED** this pass -
+see the Browser UAT section below for the current blocker.
+
 ## 2026-08-11 Preview database migration (Supabase access repaired)
 
 Supabase MCP access to the authoritative project (`tofdgndrrpnnyhbuurbx`,
