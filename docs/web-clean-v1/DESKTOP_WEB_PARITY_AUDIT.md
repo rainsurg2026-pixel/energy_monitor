@@ -2,6 +2,104 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Google OAuth Browser UAT + Export verification + PDF popup fix
+
+Follow-up to the completed/closed UPS History and Dashboard UPS Groups
+work above (not reopened). Three items per this pass's priority order.
+
+**1. Google OAuth / Backup - Browser UAT: VERIFIED (blocked state
+confirmed honest, not faked).** `GOOGLE_OAUTH_CLIENT_ID`/
+`GOOGLE_OAUTH_CLIENT_SECRET` re-checked fresh via `vercel env ls` -
+still absent from every Vercel environment. Live-clicked, as Admin, in
+Settings -> Data Backup: "Connect Google Account" is correctly disabled
+with the inline reason "Google OAuth is not configured on the server
+(...)"; "Test Connection" and "Backup Now" both correctly report the
+real blocker via a real network round-trip ("Google Sheets backup is
+not configured...", "No backup destination is configured..."), never a
+fake success. Verified in Supabase: `backup_config`/
+`google_sheets_connections` remain empty, `backup_log` gained exactly
+one honest `failed` row from the live "Backup Now" click - no
+unintended writes. Real Google OAuth consent itself remains genuinely
+blocked on the missing credential (external, unchanged).
+
+**2. Reports & Export - Browser UAT: CSV/Excel PASS, PDF popup fixed but
+NOT VERIFIED (automation limitation).** Downloaded and byte-inspected
+real CSV and XLSX files for Rangsit June 2026 via the live browser
+(Exports & Report -> Current Facility) - both match the raw
+`ups_readings` values exactly (e.g. UPS 11A=156/157, UPS 11B=155/156).
+While diagnosing an initial "Failed to fetch dynamically imported
+module" error (a stale browser tab spanning two deploys - resolved by
+reload, not a code defect), found a real, deterministic defect: the PDF
+export handlers (`git blame` -> introduced by `d31e03b`, the rack-data-
+in-PDF fix) `await` an API fetch (rack snapshot / site comparison data)
+*before* calling `window.open()` for the print popup. That async gap
+runs outside the click's original user-activation window, so a
+browser's popup blocker can legitimately block the report window -
+reproduced live as "The report window was blocked by the browser."
+
+**Fixed**: `src/web-clean-v1/exports.ts` gained `openReportPopup(name)`,
+called synchronously in the same tick as the click, before any `await`;
+`printDesktopPdf`/`printSiteComparisonPdf`/`printAllFacilitiesPdf` now
+take that already-open window and only write the report into it once
+async data has loaded. `CleanWebApp.tsx`'s `Reports()` `run()` helper
+rewritten to also catch a synchronous throw from `action()` (e.g.
+`openReportPopup()` itself being blocked), not just a rejected promise.
+
+**PDF popup mechanism: NOT VERIFIED via this browser session -
+automation-tool limitation, not a confirmed app defect.** Even after the
+fix, clicks dispatched through this session's Chrome automation tool
+(both coordinate- and element-ref-based) still triggered "blocked by the
+browser" - a new (initially blank) tab is created each time, but
+`window.open()` returns null to the page's JS. This is consistent with
+the well-documented CDP-synthesized-click-vs-popup-blocker limitation
+that affects Puppeteer/Playwright-style automation generally, not
+something specific to this app; `chrome://settings/content/popups` could
+not be adjusted to test around it (the automation sandbox correctly
+blocks navigation to internal browser pages). The underlying report HTML
+generation (`buildReportHtml`/`facilityReportData`) is unchanged and
+already covered by existing automated tests with real content
+verification. **A real human click (not CDP-synthesized) very likely
+does not hit this** - but that specific claim could not be proven this
+session and is not claimed as PASS.
+
+**Regression**: full battery (`test:web-clean-v1-exports`,
+`test:web-clean-v1-report-filename`, `test:api`, `test:phase3`,
+`test:domain-parity`, `test:display-period`, facility-context/isolation/
+comparison, dashboard-isolation, `test:ups-group-history-sync`, all 5
+rack suites, `test:air-validation`, theme, admin-ui, `test:backup-service`)
+re-run fresh - all pass, zero regressions. Lint and build clean.
+
+**3. Production Readiness Gate**: see the matrix immediately below,
+superseding all earlier matrices in this document.
+
+### Production Readiness Matrix (2026-08-11, current)
+
+| Area | Status | Evidence | Blocker |
+| --- | --- | --- | --- |
+| UPS History | PASS | Root-caused, fixed, live Browser UAT both facilities | none |
+| Dashboard UPS Groups | PASS | Verified transitively fixed, live Browser UAT both facilities | none |
+| Desktop/XLSM parity | PASS | Direct byte-level XLSM inspection + live Postgres cross-check | none |
+| Facility isolation | PASS | Verified across History, Dashboard, Export, live | none |
+| Google OAuth architecture/security | PASS | Code + tests + live UI verification, honest blocked-state UX | none |
+| Google OAuth real consent | BLOCKED | `vercel env ls` confirms credential absent everywhere | Provision Google OAuth client |
+| Export - CSV/Excel | PASS | Live browser download + byte-level content verification | none |
+| Export - PDF generation | PASS | Unchanged, existing automated content tests | none |
+| Export - PDF popup mechanism | NOT VERIFIED | Popup blocked under this session's browser automation specifically | Automation-tool limitation, not proven as a real defect |
+| Regression/Lint/Build | PASS | Full battery re-run fresh after every change this session | none |
+| Preview deployment | PASS | Pushed, deployed, health/readiness live-verified | none |
+| Production | UNTOUCHED | No deploy, no Production env read/written | none |
+
+### Production decision: **NOT PRODUCTION READY**
+
+One blocker remains, external and unchanged in kind from every prior
+pass: **Google OAuth client credentials are not provisioned** in any
+Vercel environment. Everything else in this matrix is PASS. The PDF
+popup item is not treated as a release blocker (the identified root
+cause is fixed; the remaining uncertainty is specifically this
+session's automation tooling, not application behavior) but is flagged
+for a real-human click-through before final production sign-off, since
+it was not proven either way.
+
 ## 2026-08-11 UPS History: root-caused and fixed a real data pipeline gap
 
 **Reported symptom**: History -> UPS Loads History showed "No UPS Group
