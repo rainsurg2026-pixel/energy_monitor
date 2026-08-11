@@ -2,6 +2,102 @@
 
 Audit date: 2026-08-10 (Asia/Bangkok), follow-up verification 2026-08-11.
 
+## 2026-08-11 Preview database migration (Supabase access repaired)
+
+Supabase MCP access to the authoritative project (`tofdgndrrpnnyhbuurbx`,
+`energy_monitor`, `ap-southeast-1`) was repaired this pass. Read-only
+verification first, then migrations applied through the repository's own
+mechanism (`server/db/migrate.ts`'s exact behavior replicated: each
+migration file's raw SQL followed by
+`INSERT INTO schema_migrations(version)`, in filename order), no code
+changes.
+
+**Pre-migration state (read-only verified)**: only `001_phase2_foundation`
+and `002_phase3_auth_security` applied - corroborated three independent
+ways, not just the tracking table: the live `pg_policies` list matched
+001+002's scope exactly, `backup_config`/`backup_log`/`rack_capacity_history`
+were confirmed absent via `information_schema.tables`, and RLS was enabled
+on all 34 existing tables with zero grants to `anon`/`authenticated`/
+`service_role` anywhere. Real data already present: 2 sites (Rangsit id 8,
+Srinakarin id 9), Display Period configured (`2026-01`-`2027-12`,
+`row_version 9`), 134 `monthly_periods` rows.
+
+**Safety analysis before applying anything**: re-read migrations 003-009
+in full. All are additive-only (`CREATE TABLE IF NOT EXISTS`/
+`ADD COLUMN IF NOT EXISTS`, zero `DROP`), idempotent (`IF NOT EXISTS`
+guards on every policy), and none of their target tables existed yet - no
+conflict risk. Exactly one hard ordering dependency: `009` does
+`ALTER TABLE public.backup_log ADD COLUMN ...`, which requires `008` to
+have run first - satisfied by applying strictly in filename order.
+`005`'s assertions against `rack_unit_capacity_images` target a table
+that already existed (created by `001`) with its policy already correctly
+in place - confirmed idempotent no-op, not a conflict.
+
+**Applied**: `003_workbook_source_retention`, `004_google_sheets_oauth`,
+`005_rack_history_and_images`, `006_section_save_timestamps`,
+`007_ups_group_history`, `008_backup_log`, `009_backup_config` - all
+succeeded, no conflicts encountered, nothing forced.
+
+**New forward migration - a real permission gap, found and fixed**:
+Preview verification found `energy_monitor_runtime` had `SELECT/INSERT/
+UPDATE` but no `DELETE` on `public.users` (migration `002`, already-applied
+history, was never modified) - meaning the application's existing
+`deleteUser()` (`DELETE FROM public.users WHERE id = $1`) would fail with
+a real Postgres permission error against this database, undetected all
+session because it was only ever exercised against the in-memory
+repository test double. Created `db/migrations/010_users_delete_grant.sql`
+- a single `GRANT DELETE ON TABLE public.users TO energy_monitor_runtime;`,
+minimal scope, no other privilege touched, no other role touched. Applied
+successfully.
+
+**Post-migration verification (all re-checked live, not assumed)**:
+- Migration tracking: `schema_migrations` now has 10 rows (`001`-`010`),
+  001/002's `applied_at` unchanged, 003-010 timestamped this session.
+- Tables: `workbook_source_versions`, `google_oauth_states`,
+  `google_sheets_connections`, `rack_capacity_history`, `ups_group_history`,
+  `backup_log`, `backup_config` all exist.
+- `backup_config` columns exactly match the intended non-secret shape
+  (`id`/`spreadsheet_id`/`sheet_url`/`enabled`/`updated_by`/`updated_at`)
+  - no credential column. `backup_log.spreadsheet_id` exists.
+  `monthly_periods` gained all 4 `last_saved_*` columns.
+- RLS: all 7 new tables show `rls_enabled = true` with exactly 1 policy
+  each; `anon`/`authenticated`/`service_role`/`PUBLIC` confirmed with zero
+  grants on any of them.
+- Grants: `energy_monitor_runtime` on `public.users` is now
+  `DELETE, INSERT, SELECT, UPDATE` - the gap is closed.
+- Runtime role architecture re-confirmed: `energy_monitor_runtime` itself
+  cannot log in (`rolcanlogin=false`) and does not bypass RLS; its two
+  login-capable members are `energy_monitor_api` and
+  `energy_monitor_preview` (both `rolsuper=false, rolbypassrls=false`) -
+  `postgres` is only a member (as it is of every role), never the
+  application's own runtime connection role.
+- Data integrity: sites (Rangsit id 8, Srinakarin id 9), Display Period
+  (`row_version 9`, same `updated_at`), and the 134 `monthly_periods` rows
+  are byte-for-byte unchanged - none of the applied migrations touch
+  existing rows (only new tables and nullable new columns).
+
+**Tests**: full local regression battery re-run fresh after the migration
+work (`test:api` 89, `test:domain-parity` 24, `test:display-period` 10,
+`test:web-clean-v1-facility-context` 8, `test:facility-isolation` 15,
+`test:facility-comparison` 54, `test:dashboard-facility-isolation` 13,
+`test:web-clean-v1-dashboard-ups-mapping` 13, all 5 rack suites,
+`test:air-validation`, `test:web-clean-v1-theme`,
+`test:web-clean-v1-admin-ui`, `test:web-clean-v1-report-filename`,
+`test:web-clean-v1-exports` 7+52, `test:backup-service` 38, `test:phase3`)
+- all pass, zero regressions. `npm run lint` and `npm run build` both
+clean. Note: these are the local suites against the in-memory repository
+double (no `DATABASE_URL` credential is available to this session to run
+`scripts/test-postgres-foundation.ts` directly against the real DB - a
+separate, narrower constraint from the MCP access that was just repaired).
+
+**Remaining blockers, unchanged**: Browser UAT (Chrome extension not
+connected - not re-attempted this pass per explicit instruction to
+migrate schema first) and Preview real Google Backup integration
+(credential still not provisioned in any Vercel environment). This pass's
+own migration work is the item that was previously blocking Backup's
+"Preview DB" gate - `backup_config`/`backup_log` now exist in Preview, so
+that specific sub-blocker is resolved; the Google credential itself is not.
+
 ## 2026-08-11 Final release-readiness audit: NOT PRODUCTION READY
 
 Verification-only pass, no code changes. Re-verified from fresh evidence
