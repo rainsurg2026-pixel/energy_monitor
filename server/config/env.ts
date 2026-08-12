@@ -131,4 +131,38 @@ export function loadServerConfig(
   };
 }
 
+export interface MigrationDatabaseConfig {
+  directDatabaseUrl: string | null;
+  databaseUrl: string | null;
+  databaseCaCertificate: string | null;
+  poolMax: number;
+  nodeEnv: ServerConfig["nodeEnv"];
+}
+
+/**
+ * Config for one-shot database CLIs (migrations, bootstrap/seed scripts) -
+ * deliberately does not call the hosted-web-server validation branches in
+ * loadServerConfig (APP_ORIGIN, TRUST_PROXY, SESSION_SECRET, CSRF_SECRET,
+ * PORT, SESSION_LIFETIME_MS, READ_ONLY_MODE). Those secrets protect the
+ * running API server; a script that only opens a Postgres pool and exits
+ * has no use for them, and requiring them here would only create a way
+ * for an unrelated, unset secret to block a database operation that
+ * doesn't touch it. loadServerConfig() itself is untouched by this -
+ * the hosted server keeps exactly the validation it already had.
+ */
+export function loadMigrationDatabaseConfig(environment: NodeJS.ProcessEnv = process.env): MigrationDatabaseConfig {
+  const nodeEnv = environment.NODE_ENV === "test" || environment.NODE_ENV === "production" ? environment.NODE_ENV : "development";
+  const databaseUrl = environment.DATABASE_URL?.trim() || null;
+  const directDatabaseUrl = environment.DIRECT_DATABASE_URL?.trim() || null;
+  if (!directDatabaseUrl && !databaseUrl) throw new ConfigurationError("DIRECT_DATABASE_URL or DATABASE_URL is required for the migration/admin path.");
+  // Same nuance as loadServerConfig: falling back to the pooled DATABASE_URL
+  // (no DIRECT_DATABASE_URL) for a migration-mode operation requires a
+  // verified CA certificate, matching the existing stricter posture for
+  // that less-direct connection path.
+  const managedMigrationFallback = !directDatabaseUrl && Boolean(databaseUrl);
+  const caCertificate = databaseCaCertificate(environment, managedMigrationFallback);
+  const poolMax = parsePositiveInteger(environment.DB_POOL_MAX, "DB_POOL_MAX", 3);
+  return { directDatabaseUrl, databaseUrl, databaseCaCertificate: caCertificate, poolMax, nodeEnv };
+}
+
 export function loadDotEnvFile(): void { loadDotEnv(); }

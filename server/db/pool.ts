@@ -3,13 +3,16 @@ import type { ServerConfig } from "../config/env";
 
 export type DbExecutor = Pick<Pool, "query"> | Pick<PoolClient, "query">;
 
+/** Only the fields createPoolOptions/createPool actually read. A full ServerConfig satisfies this structurally, so every existing caller is unaffected; callers that only have DB-related config (see loadMigrationDatabaseConfig) can use it too. */
+export type PoolServerConfig = Pick<ServerConfig, "directDatabaseUrl" | "databaseUrl" | "databaseCaCertificate" | "poolMax" | "nodeEnv">;
+
 function removeConnectionStringSslOptions(connectionString: string): string {
   const url = new URL(connectionString);
   for (const parameter of ["sslmode", "sslrootcert", "sslcert", "sslkey"]) url.searchParams.delete(parameter);
   return url.toString();
 }
 
-export function createPoolOptions(config: ServerConfig, mode: "runtime" | "migration" = "runtime"): PoolConfig {
+export function createPoolOptions(config: PoolServerConfig, mode: "runtime" | "migration" = "runtime"): PoolConfig {
   const connectionString = mode === "migration" ? (config.directDatabaseUrl ?? config.databaseUrl) : config.databaseUrl;
   if (!connectionString) throw new Error(`${mode === "migration" ? "DIRECT_DATABASE_URL or DATABASE_URL" : "DATABASE_URL"} is required to create a PostgreSQL pool.`);
   const ssl = config.databaseCaCertificate ? { ca: config.databaseCaCertificate, rejectUnauthorized: true } : undefined;
@@ -23,7 +26,7 @@ export function createPoolOptions(config: ServerConfig, mode: "runtime" | "migra
   };
 }
 
-export function createPool(config: ServerConfig, mode: "runtime" | "migration" = "runtime"): Pool {
+export function createPool(config: PoolServerConfig, mode: "runtime" | "migration" = "runtime"): Pool {
   return new Pool(createPoolOptions(config, mode));
 }
 

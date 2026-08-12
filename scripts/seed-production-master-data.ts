@@ -12,7 +12,7 @@
  * not trusted, since a stale env var could claim NODE_ENV=production while
  * still pointing at Preview.
  */
-import { loadDotEnvFile, loadServerConfig } from "../server/config/env";
+import { loadDotEnvFile, loadMigrationDatabaseConfig } from "../server/config/env";
 import { createPool, withTransaction } from "../server/db/pool";
 import { verifyProductionEnvironment, verifyProductionTarget } from "./lib/productionTargetGuard";
 import { runPreflightScopeGuard, seedProductionSites } from "./lib/seedProductionSites";
@@ -24,7 +24,7 @@ if (!environmentCheck.ok) {
   throw new Error(`Refusing to run: ${environmentCheck.reason}`);
 }
 
-const config = loadServerConfig(process.env, { requireDatabase: true, requireRuntimeDatabase: false, requireMigrationDatabase: true });
+const config = loadMigrationDatabaseConfig(process.env);
 const connectionString = config.directDatabaseUrl ?? config.databaseUrl;
 const verification = verifyProductionTarget(connectionString);
 if (!verification.ok) {

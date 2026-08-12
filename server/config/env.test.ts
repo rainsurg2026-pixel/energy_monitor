@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { loadServerConfig } from "./env";
+import { loadMigrationDatabaseConfig, loadServerConfig } from "./env";
 import { createOriginPolicy, createCorsMiddleware } from "../http/security/cors";
 
 const SECRET = "a".repeat(32);
@@ -72,6 +72,76 @@ test("end-to-end: a request from this deployment's own Preview URL is allowed, a
   const evilRes = mockResponse();
   middleware(mockRequest("https://evil.example"), evilRes, () => { throw new Error("evil origin reached the route"); });
   assert.equal(evilRes.statusCode, 403);
+});
+
+const validCertificate = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+
+test("loadMigrationDatabaseConfig succeeds with only NODE_ENV=production and DIRECT_DATABASE_URL - no hosted-server secrets present", () => {
+  const config = loadMigrationDatabaseConfig({ NODE_ENV: "production", DIRECT_DATABASE_URL: "postgres://postgres:pw@db.ajidkjzufpgyibagvvco.supabase.co:5432/postgres" });
+  assert.equal(config.directDatabaseUrl, "postgres://postgres:pw@db.ajidkjzufpgyibagvvco.supabase.co:5432/postgres");
+  assert.equal(config.nodeEnv, "production");
+  assert.equal(config.poolMax, 3);
+});
+
+test("loadMigrationDatabaseConfig does not require SESSION_SECRET, CSRF_SECRET, or APP_ORIGIN", () => {
+  const environment: NodeJS.ProcessEnv = { NODE_ENV: "production", DIRECT_DATABASE_URL: "postgres://postgres:pw@db.ajidkjzufpgyibagvvco.supabase.co:5432/postgres" };
+  assert.equal("SESSION_SECRET" in environment, false);
+  assert.equal("CSRF_SECRET" in environment, false);
+  assert.equal("APP_ORIGIN" in environment, false);
+  assert.doesNotThrow(() => loadMigrationDatabaseConfig(environment));
+});
+
+test("loadMigrationDatabaseConfig throws clearly when neither DIRECT_DATABASE_URL nor DATABASE_URL is set", () => {
+  assert.throws(() => loadMigrationDatabaseConfig({ NODE_ENV: "production" }), /DIRECT_DATABASE_URL or DATABASE_URL is required/);
+});
+
+test("loadMigrationDatabaseConfig preserves migration-mode precedence by returning both URLs unresolved", () => {
+  const config = loadMigrationDatabaseConfig({
+    DIRECT_DATABASE_URL: "postgres://postgres:pw@db.ajidkjzufpgyibagvvco.supabase.co:5432/postgres",
+    DATABASE_URL: "postgres://postgres:pw@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres"
+  });
+  assert.equal(config.directDatabaseUrl, "postgres://postgres:pw@db.ajidkjzufpgyibagvvco.supabase.co:5432/postgres");
+  assert.equal(config.databaseUrl, "postgres://postgres:pw@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres");
+});
+
+test("loadMigrationDatabaseConfig does not require SUPABASE_DB_CA_CERT when DIRECT_DATABASE_URL is present", () => {
+  const config = loadMigrationDatabaseConfig({ DIRECT_DATABASE_URL: "postgres://postgres:pw@db.ajidkjzufpgyibagvvco.supabase.co:5432/postgres" });
+  assert.equal(config.databaseCaCertificate, null);
+});
+
+test("loadMigrationDatabaseConfig requires SUPABASE_DB_CA_CERT when falling back to the pooled DATABASE_URL only", () => {
+  assert.throws(
+    () => loadMigrationDatabaseConfig({ DATABASE_URL: "postgres://postgres:pw@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres" }),
+    /SUPABASE_DB_CA_CERT/
+  );
+});
+
+test("loadMigrationDatabaseConfig accepts a valid SUPABASE_DB_CA_CERT for the pooled-fallback path", () => {
+  const config = loadMigrationDatabaseConfig({
+    DATABASE_URL: "postgres://postgres:pw@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres",
+    SUPABASE_DB_CA_CERT: validCertificate
+  });
+  assert.equal(config.databaseCaCertificate, validCertificate);
+});
+
+test("loadMigrationDatabaseConfig rejects a malformed SUPABASE_DB_CA_CERT even on the direct path", () => {
+  assert.throws(
+    () => loadMigrationDatabaseConfig({ DIRECT_DATABASE_URL: "postgres://postgres:pw@db.ajidkjzufpgyibagvvco.supabase.co:5432/postgres", SUPABASE_DB_CA_CERT: "not-a-pem" }),
+    /PEM certificate/
+  );
+});
+
+test("loadMigrationDatabaseConfig respects DB_POOL_MAX and defaults NODE_ENV to development for unrecognized values", () => {
+  const config = loadMigrationDatabaseConfig({ DIRECT_DATABASE_URL: "postgres://postgres:pw@db.ajidkjzufpgyibagvvco.supabase.co:5432/postgres", DB_POOL_MAX: "7" });
+  assert.equal(config.poolMax, 7);
+  assert.equal(config.nodeEnv, "development");
+});
+
+test("loadServerConfig itself is unchanged: still requires SESSION_SECRET/CSRF_SECRET/APP_ORIGIN for a hosted server", () => {
+  assert.throws(
+    () => loadServerConfig({ NODE_ENV: "production", VERCEL: "1", DATABASE_URL: "postgres://user:pass@localhost:5432/db" }, { requireDatabase: false, requireRuntimeDatabase: false }),
+    /SESSION_SECRET|APP_ORIGIN/
+  );
 });
 
 function mockRequest(origin: string) {
