@@ -1,13 +1,36 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { withTransaction } from "./pool";
 
 export interface MigrationResult { applied: string[]; skipped: string[]; }
 const MIGRATION_LOCK_KEY = "736515828224";
+const SCHEMA_MIGRATIONS_CHECK_SAVEPOINT = "schema_migrations_check";
 
 function isMissingMigrationTable(error: unknown): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && (error as { code?: unknown }).code === "42P01");
+}
+
+/**
+ * On a brand-new database schema_migrations does not exist until migration
+ * 001 creates it, so this probe is *expected* to fail with 42P01 on a first
+ * run. Catching that in JS does not reset Postgres's own aborted-transaction
+ * state - only ROLLBACK/ROLLBACK TO SAVEPOINT does - so without the savepoint
+ * here every later statement in the same transaction (including the
+ * migration's real DDL) would fail with 25P02, masking this as the apparent
+ * cause instead of the harmless bootstrap probe it actually is.
+ */
+async function hasMigrationBeenApplied(client: PoolClient, version: string): Promise<boolean> {
+  await client.query(`SAVEPOINT ${SCHEMA_MIGRATIONS_CHECK_SAVEPOINT}`);
+  const already = await client.query<{ version: string }>("SELECT version FROM schema_migrations WHERE version = $1", [version]).catch(async error => {
+    if (isMissingMigrationTable(error)) {
+      await client.query(`ROLLBACK TO SAVEPOINT ${SCHEMA_MIGRATIONS_CHECK_SAVEPOINT}`);
+      return { rows: [] as { version: string }[] };
+    }
+    throw error;
+  });
+  await client.query(`RELEASE SAVEPOINT ${SCHEMA_MIGRATIONS_CHECK_SAVEPOINT}`);
+  return already.rows.length > 0;
 }
 
 export async function runMigrations(pool: Pool, directory = path.resolve(process.cwd(), "db/migrations")): Promise<MigrationResult> {
@@ -18,11 +41,7 @@ export async function runMigrations(pool: Pool, directory = path.resolve(process
     const sql = await readFile(path.join(directory, file), "utf8");
     const applied = await withTransaction(pool, async client => {
       await client.query("SELECT pg_advisory_xact_lock($1::bigint)", [MIGRATION_LOCK_KEY]);
-      const already = await client.query<{ version: string }>("SELECT version FROM schema_migrations WHERE version = $1", [version]).catch(error => {
-        if (isMissingMigrationTable(error)) return { rows: [] as { version: string }[] };
-        throw error;
-      });
-      if (already.rows.length > 0) return false;
+      if (await hasMigrationBeenApplied(client, version)) return false;
       await client.query(sql);
       await client.query("INSERT INTO schema_migrations(version) VALUES ($1)", [version]);
       return true;
