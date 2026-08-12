@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { loadDotEnvFile, loadServerConfig } from "../server/config/env";
+import { loadDotEnvFile, loadMigrationDatabaseConfig } from "../server/config/env";
 import { createPool } from "../server/db/pool";
 import { PostgresAuthRepository } from "../server/auth/repository";
 import { Argon2idPasswordHasher, hashNewPassword } from "../server/auth/passwordHasher";
 import { normalizeUsername } from "../server/auth/passwordPolicy";
 
 loadDotEnvFile();
-const config = loadServerConfig(process.env, { requireDatabase: true, requireRuntimeDatabase: false, requireMigrationDatabase: true });
+const config = loadMigrationDatabaseConfig(process.env);
 const username = process.env.BOOTSTRAP_ADMIN_USERNAME;
 const password = process.env.BOOTSTRAP_ADMIN_PASSWORD;
 const displayName = process.env.BOOTSTRAP_ADMIN_DISPLAY_NAME?.trim() || "Energy Monitor Administrator";
