@@ -1,6 +1,7 @@
 import type { MonthlyLog } from "../types";
 import { buildCombinedCsv, buildSectionCsvs } from "../utils/exportData";
-import { calculateEnergyCostForMonth } from "../domain/energyCost";
+import { calculateEnergyCostForMonth, getAirFields, getAirValue } from "../domain/energyCost";
+import { daysInUtcMonth, previousUtcMonth } from "../domain/dates";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
 import { buildReportHtml } from "../reports/pdf/reportHtml";
 import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord } from "../reports/reportTypes";
@@ -11,6 +12,10 @@ import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 export interface ExportFacility {
   siteName: string;
   logs: MonthlyLog[];
+  /** Full saved history used to calculate the selected export rows.  A
+   *  single-month export still needs its preceding meter reading to produce
+   *  the same air-energy calculation as Desktop. */
+  calculationLogs?: MonthlyLog[];
   rack?: RackCapacityReport | null;
   rackHistory?: RackCapacityHistoryRow[];
   rackUnitCapacity?: RackUnitCapacityRow[];
@@ -72,46 +77,102 @@ export function exportCsv(logs: MonthlyLog[], siteName: string, fileName?: strin
   download(buildCombinedCsv(logs), fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.csv`, "text/csv;charset=utf-8");
 }
 
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let current = "";
-  let quoted = false;
-  for (let index = 0; index < line.length; index++) {
-    const character = line[index];
-    if (character === '"') {
-      if (quoted && line[index + 1] === '"') { current += '"'; index++; }
-      else quoted = !quoted;
-    } else if (character === "," && !quoted) { fields.push(current); current = ""; }
-    else current += character;
-  }
-  fields.push(current);
-  return fields;
+type ExcelCellValue = string | number | Date | null;
+
+function excelMonth(month: string): Date | string {
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(month);
+  return match ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, 1)) : month;
 }
 
-function sheetName(prefix: string, name: string): string {
-  return `${prefix}-${name.replace(".csv", "")}`.replace(/[\\/*?:\[\]]/g, "-").slice(0, 31);
+function excelSavedDate(value: string | null): Date | string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed;
+}
+
+/** All numbers remain numeric Excel values (not CSV text), so filters,
+ *  formulas and downstream BI can use them.  Month and save timestamps are
+ *  stored as Excel dates; invalid legacy timestamp text is deliberately
+ *  retained as text rather than silently changed. */
+function addTypedSheet(workbook: any, name: string, headers: string[], rows: ExcelCellValue[][]) {
+  const sheet = workbook.addWorksheet(name);
+  sheet.addRow(headers);
+  for (const values of rows) sheet.addRow(values);
+  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  sheet.autoFilter = { from: "A1", to: { row: 1, column: Math.max(1, headers.length) } };
+  sheet.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
+    if (rowNumber === 1) return;
+    row.eachCell({ includeEmpty: false }, (cell: any) => {
+      if (typeof cell.value === "number") cell.numFmt = "#,##0.00";
+      if (cell.value instanceof Date) cell.numFmt = "dd-mmm-yy";
+    });
+  });
+  sheet.columns.forEach((column: any, index: number) => { column.width = index === 0 ? 16 : 22; });
+  return sheet;
+}
+
+function facilitySheetName(prefix: string, suffix: string): string {
+  return `${prefix}-${suffix}`.replace(/[\\/*?:\[\]]/g, "-").slice(0, 31);
+}
+
+function addFacilityExportSheets(workbook: any, facility: ExportFacility): void {
+  const logs = [...facility.logs].sort((left, right) => left.month.localeCompare(right.month));
+  const calculationLogs = facility.calculationLogs ?? facility.logs;
+  const prefix = facility.siteName.replace(/[^a-z0-9]+/giu, "-").slice(0, 12) || "facility";
+  const airFields = Array.from(new Set(logs.flatMap(log => getAirFields(log)))).sort();
+
+  addTypedSheet(workbook, facilitySheetName(prefix, "UPS_Loads"), ["Reporting Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Last Saved Date"], logs.flatMap(log => log.ups.map(ups => [excelMonth(log.month), ups.upsId, ups.voltage, ups.current, ups.loadKw, ups.loadKva, excelSavedDate(log.lastSavedUps)])));
+  addTypedSheet(workbook, facilitySheetName(prefix, "Air_Conditioning"), ["Reporting Month", ...airFields.map(field => `${field.toUpperCase()} (GWh)`), "Last Saved Date"], logs.map(log => [excelMonth(log.month), ...airFields.map(field => getAirValue(log, field)), excelSavedDate(log.lastSavedAir)]));
+  addTypedSheet(workbook, facilitySheetName(prefix, "DC_Panels"), ["Reporting Month", "DC Panel", "Voltage (V)", "Current (A)", "Last Saved Date"], logs.flatMap(log => log.dc.map(panel => [excelMonth(log.month), panel.panelId, panel.voltage, panel.current, excelSavedDate(log.lastSavedDc)])));
+
+  addTypedSheet(workbook, facilitySheetName(prefix, "Energy_Cost"), ["Reporting Month", "Building Energy Input (kWh)", "Building Cost Input (THB)", "Last Saved Date", "UPS Energy Calculated (kWh)", "Air Energy Calculated (kWh)", "DC Energy Calculated (kWh)", "4th Floor Energy Calculated (kWh)", "4th Floor Cost Calculated (THB)", "Average Rate Calculated (THB/kWh)", "4th Floor Energy Share Calculated (%)"], logs.map(log => {
+    const calculation = calculateEnergyCostForMonth(calculationLogs, log.month);
+    return [excelMonth(log.month), log.energyCost.buildingEnergyKwh, log.energyCost.buildingElectricityCostThb, excelSavedDate(log.lastSavedEnergyCost), calculation.upsEnergyKwh, calculation.airEnergyKwh, calculation.dcEnergyKwh, calculation.floorEnergyKwh, calculation.floorElectricityCostThb, calculation.averageElectricityRateThbPerKwh, calculation.energySharePercent];
+  }));
+
+  addTypedSheet(workbook, facilitySheetName(prefix, "Air_Calculations"), ["Reporting Month", "Meter", "Previous Reading (GWh)", "Current Reading (GWh)", "Difference (GWh)", "Energy Contribution (kWh)"], logs.flatMap(log => {
+    const previousMonth = previousUtcMonth(log.month);
+    const previous = previousMonth ? calculationLogs.find(candidate => candidate.month === previousMonth) ?? null : null;
+    return getAirFields(log).map(field => {
+      const current = getAirValue(log, field);
+      const previousValue = previous ? getAirValue(previous, field) : null;
+      const difference = current === null || previousValue === null ? null : current - previousValue;
+      return [excelMonth(log.month), field.toUpperCase(), previousValue, current, difference, difference === null ? null : difference * 1000000];
+    });
+  }));
+
+  addTypedSheet(workbook, facilitySheetName(prefix, "DC_Calculations"), ["Reporting Month", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current (A)", "AC Power (W)", "Monthly Energy (kWh)"], logs.flatMap(log => {
+    const days = daysInUtcMonth(log.month);
+    return log.dc.map(panel => {
+      const dcPower = panel.voltage === null || panel.current === null ? null : panel.voltage * panel.current;
+      const acPower = dcPower === null ? null : dcPower / 200 * 220;
+      return [excelMonth(log.month), panel.panelId, panel.voltage, panel.current, dcPower, acPower === null ? null : acPower / 220, acPower, acPower === null || days === null ? null : acPower * 24 * days / 1000];
+    });
+  }));
+
+  const phaseRows: ExcelCellValue[][] = [];
+  for (const log of logs) {
+    const inputs = log.srinakarinInputs;
+    if (!inputs) continue;
+    for (const [id, value] of Object.entries(inputs.upsPhase)) phaseRows.push([excelMonth(log.month), "UPS phase", id, value.voltage, value.current, value.loadKw, value.loadKva, excelSavedDate(log.lastSavedUps)]);
+    for (const [id, value] of Object.entries(inputs.acPhase)) phaseRows.push([excelMonth(log.month), "AC phase", id, value.voltage, value.current, null, null, excelSavedDate(log.lastSavedUps)]);
+    for (const [id, current] of Object.entries(inputs.ppc43Current)) phaseRows.push([excelMonth(log.month), "PPC43 current", id, null, current, null, null, excelSavedDate(log.lastSavedUps)]);
+    for (const [id, value] of Object.entries(inputs.ppc43Panel)) phaseRows.push([excelMonth(log.month), "PPC43 panel", id, null, null, value.loadKw, value.loadKva, excelSavedDate(log.lastSavedUps)]);
+  }
+  if (phaseRows.length > 0) addTypedSheet(workbook, facilitySheetName(prefix, "Srinakarin_Inputs"), ["Reporting Month", "Input Group", "Input ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Last Saved Date"], phaseRows);
 }
 
 export async function workbookForFacilities(facilities: ExportFacility[]) {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
-  for (const facility of facilities) {
-    const prefix = facility.siteName.replace(/[^a-z0-9]+/giu, "-").slice(0, 12) || "facility";
-    for (const section of buildSectionCsvs(facility.logs)) {
-      const sheet = workbook.addWorksheet(sheetName(prefix, section.name));
-      for (const row of section.content.split("\n")) sheet.addRow(parseCsvLine(row));
-      sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-      sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
-      sheet.views = [{ state: "frozen", ySplit: 1 }];
-      sheet.autoFilter = { from: "A1", to: { row: 1, column: Math.max(1, sheet.getRow(1).cellCount) } };
-      sheet.columns.forEach(column => { column.width = 22; });
-    }
-  }
+  for (const facility of facilities) addFacilityExportSheets(workbook, facility);
   return workbook;
 }
 
-export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string): Promise<void> {
-  const workbook = await workbookForFacilities([{ siteName, logs }]);
+export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, calculationLogs: MonthlyLog[] = logs): Promise<void> {
+  const workbook = await workbookForFacilities([{ siteName, logs, calculationLogs }]);
   const data = await workbook.xlsx.writeBuffer();
   download(data, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
@@ -149,13 +210,10 @@ export function exportSiteComparisonCsv(data: SiteComparisonExport, referenceMon
 export async function exportSiteComparisonExcel(data: SiteComparisonExport, referenceMonth: string): Promise<void> {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet("Site Comparison");
-  for (const row of buildSiteComparisonCsv(data, referenceMonth).split("\n")) sheet.addRow(parseCsvLine(row));
-  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
-  sheet.autoFilter = { from: "A1", to: { row: 1, column: sheet.getRow(1).cellCount } };
-  sheet.columns.forEach(column => { column.width = 24; });
+  addTypedSheet(workbook, "Site Comparison", ["Facility", "Site code", "Reporting month", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], data.sites.map(site => {
+    const metrics = site.months.find(entry => entry.month === referenceMonth)?.metrics ?? null;
+    return [site.site.name, site.site.code, excelMonth(referenceMonth), metrics?.buildingEnergy ?? null, metrics?.buildingCost ?? null, metrics?.floorEnergy ?? null, metrics?.floorCost ?? null, metrics?.avgRate ?? null, metrics?.floorShare ?? null];
+  }));
   const bytes = await workbook.xlsx.writeBuffer();
   download(bytes, `site-comparison-${referenceMonth}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }

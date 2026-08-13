@@ -81,10 +81,12 @@ async function assertExportsShowOnlyMonth(monthLabel: string, selection: Reporti
   await reread.xlsx.load(buffer as unknown as ArrayBuffer);
   const energySheet = reread.worksheets.find(sheet => sheet.name.includes("Energy_Cost"));
   check(`${monthLabel}: Excel has an Energy_Cost sheet`, Boolean(energySheet));
-  const sheetText = energySheet!.getSheetValues().flat().map(String).join("|");
-  check(`${monthLabel}: Excel sheet contains the selected month`, sheetText.includes(monthLabel));
+  const excelMonth = (value: unknown): string | null => value instanceof Date
+    ? `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, "0")}` : null;
+  const exportedMonths = Array.from({ length: energySheet!.rowCount - 1 }, (_, index) => excelMonth(energySheet!.getRow(index + 2).getCell(1).value)).filter((value): value is string => value !== null);
+  check(`${monthLabel}: Excel stores the selected month as an Excel date`, exportedMonths.includes(monthLabel) && energySheet!.getRow(2).getCell(1).numFmt === "dd-mmm-yy");
   for (const other of threeMonthLogs.map(l => l.month).filter(m => m !== monthLabel)) {
-    check(`${monthLabel}: Excel sheet does not contain ${other}`, !sheetText.includes(other));
+    check(`${monthLabel}: Excel sheet does not contain ${other}`, !exportedMonths.includes(other));
   }
 
   // PDF - real generated HTML string. Reports render a human-readable
@@ -103,6 +105,36 @@ async function assertExportsShowOnlyMonth(monthLabel: string, selection: Reporti
 // to 2026-07 and regenerates - each pass must show only its own month.
 await assertExportsShowOnlyMonth("2026-06", { mode: "single", singleMonth: "2026-06", rangeStart: "2026-06", rangeEnd: "2026-06" }, "2026-08");
 await assertExportsShowOnlyMonth("2026-07", { mode: "single", singleMonth: "2026-07", rangeStart: "2026-07", rangeEnd: "2026-07" }, "2026-08");
+
+// Excel must retain entry values and saved timestamps as real typed cells,
+// then append the exact Desktop calculation outputs.  This is deliberately
+// richer than CSV: values remain usable in formulas/Power BI after download.
+const typedExportLog: MonthlyLog = {
+  ...log("2026-07"),
+  ups: [{ upsId: "UPS 11A", voltage: 230.125, current: 10.5, loadKw: 12.345, loadKva: 15.678 }],
+  air: { eb41a: 2.25, eb41b: 3.5, eb42a: 4.75, eb42b: 5.25, meters: { eb43a: 6.5 } },
+  dc: [{ panelId: "DC PDB41A", voltage: 48.5, current: 20.25 }],
+  energyCost: { buildingEnergyKwh: 1000.125, buildingElectricityCostThb: 5000.5 },
+  lastSavedUps: "2026-07-15T06:30:00.000Z",
+  lastSavedAir: "2026-07-16T06:30:00.000Z",
+  lastSavedDc: "2026-07-17T06:30:00.000Z",
+  lastSavedEnergyCost: "2026-07-18T06:30:00.000Z",
+  srinakarinInputs: { upsPhase: { "UPS 11A R": { voltage: 230.125, current: 10.5, loadKw: 4.115, loadKva: 5.226 } }, acPhase: { "AC-1": { voltage: 220.5, current: 8.25 } }, ppc43Current: { "PPC43-A": 12.75 }, ppc43Panel: { "PPC43-P": { loadKw: 5.5, loadKva: 6.6 } } }
+};
+const typedWorkbook = await workbookForFacilities([{ siteName: "Typed", logs: [typedExportLog], calculationLogs: [june, typedExportLog] }]);
+const typedBuffer = await typedWorkbook.xlsx.writeBuffer();
+const typedReread = new ExcelJS.Workbook();
+await typedReread.xlsx.load(typedBuffer as unknown as ArrayBuffer);
+const typedEnergy = typedReread.worksheets.find(sheet => sheet.name.includes("Energy_Cost"))!;
+const typedUps = typedReread.worksheets.find(sheet => sheet.name.includes("UPS_Loads"))!;
+const typedPhase = typedReread.worksheets.find(sheet => sheet.name.includes("Srinakarin_Inputs"))!;
+check("Excel includes raw UPS entry rows", typedUps.getCell("B2").value === "UPS 11A" && typedUps.getCell("C2").value === 230.125);
+check("Excel includes section saved dates as typed dd-Mmm-yy dates", typedUps.getCell("G2").value instanceof Date && typedUps.getCell("G2").numFmt === "dd-mmm-yy");
+check("Excel includes raw energy entry values and all calculation outputs", typedEnergy.columnCount === 11 && typedEnergy.getCell("B2").value === 1000.125 && typedEnergy.getCell("J2").value !== null);
+check("Excel includes every Srinakarin phase-level entry value", typedPhase.rowCount === 5 && typedPhase.getCell("D2").value === 230.125);
+for (const sheet of typedReread.worksheets) {
+  sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => { if (rowNumber > 1) row.eachCell({ includeEmpty: false }, cell => { if (typeof cell.value === "number") check(`${sheet.name} ${cell.address}: numeric values use two decimals`, cell.numFmt === "#,##0.00"); if (cell.value instanceof Date) check(`${sheet.name} ${cell.address}: dates use dd-Mmm-yy`, cell.numFmt === "dd-mmm-yy"); }); });
+}
 
 // "Current Month" mode follows the app's live reporting month directly,
 // with no separate stored selection to go stale.
