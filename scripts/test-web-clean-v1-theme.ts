@@ -4,8 +4,8 @@ import { languageStorageKey, normalizeLanguage, normalizeTheme, themeStorageKey 
 
 assert.equal(normalizeTheme("light"), "light");
 assert.equal(normalizeTheme("dark"), "dark");
-assert.equal(normalizeTheme("system"), "dark");
-assert.equal(normalizeTheme(null), "dark");
+assert.equal(normalizeTheme("system"), "light");
+assert.equal(normalizeTheme(null), "light");
 assert.equal(themeStorageKey("8"), "energy-monitor:theme:8");
 assert.notEqual(themeStorageKey("8"), themeStorageKey("9"));
 assert.equal(normalizeLanguage("th"), "th");
@@ -21,6 +21,7 @@ assert.match(css, /input::placeholder,[\s\S]*?color: var\(--color-input-placehol
 assert.match(css, /html\.theme-light\s*\{[\s\S]*?--color-bg: #f6f1e8;[\s\S]*?--color-text: #333333;[\s\S]*?--color-border: #e3ded5;/);
 assert.match(css, /--color-input-bg: #071a30;[\s\S]*?--color-input-text: #f4f7fb;[\s\S]*?--color-input-placeholder: #b9c9da;/);
 assert.match(app, /function Login[\s\S]*?bg-slate-950 px-4 text-slate-100/);
+assert.match(app, /const \[theme, setTheme\] = useState<Theme>\("light"\)/);
 assert.match(app, /PASSWORD_MIN_LENGTH = 12/);
 assert.match(app, /passwordHelp/);
 assert.match(app, /const \[lang, setLang\] = useState<AppLanguage>\("th"\)/);

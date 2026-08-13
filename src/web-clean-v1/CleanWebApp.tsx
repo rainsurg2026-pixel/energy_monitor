@@ -78,7 +78,9 @@ export default function CleanWebApp() {
   const [notice, setNotice] = useState<string | null>(null);
   const [facilityLoading, setFacilityLoading] = useState(false);
   const [facilityError, setFacilityError] = useState<string | null>(null);
-  const [theme, setTheme] = useState<Theme>("dark");
+  // Match src/electron/config.ts DEFAULT_CONFIG.theme. A stored dark choice
+  // is still restored by the user-scoped preference effect below.
+  const [theme, setTheme] = useState<Theme>("light");
   const [lang, setLang] = useState<AppLanguage>("th");
   const site = useMemo(() => bootstrap?.sites.find(item => item.id === siteId) ?? null, [bootstrap, siteId]);
 
