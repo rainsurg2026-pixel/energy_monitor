@@ -92,7 +92,7 @@ export default function CleanWebApp() {
       setBootstrap(result); setSiteId(first?.id ?? null);
       if (!first) { setFacilityError("No facility is available for this account."); return; }
       const records = await loadHistory(first.id);
-      await loadMonth(first.id, first.latestAvailableMonth ?? result.displayPeriod.endMonth, records);
+      await loadMonth(first.id, first.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth()), records);
     } catch (error) { setFacilityError(`Unable to load facilities: ${readError(error)}`); throw error; }
     finally { setFacilityLoading(false); }
   }, [loadHistory, loadMonth]);
@@ -100,8 +100,8 @@ export default function CleanWebApp() {
   useEffect(() => { if (notice) { const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); } }, [notice]);
   useEffect(() => { if (!user) return; let saved: string | null = null; try { saved = localStorage.getItem(themeStorageKey(user.id)); } catch { /* default remains dark when browser storage is blocked */ } const next = normalizeTheme(saved); setTheme(next); applyTheme(next); }, [user]);
 
-  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user) return; setBusy(true); setFacilityError(null); try { setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id); await loadMonth(id, nextSite.latestAvailableMonth ?? bootstrap?.displayPeriod.endMonth ?? todayMonth(), records); } catch (error) { setFacilityError(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setBusy(false); } };
-  const selectMonth = async (selected: string) => { if (!siteId) return; setBusy(true); try { await loadMonth(siteId, selected, history); } catch (error) { setNotice(readError(error)); } finally { setBusy(false); } };
+  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user) return; setBusy(true); setFacilityError(null); try { setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id); await loadMonth(id, nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()), records); } catch (error) { setFacilityError(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setBusy(false); } };
+  const selectMonth = async (selected: string) => { if (!siteId) return; setBusy(true); try { await loadMonth(siteId, selected, history); setFacilityError(null); } catch (error) { setNotice(readError(error)); } finally { setBusy(false); } };
   const save = async (patch: Partial<MonthlyLog> = {}) => {
     if (!siteId || !draft) return;
     const log = { ...draft, ...patch, month };
@@ -119,7 +119,7 @@ export default function CleanWebApp() {
     setBootstrap(result); setSiteId(current?.id ?? null); setFacilityError(null);
     if (current) {
       const records = await loadHistory(current.id);
-      await loadMonth(current.id, current.latestAvailableMonth ?? result.displayPeriod.endMonth, records);
+      await loadMonth(current.id, current.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth()), records);
     }
   };
 

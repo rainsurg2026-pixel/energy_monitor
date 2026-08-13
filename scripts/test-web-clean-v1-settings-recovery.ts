@@ -10,5 +10,7 @@ assert.match(app, /const settingsDisplayPeriod = bootstrap\?\.displayPeriod \?\?
 assert.match(app, /view === "settings" \? <SettingsPage displayPeriod=\{settingsDisplayPeriod\}/);
 assert.doesNotMatch(app, /view === "settings" && bootstrap/);
 assert.match(app, /setBootstrap\(result\); setSiteId\(current\?\.id \?\? null\); setFacilityError\(null\);/);
+assert.match(app, /first\.latestAvailableMonth \?\? \(result\.displayPeriod\.endMonth < todayMonth\(\) \? result\.displayPeriod\.endMonth : todayMonth\(\)\)/);
+assert.match(app, /await loadMonth\(siteId, selected, history\); setFacilityError\(null\);/);
 
 console.log("web-clean-v1 settings recovery: initial display-period setup remains reachable after bootstrap failure");
