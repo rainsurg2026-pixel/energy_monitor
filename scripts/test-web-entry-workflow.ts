@@ -56,6 +56,8 @@ assert.match(app, /beforeunload/);
 assert.match(app, /Unsaved Data Entry changes/);
 assert.match(app, /onDirtyChange=\{setEntryDirty\}/);
 assert.match(app, /onRegisterActions=\{registerEntryActions\}/);
+assert.match(app, /const refreshed = await loadHistory\(siteId\)/);
+assert.match(app, /const refreshedDraft = refreshed\.logs\.find\(item => item\.month === month\)/);
 assert.match(app, /Save &(?:amp;)? Continue/);
 assert.match(app, /Discard/);
 assert.match(app, /Cancel/);

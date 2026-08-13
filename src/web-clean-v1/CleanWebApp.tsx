@@ -124,7 +124,11 @@ export default function CleanWebApp() {
     setBusy(true);
     try {
       const result = await api<{ rowVersion: number }>(`/sites/${siteId}/periods/${month}`, { method: "PUT", body: JSON.stringify({ log, expected_row_version: rowVersion, provenance: { sourceType: "web-clean-v1" } }) });
-      setDraft(log); setRowVersion(result.rowVersion); await loadHistory(siteId); setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
+      setDraft(log); setRowVersion(result.rowVersion);
+      const refreshed = await loadHistory(siteId);
+      const refreshedDraft = refreshed.logs.find(item => item.month === month);
+      if (refreshedDraft) setDraft(refreshedDraft);
+      setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
     } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
   const logout = async () => { const action = async () => { setEntryDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { setUser(null); setBootstrap(null); setDraft(null); } }; deferNavigation(action); };
