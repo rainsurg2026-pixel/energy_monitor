@@ -10,6 +10,9 @@ interface HistoricalChartsProps {
   logs: MonthlyLog[];
   isGoogleConnected?: boolean;
   googleUserEmail?: string | null;
+  /** Optional explicit label for a non-Google authoritative source, such as
+   * the authenticated Production API used by CleanWebApp. */
+  dataSourceLabel?: string | null;
   lang?: "th" | "en";
   displayPeriod?: string;
 }
@@ -17,7 +20,7 @@ interface HistoricalChartsProps {
 type ChartMetric = "energy" | "cost" | "subsystems";
 type TrendPeriod = 3 | 6 | 12;
 
-export default function HistoricalCharts({ logs, isGoogleConnected = false, googleUserEmail = null, lang = "th", displayPeriod = "2026" }: HistoricalChartsProps) {
+export default function HistoricalCharts({ logs, isGoogleConnected = false, googleUserEmail = null, dataSourceLabel = null, lang = "th", displayPeriod = "2026" }: HistoricalChartsProps) {
   const [activeMetric, setActiveMetric] = useState<ChartMetric>("energy");
   const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>(12);
   // Build each metric from the full retained history so January calculations
@@ -46,7 +49,7 @@ export default function HistoricalCharts({ logs, isGoogleConnected = false, goog
   if (logs.length === 0) return <div className="bg-slate-900 border border-slate-800 p-8 rounded-2xl text-center"><Activity className="w-10 h-10 text-slate-600 mx-auto" /><h4 className="font-medium text-slate-300 text-sm mt-2">No historical records available</h4></div>;
   return <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-6">
     <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-      <div><h3 className="font-semibold text-slate-100 text-sm flex items-center gap-2"><TrendingUp className="w-4 h-4 text-emerald-400" />{lang === "th" ? "สถิติและเทรนด์ประวัติการใช้พลังงาน" : "Facility Trend Analytics"}</h3><p className="text-xs text-slate-400 mt-1">{isGoogleConnected ? `Primary Source: Google Sheets (${googleUserEmail ?? "connected"})` : "Offline Mode"}</p></div>
+      <div><h3 className="font-semibold text-slate-100 text-sm flex items-center gap-2"><TrendingUp className="w-4 h-4 text-emerald-400" />{lang === "th" ? "สถิติและเทรนด์ประวัติการใช้พลังงาน" : "Facility Trend Analytics"}</h3><p className="text-xs text-slate-400 mt-1">{dataSourceLabel ?? (isGoogleConnected ? `Primary Source: Google Sheets (${googleUserEmail ?? "connected"})` : "Offline Mode")}</p></div>
       <div className="flex flex-wrap gap-2 justify-end">
         <div className="flex flex-wrap gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
           {([{ id: "energy", label: "Energy" }, { id: "cost", label: "Cost" }, { id: "subsystems", label: "UPS / Air / DC" }] as const).map(tab => <button key={tab.id} onClick={() => setActiveMetric(tab.id)} className={`px-3 py-1.5 text-xs font-medium rounded-lg ${activeMetric === tab.id ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"}`}>{tab.label}</button>)}
