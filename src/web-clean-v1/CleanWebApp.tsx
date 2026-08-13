@@ -24,6 +24,8 @@ import RackCapacitySummaryCard from "../components/rack/RackCapacitySummaryCard"
 import RackCapacityHistoryPanel from "../components/rack/RackCapacityHistoryPanel";
 import { Forecast as RackCapacityForecast } from "../components/rack/Forecast";
 import { RackUnitCapacitySummary } from "../components/rack/RackUnitCapacitySummary";
+import { StickyHeader as RackCapacityStickyHeader } from "../components/rack/StickyHeader";
+import { ExecutiveKpiCards as RackCapacityExecutiveKpiCards } from "../components/rack/ExecutiveKpiCards";
 import { WebRackCapacityEditor, WebRackUnitCapacityEditor } from "./WebRackCapacityEditors";
 import { api, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportCsv, exportExcel, exportSiteComparisonCsv, exportSiteComparisonExcel, openReportPopup, printAllFacilitiesPdf, printDesktopPdf, printSiteComparisonPdf, rackReportFromSnapshot, type ComparisonMetric, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
@@ -144,7 +146,7 @@ export default function CleanWebApp() {
           {busy && <div className="mb-4 text-sm text-teal-300">Working…</div>}
           {view === "settings" ? <SettingsPage displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice("Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">Facility context unavailable</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">Retry facility load</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">Loading facility context…</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={month} lang="en" upsGroupHistory={history.upsGroupHistory ?? null} />}
           {view === "entry" && draft && <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">Monthly Data Entry</h2><p className="mt-1 text-sm text-slate-400">Enter validated operating readings for {month}; calculations remain Desktop v2.3.1-compatible.</p></div>{site?.code === "srinakarin" ? <SrinakarinPowerPhaseTable monthStr={month} initialLog={draft} lastSaved={draft.lastSavedUps} onSave={(ups, srinakarinInputs) => void save({ ups, srinakarinInputs })} /> : <UpsTable monthStr={month} initialRecords={draft.ups} lastSaved={draft.lastSavedUps} onSave={ups => void save({ ups })} />}<AirTable monthStr={month} initialRecord={draft.air} lastSaved={draft.lastSavedAir} meterFields={draft.energyCalculation?.airFields} onSave={air => void save({ air })} /><DcTable monthStr={month} initialRecords={draft.dc} lastSaved={draft.lastSavedDc} onSave={dc => void save({ dc })} /><EnergyCostTable monthStr={month} initialRecord={draft.energyCost} lastSaved={draft.lastSavedEnergyCost} onSave={energyCost => void save({ energyCost })} /></section>}
-          {view === "racks" && siteId && <RackCapacityView siteId={siteId} month={month} lang="en" rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onHistorySaved={() => { void loadHistory(siteId); }} />}
+          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} lang="en" rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onHistorySaved={() => { void loadHistory(siteId); }} />}
           {view === "history" && <HistoricalExplorer logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} upsGroupHistory={history.upsGroupHistory ?? null} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onEditMonth={selected => { setView("entry"); void selectMonth(selected); }} />}
           {view === "comparison" && <SiteComparison />}
           {view === "reports" && <Reports siteId={siteId} siteName={site?.name ?? "energy-monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} />}
@@ -207,7 +209,7 @@ function RackCapacityMonthSync({ month, children }: { month: string; children: R
  *  editors. Field edits retain Desktop's per-field expected-value conflict
  *  checks; Rack Unit Capacity retains a snapshot row-version. Image upload
  *  remains intentionally absent until a dedicated Storage API exists. */
-function RackCapacityView({ siteId, month, lang, rackCapacityHistory, rackUnitCapacity, onHistorySaved }: { siteId: number; month: string; lang: "th" | "en"; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; onHistorySaved?: () => void }) {
+function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, rackUnitCapacity, onHistorySaved }: { siteId: number; siteName: string | null; month: string; lang: "th" | "en"; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; onHistorySaved?: () => void }) {
   const [rack, setRack] = useState<RackApiSnapshot | null>(null);
   const [rackUnit, setRackUnit] = useState<RackUnitApiSnapshot | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -244,8 +246,10 @@ function RackCapacityView({ siteId, month, lang, rackCapacityHistory, rackUnitCa
   return (
     <div className="space-y-5">
       <div><h2 className="font-display text-2xl font-bold">Rack Capacity and Utilization</h2><p className="mt-1 text-sm text-slate-400">Desktop-compatible field editing, snapshot history, and rack-unit capacity for {month}.</p></div>
-      <RackCapacityProvider lang={lang} rackCapacity={rackCapacity} rackUnitCapacity={rackUnitCapacity} rackCapacityHistory={rackCapacityHistory}>
+      <RackCapacityProvider lang={lang} facilityName={siteName} rackCapacity={rackCapacity} rackUnitCapacity={rackUnitCapacity} rackCapacityHistory={rackCapacityHistory}>
         <RackCapacityMonthSync month={month}><RackCapacitySummaryCard /></RackCapacityMonthSync>
+        <RackCapacityStickyHeader />
+        <RackCapacityExecutiveKpiCards />
         <WebRackCapacityEditor siteId={siteId} month={month} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} />
         <RackCapacityHistoryPanel />
         <RackCapacityForecast />
