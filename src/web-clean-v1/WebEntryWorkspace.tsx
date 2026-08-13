@@ -12,6 +12,7 @@ import WebEntryWorkflowHeader, { WebHistoricalEditNotice } from "./WebEntryWorkf
 
 type Section = "ups" | "air" | "dc" | "energy";
 export type LiveDrafts = { ups?: UpsRecord[]; srinakarinInputs?: SrinakarinInputSnapshot; air?: AirRecord; dc?: DcRecord[]; energy?: EnergyCostRecord };
+export type EntryWorkspaceActions = { saveAll: () => Promise<boolean>; resetAll: () => void };
 
 export function mergeEntryDraft(draft: MonthlyLog, updates: LiveDrafts): MonthlyLog {
   return {
@@ -27,7 +28,7 @@ export function mergeEntryDraft(draft: MonthlyLog, updates: LiveDrafts): Monthly
 /** Full browser implementation of Desktop's entry workspace.
  * Save All first combines every in-page draft into one MonthlyLog and calls
  * the Web API once, preserving its row-version concurrency contract. */
-export default function WebEntryWorkspace({ siteName, siteCode, months, month, draft, busy, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onOpenReports, onNotice, onDirtyChange }: {
+export default function WebEntryWorkspace({ siteName, siteCode, months, month, draft, busy, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onOpenReports, onNotice, onDirtyChange, onRegisterActions }: {
   siteName: string;
   siteCode: string;
   months: string[];
@@ -36,11 +37,12 @@ export default function WebEntryWorkspace({ siteName, siteCode, months, month, d
   busy: boolean;
   allowedStartMonth: string;
   allowedEndMonth: string;
-  onSave: (patch: Partial<MonthlyLog>) => Promise<void>;
+  onSave: (patch: Partial<MonthlyLog>) => Promise<boolean>;
   onSelectMonth: (month: string) => void;
   onOpenReports: () => void;
   onNotice: (message: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
+  onRegisterActions?: (actions: EntryWorkspaceActions | null) => void;
 }) {
   const sectionApisRef = useRef<Partial<Record<Section, EntrySectionApi>>>({});
   const draftsRef = useRef<LiveDrafts>({});
@@ -62,13 +64,14 @@ export default function WebEntryWorkspace({ siteName, siteCode, months, month, d
     draftsRef.current = {};
     setDraftTick(tick => tick + 1);
   }, []);
-  const saveAll = useCallback(() => {
-    if (!hasDraftChanges || savingAll || busy) return;
+  const saveAll = useCallback(async (): Promise<boolean> => {
+    if (!hasDraftChanges || savingAll || busy) return !hasDraftChanges;
     const missing = listMissingFields(liveDraft);
-    if (missing.length > 0) { onNotice(`Complete ${missing.length} required field${missing.length === 1 ? "" : "s"} before saving all sections.`); return; }
+    if (missing.length > 0) { onNotice(`Complete ${missing.length} required field${missing.length === 1 ? "" : "s"} before saving all sections.`); return false; }
     setSavingAll(true);
-    void onSave({ ups: liveDraft.ups, srinakarinInputs: liveDraft.srinakarinInputs, air: liveDraft.air, dc: liveDraft.dc, energyCost: liveDraft.energyCost }).finally(() => setSavingAll(false));
+    try { return await onSave({ ups: liveDraft.ups, srinakarinInputs: liveDraft.srinakarinInputs, air: liveDraft.air, dc: liveDraft.dc, energyCost: liveDraft.energyCost }); } finally { setSavingAll(false); }
   }, [busy, hasDraftChanges, liveDraft, onNotice, onSave, savingAll]);
+  useEffect(() => { onRegisterActions?.({ saveAll, resetAll }); return () => onRegisterActions?.(null); }, [onRegisterActions, resetAll, saveAll]);
   const jumpToSection = useCallback((section: Section) => document.getElementById(`entry-section-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), []);
 
   return <div className="space-y-5 pb-40 md:pb-24">

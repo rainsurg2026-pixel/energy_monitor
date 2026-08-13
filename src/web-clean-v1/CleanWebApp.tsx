@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { BarChart3, ChartNoAxesCombined, ClipboardPenLine, Download, FileSpreadsheet, History, LogOut, Printer, Server, Settings, UsersRound } from "lucide-react";
 import { ReportProvider, useReport } from "../ReportContext";
 import DashboardSummary from "../components/DashboardSummary";
@@ -27,7 +27,7 @@ import { CapacityAlerts } from "../components/rack/CapacityAlerts";
 import { CapacityGauge } from "../components/rack/CapacityGauge";
 import { Timeline as RackCapacityTimeline } from "../components/rack/Timeline";
 import WebSiteComparison from "./WebSiteComparison";
-import WebEntryWorkspace from "./WebEntryWorkspace";
+import WebEntryWorkspace, { type EntryWorkspaceActions } from "./WebEntryWorkspace";
 import WebReportPreview from "./WebReportPreview";
 import { WebRackCapacityEditor, WebRackUnitCapacityEditor } from "./WebRackCapacityEditors";
 import { api, type SessionUser, type Role } from "./api";
@@ -45,6 +45,7 @@ type HistoryData = { months: string[]; logs: MonthlyLog[]; upsGroupHistory?: Ups
 type MonthData = { rowVersion: number | null; log: MonthlyLog | null };
 type AdminUser = { id: string; username: string; displayName: string; role: Role; active: boolean; createdAt: string; lastLoginAt: string | null };
 type DisplayPeriod = { startMonth: string; endMonth: string; rowVersion: number };
+type PendingNavigation = () => void | Promise<void>;
 
 const todayMonth = () => new Date().toISOString().slice(0, 7);
 const readError = (error: unknown) => error instanceof Error ? error.message : "The request could not be completed.";
@@ -68,6 +69,8 @@ export default function CleanWebApp() {
   const [rowVersion, setRowVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [entryDirty, setEntryDirty] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation | null>(null);
+  const entryActionsRef = useRef<EntryWorkspaceActions | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [facilityLoading, setFacilityLoading] = useState(false);
   const [facilityError, setFacilityError] = useState<string | null>(null);
@@ -110,20 +113,23 @@ export default function CleanWebApp() {
   useEffect(() => { if (!user) return; let saved: string | null = null; try { saved = localStorage.getItem(themeStorageKey(user.id)); } catch { /* default remains dark when browser storage is blocked */ } const next = normalizeTheme(saved); setTheme(next); applyTheme(next); }, [user]);
   useEffect(() => { if (!entryDirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [entryDirty]);
 
-  const confirmDiscardEntry = () => !entryDirty || window.confirm("You have unsaved Data Entry changes. Discard them and continue?");
-  const setView = (next: View) => { if (next !== view && !confirmDiscardEntry()) return; if (next !== view) setEntryDirty(false); setViewState(next); };
-  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || (id !== siteId && !confirmDiscardEntry())) return; setEntryDirty(false); setBusy(true); setFacilityError(null); try { setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id); await loadMonth(id, nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()), records); } catch (error) { setFacilityError(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setBusy(false); } };
-  const selectMonth = async (selected: string) => { if (!siteId || (selected !== month && !confirmDiscardEntry())) return; setEntryDirty(false); setBusy(true); try { await loadMonth(siteId, selected, history); setFacilityError(null); } catch (error) { setNotice(readError(error)); } finally { setBusy(false); } };
-  const save = async (patch: Partial<MonthlyLog> = {}) => {
-    if (!siteId || !draft) return;
+  const deferNavigation = (action: PendingNavigation) => { if (entryDirty) setPendingNavigation(() => action); else void action(); };
+  const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setViewState(next); }); };
+  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setBusy(true); setFacilityError(null); try { setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id); await loadMonth(id, nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()), records); } catch (error) { setFacilityError(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setBusy(false); } }; deferNavigation(action); };
+  const selectMonth = async (selected: string) => { if (!siteId || selected === month) return; const action = async () => { setEntryDirty(false); setBusy(true); try { await loadMonth(siteId, selected, history); setFacilityError(null); } catch (error) { setNotice(readError(error)); } finally { setBusy(false); } }; deferNavigation(action); };
+  const save = async (patch: Partial<MonthlyLog> = {}): Promise<boolean> => {
+    if (!siteId || !draft) return false;
     const log = { ...draft, ...patch, month };
     setBusy(true);
     try {
       const result = await api<{ rowVersion: number }>(`/sites/${siteId}/periods/${month}`, { method: "PUT", body: JSON.stringify({ log, expected_row_version: rowVersion, provenance: { sourceType: "web-clean-v1" } }) });
-      setDraft(log); setRowVersion(result.rowVersion); await loadHistory(siteId); setNotice("Saved to Data Center Energy & Facility Monitor.");
-    } catch (error) { setNotice(readError(error)); } finally { setBusy(false); }
+      setDraft(log); setRowVersion(result.rowVersion); await loadHistory(siteId); setNotice("Saved to Data Center Energy & Facility Monitor."); return true;
+    } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
-  const logout = async () => { if (!confirmDiscardEntry()) return; setEntryDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { setUser(null); setBootstrap(null); setDraft(null); } };
+  const logout = async () => { const action = async () => { setEntryDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { setUser(null); setBootstrap(null); setDraft(null); } }; deferNavigation(action); };
+  const registerEntryActions = useCallback((actions: EntryWorkspaceActions | null) => { entryActionsRef.current = actions; }, []);
+  const discardPendingNavigation = () => { const action = pendingNavigation; setPendingNavigation(null); setEntryDirty(false); if (action) void action(); };
+  const savePendingNavigation = async () => { const action = pendingNavigation; if (!action) return; const saved = await entryActionsRef.current?.saveAll(); if (!saved) return; setPendingNavigation(null); setEntryDirty(false); void action(); };
   const changeTheme = (next: Theme) => { setTheme(next); applyTheme(next); if (user) { try { localStorage.setItem(themeStorageKey(user.id), next); } catch { /* theme still applies for current page */ } } };
   const refreshAfterSettings = async () => {
     const result = normalizeBootstrap(await api<BootstrapApi>("/bootstrap"));
@@ -151,7 +157,7 @@ export default function CleanWebApp() {
         <main className="min-w-0 flex-1 p-4 pb-20 md:p-6 md:pb-6"><div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">Reporting month</span><div className="text-lg font-semibold">{month}</div></div><input aria-label="Reporting month" type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">Display period {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />Completion <b className="text-teal-300">{completion.overall.percent}%</b></div></div>
           {busy && <div className="mb-4 text-sm text-teal-300">Working…</div>}
           {view === "settings" ? <SettingsPage displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice("Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">Facility context unavailable</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">Retry facility load</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">Loading facility context…</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={month} lang="en" upsGroupHistory={history.upsGroupHistory ?? null} />}
-          {view === "entry" && draft && <WebEntryWorkspace siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} busy={busy} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={selected => void selectMonth(selected)} onOpenReports={() => setView("reports")} onNotice={setNotice} onDirtyChange={setEntryDirty} />}
+          {view === "entry" && draft && <WebEntryWorkspace siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} busy={busy} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={selected => void selectMonth(selected)} onOpenReports={() => setView("reports")} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
           {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} lang="en" rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onHistorySaved={() => { void loadHistory(siteId); }} onSelectMonth={selected => void selectMonth(selected)} />}
           {view === "history" && <section className="space-y-8"><HistoricalCharts logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} dataSourceLabel="Source: Production API" /><HistoricalExplorer logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} upsGroupHistory={history.upsGroupHistory ?? null} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onEditMonth={selected => { setView("entry"); void selectMonth(selected); }} /></section>}
           {view === "comparison" && <WebSiteComparison />}
@@ -160,6 +166,7 @@ export default function CleanWebApp() {
           </>}
         </main></div>
       <nav aria-label="Mobile application navigation" className="fixed bottom-0 left-0 right-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-800 bg-slate-950 px-1 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`min-w-[4.75rem] shrink-0 flex flex-col items-center gap-1 py-2 text-[10px] ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
+      {pendingNavigation && <div role="dialog" aria-modal="true" aria-labelledby="unsaved-entry-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><h2 id="unsaved-entry-title" className="font-display text-lg font-bold text-slate-100">Unsaved Data Entry changes</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">Save your current entries before continuing, discard them, or stay on this page.</p><div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setPendingNavigation(null)} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">Cancel</button><button type="button" onClick={discardPendingNavigation} className="rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-300">Discard</button><button type="button" onClick={() => void savePendingNavigation()} className="rounded-lg bg-teal-500 px-3 py-2 text-sm font-semibold text-slate-950">Save &amp; Continue</button></div></section></div>}
       <AppNotice message={notice} />
     </div>
   </ReportProvider>;
