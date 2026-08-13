@@ -7,6 +7,7 @@ import { AlertCircle } from "lucide-react";
  * Workbook health is deliberately omitted: the browser has no workbook to
  * inspect and must not label the Production database "Healthy" by proxy. */
 export default function WebEntryWorkflowHeader({
+  lang,
   facilityName,
   months,
   selectedMonth,
@@ -15,6 +16,7 @@ export default function WebEntryWorkflowHeader({
   allowedStartMonth,
   allowedEndMonth
 }: {
+  lang: "th" | "en";
   facilityName: string;
   months: string[];
   selectedMonth: string;
@@ -25,7 +27,7 @@ export default function WebEntryWorkflowHeader({
 }) {
   const lastSaved = draft.lastSavedUps ?? draft.lastSavedAir ?? draft.lastSavedDc ?? draft.lastSavedEnergyCost ?? null;
   return <EntryWorkflowHeader
-    lang="en"
+    lang={lang}
     facilityName={facilityName}
     facilityLogo={null}
     workbookLabel="Production API"

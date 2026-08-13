@@ -5,7 +5,7 @@ const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.m
 const workspace = readFileSync(new URL("../src/web-clean-v1/WebEntryWorkspace.tsx", import.meta.url), "utf8");
 
 assert.match(app, /import WebEntryWorkspace(?:, \{ type EntryWorkspaceActions \})? from "\.\/WebEntryWorkspace"/);
-assert.match(app, /<WebEntryWorkspace siteName=\{site\.name\} siteCode=\{site\.code\}/);
+assert.match(app, /<WebEntryWorkspace lang=\{lang\} siteName=\{site\.name\} siteCode=\{site\.code\}/);
 assert.match(app, /allowedStartMonth=\{bootstrap\?\.displayPeriod\.startMonth \?\? month\}/);
 assert.match(app, /allowedEndMonth=\{bootstrap \? \(bootstrap\.displayPeriod\.endMonth < todayMonth\(\) \? bootstrap\.displayPeriod\.endMonth : todayMonth\(\)\) : month\}/);
 assert.match(workspace, /import SrinakarinPowerPhaseTable from "\.\.\/components\/SrinakarinPowerPhaseTable"/);

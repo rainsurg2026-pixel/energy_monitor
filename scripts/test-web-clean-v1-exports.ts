@@ -111,10 +111,10 @@ await assertExportsShowOnlyMonth("2026-07", { mode: "single", singleMonth: "2026
 // richer than CSV: values remain usable in formulas/Power BI after download.
 const typedExportLog: MonthlyLog = {
   ...log("2026-07"),
-  ups: [{ upsId: "UPS 11A", voltage: 230.125, current: 10.5, loadKw: 12.345, loadKva: 15.678 }],
+  ups: [{ upsId: "UPS 11A", voltage: 230.125, current: 10.5, loadKw: 12.345, loadKva: 15.678, phases: { R: { voltage: 229.5, current: 3.25, loadKw: 4.1, loadKva: 4.5 } } }],
   air: { eb41a: 2.25, eb41b: 3.5, eb42a: 4.75, eb42b: 5.25, meters: { eb43a: 6.5 } },
   dc: [{ panelId: "DC PDB41A", voltage: 48.5, current: 20.25 }],
-  energyCost: { buildingEnergyKwh: 1000.125, buildingElectricityCostThb: 5000.5 },
+  energyCost: { buildingEnergyKwh: 1000.125, buildingElectricityCostThb: 5000.5, floorElectricityCostThb: 4100.25, averageElectricityRateThbPerKwh: 4.1 },
   lastSavedUps: "2026-07-15T06:30:00.000Z",
   lastSavedAir: "2026-07-16T06:30:00.000Z",
   lastSavedDc: "2026-07-17T06:30:00.000Z",
@@ -127,10 +127,12 @@ const typedReread = new ExcelJS.Workbook();
 await typedReread.xlsx.load(typedBuffer as unknown as ArrayBuffer);
 const typedEnergy = typedReread.worksheets.find(sheet => sheet.name.includes("Energy_Cost"))!;
 const typedUps = typedReread.worksheets.find(sheet => sheet.name.includes("UPS_Loads"))!;
+const typedUpsPhases = typedReread.worksheets.find(sheet => sheet.name.includes("UPS_Phases"))!;
 const typedPhase = typedReread.worksheets.find(sheet => sheet.name.includes("Srinakarin_Inputs"))!;
 check("Excel includes raw UPS entry rows", typedUps.getCell("B2").value === "UPS 11A" && typedUps.getCell("C2").value === 230.125);
 check("Excel includes section saved dates as typed dd-Mmm-yy dates", typedUps.getCell("G2").value instanceof Date && typedUps.getCell("G2").numFmt === "dd-mmm-yy");
-check("Excel includes raw energy entry values and all calculation outputs", typedEnergy.columnCount === 11 && typedEnergy.getCell("B2").value === 1000.125 && typedEnergy.getCell("J2").value !== null);
+check("Excel includes UPS phase entry rows", typedUpsPhases.getCell("B2").value === "UPS 11A" && typedUpsPhases.getCell("D2").value === 229.5);
+check("Excel includes raw, saved, and calculated energy values", typedEnergy.columnCount === 13 && typedEnergy.getCell("B2").value === 1000.125 && typedEnergy.getCell("E2").value === 4100.25 && typedEnergy.getCell("F2").value === 4.1 && String(typedEnergy.getCell("M1").value).includes("Calculated"));
 check("Excel includes every Srinakarin phase-level entry value", typedPhase.rowCount === 5 && typedPhase.getCell("D2").value === 230.125);
 for (const sheet of typedReread.worksheets) {
   sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => { if (rowNumber > 1) row.eachCell({ includeEmpty: false }, cell => { if (typeof cell.value === "number") check(`${sheet.name} ${cell.address}: numeric values use two decimals`, cell.numFmt === "#,##0.00"); if (cell.value instanceof Date) check(`${sheet.name} ${cell.address}: dates use dd-Mmm-yy`, cell.numFmt === "dd-mmm-yy"); }); });

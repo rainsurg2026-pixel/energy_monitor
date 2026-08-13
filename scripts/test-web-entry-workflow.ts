@@ -13,7 +13,7 @@ assert.match(header, /showHealth=\{false\}/);
 assert.match(header, /Historical Data Edit Mode/);
 assert.match(header, /Return to latest/);
 assert.match(desktopHeader, /showHealth\?: boolean/);
-assert.match(app, /<WebEntryWorkspace siteName=\{site\.name\}/);
+assert.match(app, /<WebEntryWorkspace lang=\{lang\} siteName=\{site\.name\}/);
 assert.match(workspace, /<StickyEntryToolbar/);
 assert.match(workspace, /Save All sends one concurrency-protected Production API update/);
 assert.match(workspace, /listMissingFields\(liveDraft\)/);

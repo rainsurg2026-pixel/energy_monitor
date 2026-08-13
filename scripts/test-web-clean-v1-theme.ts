@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { normalizeTheme, themeStorageKey } from "../src/web-clean-v1/theme";
+import { languageStorageKey, normalizeLanguage, normalizeTheme, themeStorageKey } from "../src/web-clean-v1/theme";
 
 assert.equal(normalizeTheme("light"), "light");
 assert.equal(normalizeTheme("dark"), "dark");
@@ -8,6 +8,11 @@ assert.equal(normalizeTheme("system"), "dark");
 assert.equal(normalizeTheme(null), "dark");
 assert.equal(themeStorageKey("8"), "energy-monitor:theme:8");
 assert.notEqual(themeStorageKey("8"), themeStorageKey("9"));
+assert.equal(normalizeLanguage("th"), "th");
+assert.equal(normalizeLanguage("en"), "en");
+assert.equal(normalizeLanguage("fr"), "th");
+assert.equal(languageStorageKey("8"), "energy-monitor:language:8");
+assert.notEqual(languageStorageKey("8"), languageStorageKey("9"));
 const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 for (const token of ["--color-bg", "--color-surface", "--color-surface-elevated", "--color-text", "--color-text-secondary", "--color-text-muted", "--color-text-disabled", "--color-border", "--color-input-bg", "--color-input-text", "--color-input-placeholder", "--color-primary", "--color-secondary", "--color-danger", "--color-success", "--color-warning"]) assert.match(css, new RegExp(`${token}:`));
@@ -18,6 +23,9 @@ assert.match(css, /--color-input-bg: #071a30;[\s\S]*?--color-input-text: #f4f7fb
 assert.match(app, /function Login[\s\S]*?bg-slate-950 px-4 text-slate-100/);
 assert.match(app, /PASSWORD_MIN_LENGTH = 12/);
 assert.match(app, /passwordHelp/);
+assert.match(app, /const \[lang, setLang\] = useState<AppLanguage>\("th"\)/);
+assert.match(app, /languageStorageKey\(user\.id\)/);
+assert.match(app, /Switch language to Thai/);
 
 // Dashboard accent colors (amber/emerald/purple/rose/sky/teal) are tuned for
 // dark-theme legibility and were measured at 1.1-2.8:1 against the light
