@@ -29,6 +29,8 @@ import { Forecast as RackCapacityForecast } from "../components/rack/Forecast";
 import { RackUnitCapacitySummary } from "../components/rack/RackUnitCapacitySummary";
 import { StickyHeader as RackCapacityStickyHeader } from "../components/rack/StickyHeader";
 import { ExecutiveKpiCards as RackCapacityExecutiveKpiCards } from "../components/rack/ExecutiveKpiCards";
+import { CapacityAlerts } from "../components/rack/CapacityAlerts";
+import { CapacityGauge } from "../components/rack/CapacityGauge";
 import { WebRackCapacityEditor, WebRackUnitCapacityEditor } from "./WebRackCapacityEditors";
 import { api, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportCsv, exportExcel, exportSiteComparisonCsv, exportSiteComparisonExcel, openReportPopup, printAllFacilitiesPdf, printDesktopPdf, printSiteComparisonPdf, rackReportFromSnapshot, type ComparisonMetric, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
@@ -247,13 +249,17 @@ function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, 
     <div className="space-y-5">
       <div><h2 className="font-display text-2xl font-bold">Rack Capacity and Utilization</h2><p className="mt-1 text-sm text-slate-400">Desktop-compatible field editing, snapshot history, and rack-unit capacity for {month}.</p></div>
       <RackCapacityProvider lang={lang} facilityName={siteName} rackCapacity={rackCapacity} rackUnitCapacity={rackUnitCapacity} rackCapacityHistory={rackCapacityHistory}>
-        <RackCapacityMonthSync month={month}><RackCapacitySummaryCard /></RackCapacityMonthSync>
         <RackCapacityStickyHeader />
+        <CapacityAlerts />
         <RackCapacityExecutiveKpiCards />
-        <WebRackCapacityEditor siteId={siteId} month={month} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} />
-        <RackCapacityHistoryPanel />
-        <RackCapacityForecast />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <CapacityGauge />
+          <RackCapacityForecast />
+        </div>
+        <RackCapacityMonthSync month={month}><RackCapacitySummaryCard /></RackCapacityMonthSync>
         <RackUnitCapacitySummary />
+        <RackCapacityHistoryPanel />
+        <WebRackCapacityEditor siteId={siteId} month={month} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} />
       </RackCapacityProvider>
       <WebRackUnitCapacityEditor siteId={siteId} month={month} initialSnapshot={rackUnit} onSaved={(next) => { setRackUnit(next); onHistorySaved?.(); }} />
     </div>
