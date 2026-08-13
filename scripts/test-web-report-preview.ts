@@ -15,7 +15,7 @@ assert.match(preview, /aria-label=\{th \? "เพิ่มขนาดตัว�
 assert.match(preview, /title=\{th \? "ตัวอย่างรายงานของไซต์ปัจจุบัน" : "Current facility report preview"\}/);
 assert.match(preview, /minWidth: "640px"/);
 assert.match(app, /<WebReportPreview lang=\{lang\} siteId=\{siteId\}/);
-assert.match(app, /<WebReportPreview lang=\{lang\} siteId=\{siteId\} siteName=\{siteName\} logs=\{logs\} month=\{contextMonth\}/);
+assert.match(app, /<WebReportPreview lang=\{lang\} siteId=\{siteId\} siteName=\{siteName\} logs=\{scopedLogs\} calculationLogs=\{logs\} month=\{contextMonth\}/);
 assert.doesNotMatch(app, /\{view === "reports" && <WebReportPreview/);
 
 console.log("web report preview: renders the shared PDF report HTML from API-backed facility data");

@@ -10,14 +10,17 @@ import { facilityReportData, rackReportFromSnapshot, type RackSnapshotApiRespons
 /** Browser counterpart of Desktop's report preview. It deliberately uses the
  * same ReportData builder and HTML renderer as PDF export, so preview cannot
  * display calculations different from the generated report. */
-export default function WebReportPreview({ lang, siteId, siteName, logs, month, rackCapacityHistory, rackUnitCapacity }: {
+export default function WebReportPreview({ lang, siteId, siteName, logs, month, rackCapacityHistory, rackUnitCapacity, calculationLogs }: {
   lang: "th" | "en";
   siteId: number | null;
   siteName: string;
+  /** Logs included in the selected report period. */
   logs: MonthlyLog[];
   month: string;
   rackCapacityHistory: RackCapacityHistoryRow[];
   rackUnitCapacity: RackUnitCapacityRow[];
+  /** Full history used only as the previous-reading context for calculations. */
+  calculationLogs?: MonthlyLog[];
 }) {
   const th = lang === "th";
   const [rack, setRack] = useState<ReturnType<typeof rackReportFromSnapshot>>(null);
@@ -40,8 +43,8 @@ export default function WebReportPreview({ lang, siteId, siteName, logs, month, 
   useEffect(() => { void loadRack(); }, [loadRack, refreshKey]);
 
   const html = useMemo(
-    () => buildReportHtml(facilityReportData(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity)),
-    [logs, month, rack, rackCapacityHistory, rackUnitCapacity, siteName]
+    () => buildReportHtml(facilityReportData(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs ?? logs)),
+    [calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, siteName]
   );
   const pageCount = (html.match(/page-break-(before|after)/g)?.length ?? 0) + 1;
 

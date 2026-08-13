@@ -18,6 +18,10 @@ assert.match(app, /Recent Reports/);
 assert.match(app, /HistoryProvider\.remove\(item\.id\)/);
 assert.match(app, /all-facilities-energy-monitor\.xlsx/);
 assert.match(app, /site-comparison-\$\{month\}\.xlsx/);
+assert.match(app, /<WebReportPreview[^>]+logs=\{scopedLogs\} calculationLogs=\{logs\}/);
+const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
+assert.match(preview, /calculationLogs\?: MonthlyLog\[\]/);
+assert.match(preview, /facilityReportData\(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs \?\? logs\)/);
 assert.match(historyProvider, /slice\(0, 50\)/);
 
 console.log("web-clean-v1 reports: exports retain a local recent-report history like Desktop");
