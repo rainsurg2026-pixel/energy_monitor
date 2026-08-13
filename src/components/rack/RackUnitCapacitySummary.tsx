@@ -38,7 +38,13 @@ const TREND_MONTHS = 12;
 /** `provider` is optional for the Web API workspace: it has the same
  * capacity snapshot/history data as Desktop but intentionally no filesystem
  * image provider. */
-export const RackUnitCapacitySummary: React.FC<{ provider?: Pick<IDataProvider, "getRackUnitCapacityImage">; refreshKey?: number }> = ({ provider, refreshKey }) => {
+export const RackUnitCapacitySummary: React.FC<{
+  provider?: Pick<IDataProvider, "getRackUnitCapacityImage">;
+  refreshKey?: number;
+  /** Browser mode keeps the Desktop layout but must not promise an upload
+   *  action before a server-side image storage contract exists. */
+  imageUploadAvailable?: boolean;
+}> = ({ provider, refreshKey, imageUploadAvailable = true }) => {
   const { lang, facilityName, reportingMonth, rackUnitCapacity, unitCapacityRow } = useRackCapacity();
 
   const [imageDataUri, setImageDataUri] = React.useState<string | null>(null);
@@ -216,8 +222,8 @@ export const RackUnitCapacitySummary: React.FC<{ provider?: Pick<IDataProvider, 
                   <div className="p-3 rounded-full bg-slate-900 border border-slate-800">
                     <ImagePlus className="w-6 h-6" />
                   </div>
-                  <p className="text-xs text-slate-400">{lang === "th" ? "ยังไม่มีรูปภาพความจุหน่วยแร็คประจำเดือนนี้" : "Rack Unit Capacity image not yet captured"}</p>
-                  <p className="text-[10px] text-slate-600 text-center px-6">{lang === "th" ? "อัปโหลดได้ที่แผงแก้ไขด้านล่าง" : "Upload one from the editor panel below"}</p>
+                  <p className="text-xs text-slate-400">{imageUploadAvailable ? (lang === "th" ? "ยังไม่มีรูปภาพความจุหน่วยแร็คประจำเดือนนี้" : "Rack Unit Capacity image not yet captured") : (lang === "th" ? "ยังไม่รองรับประวัติรูปภาพความจุหน่วยแร็คใน Web" : "Rack Unit Capacity image history is not available in this web deployment.")}</p>
+                  <p className="text-[10px] text-slate-600 text-center px-6">{imageUploadAvailable ? (lang === "th" ? "อัปโหลดได้ที่แผงแก้ไขด้านล่าง" : "Upload one from the editor panel below") : (lang === "th" ? "ต้องมี Storage API ก่อนจึงจะอัปโหลดและเรียกดูรูปภาพได้" : "A Storage API is required before images can be uploaded or viewed here.")}</p>
                 </div>
               )}
             </div>
