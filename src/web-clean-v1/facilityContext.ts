@@ -1,3 +1,6 @@
+import type { DashboardUpsMappingReport } from "../reports/reportTypes";
+import { registerDesktopDashboardMapping } from "../domain/dashboardMapping";
+
 export interface FacilitySite {
   id: number;
   code: string;
@@ -5,6 +8,8 @@ export interface FacilitySite {
   active: boolean;
   availableMonths: string[];
   latestAvailableMonth: string | null;
+  /** Source-derived Desktop Dashboard-FAC topology, when migration retained it. */
+  dashboardMapping?: DashboardUpsMappingReport | null;
 }
 
 export interface DisplayPeriodState { startMonth: string; endMonth: string; rowVersion: number; }
@@ -24,7 +29,10 @@ interface ApiSiteState {
 export function normalizeBootstrap(payload: Omit<BootstrapState, "sites"> & { sites: ApiSiteState[] }): BootstrapState {
   return {
     ...payload,
-    sites: payload.sites.map(item => ({ ...item.site, availableMonths: item.availableMonths, latestAvailableMonth: item.latestAvailableMonth }))
+    sites: payload.sites.map(item => {
+      registerDesktopDashboardMapping(item.site.code, item.site.dashboardMapping);
+      return { ...item.site, availableMonths: item.availableMonths, latestAvailableMonth: item.latestAvailableMonth };
+    })
   };
 }
 

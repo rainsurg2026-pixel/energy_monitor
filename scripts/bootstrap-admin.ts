@@ -27,7 +27,7 @@ console.log(`Target verification: PASS - ${targetVerification.reason}`);
 
 const username = process.env.BOOTSTRAP_ADMIN_USERNAME;
 const password = process.env.BOOTSTRAP_ADMIN_PASSWORD;
-const displayName = process.env.BOOTSTRAP_ADMIN_DISPLAY_NAME?.trim() || "Energy Monitor Administrator";
+const displayName = process.env.BOOTSTRAP_ADMIN_DISPLAY_NAME?.trim() || "Data Center Energy & Facility Monitor Administrator";
 
 if (!username || !password) throw new Error("BOOTSTRAP_ADMIN_USERNAME and BOOTSTRAP_ADMIN_PASSWORD are required.");
 if (displayName.length === 0 || displayName.length > 256) throw new Error("BOOTSTRAP_ADMIN_DISPLAY_NAME must be between 1 and 256 characters.");

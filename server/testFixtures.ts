@@ -1,4 +1,5 @@
 import type { MonthlyLog, UpsRecord } from "../src/types";
+import { getDesktopDashboardMapping } from "../src/domain/dashboardMapping";
 import { InMemoryRepository } from "./repositories/inMemoryRepository";
 
 function upsRecords(): UpsRecord[] {
@@ -27,7 +28,7 @@ export function apiTestRepository(readOnly = false): InMemoryRepository {
   void readOnly;
   return new InMemoryRepository({
     sites: [
-      { id: 1, code: "site-a", name: "Site A", active: true },
+      { id: 1, code: "site-a", name: "Site A", active: true, dashboardMapping: { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping("rangsit") } },
       { id: 2, code: "site-b", name: "Site B", active: true }
     ],
     logs: {
@@ -40,7 +41,10 @@ export function apiTestRepository(readOnly = false): InMemoryRepository {
       // filtered out of the bulk history response, same as fixtureLog's
       // hidden 2025-12 month.
       "1:2025-12": { month: "2025-12", rowVersion: 1, totalU: 400, usedU: 300 },
-      "1:2026-01": { month: "2026-01", rowVersion: 1, totalU: 400, usedU: 350 }
+      "1:2026-01": { month: "2026-01", rowVersion: 1, totalU: 400, usedU: 350 },
+      // No monthly log exists for this month. It must still be visible in
+      // History/Data Entry because Rack Unit Capacity is a separate dataset.
+      "1:2026-03": { month: "2026-03", rowVersion: 1, totalU: 100, usedU: 20 }
       // Site 2 deliberately has no Rack Unit Capacity snapshot at all.
     },
     rackSnapshots: {

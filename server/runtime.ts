@@ -8,6 +8,7 @@ import { PostgresRepository } from "./db/postgresRepository";
 import { createPool } from "./db/pool";
 import { createApp } from "./http/app";
 import { PostgresRateLimitStore } from "./http/security/rateLimit";
+import { SupabaseRackUnitImageStorage } from "./storage/rackUnitImageStorage";
 
 export interface ConfiguredRuntime {
   readonly app: Express;
@@ -32,11 +33,15 @@ export async function createConfiguredRuntime(environment: NodeJS.ProcessEnv = p
       sessionSecret: config.sessionSecret,
       sessionPolicy: { absoluteLifetimeMs: config.sessionLifetimeMs }
     });
+    const imageStorage = config.supabaseUrl && config.supabaseServiceRoleKey
+      ? new SupabaseRackUnitImageStorage(config.supabaseUrl, config.supabaseServiceRoleKey, config.rackUnitImageBucket ?? "rack-unit-capacity")
+      : undefined;
     const app = createApp({
       config,
       repository: new PostgresRepository(pool),
       authService,
-      rateLimitStore: new PostgresRateLimitStore(pool)
+      rateLimitStore: new PostgresRateLimitStore(pool),
+      imageStorage
     });
     return { app, config, pool };
   } catch (error) {

@@ -34,7 +34,9 @@ function previewAvailability(totalU: number, usedU: number): { availableU: numbe
 export default function RackUnitCapacityPanel({
   provider,
   onSaved,
-  onImageHistorySaved
+  onImageHistorySaved,
+  reportingMonth,
+  onReportingMonthChange
 }: {
   provider: IDataProvider;
   onSaved?: (rows: RackUnitCapacityRow[]) => void;
@@ -43,8 +45,14 @@ export default function RackUnitCapacityPanel({
    *  RackUnitCapacitySummary re-fetches the image it may already be
    *  showing (or not showing) for this same month. */
   onImageHistorySaved?: () => void;
+  /** Optional controlled month for embedding the editor in Data Entry. */
+  reportingMonth?: string;
+  /** Called when the embedded editor's Month/Year selector changes. */
+  onReportingMonthChange?: (month: string) => void;
 }) {
-  const { lang, facilityName, reportingMonth: month, setReportingMonth: onMonthChange, rackUnitCapacity } = useRackCapacity();
+  const { lang, facilityName, reportingMonth: contextMonth, setReportingMonth: setContextMonth, rackUnitCapacity } = useRackCapacity();
+  const month = reportingMonth ?? contextMonth;
+  const onMonthChange = onReportingMonthChange ?? setContextMonth;
   const rows = rackUnitCapacity;
   const [yearStr, monthStr] = month.split("-");
   const year = Number(yearStr);

@@ -7,6 +7,7 @@ import path from "path";
 import { createHash } from "crypto";
 import JSZip from "jszip";
 import { readWorkbookFromFile } from "../src/excel/WorkbookReader";
+import { locateUpsGroupHistorySheet } from "../src/excel/UpsGroupHistoryWriter";
 import { readUpsGroupHistoryFromBuffer } from "../src/reports/upsGroupHistoryReader";
 import { migrateUpsGroupHistoryIfNeeded, MigrationStage } from "../src/electron/upsGroupHistoryMigration";
 import type { UpsGroupConfig } from "../src/utils/upsGroupAggregation";
@@ -24,6 +25,39 @@ function check(name: string, condition: boolean, detail = ""): void {
 
 function hash(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
+}
+
+/**
+ * The production workbook may already contain the migrated sheet. Build a
+ * clean fixture in the test workspace without ever changing the source file.
+ * Only the worksheet registration and its own part are removed; all other
+ * workbook parts remain byte-identical in the generated fixture.
+ */
+async function removeHistorySheetFromFixture(original: Buffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(original);
+  const sheetPath = await locateUpsGroupHistorySheet(zip);
+  if (!sheetPath) return original;
+  const workbookFile = zip.file("xl/workbook.xml");
+  const relsFile = zip.file("xl/_rels/workbook.xml.rels");
+  const contentTypesFile = zip.file("[Content_Types].xml");
+  if (!workbookFile || !relsFile || !contentTypesFile) throw new Error("Fixture workbook is missing required OPC parts.");
+  const workbookXml = await workbookFile.async("string");
+  const relsXml = await relsFile.async("string");
+  const contentTypesXml = await contentTypesFile.async("string");
+  const sheetTag = workbookXml.match(/<sheet\b[^>]*name="2\. UPS Group History"[^>]*\/>/)?.[0];
+  const relationshipId = sheetTag?.match(/\br:id="([^"]+)"/)?.[1];
+  if (!sheetTag || !relationshipId) throw new Error("Fixture History sheet registration is malformed.");
+  const patchedWorkbook = workbookXml.replace(sheetTag, "");
+  const relationshipTag = relsXml.match(new RegExp(`<Relationship\\b[^>]*Id="${relationshipId}"[^>]*/>`))?.[0];
+  const patchedRels = relationshipTag ? relsXml.replace(relationshipTag, "") : relsXml;
+  const escapedPart = sheetPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const contentTypeTag = contentTypesXml.match(new RegExp(`<Override\\b[^>]*PartName="/${escapedPart}"[^>]*/>`))?.[0];
+  const patchedContentTypes = contentTypeTag ? contentTypesXml.replace(contentTypeTag, "") : contentTypesXml;
+  zip.file("xl/workbook.xml", patchedWorkbook);
+  zip.file("xl/_rels/workbook.xml.rels", patchedRels);
+  zip.file("[Content_Types].xml", patchedContentTypes);
+  zip.remove(sheetPath);
+  return (await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", compressionOptions: { level: 6 } })) as Buffer;
 }
 
 async function partHashes(buf: Buffer): Promise<Record<string, string>> {
@@ -52,7 +86,8 @@ async function main(): Promise<void> {
   await fs.mkdir(workDir, { recursive: true });
   const target = path.join(workDir, "DC_Rangsit_migration.xlsm");
   await fs.copyFile(path.join(root, "DC_Rangsit.xlsm"), target);
-  const originalBytes = await fs.readFile(target);
+  const originalBytes = await removeHistorySheetFromFixture(await fs.readFile(target));
+  await fs.writeFile(target, originalBytes);
 
   const preOpen = await readUpsGroupHistoryFromBuffer(originalBytes);
   check("Fresh copy: no History sheet before migration (never manually created)", preOpen === null);

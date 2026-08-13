@@ -3,7 +3,8 @@ import type { MonthlyLog, UpsRecord } from "../../src/types";
 import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
 import { withTransaction, type DbExecutor, query } from "./pool";
 import { HttpError } from "../errors";
-import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "../repositories/contracts";
+import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitImageRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SaveRackUnitImageInput, SaveRackUnitSnapshotInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "../repositories/contracts";
+import { dashboardMappingFromPolicy } from "../repositories/dashboardMapping";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 function numberOrNull(value: unknown): number | null { return value === null || value === undefined ? null : Number(value); }
@@ -43,14 +44,16 @@ export class PostgresRepository implements BackendRepository {
   async ping(): Promise<void> { await this.executor.query("SELECT 1"); }
 
   async listSites(): Promise<SiteRecord[]> {
-    const result = await query<{ id: string; code: string; name: string; active: boolean }>(this.executor, "SELECT id, code, name, active FROM sites WHERE active = true ORDER BY name, id");
-    return result.rows.map(row => ({ id: Number(row.id), code: row.code, name: row.name, active: row.active }));
+    const result = await query<{ id: string; code: string; name: string; active: boolean; policy: unknown }>(this.executor,
+      "SELECT s.id, s.code, s.name, s.active, sp.policy FROM sites s LEFT JOIN site_profiles sp ON sp.site_id = s.id WHERE s.active = true ORDER BY s.name, s.id");
+    return result.rows.map(row => ({ id: Number(row.id), code: row.code, name: row.name, active: row.active, dashboardMapping: dashboardMappingFromPolicy(row.policy) }));
   }
 
   async getSite(siteId: number): Promise<SiteRecord | null> {
-    const result = await query<{ id: string; code: string; name: string; active: boolean }>(this.executor, "SELECT id, code, name, active FROM sites WHERE id = $1", [siteId]);
+    const result = await query<{ id: string; code: string; name: string; active: boolean; policy: unknown }>(this.executor,
+      "SELECT s.id, s.code, s.name, s.active, sp.policy FROM sites s LEFT JOIN site_profiles sp ON sp.site_id = s.id WHERE s.id = $1", [siteId]);
     const row = result.rows[0];
-    return row ? { id: Number(row.id), code: row.code, name: row.name, active: row.active } : null;
+    return row ? { id: Number(row.id), code: row.code, name: row.name, active: row.active, dashboardMapping: dashboardMappingFromPolicy(row.policy) } : null;
   }
 
   async getGlobalSettings(): Promise<DisplayPeriod | null> {
@@ -286,9 +289,52 @@ export class PostgresRepository implements BackendRepository {
   }
 
   async getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null> {
-    const result = await query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown }>(this.executor, "SELECT period_month, row_version, total_u, used_u FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = $2::date", [siteId, `${month}-01`]);
+    const result = await query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown; object_key: string | null; content_type: string | null; byte_size: unknown; sha256: string | null; width: number | null; height: number | null; saved_at: string | null; saved_by: string | null }>(this.executor,
+      `SELECT s.period_month, s.row_version, s.total_u, s.used_u,
+              i.object_key, i.content_type, i.byte_size, i.sha256, i.width, i.height, i.saved_at, i.saved_by
+         FROM rack_unit_capacity_snapshots s
+         LEFT JOIN LATERAL (
+           SELECT object_key, content_type, byte_size, sha256, width, height, saved_at, saved_by
+             FROM rack_unit_capacity_images
+            WHERE snapshot_id = s.id
+            ORDER BY saved_at DESC, id DESC
+            LIMIT 1
+         ) i ON true
+        WHERE s.site_id = $1 AND s.period_month = $2::date`, [siteId, `${month}-01`]);
     const row = result.rows[0];
-    return row ? { month: monthString(row.period_month), rowVersion: row.row_version, totalU: Number(row.total_u), usedU: Number(row.used_u) } : null;
+    if (!row) return null;
+    const image = row.object_key && (row.content_type === "image/png" || row.content_type === "image/jpeg")
+      ? { objectKey: row.object_key, contentType: row.content_type as "image/png" | "image/jpeg", byteSize: numberOrNull(row.byte_size), sha256: row.sha256, width: row.width, height: row.height, savedAt: String(row.saved_at), savedBy: String(row.saved_by ?? "system") }
+      : null;
+    return { month: monthString(row.period_month), rowVersion: row.row_version, totalU: Number(row.total_u), usedU: Number(row.used_u), image };
+  }
+
+  async saveRackUnitSnapshot(input: SaveRackUnitSnapshotInput): Promise<RackUnitSnapshotRecord> {
+    const current = await query<{ id: string; row_version: number }>(this.executor, "SELECT id, row_version FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = $2::date FOR UPDATE", [input.siteId, `${input.month}-01`]);
+    const existing = current.rows[0];
+    if (existing && input.expectedRowVersion !== existing.row_version) throw new HttpError(409, "STALE_VERSION", "Rack Unit Capacity changed before this save was committed.");
+    if (!existing && input.expectedRowVersion !== null && input.expectedRowVersion !== 0) throw new HttpError(409, "STALE_VERSION", "Rack Unit Capacity changed before this save was committed.");
+    const result = existing
+      ? await query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown }>(this.executor, "UPDATE rack_unit_capacity_snapshots SET total_u = $1, used_u = $2, row_version = row_version + 1, updated_at = now() WHERE id = $3 RETURNING period_month, row_version, total_u, used_u", [input.totalU, input.usedU, existing.id])
+      : await query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown }>(this.executor, "INSERT INTO rack_unit_capacity_snapshots(site_id, period_month, total_u, used_u) VALUES ($1, $2::date, $3, $4) RETURNING period_month, row_version, total_u, used_u", [input.siteId, `${input.month}-01`, input.totalU, input.usedU]);
+    const row = result.rows[0];
+    return { month: monthString(row.period_month), rowVersion: row.row_version, totalU: Number(row.total_u), usedU: Number(row.used_u), image: null };
+  }
+
+  async replaceRackUnitImage(input: SaveRackUnitImageInput): Promise<{ image: RackUnitImageRecord; replacedObjectKeys: string[] }> {
+    const snapshot = await query<{ id: string }>(this.executor, "SELECT id FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = $2::date FOR UPDATE", [input.siteId, `${input.month}-01`]);
+    const snapshotId = snapshot.rows[0]?.id;
+    if (!snapshotId) throw new HttpError(409, "RACK_UNIT_CAPACITY_REQUIRED", "Save Rack Unit Capacity before saving its image.");
+    const previous = await query<{ object_key: string }>(this.executor, "SELECT object_key FROM rack_unit_capacity_images WHERE snapshot_id = $1", [snapshotId]);
+    await query(this.executor, "DELETE FROM rack_unit_capacity_images WHERE snapshot_id = $1", [snapshotId]);
+    const inserted = await query<{ object_key: string; content_type: string; byte_size: unknown; sha256: string; width: number; height: number; saved_at: string; saved_by: string }>(this.executor,
+      "INSERT INTO rack_unit_capacity_images(snapshot_id, object_key, content_type, byte_size, sha256, width, height, saved_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING object_key, content_type, byte_size, sha256, width, height, saved_at, saved_by",
+      [snapshotId, input.objectKey, input.contentType, input.byteSize, input.sha256, input.width, input.height, String(input.actorUserId ?? "system")]);
+    const row = inserted.rows[0];
+    return {
+      image: { objectKey: row.object_key, contentType: row.content_type as "image/png" | "image/jpeg", byteSize: numberOrNull(row.byte_size), sha256: row.sha256, width: row.width, height: row.height, savedAt: row.saved_at, savedBy: row.saved_by },
+      replacedObjectKeys: previous.rows.map(item => item.object_key)
+    };
   }
 
   async listRackCapacityHistory(siteId: number): Promise<RackCapacityHistoryRecord[]> {
@@ -322,12 +368,30 @@ export class PostgresRepository implements BackendRepository {
   }
 
   async listRackUnitCapacityHistory(siteId: number): Promise<RackUnitSnapshotRecord[]> {
-    const result = await query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown }>(
+    const result = await query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown; object_key: string | null; content_type: string | null; byte_size: unknown; sha256: string | null; width: number | null; height: number | null; saved_at: string | null; saved_by: string | null }>(
       this.executor,
-      "SELECT period_month, row_version, total_u, used_u FROM rack_unit_capacity_snapshots WHERE site_id = $1 ORDER BY period_month",
+      `SELECT s.period_month, s.row_version, s.total_u, s.used_u,
+              i.object_key, i.content_type, i.byte_size, i.sha256, i.width, i.height, i.saved_at, i.saved_by
+         FROM rack_unit_capacity_snapshots s
+         LEFT JOIN LATERAL (
+           SELECT object_key, content_type, byte_size, sha256, width, height, saved_at, saved_by
+             FROM rack_unit_capacity_images
+            WHERE snapshot_id = s.id
+            ORDER BY saved_at DESC, id DESC
+            LIMIT 1
+         ) i ON true
+        WHERE s.site_id = $1 ORDER BY s.period_month`,
       [siteId]
     );
-    return result.rows.map(row => ({ month: monthString(row.period_month), rowVersion: row.row_version, totalU: Number(row.total_u), usedU: Number(row.used_u) }));
+    return result.rows.map(row => ({
+      month: monthString(row.period_month),
+      rowVersion: row.row_version,
+      totalU: Number(row.total_u),
+      usedU: Number(row.used_u),
+      image: row.object_key && (row.content_type === "image/png" || row.content_type === "image/jpeg")
+        ? { objectKey: row.object_key, contentType: row.content_type as "image/png" | "image/jpeg", byteSize: numberOrNull(row.byte_size), sha256: row.sha256, width: row.width, height: row.height, savedAt: String(row.saved_at), savedBy: String(row.saved_by ?? "system") }
+        : null
+    }));
   }
 
   async getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]> {

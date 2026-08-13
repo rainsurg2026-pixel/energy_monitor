@@ -172,10 +172,19 @@ function buildRowXml(rowNumber: number, row: RackCapacityHistoryRow, styles: His
 
 /** Parses one existing <row> (any prior version's format: text or real-date
  *  Month, styled or unstyled percentages) into a complete, canonical row. */
-function parseFullRow(rawRowXml: string, date1904: boolean): RackCapacityHistoryRow | null {
+async function readSharedStrings(zip: JSZip): Promise<string[]> {
+  const xml = await entryText(zip, "xl/sharedStrings.xml");
+  if (!xml) return [];
+  return [...xml.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)].map(match =>
+    [...match[1].matchAll(/<t\b[^>]*>([\s\S]*?)<\/t>/g)].map(text => xmlUnescape(text[1])).join("")
+  );
+}
+
+function parseFullRow(rawRowXml: string, date1904: boolean, sharedStrings: readonly string[] = []): RackCapacityHistoryRow | null {
   const cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g;
   const cells: Array<string | number | null> = [];
   for (const cellMatch of rawRowXml.matchAll(cellRe)) {
+    const attributes = cellMatch[1];
     const inner = cellMatch[2] ?? null;
     if (!inner) {
       cells.push(null);
@@ -187,7 +196,12 @@ function parseFullRow(rawRowXml: string, date1904: boolean): RackCapacityHistory
       continue;
     }
     const v = inner.match(/<v>([\s\S]*?)<\/v>/);
-    cells.push(v ? Number(v[1]) : null);
+    if (v && getAttr(attributes, "t") === "s") {
+      const sharedIndex = Number(v[1]);
+      cells.push(Number.isInteger(sharedIndex) ? (sharedStrings[sharedIndex] ?? "") : "");
+    } else {
+      cells.push(v ? Number(v[1]) : null);
+    }
   }
   if (cells.length < HEADERS.length || cells[0] === null || cells[0] === "") return null;
   const rawMonth = cells[0];
@@ -220,13 +234,13 @@ interface ExistingRow {
   row: RackCapacityHistoryRow | null;
 }
 
-function parseExistingRows(sheetDataInner: string, date1904: boolean): ExistingRow[] {
+function parseExistingRows(sheetDataInner: string, date1904: boolean, sharedStrings: readonly string[] = []): ExistingRow[] {
   const rows: ExistingRow[] = [];
   const rowRe = /<row\b[^>]*?r="(\d+)"[^>]*?(?:\/>|>[\s\S]*?<\/row>)/g;
   for (const match of sheetDataInner.matchAll(rowRe)) {
     const rowNumber = parseInt(match[1], 10);
     if (rowNumber === 1) continue; // header, always rebuilt fresh
-    rows.push({ rowNumber, row: parseFullRow(match[0], date1904) });
+    rows.push({ rowNumber, row: parseFullRow(match[0], date1904, sharedStrings) });
   }
   return rows;
 }
@@ -345,10 +359,11 @@ export async function upsertRackCapacityHistoryRows(zip: JSZip, xmlPath: string,
   if (!sheetDataMatch) throw new Error("Rack Capacity History worksheet has no sheetData.");
   const workbookXml = await entryText(zip, "xl/workbook.xml");
   const date1904 = workbookUsesDate1904(workbookXml ?? "");
+  const sharedStrings = await readSharedStrings(zip);
   const styles = await ensureHistoryStyles(zip);
 
   const inner = sheetDataMatch[1] ?? "";
-  const existingRows = parseExistingRows(inner, date1904);
+  const existingRows = parseExistingRows(inner, date1904, sharedStrings);
   const byKey = new Map(existingRows.filter(r => r.row).map(r => [rowKey(r.row!.facility, r.row!.snapshotMonth, r.row!.rackZone), r]));
 
   let maxRowNumber = existingRows.reduce((max, r) => Math.max(max, r.rowNumber), 1);
@@ -461,9 +476,10 @@ export async function readRackCapacityHistoryFromBuffer(buffer: Buffer): Promise
   if (!xml) return [];
   const workbookXml = await entryText(zip, "xl/workbook.xml");
   const date1904 = workbookUsesDate1904(workbookXml ?? "");
+  const sharedStrings = await readSharedStrings(zip);
   const sheetDataMatch = xml.match(/<sheetData\s*\/>|<sheetData>([\s\S]*?)<\/sheetData>/);
   if (!sheetDataMatch || !sheetDataMatch[1]) return [];
-  return parseExistingRows(sheetDataMatch[1], date1904)
+  return parseExistingRows(sheetDataMatch[1], date1904, sharedStrings)
     .map(r => r.row)
     .filter((row): row is RackCapacityHistoryRow => row !== null);
 }

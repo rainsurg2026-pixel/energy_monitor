@@ -57,12 +57,12 @@ export function buildEngineeringDashboardSnapshot(
     const reading = activeLog.ups.find(item => normalizedUpsId(item.upsId) === normalizedUpsId(row.upsId))
       ?? activeLog.ups.find(item => normalizedUpsId(item.upsId) === normalizedUpsId(configured?.keyId ?? configured?.upsId ?? row.upsId));
     const capacity = row.capacity ?? configured?.capacity ?? null;
-    const loadKva = reading?.loadKva ?? row.loadKva ?? 0;
+    const loadKva = reading?.loadKva ?? row.loadKva ?? null;
     return {
       no: row.no, umdb: row.umdb, upsId: row.upsId, acPowerPanel: row.acPowerPanel,
-      sts: row.sts, oudb: row.oudb, voltage: reading?.voltage ?? row.voltage ?? 0, current: reading?.current ?? row.current ?? 0,
-      loadKw: reading?.loadKw ?? row.loadKw ?? 0, loadKva, capacity,
-      loadPercent: capacity !== null && capacity > 0 ? loadKva / capacity * 100 : row.loadPercent
+      sts: row.sts, oudb: row.oudb, voltage: reading?.voltage ?? row.voltage ?? null, current: reading?.current ?? row.current ?? null,
+      loadKw: reading?.loadKw ?? row.loadKw ?? null, loadKva, capacity,
+      loadPercent: capacity !== null && capacity > 0 && loadKva !== null ? loadKva / capacity * 100 : row.loadPercent
     };
   });
   const airFields = getAirFields(activeLog);
@@ -84,8 +84,8 @@ export function buildEngineeringDashboardSnapshot(
     daysInMonth, previousMonth: previousLog?.month ?? null, upsGroups, upsOverallGroups, upsDetails,
     totalUpsKw: upsGroups.reduce((sum, row) => sum + row.totalKw, 0), totalUpsKva: upsGroups.reduce((sum, row) => sum + row.totalKva, 0),
     totalUpsEnergyKwh: upsGroups.reduce((sum, row) => sum + row.monthlyEnergyKwh, 0),
-    detailedVoltageAvg: upsDetails.length ? upsDetails.reduce((sum, row) => sum + row.voltage, 0) / upsDetails.length : null,
-    detailedCurrentSum: upsDetails.reduce((sum, row) => sum + row.current, 0),
+    detailedVoltageAvg: (() => { const values = upsDetails.map(row => row.voltage).filter((value): value is number => value !== null); return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null; })(),
+    detailedCurrentSum: (() => { const values = upsDetails.map(row => row.current).filter((value): value is number => value !== null); return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : null; })(),
     airFields, airPrevious, airCurrent, airDifference, airEnergyKwh, dcPanels,
     totalDcPowerW: dcPanels.reduce((sum, row) => sum + row.dcPowerW, 0), totalDcAcCurrentA: dcPanels.reduce((sum, row) => sum + row.acCurrentA, 0),
     totalDcAcPowerW: dcPanels.reduce((sum, row) => sum + row.acPowerW, 0), totalDcEnergyKwh: dcPanels.reduce((sum, row) => sum + row.monthlyEnergyKwh, 0),

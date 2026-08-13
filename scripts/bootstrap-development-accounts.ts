@@ -21,8 +21,8 @@ const hasher = new Argon2idPasswordHasher();
 const developmentPasswordPolicy = { minLength: 8, maxLength: 1024 };
 
 const accounts = [
-  { username: "admin", displayName: "Energy Monitor Administrator", role: "admin" as const, password: adminPassword },
-  { username: "usertest", displayName: "Energy Monitor User", role: "user" as const, password: userPassword }
+  { username: "admin", displayName: "Data Center Energy & Facility Monitor Administrator", role: "admin" as const, password: adminPassword },
+  { username: "usertest", displayName: "Data Center Energy & Facility Monitor User", role: "user" as const, password: userPassword }
 ];
 
 try {

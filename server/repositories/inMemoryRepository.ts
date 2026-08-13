@@ -1,7 +1,7 @@
 import type { MonthlyLog } from "../../src/types";
 import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
 import { HttpError } from "../errors";
-import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "./contracts";
+import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitImageRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SaveRackUnitImageInput, SaveRackUnitSnapshotInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "./contracts";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 export interface InMemoryRepositoryOptions {
@@ -134,6 +134,24 @@ export class InMemoryRepository implements BackendRepository {
 
   async getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null> { return this.rackSnapshots[`${siteId}:${month}`] ?? null; }
   async getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null> { return this.rackUnitSnapshots[`${siteId}:${month}`] ?? null; }
+  async saveRackUnitSnapshot(input: SaveRackUnitSnapshotInput): Promise<RackUnitSnapshotRecord> {
+    const key = `${input.siteId}:${input.month}`;
+    const current = this.rackUnitSnapshots[key] ?? null;
+    if (current && input.expectedRowVersion !== current.rowVersion) throw new HttpError(409, "STALE_VERSION", "Rack Unit Capacity changed before this save was committed.");
+    if (!current && input.expectedRowVersion !== null && input.expectedRowVersion !== 0) throw new HttpError(409, "STALE_VERSION", "Rack Unit Capacity changed before this save was committed.");
+    const next: RackUnitSnapshotRecord = { month: input.month, rowVersion: current ? current.rowVersion + 1 : 1, totalU: input.totalU, usedU: input.usedU, image: current?.image ?? null };
+    this.rackUnitSnapshots[key] = next;
+    return { ...next, image: next.image ? { ...next.image } : null };
+  }
+  async replaceRackUnitImage(input: SaveRackUnitImageInput): Promise<{ image: RackUnitImageRecord; replacedObjectKeys: string[] }> {
+    const key = `${input.siteId}:${input.month}`;
+    const current = this.rackUnitSnapshots[key];
+    if (!current) throw new HttpError(409, "RACK_UNIT_CAPACITY_REQUIRED", "Save Rack Unit Capacity before saving its image.");
+    const image: RackUnitImageRecord = { objectKey: input.objectKey, contentType: input.contentType, byteSize: input.byteSize, sha256: input.sha256, width: input.width, height: input.height, savedAt: new Date().toISOString(), savedBy: String(input.actorUserId ?? "system") };
+    const replacedObjectKeys = current.image?.objectKey ? [current.image.objectKey] : [];
+    this.rackUnitSnapshots[key] = { ...current, image };
+    return { image, replacedObjectKeys };
+  }
   async listRackCapacityHistory(siteId: number): Promise<RackCapacityHistoryRecord[]> { return (this.rackCapacityHistory[siteId] ?? []).map(row => ({ ...row })).sort((a, b) => a.month === b.month ? a.rackZone.localeCompare(b.rackZone) : a.month.localeCompare(b.month)); }
   async listRackUnitCapacityHistory(siteId: number): Promise<RackUnitSnapshotRecord[]> {
     return Object.entries(this.rackUnitSnapshots)

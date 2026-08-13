@@ -214,7 +214,7 @@ export const RackUnitCapacitySummary: React.FC<{ provider: IDataProvider; refres
                     <ImagePlus className="w-6 h-6" />
                   </div>
                   <p className="text-xs text-slate-400">{lang === "th" ? "ยังไม่มีรูปภาพความจุหน่วยแร็คประจำเดือนนี้" : "Rack Unit Capacity image not yet captured"}</p>
-                  <p className="text-[10px] text-slate-600 text-center px-6">{lang === "th" ? "อัปโหลดได้ที่แผงแก้ไขด้านล่าง" : "Upload one from the editor panel below"}</p>
+                  <p className="text-[10px] text-slate-600 text-center px-6">{lang === "th" ? "อัปโหลดได้ที่หัวข้อ Rack Unit Capacity ด้านล่างสุดของ Data Entry" : "Upload one in the Rack Unit Capacity section at the bottom of Data Entry"}</p>
                 </div>
               )}
             </div>

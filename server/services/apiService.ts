@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { calculateEnergyCostForMonth } from "../../src/domain/energyCost";
 import { buildFacilityComparisonMetrics } from "../../src/domain/facilityComparison";
 import { calculateRackCapacityMetrics } from "../../src/domain/rackCapacity";
@@ -8,15 +9,17 @@ import type { MonthlyLog } from "../../src/types";
 import { HttpError } from "../errors";
 import { assertDisplayPeriod, assertStrictMonth, allowedMonths, isAllowedMonth, latestAvailableMonth, previousCalculationMonth, visibleMonths, type DisplayPeriod } from "../policies/displayPeriod";
 import type { BackendRepository, SiteRecord, UpsGroupHistoryRecord } from "../repositories/contracts";
+import { validateImageBytes } from "../../src/utils/imageValidation";
+import { imageObjectKey, type RackUnitImageStorage } from "../storage/rackUnitImageStorage";
 import { parseExpectedRowVersion, parseMonthlyLog, parseProvenance } from "./rawInputValidation";
 import { API_HEALTH_RESPONSE } from "../http/health";
 
-export interface ApiServiceOptions { repository: BackendRepository; now?: () => Date; }
+export interface ApiServiceOptions { repository: BackendRepository; now?: () => Date; imageStorage?: RackUnitImageStorage; }
 
 function monthOfDate(date: Date): string { return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`; }
 
 export class ApiService {
-  constructor(private readonly repository: BackendRepository, private readonly now: () => Date = () => new Date()) {}
+  constructor(private readonly repository: BackendRepository, private readonly now: () => Date = () => new Date(), private readonly imageStorage?: RackUnitImageStorage) {}
 
   async health(): Promise<typeof API_HEALTH_RESPONSE> { return API_HEALTH_RESPONSE; }
   async readiness(): Promise<{ status: "ready" }> {
@@ -46,9 +49,22 @@ export class ApiService {
   }
 
   private async availableForSite(siteId: number, period: DisplayPeriod): Promise<{ availableMonths: string[]; latestAvailableMonth: string | null }> {
-    const records = await this.repository.listPeriods(siteId);
+    // A month can be populated by a secondary historical dataset even when
+    // the monthly energy log is absent (for example an imported Rack Unit
+    // Capacity row from Desktop).  The old implementation used only
+    // monthly_periods, so those valid historical rows were silently hidden
+    // from bootstrap/history and could never be selected in Data Entry.
+    const [records, rackHistory, rackUnitHistory] = await Promise.all([
+      this.repository.listPeriods(siteId),
+      this.repository.listRackCapacityHistory(siteId),
+      this.repository.listRackUnitCapacityHistory(siteId)
+    ]);
     const asOf = monthOfDate(this.now());
-    const available = records.filter(record => record.hasData && record.month <= asOf).map(record => record.month);
+    const available = [
+      ...records.filter(record => record.hasData).map(record => record.month),
+      ...rackHistory.map(record => record.month),
+      ...rackUnitHistory.map(record => record.month)
+    ].filter(month => month <= asOf);
     return { availableMonths: visibleMonths(period, available), latestAvailableMonth: latestAvailableMonth(period, available) };
   }
 
@@ -156,13 +172,13 @@ export class ApiService {
    * migrateUpsGroupHistoryIfNeeded: lazy, idempotent, backfill-only.
    */
   private async backfillMissingUpsGroupHistory(siteId: number, facility: string, logs: MonthlyLog[], existingRows: UpsGroupHistoryRecord[]): Promise<UpsGroupHistoryRecord[]> {
-    const existingKeys = new Set(existingRows.map(row => `${row.month} ${row.group}`));
+    const existingKeys = new Set(existingRows.map(row => `${row.month}\u0000${row.group}`));
     const generatedAt = this.now().toISOString();
     const newRows: UpsGroupHistoryRecord[] = [];
     for (const log of logs) {
       const rows = computeUpsGroupHistorySnapshot(facility, log);
       if (!rows) continue;
-      const missing = rows.filter(row => !existingKeys.has(`${row.month} ${row.group}`));
+      const missing = rows.filter(row => !existingKeys.has(`${row.month}\u0000${row.group}`));
       if (missing.length === 0) continue;
       await this.repository.saveUpsGroupHistoryRows(siteId, facility, missing, false);
       for (const row of missing) newRows.push({ facility, ...row, generatedAt, dataVersion: 1 });
@@ -202,13 +218,16 @@ export class ApiService {
         .map(row => ({ snapshotMonth: row.month, facility: row.facility, rackZone: row.rackZone, totalRacks: row.totalRacks, inUse: row.inUse, available: row.available, reserved: row.reserved, pendingDismantle: row.pendingDismantle, other: row.other, usagePct: row.usagePct, availabilityPct: row.availabilityPct, reservedPct: row.reservedPct, pendingDismantlePct: row.pendingDismantlePct, otherPct: row.otherPct, generatedAt: row.generatedAt, dataVersion: row.dataVersion })),
       rackUnitCapacity: rackUnitCapacityRows
         .filter(row => visibleMonths.has(row.month))
-        .map(row => ({ month: row.month, totalU: row.totalU, usedU: row.usedU, availableU: row.totalU - row.usedU, availabilityPct: row.totalU > 0 ? (row.totalU - row.usedU) / row.totalU : null }))
+        .map(row => ({ month: row.month, totalU: row.totalU, usedU: row.usedU, availableU: row.totalU - row.usedU, availabilityPct: row.totalU > 0 ? (row.totalU - row.usedU) / row.totalU : null, imageAttached: Boolean(row.image), imageContentType: row.image?.contentType ?? null, imageSavedAt: row.image?.savedAt ?? null }))
     };
   }
 
   async getDashboard(siteId: number, month: unknown): Promise<unknown> {
-    const periods = await this.getPeriods(siteId) as { latestAvailableMonth: string | null };
-    const selected = month === undefined || month === null || month === "" ? periods.latestAvailableMonth : month;
+    const periods = await this.getPeriods(siteId) as { latestAvailableMonth: string | null; availableMonths: string[] };
+    const monthlyPeriods = await this.repository.listPeriods(siteId);
+    const monthlyMonths = new Set(monthlyPeriods.filter(record => record.hasData).map(record => record.month));
+    const latestEnergyMonth = periods.availableMonths.filter(candidate => monthlyMonths.has(candidate)).at(-1) ?? null;
+    const selected = month === undefined || month === null || month === "" ? latestEnergyMonth : month;
     return { siteId, latestAvailableMonth: periods.latestAvailableMonth, selectedMonth: selected, energy: selected ? await this.getEnergy(siteId, selected) : null };
   }
 
@@ -217,9 +236,11 @@ export class ApiService {
     const sites = await this.repository.listSites();
     const states = await Promise.all(sites.map(async site => {
       const state = await this.availableForSite(site.id, period);
-      const logs = await this.repository.getMonthlyLogs(site.id, state.availableMonths);
+      const monthlyMonths = new Set((await this.repository.listPeriods(site.id)).filter(record => record.hasData).map(record => record.month));
+      const comparisonMonths = state.availableMonths.filter(month => monthlyMonths.has(month));
+      const logs = await this.repository.getMonthlyLogs(site.id, comparisonMonths);
       const metrics = buildFacilityComparisonMetrics(logs, period.endMonth);
-      return { site, availableMonths: state.availableMonths, metrics: Object.fromEntries(metrics) };
+      return { site, availableMonths: comparisonMonths, metrics: Object.fromEntries(metrics) };
     }));
     const months = [...new Set(states.flatMap(state => state.availableMonths))].sort();
     const data = states.map(state => ({
@@ -241,7 +262,57 @@ export class ApiService {
     const { month: selected } = await this.requireVisibleMonth(month);
     const snapshot = await this.repository.getRackUnitSnapshot(siteId, selected);
     if (!snapshot) return { siteId, month: selected, snapshot: null };
-    return { siteId, month: selected, snapshot: { ...snapshot, availableU: snapshot.totalU - snapshot.usedU, usagePercent: usagePercent(snapshot), availabilityPercent: snapshot.totalU > 0 ? ((snapshot.totalU - snapshot.usedU) / snapshot.totalU) * 100 : null } };
+    return { siteId, month: selected, snapshot: { ...snapshot, image: snapshot.image ? { ...snapshot.image, available: true } : null, availableU: snapshot.totalU - snapshot.usedU, usagePercent: usagePercent(snapshot), availabilityPercent: snapshot.totalU > 0 ? ((snapshot.totalU - snapshot.usedU) / snapshot.totalU) * 100 : null } };
+  }
+
+  async getRackUnitImage(siteId: number, month: unknown): Promise<{ contentType: "image/png" | "image/jpeg"; bytes: Buffer }> {
+    await this.requireSite(siteId);
+    const { month: selected } = await this.requireVisibleMonth(month);
+    const snapshot = await this.repository.getRackUnitSnapshot(siteId, selected);
+    if (!snapshot?.image) throw new HttpError(404, "IMAGE_NOT_FOUND", "No Rack Unit Capacity image exists for the requested month.");
+    if (!this.imageStorage) throw new HttpError(503, "IMAGE_STORAGE_UNAVAILABLE", "Rack Unit Capacity image storage is not configured.");
+    const bytes = await this.imageStorage.getObject(snapshot.image.objectKey);
+    if (!bytes) throw new HttpError(503, "IMAGE_OBJECT_MISSING", "Rack Unit Capacity image metadata exists but the stored object is unavailable.");
+    if (snapshot.image.sha256 && createHash("sha256").update(bytes).digest("hex") !== snapshot.image.sha256) throw new HttpError(503, "IMAGE_CHECKSUM_MISMATCH", "Rack Unit Capacity image integrity verification failed.");
+    return { contentType: snapshot.image.contentType, bytes };
+  }
+
+  async saveRackUnit(siteId: number, month: unknown, body: unknown, correlationId: string, actorUserId?: number | null): Promise<unknown> {
+    await this.requireSite(siteId);
+    const { month: selected } = await this.requireVisibleMonth(month);
+    if (body === null || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "INVALID_BODY", "Request body must be a JSON object.");
+    const source = body as Record<string, unknown>;
+    const totalU = source.total_u;
+    const usedU = source.used_u;
+    if (typeof totalU !== "number" || !Number.isFinite(totalU) || totalU < 0 || typeof usedU !== "number" || !Number.isFinite(usedU) || usedU < 0) throw new HttpError(400, "INVALID_RACK_UNIT_VALUES", "total_u and used_u must be finite non-negative numbers.");
+    const saved = await this.repository.withTransaction(repository => repository.saveRackUnitSnapshot({ siteId, month: selected, totalU, usedU, expectedRowVersion: parseExpectedRowVersion(source.expected_row_version), actorUserId, correlationId }));
+    const refreshed = await this.repository.getRackUnitSnapshot(siteId, selected);
+    const snapshot = refreshed ?? saved;
+    return { siteId, month: selected, rowVersion: snapshot.rowVersion, totalU: snapshot.totalU, usedU: snapshot.usedU, availableU: snapshot.totalU - snapshot.usedU, availabilityPercent: snapshot.totalU > 0 ? ((snapshot.totalU - snapshot.usedU) / snapshot.totalU) * 100 : null };
+  }
+
+  async saveRackUnitImage(siteId: number, month: unknown, bytes: Buffer, contentType: string | undefined, _correlationId: string, actorUserId?: number | null): Promise<unknown> {
+    const site = await this.requireSite(siteId);
+    const { month: selected } = await this.requireVisibleMonth(month);
+    if (!this.imageStorage) throw new HttpError(503, "IMAGE_STORAGE_UNAVAILABLE", "Rack Unit Capacity image storage is not configured.");
+    const normalizedContentType = contentType?.split(";", 1)[0]?.trim().toLowerCase();
+    if (normalizedContentType !== "image/png" && normalizedContentType !== "image/jpeg") throw new HttpError(400, "INVALID_IMAGE_TYPE", "Only PNG or JPEG images are supported.");
+    const validation = validateImageBytes(bytes);
+    if (validation.ok === false) throw new HttpError(400, "INVALID_IMAGE", "The uploaded Rack Unit Capacity image is invalid.");
+    if (validation.image.mimeType !== normalizedContentType) throw new HttpError(400, "IMAGE_TYPE_MISMATCH", "The image content does not match its content type.");
+    const existing = await this.repository.getRackUnitSnapshot(siteId, selected);
+    if (!existing) throw new HttpError(409, "RACK_UNIT_CAPACITY_REQUIRED", "Save Rack Unit Capacity before saving its image.");
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    const objectKey = imageObjectKey(site.code, selected, bytes, validation.image.mimeType);
+    await this.imageStorage.putObject(objectKey, bytes, validation.image.mimeType);
+    try {
+      const result = await this.repository.withTransaction(repository => repository.replaceRackUnitImage({ siteId, month: selected, objectKey, contentType: validation.image.mimeType, byteSize: bytes.length, sha256, width: validation.image.width, height: validation.image.height, actorUserId }));
+      for (const oldKey of result.replacedObjectKeys.filter(key => key !== objectKey)) await this.imageStorage!.deleteObject(oldKey).catch(() => undefined);
+      return { siteId, month: selected, image: result.image };
+    } catch (error) {
+      await this.imageStorage.deleteObject(objectKey).catch(() => undefined);
+      throw error;
+    }
   }
 
   async saveMonthlyLog(siteId: number, month: unknown, body: unknown, correlationId: string, actorUserId?: number | null): Promise<unknown> {

@@ -16,6 +16,9 @@ export interface ServerConfig {
   sessionLifetimeMs: number;
   poolMax: number;
   readOnlyMode: boolean;
+  supabaseUrl?: string | null;
+  supabaseServiceRoleKey?: string | null;
+  rackUnitImageBucket?: string;
 }
 
 export class ConfigurationError extends Error {
@@ -127,7 +130,10 @@ export function loadServerConfig(
     csrfSecret: secretValue(environment, "CSRF_SECRET", nodeEnv),
     sessionLifetimeMs: parsePositiveInteger(environment.SESSION_LIFETIME_MS, "SESSION_LIFETIME_MS", 8 * 60 * 60 * 1000),
     poolMax,
-    readOnlyMode: parseBoolean(environment.READ_ONLY_MODE, "READ_ONLY_MODE")
+    readOnlyMode: parseBoolean(environment.READ_ONLY_MODE, "READ_ONLY_MODE"),
+    supabaseUrl: environment.SUPABASE_URL?.trim() || null,
+    supabaseServiceRoleKey: environment.SUPABASE_SERVICE_ROLE_KEY?.trim() || null,
+    rackUnitImageBucket: environment.RACK_UNIT_IMAGE_BUCKET?.trim() || "rack-unit-capacity"
   };
 }
 
@@ -137,6 +143,9 @@ export interface MigrationDatabaseConfig {
   databaseCaCertificate: string | null;
   poolMax: number;
   nodeEnv: ServerConfig["nodeEnv"];
+  supabaseUrl?: string | null;
+  supabaseServiceRoleKey?: string | null;
+  rackUnitImageBucket?: string;
 }
 
 /**
@@ -162,7 +171,16 @@ export function loadMigrationDatabaseConfig(environment: NodeJS.ProcessEnv = pro
   const managedMigrationFallback = !directDatabaseUrl && Boolean(databaseUrl);
   const caCertificate = databaseCaCertificate(environment, managedMigrationFallback);
   const poolMax = parsePositiveInteger(environment.DB_POOL_MAX, "DB_POOL_MAX", 3);
-  return { directDatabaseUrl, databaseUrl, databaseCaCertificate: caCertificate, poolMax, nodeEnv };
+  return {
+    directDatabaseUrl,
+    databaseUrl,
+    databaseCaCertificate: caCertificate,
+    poolMax,
+    nodeEnv,
+    supabaseUrl: environment.SUPABASE_URL?.trim() || null,
+    supabaseServiceRoleKey: environment.SUPABASE_SERVICE_ROLE_KEY?.trim() || null,
+    rackUnitImageBucket: environment.RACK_UNIT_IMAGE_BUCKET?.trim() || "rack-unit-capacity"
+  };
 }
 
 export function loadDotEnvFile(): void { loadDotEnv(); }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import type { MonthlyLog } from "../src/types";
+import type { UpsGroupHistoryRow } from "../src/reports/reportTypes";
 import { createMigrationPlan, createSyntheticMigrationSource, previewMigrationPlan, verifyCalculatedParity } from "../server/migration/engine";
 
 const fixture = JSON.parse(fs.readFileSync("tests/fixtures/desktop-v2.3.1.json", "utf8")) as { rangsit: { logs: MonthlyLog[] } };
@@ -42,5 +43,15 @@ const formulaInputSource = createSyntheticMigrationSource(clone(fixture.rangsit.
 formulaInputSource.cachedEvidence.push({ month: "2026-03", fieldName: "Building Energy (kWh)", numericValue: 100, textValue: null, sourceSheet: "4. Electricity Cost Log", sourceLocation: "4. Electricity Cost Log!B4", formulaVersion: "desktop-v2.3.1", authoritativeInput: true });
 const formulaInputPreview = previewMigrationPlan(createMigrationPlan(formulaInputSource, { siteCode: "rangsit" }));
 check("cached formula in authoritative input is rejected", formulaInputPreview.errors.some(entry => entry.code === "CACHED_FORMULA_INPUT"));
+
+const historyRow: UpsGroupHistoryRow = { facility: "rangsit", month: "2026-07", group: "UPS 11", totalLoadKw: 10, totalLoadKva: 11, capacity: 400, loadPercent: 2.75, availablePercent: 97.25, monthlyEnergyKwh: 7440, generatedAt: "2026-08-01T00:00:00.000Z", dataVersion: 1 };
+const duplicateHistorySource = createSyntheticMigrationSource(clone(fixture.rangsit.logs), "f".repeat(64));
+duplicateHistorySource.upsGroupHistoryRows = [historyRow, { ...historyRow, generatedAt: "2026-08-02T00:00:00.000Z" }];
+const duplicateHistoryPreview = previewMigrationPlan(createMigrationPlan(duplicateHistorySource, { siteCode: "rangsit" }));
+check("identical duplicate UPS history keys are previewed as collapsible warnings", duplicateHistoryPreview.canImport && duplicateHistoryPreview.warnings.some(entry => entry.code === "DUPLICATE_UPS_HISTORY_COLLAPSED"));
+const conflictingHistorySource = createSyntheticMigrationSource(clone(fixture.rangsit.logs), "1".repeat(64));
+conflictingHistorySource.upsGroupHistoryRows = [historyRow, { ...historyRow, totalLoadKw: 99 }];
+const conflictingHistoryPreview = previewMigrationPlan(createMigrationPlan(conflictingHistorySource, { siteCode: "rangsit" }));
+check("conflicting duplicate UPS history keys are rejected", !conflictingHistoryPreview.canImport && conflictingHistoryPreview.errors.some(entry => entry.code === "DUPLICATE_UPS_HISTORY_CONFLICT"));
 
 console.log(`migration tooling: ${checks} assertions passed; preview-only; no database or source workbook writes`);

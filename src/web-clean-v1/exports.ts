@@ -1,19 +1,33 @@
 import type { MonthlyLog } from "../types";
-import { buildCombinedCsv, buildSectionCsvs } from "../utils/exportData";
+import { buildCombinedCsv } from "../utils/exportData";
 import { calculateEnergyCostForMonth } from "../domain/energyCost";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
 import { buildReportHtml } from "../reports/pdf/reportHtml";
-import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord } from "../reports/reportTypes";
+import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord, UpsGroupHistoryReport } from "../reports/reportTypes";
 import { deriveRackCapacityReport } from "../reports/rackCapacityReportBuilder";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
+import type { DashboardUpsMappingReport } from "../reports/reportTypes";
+import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
+
+export interface ExportRackUnitCapacityRow extends RackUnitCapacityRow {
+  /** Metadata only; image bytes remain in server-side storage. */
+  imageAttached?: boolean;
+  imageContentType?: "image/png" | "image/jpeg" | null;
+  imageSavedAt?: string | null;
+}
 
 export interface ExportFacility {
   siteName: string;
   logs: MonthlyLog[];
   rack?: RackCapacityReport | null;
   rackHistory?: RackCapacityHistoryRow[];
-  rackUnitCapacity?: RackUnitCapacityRow[];
+  rackUnitCapacity?: ExportRackUnitCapacityRow[];
+  upsGroupHistory?: UpsGroupHistoryReport | null;
+  dashboardMapping?: DashboardUpsMappingReport | null;
+  /** Explicit report scope for secondary tables when the selected month has
+   * no MonthlyLog (for example a Rack Unit-only historical month). */
+  reportingMonths?: string[];
 }
 
 /** The GET /racks API response shape (server/services/apiService.ts's
@@ -89,29 +103,133 @@ function parseCsvLine(line: string): string[] {
 }
 
 function sheetName(prefix: string, name: string): string {
-  return `${prefix}-${name.replace(".csv", "")}`.replace(/[\\/*?:\[\]]/g, "-").slice(0, 31);
+  const title = name.replace(".csv", "").replace(/[\\/*?:\[\]]/g, "-");
+  const prefixLength = Math.max(1, 31 - title.length - 1);
+  return `${prefix.slice(0, prefixLength)}-${title}`.slice(0, 31);
 }
 
+function configureTableSheet(sheet: any, headers: unknown[], rows: unknown[][]): void {
+  sheet.addRow(headers);
+  rows.forEach(values => sheet.addRow(values));
+  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  sheet.autoFilter = { from: "A1", to: { row: Math.max(1, sheet.rowCount), column: Math.max(1, sheet.getRow(1).cellCount) } };
+  sheet.columns.forEach((column: any) => { column.width = 22; });
+  sheet.columns.forEach((column: any, index: number) => {
+    if (String(headers[index]).includes("JSON")) column.width = 48;
+  });
+}
+
+function addTableSheet(workbook: any, prefix: string, title: string, headers: unknown[], rows: unknown[][]): void {
+  configureTableSheet(workbook.addWorksheet(sheetName(prefix, title)), headers, rows);
+}
+
+function monthSet(logs: MonthlyLog[]): Set<string> {
+  return new Set(logs.map(log => log.month));
+}
+
+/**
+ * Builds a workbook from the same DTOs used by the Web screens.  The old
+ * implementation exported only four compact CSV-like sheets, which silently
+ * omitted save metadata, persisted history, Rack Unit Capacity, and the
+ * Dashboard-FAC calculation tables.  These sheets intentionally separate
+ * facts, persisted/audit state, and derived values so an export can be
+ * reconciled back to the source instead of looking complete while losing
+ * information.
+ */
 export async function workbookForFacilities(facilities: ExportFacility[]) {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
   for (const facility of facilities) {
-    const prefix = facility.siteName.replace(/[^a-z0-9]+/giu, "-").slice(0, 12) || "facility";
-    for (const section of buildSectionCsvs(facility.logs)) {
-      const sheet = workbook.addWorksheet(sheetName(prefix, section.name));
-      for (const row of section.content.split("\n")) sheet.addRow(parseCsvLine(row));
-      sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-      sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
-      sheet.views = [{ state: "frozen", ySplit: 1 }];
-      sheet.autoFilter = { from: "A1", to: { row: 1, column: Math.max(1, sheet.getRow(1).cellCount) } };
-      sheet.columns.forEach(column => { column.width = 22; });
+    const prefix = facility.siteName.replace(/[^a-z0-9]+/giu, "-").slice(0, 10) || "facility";
+    const logs = [...facility.logs].sort((a, b) => a.month.localeCompare(b.month));
+    const months = new Set(facility.reportingMonths ?? [
+      ...logs.map(log => log.month),
+      ...(facility.rackUnitCapacity ?? []).map(row => row.month),
+      ...(facility.rackHistory ?? []).map(row => row.snapshotMonth),
+      ...(facility.upsGroupHistory?.rows ?? []).map(row => row.month)
+    ]);
+    const airFields = [...new Set(logs.flatMap(log => Object.keys(log.air.meters ?? {}).concat(["eb41a", "eb41b", "eb42a", "eb42b"])))].sort();
+
+    addTableSheet(workbook, prefix, "UPS_Loads", ["Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Raw phases JSON", "Last Saved"], logs.flatMap(log => log.ups.map(row => [log.month, row.upsId, row.voltage, row.current, row.loadKw, row.loadKva, JSON.stringify(row.phases ?? {}), log.lastSavedUps])));
+    addTableSheet(workbook, prefix, "Air_Inputs", ["Month", ...airFields.map(field => `${field.toUpperCase()} (GWh)`), "Raw meters JSON", "Last Saved"], logs.map(log => [log.month, ...airFields.map(field => (log.air as unknown as Record<string, number | null | undefined>)[field] ?? log.air.meters?.[field] ?? null), JSON.stringify(log.air.meters ?? {}), log.lastSavedAir]));
+    addTableSheet(workbook, prefix, "DC_Inputs", ["Month", "DC Panel", "Voltage (V)", "Current (A)", "Last Saved"], logs.flatMap(log => log.dc.map(row => [log.month, row.panelId, row.voltage, row.current, log.lastSavedDc])));
+    addTableSheet(workbook, prefix, "Energy_Cost_Inputs", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "Stored Floor Cost (THB)", "Stored Average Rate (THB/kWh)", "Last Saved"], logs.map(log => [log.month, log.energyCost.buildingEnergyKwh, log.energyCost.buildingElectricityCostThb, log.energyCost.floorElectricityCostThb ?? null, log.energyCost.averageElectricityRateThbPerKwh ?? null, log.lastSavedEnergyCost]));
+    const logsByMonth = new Map(logs.map(log => [log.month, log]));
+    addTableSheet(workbook, prefix, "Saved_Records", ["Month", "UPS Last Saved", "Air Last Saved", "DC Last Saved", "Energy Cost Last Saved", "Source State"], [...months].sort().map(month => {
+      const log = logsByMonth.get(month);
+      return [month, log?.lastSavedUps ?? null, log?.lastSavedAir ?? null, log?.lastSavedDc ?? null, log?.lastSavedEnergyCost ?? null, log ? "persisted monthly log" : "persisted Rack Unit-only row"];
+    }));
+    addTableSheet(workbook, prefix, "Saved_Values", ["Month", "UPS Saved JSON", "Air Saved JSON", "DC Saved JSON", "Energy Cost Saved JSON", "Rack Unit Saved JSON", "Rack Unit Image JSON", "UPS Last Saved", "Air Last Saved", "DC Last Saved", "Energy Cost Last Saved"], [...months].sort().map(month => {
+      const log = logsByMonth.get(month);
+      const rackUnit = facility.rackUnitCapacity?.find(row => row.month === month) ?? null;
+      const image = rackUnit?.imageAttached ? { attached: true, contentType: rackUnit.imageContentType ?? null, savedAt: rackUnit.imageSavedAt ?? null } : null;
+      return [month, JSON.stringify(log?.ups ?? null), JSON.stringify(log?.air ?? null), JSON.stringify(log?.dc ?? null), JSON.stringify(log?.energyCost ?? null), JSON.stringify(rackUnit), JSON.stringify(image), log?.lastSavedUps ?? null, log?.lastSavedAir ?? null, log?.lastSavedDc ?? null, log?.lastSavedEnergyCost ?? null];
+    }));
+    addTableSheet(workbook, prefix, "Raw_Inputs", ["Month", "Raw Phase/Panel Values JSON"], logs.filter(log => log.srinakarinInputs).map(log => [log.month, JSON.stringify(log.srinakarinInputs)]));
+
+    const calculated = logs.map(log => {
+      const value = calculateEnergyCostForMonth(logs, log.month);
+      return [log.month, value.buildingEnergyKwh, value.buildingElectricityCostThb, value.upsEnergyKwh, value.airEnergyKwh, value.dcEnergyKwh, value.floorEnergyKwh, value.floorElectricityCostThb, value.averageElectricityRateThbPerKwh, value.energySharePercent, value.floorEnergyKwh === null ? "Partial" : "Complete"];
+    });
+    addTableSheet(workbook, prefix, "Calculated_Energy", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "Floor Energy (kWh)", "Floor Cost (THB)", "Average Rate (THB/kWh)", "Floor Share (%)", "Status"], calculated);
+
+    const dashboardRows: unknown[][] = [];
+    const dashboardUpsRows: unknown[][] = [];
+    const dashboardDetailRows: unknown[][] = [];
+    const dashboardAirRows: unknown[][] = [];
+    const dashboardDcRows: unknown[][] = [];
+    for (const log of logs) {
+      const mapping = buildDashboardUpsMapping(facility.upsGroupHistory ?? null, log.month, facility.dashboardMapping?.mapping ?? []);
+      const dashboard = buildEngineeringDashboardSnapshot(logs, log.month, mapping);
+      const rackUnit = facility.rackUnitCapacity?.find(row => row.month === log.month) ?? null;
+      dashboardRows.push([
+        log.month,
+        dashboard?.daysInMonth ?? null,
+        dashboard?.previousMonth ?? null,
+        dashboard?.totalUpsKw ?? null,
+        dashboard?.totalUpsKva ?? null,
+        dashboard?.totalUpsEnergyKwh ?? null,
+        dashboard?.airEnergyKwh ?? null,
+        dashboard?.totalDcEnergyKwh ?? null,
+        dashboard?.buildingEnergyKwh ?? null,
+        dashboard?.buildingCostThb ?? null,
+        dashboard?.floorEnergyKwh ?? null,
+        dashboard?.floorCostThb ?? null,
+        dashboard?.averageRateThbPerKwh ?? null,
+        dashboard?.floorSharePercent ?? null,
+        dashboard?.floorEnergyKwh === null || !dashboard ? "Partial" : "Complete",
+        rackUnit?.totalU ?? null,
+        rackUnit?.usedU ?? null,
+        rackUnit?.availableU ?? null,
+        rackUnit?.availabilityPct ?? null
+      ]);
+      for (const row of [...(dashboard?.upsGroups ?? []), ...(dashboard?.upsOverallGroups ?? [])]) dashboardUpsRows.push([log.month, row.name, row.totalKw, row.totalKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh]);
+      for (const row of dashboard?.upsDetails ?? []) dashboardDetailRows.push([log.month, row.no, row.umdb, row.upsId, row.acPowerPanel, row.sts, row.oudb, row.voltage, row.current, row.loadKw, row.loadKva, row.capacity, row.loadPercent]);
+      for (const field of dashboard?.airFields ?? []) dashboardAirRows.push([log.month, field, dashboard.airPrevious[field], dashboard.airCurrent[field], dashboard.airDifference[field]]);
+      for (const row of dashboard?.dcPanels ?? []) dashboardDcRows.push([log.month, row.panelId, row.voltage, row.current, row.dcPowerW, row.acCurrentA, row.acPowerW, row.monthlyEnergyKwh]);
     }
+    addTableSheet(workbook, prefix, "Dashboard-FAC", ["Month", "Days", "Previous Month", "UPS Total kW", "UPS Total kVA", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "Building Energy (kWh)", "Building Cost (THB)", "Floor Energy (kWh)", "Floor Cost (THB)", "Average Rate (THB/kWh)", "Floor Share (%)", "Status", "Rack Total (U)", "Rack Used (U)", "Rack Available (U)", "Rack Availability (%)"], dashboardRows);
+    addTableSheet(workbook, prefix, "Dashboard-FAC UPS", ["Month", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)"], dashboardUpsRows);
+    addTableSheet(workbook, prefix, "Dashboard-FAC Details", ["Month", "No", "UMDB", "UPS ID", "AC Power Panel", "STS", "OUDB", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Capacity", "Load (%)"], dashboardDetailRows);
+    addTableSheet(workbook, prefix, "Dashboard-FAC Air", ["Month", "Field", "Previous", "Current", "Difference"], dashboardAirRows);
+    addTableSheet(workbook, prefix, "Dashboard-FAC DC", ["Month", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current (A)", "AC Power (W)", "Monthly Energy (kWh)"], dashboardDcRows);
+
+    const rackUnitRows = (facility.rackUnitCapacity ?? []).filter(row => months.has(row.month)).sort((a, b) => a.month.localeCompare(b.month));
+    addTableSheet(workbook, prefix, "Rack Unit Capacity", ["Month", "Total (U)", "Used (U)", "Available (U)", "Availability Capacity (%)", "Image Attached", "Image Content Type", "Image Saved At"], rackUnitRows.map(row => [row.month, row.totalU, row.usedU, row.availableU, row.availabilityPct, row.imageAttached ? "Yes" : "No", row.imageContentType ?? null, row.imageSavedAt ?? null]));
+    const rackHistoryRows = (facility.rackHistory ?? []).filter(row => months.has(row.snapshotMonth)).sort((a, b) => a.snapshotMonth.localeCompare(b.snapshotMonth) || a.rackZone.localeCompare(b.rackZone));
+    addTableSheet(workbook, prefix, "Rack Capacity History", ["Snapshot Month", "Facility", "Rack Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle", "Other", "Usage (%)", "Availability (%)", "Reserved (%)", "Pending Dismantle (%)", "Other (%)", "Generated At", "Data Version"], rackHistoryRows.map(row => [row.snapshotMonth, row.facility, row.rackZone, row.totalRacks, row.inUse, row.available, row.reserved, row.pendingDismantle, row.other, row.usagePct, row.availabilityPct, row.reservedPct, row.pendingDismantlePct, row.otherPct, row.generatedAt, row.dataVersion]));
+    const upsHistoryRows = (facility.upsGroupHistory?.rows ?? []).filter(row => months.has(row.month)).sort((a, b) => a.month.localeCompare(b.month) || a.group.localeCompare(b.group));
+    addTableSheet(workbook, prefix, "UPS Group History", ["Month", "Facility", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)", "Generated At", "Data Version"], upsHistoryRows.map(row => [row.month, row.facility, row.group, row.totalLoadKw, row.totalLoadKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh, row.generatedAt, row.dataVersion]));
+    const rackRecords = facility.rack?.records ?? [];
+    addTableSheet(workbook, prefix, "Rack Capacity Raw", ["Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], rackRecords.map(row => [facility.rack?.sourceSnapshot ?? null, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
   }
   return workbook;
 }
 
-export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string): Promise<void> {
-  const workbook = await workbookForFacilities([{ siteName, logs }]);
+export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, additional: Omit<ExportFacility, "siteName" | "logs"> = {}): Promise<void> {
+  const workbook = await workbookForFacilities([{ siteName, logs, ...additional }]);
   const data = await workbook.xlsx.writeBuffer();
   download(data, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
@@ -183,7 +301,7 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
   const rows = reportRows(logs);
   const current = rows.find(row => row.month === selectedMonth) ?? null;
   return {
-    title: "Energy Monitor Report",
+    title: "Data Center Energy & Facility Monitor Report",
     thaiSubtitle: "รายงานการใช้พลังงานและระบบวิศวกรรม",
     facility: siteName,
     sourceWorkbook: "Supabase PostgreSQL",
@@ -200,9 +318,9 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
     rack,
     rackHistory,
     rackUnitCapacity,
-    // No Web/DB image-storage API exists yet for the Rack Unit Capacity
-    // photo (see docs/web-clean-v1/DESKTOP_WEB_PARITY_AUDIT.md's Rack
-    // Capacity section) - left null rather than fabricated.
+    // Binary Rack Unit Capacity images remain in server-side object storage;
+    // the export keeps the numeric/history tables authoritative and does not
+    // fabricate a browser-visible data URI for an image that was not loaded.
     rackUnitCapacityImageDataUri: null,
     rackUnitCapacityImageMeta: null,
     comparison: null,
@@ -284,7 +402,7 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
   const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
   const primaryRow = comparisonRow(primary, referenceMonth);
   const report: ReportData = {
-    title: "Energy Monitor Site Comparison",
+    title: "Data Center Energy & Facility Monitor Site Comparison",
     thaiSubtitle: "รายงานเปรียบเทียบการใช้พลังงานระหว่างไซต์",
     facility: "All Facilities",
     sourceWorkbook: "Supabase PostgreSQL",
@@ -326,7 +444,7 @@ export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[
   const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
   const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
   popup.document.open();
-  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Energy Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`);
+  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy & Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`);
   popup.document.close();
   popup.addEventListener("load", () => popup.print(), { once: true });
 }

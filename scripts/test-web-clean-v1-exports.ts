@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
 import { buildAllFacilitiesCsv, buildSiteComparisonCsv, facilityReportData, workbookForFacilities, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
 import type { ReportData } from "../src/reports/reportTypes";
@@ -8,6 +9,11 @@ import { calculateRackCapacityMetrics } from "../src/domain/rackCapacity";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, type ReportingPeriodSelection } from "../src/web-clean-v1/reportPeriod";
 import { defaultReportFilename, withExtension } from "../src/web-clean-v1/reportFilename";
 import type { MonthlyLog } from "../src/types";
+import { readWorkbookSource } from "../server/migration/workbookSource";
+import { readUpsGroupHistoryFromBuffer } from "../src/reports/upsGroupHistoryReader";
+import { readUpsMappingFromBuffer } from "../src/reports/upsMappingReader";
+import { readRackCapacityFromBuffer } from "../src/reports/rackCapacityReader";
+import { readRackCapacityHistoryFromBuffer } from "../src/excel/RackCapacityHistoryWriter";
 
 const log = (month: string): MonthlyLog => ({
   month,
@@ -49,6 +55,50 @@ assert.doesNotMatch(csv, /undefined|NaN/);
 // (611111 / 722222 / 833333) rule out accidental substring collisions.
 let checks = 0;
 function check(name: string, condition: unknown): void { assert.equal(Boolean(condition), true, name); checks++; }
+
+// Excel completeness gate: every facility export must keep the entered facts,
+// save/audit state, calculated values, Dashboard-FAC tables, and persisted
+// history tables in separate, inspectable worksheets. Existence alone is not
+// enough - read the generated XLSX back and verify representative values too.
+const completeExportWorkbook = await workbookForFacilities([{
+  siteName: "Rangsit",
+  logs: [{
+    ...log("2026-06"),
+    ups: [{ upsId: "UPS 11A", voltage: 220, current: 10, loadKw: 2, loadKva: 2.5 }],
+    dc: [{ panelId: "DC PDB41A", voltage: 220, current: 5 }],
+    energyCost: { buildingEnergyKwh: 100, buildingElectricityCostThb: 500 },
+    lastSavedUps: "2026-06-30T01:00:00.000Z",
+    lastSavedAir: "2026-06-30T01:01:00.000Z",
+    lastSavedDc: "2026-06-30T01:02:00.000Z",
+    lastSavedEnergyCost: "2026-06-30T01:03:00.000Z"
+  }],
+  rackUnitCapacity: [{ month: "2026-06", totalU: 100, usedU: 40, availableU: 60, availabilityPct: 0.6, imageAttached: true, imageContentType: "image/png", imageSavedAt: "2026-06-30T01:04:00.000Z" }],
+  rackHistory: [{ snapshotMonth: "2026-06", facility: "Rangsit", rackZone: "(Total)", totalRacks: 10, inUse: 4, available: 6, reserved: 0, pendingDismantle: 0, other: 0, usagePct: 0.4, availabilityPct: 0.6, reservedPct: 0, pendingDismantlePct: 0, otherPct: 0, generatedAt: "2026-06-30T01:00:00.000Z", dataVersion: 1 }],
+  upsGroupHistory: { sourceSheet: "2. UPS Group History", rows: [{ facility: "Rangsit", month: "2026-06", group: "UPS 11", totalLoadKw: 2, totalLoadKva: 2.5, capacity: 400, loadPercent: 0.625, availablePercent: 99.375, monthlyEnergyKwh: 1440, generatedAt: "2026-06-30T01:00:00.000Z", dataVersion: 1 }] },
+  dashboardMapping: { sourceSheet: "Dashboard-FAC", summary: [], mapping: [{ no: 1, umdb: "UMDB11A", upsId: "UPS 11A", acPowerPanel: "—", sts: "STS11A", oudb: "OUDB41A", voltage: null, current: null, loadKw: null, loadKva: null, capacity: 400, loadPercent: null }] }
+}]);
+const completeSheetNames = completeExportWorkbook.worksheets.map(sheet => sheet.name);
+for (const fragment of ["UPS_Loads", "Air_Inputs", "DC_Inputs", "Energy_Cost", "Saved_Records", "Saved_Values", "Raw_Inputs", "Calculated_Energy", "Dashboard-FAC", "Dashboard-FAC UPS", "Dashboard-FAC Air", "Dashboard-FAC DC", "Rack Unit Capacity", "Rack Capacity History", "UPS Group History", "Rack Capacity Raw"]) {
+  check(`complete Excel export has ${fragment} table`, completeSheetNames.some(name => name.includes(fragment)));
+}
+const dashboardSheet = completeExportWorkbook.worksheets.find(sheet => sheet.name.includes("Dashboard-FAC") && !sheet.name.includes("UPS") && !sheet.name.includes("Air") && !sheet.name.includes("DC"));
+const dashboardText = dashboardSheet?.getSheetValues().flat().map(String).join("|") ?? "";
+check("Dashboard-FAC export contains the selected facility's calculated value", dashboardText.includes("100"));
+const dashboardDetailSheet = completeExportWorkbook.worksheets.find(sheet => sheet.name.includes("Dashboard-FAC Detail"));
+check("Dashboard-FAC Details export contains the Desktop mapping row", (dashboardDetailSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("UPS 11A"));
+const rackUnitSheet = completeExportWorkbook.worksheets.find(sheet => sheet.name.includes("Rack Unit Capacity"));
+check("Rack Unit Capacity export contains persisted Total (U)", (rackUnitSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("100"));
+check("Rack Unit Capacity export exposes image attachment status without exposing storage keys", (rackUnitSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("Image Attached") && (rackUnitSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("Yes") && !(rackUnitSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("objectKey"));
+const savedValuesSheet = completeExportWorkbook.worksheets.find(sheet => sheet.name.includes("Saved_Values"));
+check("Saved Values export contains Rack Unit image metadata column", (savedValuesSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("Rack Unit Image JSON"));
+const rackOnlyExport = await workbookForFacilities([{
+  siteName: "Rangsit",
+  logs: [],
+  reportingMonths: ["2026-08"],
+  rackUnitCapacity: [{ month: "2026-08", totalU: 200, usedU: 50, availableU: 150, availabilityPct: 0.75 }]
+}]);
+const rackOnlySheet = rackOnlyExport.worksheets.find(sheet => sheet.name.includes("Rack Unit Capacity"));
+check("Rack Unit-only historical month is exported even when no MonthlyLog exists", (rackOnlySheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("2026-08") && (rackOnlySheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("200"));
 
 const june = { ...log("2026-06"), energyCost: { buildingEnergyKwh: 611111, buildingElectricityCostThb: 3055555 } };
 const july = { ...log("2026-07"), energyCost: { buildingEnergyKwh: 722222, buildingElectricityCostThb: 3611110 } };
@@ -205,5 +255,88 @@ check("Rack Capacity Site Comparison page renders when rackComparison is populat
 check("the comparison page shows both facility labels", rackComparisonHtml.includes("Rangsit") && rackComparisonHtml.includes("Srinakarin"));
 const withoutRackComparison: ReportData = { ...comparisonBase, rackComparison: null };
 check("Rack Capacity Site Comparison page is absent (not an empty section) when rackComparison is null", !buildReportHtml(withoutRackComparison).includes("Rack Capacity Site Comparison"));
+
+// ============================================================
+// Desktop-source acceptance gate: build the actual Web Excel export from the
+// two Desktop workbooks and their external Rack Unit image stores. This is a
+// stronger check than fixture-only sheet-name assertions: every required
+// table must contain the source's real rows, including Dashboard-FAC detail
+// mapping, UPS Group History, Rack Unit history, and image attachment status.
+for (const sourceCase of [
+  { site: "Rangsit", workbookPath: "DC_Rangsit.xlsm", imagesRoot: "release\\Energy Monitor-v2.3.0\\data\\rack-unit-images" },
+  { site: "Srinakarin", workbookPath: "DC_Srinakarin.xlsm", imagesRoot: "release\\Energy Monitor-v2.2.7\\data\\rack-unit-images" }
+]) {
+  const buffer = await readFile(sourceCase.workbookPath);
+  const source = await readWorkbookSource(sourceCase.workbookPath, undefined, { imagesRootDir: sourceCase.imagesRoot, siteCode: sourceCase.site });
+  const upsGroupHistory = await readUpsGroupHistoryFromBuffer(buffer);
+  const dashboardMapping = source.dashboardMapping ?? await readUpsMappingFromBuffer(buffer);
+  const rack = await readRackCapacityFromBuffer(buffer);
+  const rackHistory = await readRackCapacityHistoryFromBuffer(buffer);
+  const imageByMonth = new Map((source.rackUnitCapacityImages ?? []).map(image => [image.reportingMonth, image]));
+  const rackUnitCapacity = source.rackUnitCapacityRows.map(row => {
+    const image = imageByMonth.get(row.month);
+    return { ...row, imageAttached: Boolean(image), imageContentType: image?.contentType ?? null, imageSavedAt: null };
+  });
+  const reportingMonths = [...new Set([
+    ...source.logs.map(row => row.month),
+    ...rackUnitCapacity.map(row => row.month),
+    ...(upsGroupHistory?.rows ?? []).map(row => row.month),
+    ...(rackHistory ?? []).map(row => row.snapshotMonth)
+  ])].sort();
+  const workbook = await workbookForFacilities([{ siteName: sourceCase.site, logs: source.logs, rack, rackHistory: rackHistory ?? [], rackUnitCapacity, upsGroupHistory, dashboardMapping, reportingMonths }]);
+  const sheet = (fragment: string) => workbook.worksheets.find(item => item.name.includes(fragment));
+  const arraySheetValues = (worksheet: ExcelJS.Worksheet | undefined): unknown[][] =>
+    (worksheet?.getSheetValues() ?? []).map(row => Array.isArray(row) ? row : []);
+  const requiredTables: Array<[string, number]> = [
+    ["UPS_Loads", source.logs.reduce((count, log) => count + log.ups.length, 0) + 1],
+    ["Air_Inputs", source.logs.length + 1],
+    ["DC_Inputs", source.logs.reduce((count, log) => count + log.dc.length, 0) + 1],
+    ["Energy_Cost_Inputs", source.logs.length + 1],
+    ["Saved_Records", reportingMonths.length + 1],
+    ["Saved_Values", reportingMonths.length + 1],
+    ["Raw_Inputs", source.logs.filter(log => Boolean(log.srinakarinInputs)).length + 1],
+    ["Calculated_Energy", source.logs.length + 1],
+    ["Dashboard-FAC", source.logs.length + 1],
+    ["Dashboard-FAC UPS", (upsGroupHistory?.rows.length ?? 0) + 1],
+    ["Dashboard-FAC Details", source.logs.length * (dashboardMapping?.mapping.length ?? 0) + 1],
+    ["Dashboard-FAC Air", 2],
+    ["Dashboard-FAC DC", 2],
+    ["Rack Unit Capacity", source.rackUnitCapacityRows.length + 1],
+    ["Rack Capacity History", (rackHistory?.length ?? 0) + 1],
+    ["UPS Group History", (upsGroupHistory?.rows.length ?? 0) + 1],
+    ["Rack Capacity Raw", (rack?.records.length ?? 0) + 1]
+  ];
+  for (const [tableName, minimumRows] of requiredTables) {
+    check(`${sourceCase.site}: export contains ${tableName} with its expected row count`, (sheet(tableName)?.rowCount ?? 0) >= minimumRows);
+  }
+  const serializedExport = await workbook.xlsx.writeBuffer();
+  const roundTrip = new ExcelJS.Workbook();
+  await roundTrip.xlsx.load(serializedExport as unknown as ArrayBuffer);
+  check(`${sourceCase.site}: serialized XLSX reopens with all required worksheets`, requiredTables.every(([tableName]) => roundTrip.worksheets.some(item => item.name.includes(tableName))));
+  check(`${sourceCase.site}: Desktop workbook has no validation errors`, source.validation.errors.length === 0);
+  check(`${sourceCase.site}: migration source retains Dashboard-FAC mapping from the workbook`, Boolean(source.dashboardMapping) && source.dashboardMapping?.mapping.length === dashboardMapping?.mapping.length);
+  check(`${sourceCase.site}: migration source retains every persisted UPS Group History row`, source.upsGroupHistoryRows.length === (upsGroupHistory?.rows.length ?? 0));
+  check(`${sourceCase.site}: migration source retains every Desktop Rack Capacity History row`, source.rackCapacityHistoryRows.length === (rackHistory?.length ?? 0));
+  check(`${sourceCase.site}: Desktop Rack Unit image sources are discovered`, (source.rackUnitCapacityImages ?? []).length === 2);
+  check(`${sourceCase.site}: UPS input rows are exported from Desktop logs`, (sheet("UPS_Loads")?.rowCount ?? 1) > 1);
+  check(`${sourceCase.site}: saved values table contains all source months`, (sheet("Saved_Values")?.rowCount ?? 0) >= source.logs.length + 1);
+  check(`${sourceCase.site}: calculated energy table contains all source log months`, (sheet("Calculated_Energy")?.rowCount ?? 0) === source.logs.length + 1);
+  check(`${sourceCase.site}: Dashboard-FAC contains all source log months`, (sheet("Dashboard-FAC")?.rowCount ?? 0) === source.logs.length + 1);
+  check(`${sourceCase.site}: Dashboard-FAC Details contains Desktop mapping rows`, (sheet("Dashboard-FAC Details")?.rowCount ?? 1) > 1 && (sheet("Dashboard-FAC Details")?.getSheetValues().flat().map(String).join("|") ?? "").includes(dashboardMapping?.mapping[0]?.upsId ?? "__missing__"));
+  check(`${sourceCase.site}: every Desktop Dashboard-FAC mapping ID is retained in the export`, (dashboardMapping?.mapping ?? []).every(row => (sheet("Dashboard-FAC Details")?.getSheetValues().flat().map(String).join("|") ?? "").includes(row.upsId)));
+  if (sourceCase.site === "Rangsit") {
+    const firstMonth = source.logs[0]?.month;
+    const historicalDetails = arraySheetValues(sheet("Dashboard-FAC Details")).filter(row => row[1] === firstMonth);
+    check("Rangsit historical Dashboard-FAC missing UPS readings remain blank, not fabricated zeros", historicalDetails.length > 0 && historicalDetails.every(row => row.slice(8, 12).every(value => value === null || value === undefined)));
+  }
+  check(`${sourceCase.site}: Dashboard-FAC UPS contains persisted group history`, (sheet("Dashboard-FAC UPS")?.rowCount ?? 1) >= (upsGroupHistory?.rows.length ?? 0) + 1);
+  check(`${sourceCase.site}: UPS Group History export contains every persisted source row`, (sheet("UPS Group History")?.rowCount ?? 1) === (upsGroupHistory?.rows.length ?? 0) + 1);
+  check(`${sourceCase.site}: Dashboard-FAC Air table contains source rows`, (sheet("Dashboard-FAC Air")?.rowCount ?? 1) > 1);
+  check(`${sourceCase.site}: Dashboard-FAC DC table contains source rows`, (sheet("Dashboard-FAC DC")?.rowCount ?? 1) > 1);
+  check(`${sourceCase.site}: Rack Unit Capacity contains every Desktop row`, (sheet("Rack Unit Capacity")?.rowCount ?? 0) === source.rackUnitCapacityRows.length + 1);
+  check(`${sourceCase.site}: Rack Unit export marks discovered images`, (sheet("Rack Unit Capacity")?.getSheetValues().flat().map(String).join("|") ?? "").includes("Yes"));
+  check(`${sourceCase.site}: Rack Capacity Raw contains the Desktop snapshot rows`, (sheet("Rack Capacity Raw")?.rowCount ?? 1) === (rack?.records.length ?? 0) + 1);
+  check(`${sourceCase.site}: Rack Capacity History preserves source rows when present`, (sheet("Rack Capacity History")?.rowCount ?? 1) === (rackHistory?.length ?? 0) + 1);
+}
 
 console.log(`web-clean-v1 exports: 7 + ${checks} assertions passed`);

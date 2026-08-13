@@ -75,6 +75,8 @@ For `feat/web-clean-v1`, all values must target
 | `READ_ONLY_MODE` | Yes under current code | The current Preview guard requires `true`, which prevents write/admin UAT; this conflicts with full Preview UAT and must be explicitly redesigned before acceptance testing. |
 | `DB_POOL_MAX` | Optional | Defaults to 3; hosted runtime rejects values above 10. |
 | `APP_ORIGINS`, `APP_PREVIEW_ORIGINS` | Optional | Current deployment self-origin is automatically allow-listed from Vercel-provided hostnames. |
-| `SUPABASE_SERVICE_ROLE_KEY` | No | Clean v1 does not consume it. Do not add it merely for this application. |
+| `SUPABASE_URL` | Conditional | Server-only Supabase Storage URL for Rack Unit Capacity images. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Conditional | Server-only Storage credential for Rack Unit Capacity images; never expose to the browser. |
+| `RACK_UNIT_IMAGE_BUCKET` | Conditional | Existing Storage bucket; defaults to `rack-unit-capacity`. |
 
 Production values and configuration are out of scope for this correction.
