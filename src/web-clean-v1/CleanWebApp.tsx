@@ -136,6 +136,60 @@ export default function CleanWebApp() {
   useEffect(() => { if (notice) { const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); } }, [notice]);
   useEffect(() => { if (!user) return; let savedTheme: string | null = null; let savedLanguage: string | null = null; try { savedTheme = localStorage.getItem(themeStorageKey(user.id)); savedLanguage = localStorage.getItem(languageStorageKey(user.id)); } catch { /* browser storage is optional; defaults remain available */ } const nextTheme = normalizeTheme(savedTheme); setTheme(nextTheme); applyTheme(nextTheme); if (savedLanguage !== null) setLang(normalizeLanguage(savedLanguage)); }, [user]);
   useEffect(() => { if (!entryDirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [entryDirty]);
+  type WebUndoEntry = { el: HTMLInputElement | HTMLSelectElement; kind: "input" | "select" | "checkbox"; value: string; checked?: boolean };
+  const undoStackRef = useRef<WebUndoEntry[]>([]);
+  const undoBaselineRef = useRef<WeakMap<Element, string>>(new WeakMap());
+  const undoSessionElRef = useRef<Element | null>(null);
+  const suppressUndoRecordRef = useRef(false);
+  useEffect(() => {
+    const inEntry = (element: Element | null) => Boolean(element?.closest?.("[id^='entry-section-']"));
+    const currentValueOf = (element: HTMLInputElement | HTMLSelectElement) => element instanceof HTMLInputElement && element.type === "checkbox" ? String(element.checked) : element.value;
+    const onFocusIn = (event: FocusEvent) => {
+      const element = event.target as HTMLInputElement | HTMLSelectElement | null;
+      if (!element || !inEntry(element) || !("value" in element)) return;
+      undoBaselineRef.current.set(element, currentValueOf(element));
+      undoSessionElRef.current = null;
+    };
+    const onInput = (event: Event) => {
+      if (suppressUndoRecordRef.current) return;
+      const element = event.target as HTMLInputElement | HTMLSelectElement | null;
+      if (!element || !inEntry(element) || !("value" in element)) return;
+      const kind: WebUndoEntry["kind"] = element instanceof HTMLInputElement && element.type === "checkbox" ? "checkbox" : element instanceof HTMLSelectElement ? "select" : "input";
+      if (kind === "input" && undoSessionElRef.current === element) return;
+      const baseline = undoBaselineRef.current.get(element) ?? "";
+      undoStackRef.current.push({ el: element, kind, value: kind === "checkbox" ? "" : baseline, checked: kind === "checkbox" ? baseline === "true" : undefined });
+      if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+      if (kind === "input") undoSessionElRef.current = element;
+      else undoBaselineRef.current.set(element, currentValueOf(element));
+    };
+    window.addEventListener("focusin", onFocusIn, true);
+    window.addEventListener("input", onInput, true);
+    return () => { window.removeEventListener("focusin", onFocusIn, true); window.removeEventListener("input", onInput, true); };
+  }, []);
+  const undoLastEdit = useCallback(() => {
+    while (undoStackRef.current.length > 0) {
+      const entry = undoStackRef.current.pop()!;
+      const element = entry.el;
+      if (!element.isConnected) continue;
+      suppressUndoRecordRef.current = true;
+      try {
+        if (entry.kind === "checkbox") {
+          if (element.checked !== entry.checked) element.click();
+        } else {
+          const prototype = entry.kind === "select" ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+          const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
+          setter?.call(element, entry.value);
+          element.dispatchEvent(new Event("input", { bubbles: true }));
+          element.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      } finally { suppressUndoRecordRef.current = false; }
+      undoBaselineRef.current.set(element, entry.kind === "checkbox" ? String(entry.checked) : entry.value);
+      undoSessionElRef.current = null;
+      element.focus({ preventScroll: true });
+      return true;
+    }
+    return false;
+  }, []);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -150,14 +204,23 @@ export default function CleanWebApp() {
       } else if (command && !event.altKey && (event.key === "e" || event.key === "E")) {
         event.preventDefault();
         setView("reports");
+      } else if (command && !event.shiftKey && !event.altKey && (event.key === "z" || event.key === "Z") && view === "entry") {
+        if (undoLastEdit()) event.preventDefault();
       } else if (event.key === "F5" && !event.ctrlKey && !event.metaKey && !event.shiftKey && !editingText) {
         event.preventDefault();
         void initialize().catch(error => setNotice(readError(error)));
+      } else if (event.key === "Enter" && !command && !event.altKey && target?.tagName === "INPUT" && target.closest("[id^='entry-section-']")) {
+        event.preventDefault();
+        const inputs = Array.from(document.querySelectorAll<HTMLInputElement>("[id^='entry-section-'] input:not(:disabled)"));
+        const index = inputs.indexOf(target as HTMLInputElement);
+        const next = inputs[index + (event.shiftKey ? -1 : 1)];
+        next?.focus();
+        next?.select();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [initialize, view]);
+  }, [initialize, undoLastEdit, view]);
 
   const deferNavigation = (action: PendingNavigation) => { if (entryDirty) setPendingNavigation(() => action); else void action(); };
   const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setViewState(next); }); };
