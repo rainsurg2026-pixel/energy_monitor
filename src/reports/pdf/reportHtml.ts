@@ -8,6 +8,7 @@ import { getCapacityHealth } from "../../utils/capacityForecast";
 import { getAccessibleTextColor } from "../../utils/colorContrast";
 import { findPreviousRackUnitCapacityRow, usagePercent } from "../../utils/rackUnitCapacity";
 import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
+import type { ReportSectionId } from "../../reporting/reportingTypes";
 
 const FONT_STACK = '"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif';
 
@@ -506,7 +507,28 @@ function comparisonRow(facility: ReportComparisonFacility): string[] {
   ];
 }
 
-export function buildReportHtml(data: ReportData): string {
+function filterReportHtmlBySections(html: string, selectedSections: readonly ReportSectionId[]): string {
+  const selected = new Set(selectedSections);
+  const keep = (section: ReportSectionId) => selected.has(section);
+  const bodyStart = html.indexOf("</main>") + "</main>".length;
+  const scriptStart = html.indexOf("<script>document.body.dataset.reportReady=\"true\";</script>");
+  const body = scriptStart >= bodyStart ? html.slice(bodyStart, scriptStart) : "";
+  const pages = body.split(/(?=<section class="page)/).filter(page => page.startsWith('<section class="page'));
+  const selectedPages = pages.filter(page => {
+    if (page.includes('class="page trend-page"')) return keep("historical");
+    if (page.includes("Building Energy Dashboard")) return keep("executive") || keep("dashboard") || keep("ups") || keep("air-conditioning") || keep("dc");
+    if (page.includes("Monthly Energy &amp; Cost Table")) return keep("executive") || keep("appendix");
+    if (page.includes("Rack Unit Capacity and Utilization")) return keep("rack-unit-capacity");
+    if (page.includes("Capacity Health and Zone Heatmap")) return keep("rack-capacity") || keep("rack-unit-capacity");
+    if (page.includes("Rack Capacity Site Comparison") || page.includes("<h2>Site Comparison</h2>")) return keep("site-comparison");
+    if (page.includes("Rack Capacity and Utilization")) return keep("rack-capacity");
+    return false;
+  });
+  return html.slice(0, bodyStart) + selectedPages.join("") + html.slice(scriptStart);
+}
+
+export function buildReportHtml(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
+  if (selectedSections !== undefined) return filterReportHtmlBySections(buildReportHtml(data), selectedSections);
   const range = `${formatMonth(data.historicalStart)} – ${formatMonth(data.historicalEnd)}`;
   const dashboard = data.engineeringDashboard ? engineeringDashboard(data, data.engineeringDashboard) : "";
   const trendPages: Array<[string, string, string, Array<number | null>, string]> = [

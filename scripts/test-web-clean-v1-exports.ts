@@ -106,15 +106,23 @@ async function assertExportsShowOnlyMonth(monthLabel: string, selection: Reporti
 await assertExportsShowOnlyMonth("2026-06", { mode: "single", singleMonth: "2026-06", rangeStart: "2026-06", rangeEnd: "2026-06" }, "2026-08");
 await assertExportsShowOnlyMonth("2026-07", { mode: "single", singleMonth: "2026-07", rangeStart: "2026-07", rangeEnd: "2026-07" }, "2026-08");
 
+const previousAir = { ...log("2026-06"), air: { eb41a: 1, eb41b: 1, eb42a: 1, eb42b: 1, meters: {} } };
+const currentAir = { ...log("2026-07"), air: { eb41a: 2, eb41b: 2, eb42a: 2, eb42b: 2, meters: {} } };
+const singleMonthPdfData = facilityReportData([currentAir], "Rangsit", "2026-07", null, [], [], [previousAir, currentAir]);
+check("single-month PDF calculations retain the previous month from full history", singleMonthPdfData.currentRow?.airEnergyKwh === 4_000_000);
+const rackOnlyHtml = buildReportHtml(singleMonthPdfData, ["rack-capacity"]);
+check("custom report sections keep the selected Rack Capacity page", rackOnlyHtml.includes("Rack Capacity and Utilization"));
+check("custom report sections omit the unselected Dashboard page", !rackOnlyHtml.includes("Building Energy Dashboard"));
+
 // Excel must retain entry values and saved timestamps as real typed cells,
 // then append the exact Desktop calculation outputs.  This is deliberately
 // richer than CSV: values remain usable in formulas/Power BI after download.
 const typedExportLog: MonthlyLog = {
   ...log("2026-07"),
-  ups: [{ upsId: "UPS 11A", voltage: 230.125, current: 10.5, loadKw: 12.345, loadKva: 15.678 }],
+  ups: [{ upsId: "UPS 11A", voltage: 230.125, current: 10.5, loadKw: 12.345, loadKva: 15.678, phases: { R: { voltage: 229.5, current: 3.25, loadKw: 4.1, loadKva: 4.5 } } }],
   air: { eb41a: 2.25, eb41b: 3.5, eb42a: 4.75, eb42b: 5.25, meters: { eb43a: 6.5 } },
   dc: [{ panelId: "DC PDB41A", voltage: 48.5, current: 20.25 }],
-  energyCost: { buildingEnergyKwh: 1000.125, buildingElectricityCostThb: 5000.5 },
+  energyCost: { buildingEnergyKwh: 1000.125, buildingElectricityCostThb: 5000.5, floorElectricityCostThb: 4100.25, averageElectricityRateThbPerKwh: 4.1 },
   lastSavedUps: "2026-07-15T06:30:00.000Z",
   lastSavedAir: "2026-07-16T06:30:00.000Z",
   lastSavedDc: "2026-07-17T06:30:00.000Z",
@@ -125,13 +133,25 @@ const typedWorkbook = await workbookForFacilities([{ siteName: "Typed", logs: [t
 const typedBuffer = await typedWorkbook.xlsx.writeBuffer();
 const typedReread = new ExcelJS.Workbook();
 await typedReread.xlsx.load(typedBuffer as unknown as ArrayBuffer);
+const typedSummary = typedReread.worksheets.find(sheet => sheet.name.includes("Summary"));
 const typedEnergy = typedReread.worksheets.find(sheet => sheet.name.includes("Energy_Cost"))!;
 const typedUps = typedReread.worksheets.find(sheet => sheet.name.includes("UPS_Loads"))!;
+const typedUpsCalculations = typedReread.worksheets.find(sheet => sheet.name.includes("UPS_Calculations"))!;
+const typedUpsPhases = typedReread.worksheets.find(sheet => sheet.name.includes("UPS_Phases"))!;
+const typedAirCalculations = typedReread.worksheets.find(sheet => sheet.name.includes("Air_Calculations"))!;
+const typedDcCalculations = typedReread.worksheets.find(sheet => sheet.name.includes("DC_Calculations"))!;
 const typedPhase = typedReread.worksheets.find(sheet => sheet.name.includes("Srinakarin_Inputs"))!;
+check("Excel includes a Desktop-style summary with inputs, saved values, and calculations", Boolean(typedSummary) && typedSummary!.columnCount === 17 && typedSummary!.getCell("B2").value === 1000.125 && typedSummary!.getCell("D2").value instanceof Date && typedSummary!.getCell("J2").value === null && typedSummary!.getCell("Q2").value === "Partial");
 check("Excel includes raw UPS entry rows", typedUps.getCell("B2").value === "UPS 11A" && typedUps.getCell("C2").value === 230.125);
 check("Excel includes section saved dates as typed dd-Mmm-yy dates", typedUps.getCell("G2").value instanceof Date && typedUps.getCell("G2").numFmt === "dd-mmm-yy");
-check("Excel includes raw energy entry values and all calculation outputs", typedEnergy.columnCount === 11 && typedEnergy.getCell("B2").value === 1000.125 && typedEnergy.getCell("J2").value !== null);
+check("Excel includes calculated UPS energy with the matching saved date", typedUpsCalculations.getCell("B2").value === "UPS 11A" && typedUpsCalculations.getCell("E2").value === 9184.68 && typedUpsCalculations.getCell("F2").value instanceof Date && typedUpsCalculations.getCell("F2").numFmt === "dd-mmm-yy");
+check("Excel includes UPS phase entry rows", typedUpsPhases.getCell("B2").value === "UPS 11A" && typedUpsPhases.getCell("D2").value === 229.5);
+check("Excel keeps the Air calculation saved date beside derived values", typedAirCalculations.getCell("G2").value instanceof Date && typedAirCalculations.getCell("G2").numFmt === "dd-mmm-yy");
+check("Excel keeps the DC calculation saved date beside derived values", typedDcCalculations.getCell("I2").value instanceof Date && typedDcCalculations.getCell("I2").numFmt === "dd-mmm-yy");
+check("Excel includes raw, saved, and calculated energy values", typedEnergy.columnCount === 13 && typedEnergy.getCell("B2").value === 1000.125 && typedEnergy.getCell("E2").value === 4100.25 && typedEnergy.getCell("F2").value === 4.1 && String(typedEnergy.getCell("M1").value).includes("Calculated"));
 check("Excel includes every Srinakarin phase-level entry value", typedPhase.rowCount === 5 && typedPhase.getCell("D2").value === 230.125);
+check("Excel worksheets use the Desktop print layout", typedSummary?.pageSetup.orientation === "landscape" && typedSummary?.pageSetup.fitToWidth === 1 && typedSummary?.views[0]?.state === "frozen" && typedSummary?.headerFooter.oddHeader.includes("Summary"));
+check("Excel worksheets use wrapped headers and banded detail rows", typedSummary?.getRow(1).alignment.wrapText === true && (typedSummary?.getRow(2).getCell(1).fill as any).fgColor?.argb === "FFF8FAFC" && typedSummary?.getRow(2).getCell(1).border.bottom?.style === "hair");
 for (const sheet of typedReread.worksheets) {
   sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => { if (rowNumber > 1) row.eachCell({ includeEmpty: false }, cell => { if (typeof cell.value === "number") check(`${sheet.name} ${cell.address}: numeric values use two decimals`, cell.numFmt === "#,##0.00"); if (cell.value instanceof Date) check(`${sheet.name} ${cell.address}: dates use dd-Mmm-yy`, cell.numFmt === "dd-mmm-yy"); }); });
 }
@@ -197,6 +217,23 @@ check("an already-present rowNumber is preserved exactly, not overwritten by the
 check("byZone grouping reuses Desktop's exact rule (2 zones, 2 records each)", rackReport!.byZone.length === 2 && rackReport!.byZone.every((z: { count: number }) => z.count === 2));
 check("duplicate rack IDs are detected using the same rule the Excel reader uses", rackReport!.validation.duplicateIds.includes("A-01"));
 check("sourceSheet/sourceTable match Desktop's Rack Capacity sheet/table naming", rackReport!.sourceSheet === "Rack Capacity" && rackReport!.sourceTable === "Table7");
+
+const rackExcelWorkbook = await workbookForFacilities([{
+  siteName: "Racks",
+  logs: [log("2026-06")],
+  rack: rackReport,
+  rackHistory: [{ snapshotMonth: "2026-06", facility: "Rangsit", rackZone: "Zone A", totalRacks: 2, inUse: 1, available: 1, reserved: 0, pendingDismantle: 0, other: 0, usagePct: 0.5, availabilityPct: 0.5, reservedPct: 0, pendingDismantlePct: 0, otherPct: 0, generatedAt: "2026-06-30T06:30:00.000Z", dataVersion: 1 }],
+  rackUnitCapacity: [{ month: "2026-06", totalU: 100, usedU: 40, availableU: 60, availabilityPct: 0.6 }]
+}]);
+const rackExcelBuffer = await rackExcelWorkbook.xlsx.writeBuffer();
+const rackExcelReread = new ExcelJS.Workbook();
+await rackExcelReread.xlsx.load(rackExcelBuffer as unknown as ArrayBuffer);
+const rackSnapshotSheet = rackExcelReread.worksheets.find(sheet => sheet.name.includes("Rack_Capacity_Snapshot"));
+const rackHistorySheet = rackExcelReread.worksheets.find(sheet => sheet.name.includes("Rack_Capacity_History"));
+const rackUnitSheet = rackExcelReread.worksheets.find(sheet => sheet.name.includes("Rack_Unit_Capacity"));
+check("Excel includes the current Rack Capacity snapshot values", Boolean(rackSnapshotSheet) && rackSnapshotSheet!.getCell("C2").value === "Zone A" && rackSnapshotSheet!.getCell("D2").value === "A-01");
+check("Excel includes Rack Capacity history with typed month/date values", Boolean(rackHistorySheet) && rackHistorySheet!.getCell("A2").value instanceof Date && rackHistorySheet!.getCell("A2").numFmt === "dd-mmm-yy" && rackHistorySheet!.getCell("O2").value instanceof Date && rackHistorySheet!.getCell("O2").numFmt === "dd-mmm-yy");
+check("Excel includes Rack Unit Capacity entry and calculated values", Boolean(rackUnitSheet) && rackUnitSheet!.getCell("B2").value === 100 && rackUnitSheet!.getCell("C2").value === 40 && rackUnitSheet!.getCell("D2").value === 60 && rackUnitSheet!.getCell("E2").value === 0.6);
 
 // PDF content: the "Rack Capacity and Utilization" page must show real,
 // non-fabricated numbers computed by the exact same calculateRackCapacityMetrics

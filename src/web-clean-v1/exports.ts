@@ -5,6 +5,7 @@ import { daysInUtcMonth, previousUtcMonth } from "../domain/dates";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
 import { buildReportHtml } from "../reports/pdf/reportHtml";
 import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord } from "../reports/reportTypes";
+import type { ReportSectionId } from "../reporting/reportingTypes";
 import { deriveRackCapacityReport } from "../reports/rackCapacityReportBuilder";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
@@ -98,12 +99,30 @@ function addTypedSheet(workbook: any, name: string, headers: string[], rows: Exc
   const sheet = workbook.addWorksheet(name);
   sheet.addRow(headers);
   for (const values of rows) sheet.addRow(values);
-  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
+  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF17324D" } };
+  sheet.getRow(1).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  sheet.getRow(1).height = 34;
   sheet.views = [{ state: "frozen", ySplit: 1 }];
   sheet.autoFilter = { from: "A1", to: { row: 1, column: Math.max(1, headers.length) } };
-  sheet.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
+  sheet.pageSetup = {
+    orientation: "landscape",
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    paperSize: 9,
+    margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 }
+  };
+  sheet.headerFooter.oddHeader = `&B${name}&B`;
+  sheet.headerFooter.oddFooter = `Data Center Energy & Facility Monitor | ${name} | Page &P of &N`;
+  sheet.properties.defaultRowHeight = 19;
+  sheet.eachRow({ includeEmpty: true }, (row: any, rowNumber: number) => {
     if (rowNumber === 1) return;
+    row.eachCell({ includeEmpty: true }, (cell: any) => {
+      cell.border = { bottom: { style: "hair", color: { argb: "FFE2E8F0" } } };
+      cell.alignment = { vertical: "middle", wrapText: false };
+      if (rowNumber % 2 === 0) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+    });
     row.eachCell({ includeEmpty: false }, (cell: any) => {
       if (typeof cell.value === "number") cell.numFmt = "#,##0.00";
       if (cell.value instanceof Date) cell.numFmt = "dd-mmm-yy";
@@ -123,32 +142,91 @@ function addFacilityExportSheets(workbook: any, facility: ExportFacility): void 
   const prefix = facility.siteName.replace(/[^a-z0-9]+/giu, "-").slice(0, 12) || "facility";
   const airFields = Array.from(new Set(logs.flatMap(log => getAirFields(log)))).sort();
 
+  // Keep the first worksheet useful when a user opens the downloaded file.
+  // This is the web equivalent of Desktop's report/dashboard summary: source
+  // inputs, persisted values, and the same derived calculation snapshot are
+  // visible together, while section-specific sheets below retain every raw
+  // reading.  Nulls remain blank rather than being converted to zero.
+  addTypedSheet(workbook, facilitySheetName(prefix, "Summary"), [
+    "Reporting Month",
+    "Building Energy Input (kWh)",
+    "Building Cost Input (THB)",
+    "Last Saved UPS Date",
+    "Last Saved Air Date",
+    "Last Saved DC Date",
+    "Last Saved Energy/Cost Date",
+    "4th Floor Cost Saved (THB)",
+    "Average Rate Saved (THB/kWh)",
+    "UPS Energy Calculated (kWh)",
+    "Air Energy Calculated (kWh)",
+    "DC Energy Calculated (kWh)",
+    "4th Floor Energy Calculated (kWh)",
+    "4th Floor Cost Calculated (THB)",
+    "Average Rate Calculated (THB/kWh)",
+    "4th Floor Energy Share Calculated (%)",
+    "Data Status"
+  ], logs.map(log => {
+    const calculation = calculateEnergyCostForMonth(calculationLogs, log.month);
+    return [
+      excelMonth(log.month),
+      log.energyCost.buildingEnergyKwh,
+      log.energyCost.buildingElectricityCostThb,
+      excelSavedDate(log.lastSavedUps),
+      excelSavedDate(log.lastSavedAir),
+      excelSavedDate(log.lastSavedDc),
+      excelSavedDate(log.lastSavedEnergyCost),
+      log.energyCost.floorElectricityCostThb ?? null,
+      log.energyCost.averageElectricityRateThbPerKwh ?? null,
+      calculation.upsEnergyKwh,
+      calculation.airEnergyKwh,
+      calculation.dcEnergyKwh,
+      calculation.floorEnergyKwh,
+      calculation.floorElectricityCostThb,
+      calculation.averageElectricityRateThbPerKwh,
+      calculation.energySharePercent,
+      calculation.floorEnergyKwh === null ? "Partial" : "Complete"
+    ] as ExcelCellValue[];
+  }));
+
   addTypedSheet(workbook, facilitySheetName(prefix, "UPS_Loads"), ["Reporting Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Last Saved Date"], logs.flatMap(log => log.ups.map(ups => [excelMonth(log.month), ups.upsId, ups.voltage, ups.current, ups.loadKw, ups.loadKva, excelSavedDate(log.lastSavedUps)])));
+  const upsPhaseRows = logs.flatMap(log => log.ups.flatMap(ups => Object.entries(ups.phases ?? {}).map(([phase, values]) => [excelMonth(log.month), ups.upsId, phase, values.voltage, values.current, values.loadKw, values.loadKva, excelSavedDate(log.lastSavedUps)] as ExcelCellValue[])));
+  if (upsPhaseRows.length > 0) addTypedSheet(workbook, facilitySheetName(prefix, "UPS_Phases"), ["Reporting Month", "UPS ID", "Phase", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Last Saved Date"], upsPhaseRows);
+  addTypedSheet(workbook, facilitySheetName(prefix, "UPS_Calculations"), ["Reporting Month", "UPS ID", "Load (kW)", "Days in Month", "Monthly Energy Calculated (kWh)", "Last Saved Date"], logs.flatMap(log => {
+    const days = daysInUtcMonth(log.month);
+    return log.ups.map(ups => [
+      excelMonth(log.month),
+      ups.upsId,
+      ups.loadKw,
+      days,
+      ups.loadKw === null || days === null ? null : ups.loadKw * 24 * days,
+      excelSavedDate(log.lastSavedUps)
+    ] as ExcelCellValue[]);
+  }));
   addTypedSheet(workbook, facilitySheetName(prefix, "Air_Conditioning"), ["Reporting Month", ...airFields.map(field => `${field.toUpperCase()} (GWh)`), "Last Saved Date"], logs.map(log => [excelMonth(log.month), ...airFields.map(field => getAirValue(log, field)), excelSavedDate(log.lastSavedAir)]));
   addTypedSheet(workbook, facilitySheetName(prefix, "DC_Panels"), ["Reporting Month", "DC Panel", "Voltage (V)", "Current (A)", "Last Saved Date"], logs.flatMap(log => log.dc.map(panel => [excelMonth(log.month), panel.panelId, panel.voltage, panel.current, excelSavedDate(log.lastSavedDc)])));
 
-  addTypedSheet(workbook, facilitySheetName(prefix, "Energy_Cost"), ["Reporting Month", "Building Energy Input (kWh)", "Building Cost Input (THB)", "Last Saved Date", "UPS Energy Calculated (kWh)", "Air Energy Calculated (kWh)", "DC Energy Calculated (kWh)", "4th Floor Energy Calculated (kWh)", "4th Floor Cost Calculated (THB)", "Average Rate Calculated (THB/kWh)", "4th Floor Energy Share Calculated (%)"], logs.map(log => {
+  addTypedSheet(workbook, facilitySheetName(prefix, "Energy_Cost"), ["Reporting Month", "Building Energy Input (kWh)", "Building Cost Input (THB)", "Last Saved Date", "4th Floor Cost Saved (THB)", "Average Rate Saved (THB/kWh)", "UPS Energy Calculated (kWh)", "Air Energy Calculated (kWh)", "DC Energy Calculated (kWh)", "4th Floor Energy Calculated (kWh)", "4th Floor Cost Calculated (THB)", "Average Rate Calculated (THB/kWh)", "4th Floor Energy Share Calculated (%)"], logs.map(log => {
     const calculation = calculateEnergyCostForMonth(calculationLogs, log.month);
-    return [excelMonth(log.month), log.energyCost.buildingEnergyKwh, log.energyCost.buildingElectricityCostThb, excelSavedDate(log.lastSavedEnergyCost), calculation.upsEnergyKwh, calculation.airEnergyKwh, calculation.dcEnergyKwh, calculation.floorEnergyKwh, calculation.floorElectricityCostThb, calculation.averageElectricityRateThbPerKwh, calculation.energySharePercent];
+    return [excelMonth(log.month), log.energyCost.buildingEnergyKwh, log.energyCost.buildingElectricityCostThb, excelSavedDate(log.lastSavedEnergyCost), log.energyCost.floorElectricityCostThb ?? null, log.energyCost.averageElectricityRateThbPerKwh ?? null, calculation.upsEnergyKwh, calculation.airEnergyKwh, calculation.dcEnergyKwh, calculation.floorEnergyKwh, calculation.floorElectricityCostThb, calculation.averageElectricityRateThbPerKwh, calculation.energySharePercent];
   }));
 
-  addTypedSheet(workbook, facilitySheetName(prefix, "Air_Calculations"), ["Reporting Month", "Meter", "Previous Reading (GWh)", "Current Reading (GWh)", "Difference (GWh)", "Energy Contribution (kWh)"], logs.flatMap(log => {
+  addTypedSheet(workbook, facilitySheetName(prefix, "Air_Calculations"), ["Reporting Month", "Meter", "Previous Reading (GWh)", "Current Reading (GWh)", "Difference (GWh)", "Energy Contribution (kWh)", "Last Saved Date"], logs.flatMap(log => {
     const previousMonth = previousUtcMonth(log.month);
     const previous = previousMonth ? calculationLogs.find(candidate => candidate.month === previousMonth) ?? null : null;
     return getAirFields(log).map(field => {
       const current = getAirValue(log, field);
       const previousValue = previous ? getAirValue(previous, field) : null;
       const difference = current === null || previousValue === null ? null : current - previousValue;
-      return [excelMonth(log.month), field.toUpperCase(), previousValue, current, difference, difference === null ? null : difference * 1000000];
+      return [excelMonth(log.month), field.toUpperCase(), previousValue, current, difference, difference === null ? null : difference * 1000000, excelSavedDate(log.lastSavedAir)];
     });
   }));
 
-  addTypedSheet(workbook, facilitySheetName(prefix, "DC_Calculations"), ["Reporting Month", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current (A)", "AC Power (W)", "Monthly Energy (kWh)"], logs.flatMap(log => {
+  addTypedSheet(workbook, facilitySheetName(prefix, "DC_Calculations"), ["Reporting Month", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current (A)", "AC Power (W)", "Monthly Energy (kWh)", "Last Saved Date"], logs.flatMap(log => {
     const days = daysInUtcMonth(log.month);
     return log.dc.map(panel => {
       const dcPower = panel.voltage === null || panel.current === null ? null : panel.voltage * panel.current;
       const acPower = dcPower === null ? null : dcPower / 200 * 220;
-      return [excelMonth(log.month), panel.panelId, panel.voltage, panel.current, dcPower, acPower === null ? null : acPower / 220, acPower, acPower === null || days === null ? null : acPower * 24 * days / 1000];
+      return [excelMonth(log.month), panel.panelId, panel.voltage, panel.current, dcPower, acPower === null ? null : acPower / 220, acPower, acPower === null || days === null ? null : acPower * 24 * days / 1000, excelSavedDate(log.lastSavedDc)];
     });
   }));
 
@@ -162,6 +240,51 @@ function addFacilityExportSheets(workbook: any, facility: ExportFacility): void 
     for (const [id, value] of Object.entries(inputs.ppc43Panel)) phaseRows.push([excelMonth(log.month), "PPC43 panel", id, null, null, value.loadKw, value.loadKva, excelSavedDate(log.lastSavedUps)]);
   }
   if (phaseRows.length > 0) addTypedSheet(workbook, facilitySheetName(prefix, "Srinakarin_Inputs"), ["Reporting Month", "Input Group", "Input ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Last Saved Date"], phaseRows);
+
+  if (facility.rack?.records.length) {
+    addTypedSheet(workbook, facilitySheetName(prefix, "Rack_Capacity_Snapshot"), ["Reporting Month", "Row Number", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], facility.rack.records.map(record => [
+      excelMonth(facility.rack?.sourceSnapshot ?? ""),
+      record.rowNumber,
+      record.rackZone,
+      record.rackId,
+      record.status,
+      record.cabinetSize,
+      record.detail,
+      record.deviceType,
+      record.remarks
+    ]));
+  }
+
+  if (facility.rackHistory && facility.rackHistory.length > 0) {
+    addTypedSheet(workbook, facilitySheetName(prefix, "Rack_Capacity_History"), ["Snapshot Month", "Facility", "Rack Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle", "Other", "Usage Ratio", "Availability Ratio", "Reserved Ratio", "Pending Dismantle Ratio", "Other Ratio", "Generated Date", "Data Version"], facility.rackHistory.map(row => [
+      excelMonth(row.snapshotMonth),
+      row.facility,
+      row.rackZone,
+      row.totalRacks,
+      row.inUse,
+      row.available,
+      row.reserved,
+      row.pendingDismantle,
+      row.other,
+      row.usagePct,
+      row.availabilityPct,
+      row.reservedPct,
+      row.pendingDismantlePct,
+      row.otherPct,
+      excelSavedDate(row.generatedAt),
+      row.dataVersion
+    ]));
+  }
+
+  if (facility.rackUnitCapacity && facility.rackUnitCapacity.length > 0) {
+    addTypedSheet(workbook, facilitySheetName(prefix, "Rack_Unit_Capacity"), ["Reporting Month", "Total (U)", "Used (U)", "Available (U)", "Availability Ratio"], facility.rackUnitCapacity.map(row => [
+      excelMonth(row.month),
+      row.totalU,
+      row.usedU,
+      row.availableU,
+      row.availabilityPct
+    ]));
+  }
 }
 
 export async function workbookForFacilities(facilities: ExportFacility[]) {
@@ -171,8 +294,8 @@ export async function workbookForFacilities(facilities: ExportFacility[]) {
   return workbook;
 }
 
-export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, calculationLogs: MonthlyLog[] = logs): Promise<void> {
-  const workbook = await workbookForFacilities([{ siteName, logs, calculationLogs }]);
+export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, calculationLogs: MonthlyLog[] = logs, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = []): Promise<void> {
+  const workbook = await workbookForFacilities([{ siteName, logs, calculationLogs, rack, rackHistory, rackUnitCapacity }]);
   const data = await workbook.xlsx.writeBuffer();
   download(data, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
@@ -189,6 +312,18 @@ export async function exportAllFacilitiesExcel(facilities: ExportFacility[]): Pr
   const workbook = await workbookForFacilities(facilities);
   const data = await workbook.xlsx.writeBuffer();
   download(data, "all-facilities-energy-monitor.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+}
+
+function mergeReportHtml(reports: string[], title: string): string {
+  if (reports.length === 0) throw new Error("No facilities are available for export.");
+  const style = reports[0].match(/<style>([\s\S]*?)<\/style>/i)?.[1] ?? "";
+  const body = reports.map(report => report.match(/<body>([\s\S]*?)<\/body>/i)?.[1] ?? report).join('<div style="page-break-before:always"></div>');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${style}</style></head><body>${body}</body></html>`;
+}
+
+export function exportAllFacilitiesHtml(facilities: ExportFacility[], selectedMonth: string, fileName?: string, selectedSections?: readonly ReportSectionId[]): void {
+  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs), selectedSections));
+  download(mergeReportHtml(reports, "Data Center Energy & Facility Monitor All Facilities"), fileName ?? "all-facilities-energy-monitor.html", "text/html;charset=utf-8");
 }
 
 const csvCell = (value: string | number | null): string => value === null ? "" : /[",\n]/.test(String(value)) ? `"${String(value).replace(/"/g, '""')}"` : String(value);
@@ -218,9 +353,9 @@ export async function exportSiteComparisonExcel(data: SiteComparisonExport, refe
   download(bytes, `site-comparison-${referenceMonth}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
-function reportRows(logs: MonthlyLog[]): ReportMonthlyRow[] {
+function reportRows(logs: MonthlyLog[], calculationLogs: MonthlyLog[] = logs): ReportMonthlyRow[] {
   return [...logs].sort((left, right) => left.month.localeCompare(right.month)).map(log => {
-    const calculation = calculateEnergyCostForMonth(logs, log.month);
+    const calculation = calculateEnergyCostForMonth(calculationLogs, log.month);
     return {
       month: log.month,
       buildingEnergyKwh: calculation.buildingEnergyKwh,
@@ -237,8 +372,8 @@ function reportRows(logs: MonthlyLog[]): ReportMonthlyRow[] {
   });
 }
 
-export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = []): ReportData {
-  const rows = reportRows(logs);
+export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs): ReportData {
+  const rows = reportRows(logs, calculationLogs);
   const current = rows.find(row => row.month === selectedMonth) ?? null;
   return {
     title: "Data Center Energy & Facility Monitor Report",
@@ -254,7 +389,7 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
     validationWarnings: current?.status === "Partial" ? ["The selected month has incomplete source readings."] : [],
     monthlyRows: rows,
     currentRow: current,
-    engineeringDashboard: buildEngineeringDashboardSnapshot(logs, selectedMonth, null),
+    engineeringDashboard: buildEngineeringDashboardSnapshot(calculationLogs, selectedMonth, null),
     rack,
     rackHistory,
     rackUnitCapacity,
@@ -266,6 +401,11 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
     comparison: null,
     rackComparison: null
   };
+}
+
+export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, selectedSections?: readonly ReportSectionId[]): void {
+  const report = buildReportHtml(facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs), selectedSections);
+  download(report, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.html`, "text/html;charset=utf-8");
 }
 
 /**
@@ -289,10 +429,10 @@ export function openReportPopup(name: string): Window {
  *  fileName (without extension) becomes the print dialog's suggested "Save
  *  as PDF" name, via document.title - the browser convention for print-to-PDF.
  *  `popup` must come from openReportPopup(), called synchronously on click. */
-export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = []): void {
-  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity);
+export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, selectedSections?: readonly ReportSectionId[]): void {
+  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs);
   popup.document.open();
-  popup.document.write(buildReportHtml(data));
+  popup.document.write(buildReportHtml(data, selectedSections));
   popup.document.close();
   if (fileName) popup.document.title = fileName;
   popup.addEventListener("load", () => popup.print(), { once: true });
@@ -329,6 +469,44 @@ function comparisonTrend(site: ComparisonSite, months: string[]): ReportMonthlyR
       status: metrics ? "Complete" : "Partial"
     };
   });
+}
+
+function buildSiteComparisonReportData(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): ReportData {
+  const [primary, secondary] = data.sites;
+  if (!primary) throw new Error("No facilities are available for comparison.");
+  const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
+  return {
+    title: "Data Center Energy & Facility Monitor Site Comparison",
+    thaiSubtitle: "Site comparison report",
+    facility: "All Facilities",
+    sourceWorkbook: "Supabase PostgreSQL",
+    generatedAt: new Date().toISOString(),
+    appVersion: "2.3.1 Web Clean v1",
+    reportingMonth: referenceMonth,
+    historicalStart: trendMonths[0] ?? null,
+    historicalEnd: trendMonths.at(-1) ?? null,
+    status: "Complete",
+    validationWarnings: [],
+    monthlyRows: comparisonTrend(primary, trendMonths),
+    currentRow: null,
+    engineeringDashboard: null,
+    rack: null,
+    rackHistory: [],
+    rackUnitCapacity: [],
+    rackUnitCapacityImageDataUri: null,
+    rackUnitCapacityImageMeta: null,
+    comparison: {
+      self: comparisonRow(primary, referenceMonth),
+      other: secondary ? comparisonRow(secondary, referenceMonth) : null,
+      selfTrend: comparisonTrend(primary, trendMonths),
+      otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
+    },
+    rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
+  };
+}
+
+export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): void {
+  download(buildReportHtml(buildSiteComparisonReportData(data, referenceMonth, selfRack, otherRack)), fileName ?? `site-comparison-${referenceMonth}.html`, "text/html;charset=utf-8");
 }
 
 /** Uses Desktop report renderer; comparison values come from the scoped API DTO.
@@ -377,9 +555,9 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
 
 /** Prints one full Desktop-compatible report per facility in one document.
  *  `popup` must come from openReportPopup(), called synchronously on click. */
-export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[], selectedMonth: string): void {
+export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[], selectedMonth: string, selectedSections?: readonly ReportSectionId[]): void {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [])));
+  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs), selectedSections));
   const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
   const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
   const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");

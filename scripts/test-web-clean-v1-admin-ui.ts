@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
-const admin = app.slice(app.indexOf("function Admin()"));
+const admin = app.slice(app.indexOf("function Admin({ lang }"));
 
 assert.match(admin, /role:\s*"user"\s+as Role/);
 assert.match(admin, /active:\s*true/);
-assert.match(admin, /aria-label="Role"/);
+assert.match(admin, /aria-label=\{th \? "บทบาท" : "Role"\}/);
 assert.match(admin, /<option value="user">User<\/option>/);
 assert.match(admin, /<option value="admin">Admin<\/option>/);
 assert.match(admin, /type="checkbox"\s+checked=\{form\.active\}/);
@@ -20,21 +20,14 @@ assert.match(admin, /\/admin\/users\/\$\{target\.id\}/);
 // with last-admin protection, audit logging, and session revocation) already
 // existed and was already tested server-side - this closes the frontend gap
 // where the Role column was previously a plain, uneditable <td>{target.role}</td>.
-assert.match(admin, /aria-label=\{`Role for \$\{target\.username\}`\}/);
+assert.match(admin, /aria-label=\{`\$\{th \? "บทบาทของ" : "Role for"\} \$\{target\.username\}`\}/);
 assert.match(admin, /value=\{target\.role\}\s+onChange=\{event\s*=>\s*void changeRole/);
 assert.match(admin, /if \(role === target\.role\) return;/);
-assert.match(admin, /if \(!window\.confirm\(`Change/);
+assert.match(admin, /window\.confirm\(th \? [\s\S]*?`Change/);
 assert.match(admin, /\/admin\/users\/\$\{target\.id\}\/role.*method:\s*"PATCH"/);
 assert.match(admin, /editingUserId/);
-assert.match(admin, /aria-label=\{`Display name for \$\{target\.username\}`\}/);
+assert.match(admin, /aria-label=\{`\$\{th \? "ชื่อที่แสดงของ" : "Display name for"\} \$\{target\.username\}`\}/);
 assert.match(admin, /\/admin\/users\/\$\{target\.id\}\/display-name.*method:\s*"PATCH"/);
 assert.match(admin, /body:\s*JSON\.stringify\(\{ display_name: displayName \}\)/);
 
-// The API already supports PATCH /admin/users/:id/display-name. CleanWeb must
-// expose it with an explicit edit mode rather than forcing user recreation.
-assert.match(admin, /editingUserId/);
-assert.match(admin, /aria-label=\{`Display name for \$\{target\.username\}`\}/);
-assert.match(admin, /\/admin\/users\/\$\{target\.id\}\/display-name.*method:\s*"PATCH"/);
-assert.match(admin, /body:\s*JSON\.stringify\(\{ display_name: displayName \}\)/);
-
-console.log("web-clean-v1 admin UI: user lifecycle, role, display name, and destructive-action guard assertions passed");
+console.log("web-clean-v1 admin UI: display-name, role, active-state, edit-role, and destructive-action guard assertions passed");

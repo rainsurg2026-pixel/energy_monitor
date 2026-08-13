@@ -6,6 +6,7 @@ import {
   ComputedMonthMetrics
 } from "../utils/analytics";
 import { formatNumber2 } from "../utils/numberFormatBridge";
+import { selectedPeriodMonths } from "../utils/reportPeriodSelection";
 import {
   Zap,
   Coins,
@@ -28,20 +29,7 @@ export default function ExecutiveDashboard({ logs, lang }: ExecutiveDashboardPro
 
   // Filter metrics based on Selected Year and Period
   const activePeriodMetrics = useMemo(() => {
-    let yearFiltered = allMonthlyMetrics.filter(m => m.month.startsWith(selectedYear));
-    
-    // Sort chronological
-    yearFiltered.sort((a, b) => a.month.localeCompare(b.month));
-
-    if (selectedPeriod === "Entire Year") {
-      return yearFiltered;
-    } else if (selectedPeriod === "YTD") {
-      // Find latest month in that year
-      return yearFiltered; // all months up to latest for that year
-    } else {
-      // Specific month (e.g., "05")
-      return yearFiltered.filter(m => m.month.endsWith(`-${selectedPeriod}`));
-    }
+    return selectedPeriodMonths(allMonthlyMetrics, selectedYear, selectedPeriod);
   }, [allMonthlyMetrics, selectedYear, selectedPeriod]);
 
     // Approximate horizontal plot width available to the point scale: measured

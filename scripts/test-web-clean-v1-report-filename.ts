@@ -14,6 +14,7 @@ check("default filename strips spaces from a multi-word facility name", defaultR
 check("Excel gets .xlsx", withExtension("Energy_Report_Rangsit_2026-06", "xlsx") === "Energy_Report_Rangsit_2026-06.xlsx");
 check("CSV gets .csv", withExtension("Energy_Report_Rangsit_2026-06", "csv") === "Energy_Report_Rangsit_2026-06.csv");
 check("PDF gets .pdf", withExtension("Energy_Report_Rangsit_2026-06", "pdf") === "Energy_Report_Rangsit_2026-06.pdf");
+check("HTML gets .html", withExtension("Energy_Report_Rangsit_2026-06", "html") === "Energy_Report_Rangsit_2026-06.html");
 check("a name already ending in .xlsx does not become .xlsx.xlsx", withExtension("MyReport.xlsx", "xlsx") === "MyReport.xlsx");
 check("a name typed with the wrong extension is corrected, not appended", withExtension("MyReport.csv", "pdf") === "MyReport.pdf");
 check("extension matching is case-insensitive", withExtension("MyReport.XLSX", "xlsx") === "MyReport.xlsx");

@@ -1,0 +1,43 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+
+const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
+const historyProvider = readFileSync(new URL("../src/reporting/HistoryProvider.ts", import.meta.url), "utf8");
+
+assert.match(app, /import \{ HistoryProvider \} from "\.\.\/reporting\/HistoryProvider"/);
+assert.match(app, /const \[recentReports, setRecentReports\]/);
+assert.match(app, /const readRecentReports = \(\): ReportHistoryItem\[\] /);
+assert.match(app, /const rememberReport = \(filename: string\)/);
+assert.match(app, /crypto\.randomUUID/);
+assert.match(app, /HistoryProvider\.add\(item\)/);
+assert.match(app, /const reportContextKey = `\$\{siteName\}\\u0000\$\{contextMonth\}`/);
+assert.match(app, /setFileNameCustomized\(false\)/);
+assert.match(app, /const available = \[\.\.\.new Set\(logs\.map\(log => log\.month\)\)\]/);
+assert.match(app, /const fallback = available\.includes\(month\) \? month : available\.at\(-1\) \?\? month/);
+assert.match(app, /Recent Reports/);
+assert.match(app, /HistoryProvider\.remove\(item\.id\)/);
+assert.match(app, /all-facilities-energy-monitor\.xlsx/);
+assert.match(app, /site-comparison-\$\{month\}\.xlsx/);
+assert.match(app, /exportAllFacilitiesHtml/);
+assert.match(app, /exportSiteComparisonHtml/);
+assert.match(app, /withExtension\(resolvedFileName, "html"\)/);
+const exports = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
+assert.match(exports, /export function exportHtml/);
+assert.match(exports, /export function exportAllFacilitiesHtml/);
+assert.match(exports, /export function exportSiteComparisonHtml/);
+assert.match(exports, /text\/html;charset=utf-8/);
+assert.match(app, /<WebReportPreview[^>]+logs=\{scopedLogs\} calculationLogs=\{logs\}/);
+assert.match(app, /ReportRegistry\.all\(\)/);
+assert.match(app, /selectedReportSections/);
+assert.match(app, /Choose sections for the preview and PDF\/HTML/);
+const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
+assert.match(preview, /calculationLogs\?: MonthlyLog\[\]/);
+assert.match(preview, /facilityReportData\(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs \?\? logs\)/);
+assert.match(preview, /sections\?: readonly ReportSectionId\[\]/);
+assert.match(preview, /buildReportHtml\(facilityReportData\(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs \?\? logs\), sections\)/);
+const reportHtml = readFileSync(new URL("../src/reports/pdf/reportHtml.ts", import.meta.url), "utf8");
+assert.match(reportHtml, /selectedSections\?: readonly ReportSectionId\[\]/);
+assert.match(reportHtml, /filterReportHtmlBySections/);
+assert.match(historyProvider, /slice\(0, 50\)/);
+
+console.log("web-clean-v1 reports: exports retain a local recent-report history like Desktop");

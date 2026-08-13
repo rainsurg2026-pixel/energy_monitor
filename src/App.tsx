@@ -11,6 +11,7 @@ import {
   formatTimestamp,
   getPreviousMonthStr
 } from "./utils";
+import { selectedDashboardMonth } from "./utils/reportPeriodSelection";
 import { DEFAULT_SPREADSHEET_ID } from "./sheetsService";
 import { MonthlyLog, SecurityConfig, UpsRecord, AirRecord, DcRecord, EnergyCostRecord, SrinakarinInputSnapshot } from "./types";
 import { DataSnapshot, ProviderError, type WorkbookSaveScope } from "./data/IDataProvider";
@@ -130,18 +131,7 @@ function DashboardViewContainer({
 }) {
   const { selectedReportView, selectedYear, selectedPeriod } = useReport();
 
-  const activeMonthStr = useMemo(() => {
-    if (selectedPeriod === "Entire Year" || selectedPeriod === "YTD") {
-      const matching = logs
-        .filter(l => l.month.startsWith(selectedYear))
-        .sort((a, b) => b.month.localeCompare(a.month));
-      if (matching.length > 0) {
-        return matching[0].month;
-      }
-      return `${selectedYear}-06`;
-    }
-    return `${selectedYear}-${selectedPeriod}`;
-  }, [selectedYear, selectedPeriod, logs]);
+  const activeMonthStr = useMemo(() => selectedDashboardMonth(logs, selectedYear, selectedPeriod, `${selectedYear}-06`), [selectedYear, selectedPeriod, logs]);
 
   const handleExport = (format: "pdf" | "excel" | "csv" | "png") => {
     if (onExport) {

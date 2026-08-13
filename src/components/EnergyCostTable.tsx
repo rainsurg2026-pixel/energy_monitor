@@ -11,7 +11,8 @@ interface EnergyCostTableProps {
   monthStr: string;
   initialRecord: EnergyCostRecord;
   lastSaved: string | null;
-  onSave: (record: EnergyCostRecord) => void;
+  lang?: "th" | "en";
+  onSave: (record: EnergyCostRecord) => void | boolean | Promise<void | boolean>;
   /** RC3: register imperative save/reset for the sticky toolbar. */
   registerApi?: (api: EntrySectionApi | null) => void;
   /** RC3/RC4: live draft updates for completion + validation. */
@@ -22,10 +23,43 @@ export default function EnergyCostTable({
   monthStr,
   initialRecord,
   lastSaved,
+  lang = "en",
   onSave,
   registerApi,
   onDraftChange
 }: EnergyCostTableProps) {
+  const th = lang === "th";
+  const copy = th ? {
+    title: "การใช้พลังงานอาคารและค่าไฟฟ้า",
+    description: "กรอกปริมาณการใช้ไฟฟ้ารวมของอาคาร (kWh) และค่าไฟฟ้า (บาท)",
+    formula: "สูตร: อัตราค่าไฟฟ้าเฉลี่ย (บาท/kWh) = ค่าไฟฟ้าอาคาร (บาท) ÷ พลังงานอาคาร (kWh)",
+    reset: "รีเซ็ต",
+    save: "บันทึกค่าไฟฟ้า",
+    saved: "บันทึกค่าไฟฟ้าแล้ว",
+    month: "เดือน",
+    buildingEnergy: "พลังงานอาคาร (kWh)",
+    buildingCost: "ค่าไฟฟ้าอาคาร (บาท)",
+    rate: "อัตราที่คำนวณได้",
+    enterBoth: "กรอกค่าทั้งสองช่อง",
+    records: "รายการค่าไฟฟ้าอาคาร",
+    lastSaved: "บันทึกล่าสุด",
+    noSaved: "ยังไม่มีการบันทึกค่าไฟฟ้าเดือนนี้"
+  } : {
+    title: "Building Energy Consumption & Electricity Cost",
+    description: "Input overall facility utility grid consumption metrics in Kilowatt-Hours (kWh) and billing amount in Thai Baht (THB).",
+    formula: "Formula: Average Electricity Rate (THB/kWh) = Building Electricity Cost (THB) / Building Energy Consumption (kWh)",
+    reset: "Reset",
+    save: "Save Energy Cost",
+    saved: "Energy Cost Saved!",
+    month: "Month",
+    buildingEnergy: "Building Energy Consumption (kWh)",
+    buildingCost: "Building Electricity Cost (THB)",
+    rate: "Calculated Unit Rate",
+    enterBoth: "Enter both fields...",
+    records: "Electricity Utility Billing Records",
+    lastSaved: "Last Saved",
+    noSaved: "No cost log saved for this month yet"
+  };
   const [record, setRecord] = useState<EnergyCostRecord>({
     buildingEnergyKwh: null,
     buildingElectricityCostThb: null
@@ -80,8 +114,9 @@ export default function EnergyCostTable({
   const handleSaveRef = { current: () => handleSave() };
   const handleResetRef = { current: () => handleReset() };
 
-  const handleSave = () => {
-    onSave(record);
+  const handleSave = async () => {
+    const result = await onSave(record);
+    if (result === false) return;
     setIsSaved(true);
     setHasChanges(false);
     setTimeout(() => setIsSaved(false), 3000);
@@ -105,12 +140,12 @@ export default function EnergyCostTable({
         <div>
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full" />
-            <h3 className="font-display font-semibold text-slate-100 text-base">Building Energy Consumption & Electricity Cost</h3>
+            <h3 className="font-display font-semibold text-slate-100 text-base">{copy.title}</h3>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Input overall facility utility grid consumption metrics in Kilowatt-Hours (kWh) and billing amount in Thai Baht (THB).
+            {copy.description}
             <span className="block mt-1.5 text-emerald-400/90 font-mono text-[11px] font-semibold">
-              Formula: Average Electricity Rate (THB/kWh) = Building Electricity Cost (THB) / Building Energy Consumption (kWh)
+              {copy.formula}
             </span>
           </p>
         </div>
@@ -123,7 +158,7 @@ export default function EnergyCostTable({
               className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 border border-slate-800 hover:bg-slate-800/50 rounded-lg flex items-center gap-1.5 transition-colors"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset</span>
+              <span>{copy.reset}</span>
             </button>
           )}
 
@@ -138,7 +173,7 @@ export default function EnergyCostTable({
             }`}
           >
             {isSaved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-            <span>{isSaved ? "Energy Cost Saved!" : "Save Energy Cost"}</span>
+            <span>{isSaved ? copy.saved : copy.save}</span>
           </button>
         </div>
       </div>
@@ -148,10 +183,10 @@ export default function EnergyCostTable({
         <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-emerald-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-emerald-300 border-b border-slate-800/80">
-              <th className="py-3.5 px-4 font-normal">Month</th>
-              <th className="py-3.5 px-4 font-normal text-right">Building Energy Consumption (kWh)</th>
-              <th className="py-3.5 px-4 font-normal text-right">Building Electricity Cost (THB)</th>
-              <th className="py-3.5 px-4 font-normal text-right">Calculated Unit Rate</th>
+              <th className="py-3.5 px-4 font-normal">{copy.month}</th>
+              <th className="py-3.5 px-4 font-normal text-right">{copy.buildingEnergy}</th>
+              <th className="py-3.5 px-4 font-normal text-right">{copy.buildingCost}</th>
+              <th className="py-3.5 px-4 font-normal text-right">{copy.rate}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/50 font-mono text-sm text-slate-300">
@@ -189,7 +224,7 @@ export default function EnergyCostTable({
                 }`}>
                   {averageRate !== null
                     ? `${formatNumber2(averageRate)} ฿/kWh`
-                    : "Enter both fields..."}
+                    : copy.enterBoth}
                 </span>
               </td>
             </tr>
@@ -199,14 +234,14 @@ export default function EnergyCostTable({
 
       {/* Footer info & timestamp */}
       <div className="px-5 py-3 border-t border-slate-850 bg-slate-900/20 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs text-slate-500 font-mono">
-        <span>Electricity Utility Billing Records</span>
+        <span>{copy.records}</span>
         {lastSaved ? (
           <span className="flex items-center gap-1.5 text-slate-400">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
-            <span>Last Saved: {lastSaved}</span>
+            <span>{copy.lastSaved}: {lastSaved}</span>
           </span>
         ) : (
-          <span className="text-slate-500 italic">No cost log saved for this month yet</span>
+          <span className="text-slate-500 italic">{copy.noSaved}</span>
         )}
       </div>
     </div>

@@ -27,6 +27,9 @@ interface UniversalFilterBarProps {
   onExport?: (format: "pdf" | "excel" | "csv" | "png") => void;
   lang: "th" | "en";
   facility?: FacilityEntry | null;
+  /** Web hosts can provide server-derived UPS group names when no desktop
+   * facility profile is available; labels remain data-backed, never guessed. */
+  upsGroupNames?: readonly string[];
   /** Which of the 4 sub-view tabs to render, in order. Defaults to all 4
    *  (Desktop's existing behavior, unchanged). A caller that only supports a
    *  subset of views (e.g. a host with no Benchmark/Forecast implementation)
@@ -35,7 +38,7 @@ interface UniversalFilterBarProps {
   reportViews?: readonly ReportViewId[];
 }
 
-export default function UniversalFilterBar({ onExport, lang, facility = null, reportViews = ALL_REPORT_VIEWS }: UniversalFilterBarProps) {
+export default function UniversalFilterBar({ onExport, lang, facility = null, upsGroupNames = [], reportViews = ALL_REPORT_VIEWS }: UniversalFilterBarProps) {
   const {
     selectedYear,
     selectedPeriod,
@@ -141,8 +144,9 @@ export default function UniversalFilterBar({ onExport, lang, facility = null, re
   const upsGroupOptions = [
     { value: "All", label: t.allUpsGroups },
     ...(facility?.profile.dashboard.upsGroups ?? []).map(g => ({ value: g.name, label: g.name })),
-    ...(facility?.profile.dashboard.upsMapping ?? []).map(m => ({ value: m.upsId, label: m.upsId }))
-  ];
+    ...(facility?.profile.dashboard.upsMapping ?? []).map(m => ({ value: m.upsId, label: m.upsId })),
+    ...upsGroupNames.map(name => ({ value: name, label: name }))
+  ].filter((item, index, options) => options.findIndex(candidate => candidate.value === item.value) === index);
 
   const categories = [
     { value: "All", label: t.allCategories },
