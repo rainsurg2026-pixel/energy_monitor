@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { formatTimestamp } from "../src/utils";
+import { formatTimestamp, formatTimestampValue } from "../src/utils";
 import { formatWebSavedTimestamp } from "../src/web-clean-v1/formatting";
 
 const header = readFileSync(new URL("../src/web-clean-v1/WebEntryWorkflowHeader.tsx", import.meta.url), "utf8");
@@ -17,6 +17,8 @@ const dashboardStats = readFileSync(new URL("../src/components/DashboardStats.ts
 assert.equal(formatWebSavedTimestamp("2026-08-13T03:30:00.000Z"), formatTimestamp(new Date("2026-08-13T03:30:00.000Z")));
 assert.equal(formatWebSavedTimestamp("legacy saved marker"), "legacy saved marker");
 assert.equal(formatWebSavedTimestamp(null), null);
+assert.equal(formatTimestampValue("2026-08-13T03:30:00.000Z"), formatTimestamp(new Date("2026-08-13T03:30:00.000Z")));
+assert.equal(formatTimestampValue("legacy saved marker"), "legacy saved marker");
 
 assert.match(header, /import EntryWorkflowHeader/);
 assert.match(header, /workbookLabel="Production API"/);
@@ -44,6 +46,9 @@ assert.match(workspace, /formatWebSavedTimestamp\(draft\.lastSavedUps\)/);
 assert.match(workspace, /formatWebSavedTimestamp\(draft\.lastSavedAir\)/);
 assert.match(workspace, /formatWebSavedTimestamp\(draft\.lastSavedDc\)/);
 assert.match(workspace, /formatWebSavedTimestamp\(draft\.lastSavedEnergyCost\)/);
+const history = readFileSync(new URL("../src/components/HistoricalExplorer.tsx", import.meta.url), "utf8");
+assert.match(history, /formatTimestampValue\(log\.lastSavedAir\)/);
+assert.match(history, /timestamp: formatTimestampValue\(log\.lastSavedDc\)/);
 assert.match(workspace, /<UpsTable lang=\{lang\}/);
 assert.match(workspace, /<AirTable lang=\{lang\}/);
 assert.match(workspace, /<DcTable lang=\{lang\}/);

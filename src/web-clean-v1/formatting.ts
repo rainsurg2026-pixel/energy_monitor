@@ -1,4 +1,4 @@
-import { formatTimestamp } from "../utils";
+import { formatTimestampValue } from "../utils";
 
 /**
  * API timestamps are ISO strings, while the Desktop entry workflow shows
@@ -7,7 +7,5 @@ import { formatTimestamp } from "../utils";
  * "Invalid Date" placeholder or throwing during render.
  */
 export function formatWebSavedTimestamp(value: string | null): string | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : formatTimestamp(parsed);
+  return formatTimestampValue(value);
 }

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { MonthlyLog } from "../types";
-import { formatMonthYear } from "../utils";
+import { formatMonthYear, formatTimestampValue } from "../utils";
 import { calculateEnergyCostForMonth, getAirFields, getAirValue, normalizedMonth } from "../utils/energyCost";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 import { formatRatioPercent } from "../utils/rackCapacity";
@@ -458,7 +458,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
                       {renderEditBadge(statuses.editStatus)}
                       {renderSyncBadge(statuses.syncStatus)}
                     </td>
-                    <td className="py-3.5 px-4 text-right font-mono text-slate-500 text-[10px]">{log.lastSavedAir || "—"}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-slate-500 text-[10px]">{formatTimestampValue(log.lastSavedAir) || "—"}</td>
                   </tr>
                 );
               })
@@ -491,7 +491,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
           dcPowerW,
           acPowerW,
           energyKwh,
-          timestamp: log.lastSavedDc,
+          timestamp: formatTimestampValue(log.lastSavedDc),
           statuses
         });
       });
