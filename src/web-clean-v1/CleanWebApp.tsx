@@ -245,14 +245,36 @@ const DASHBOARD_REPORT_VIEWS = ["executive", "dashboard", "benchmark", "forecast
  *  KPI group totals from silently rendering empty. The detailed per-UPS
  *  UMDB/STS/OUDB hardware mapping table has no Web/DB equivalent at all
  *  (Desktop-only busbar data) and is left empty rather than fabricated. */
-function DashboardView({ logs, month, lang, upsGroupHistory }: { logs: MonthlyLog[]; month: string; lang: "th" | "en"; upsGroupHistory: UpsGroupHistoryReport | null }) {
+function DashboardView({ logs, month, siteName = "Facility", lang, upsGroupHistory, onNotice }: { logs: MonthlyLog[]; month: string; siteName?: string; lang: "th" | "en"; upsGroupHistory: UpsGroupHistoryReport | null; onNotice?: (message: string) => void }) {
   const { selectedReportView, selectedYear, selectedPeriod } = useReport();
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const notify = onNotice === undefined ? (message: string) => setExportNotice(message) : onNotice;
   const activeMonth = useMemo(() => selectedDashboardMonth(logs, selectedYear, selectedPeriod, month), [logs, month, selectedPeriod, selectedYear]);
   const upsMapping = useMemo(() => buildDashboardUpsMapping(upsGroupHistory, activeMonth), [upsGroupHistory, activeMonth]);
   const upsGroupNames = useMemo(() => Array.from(new Set((upsGroupHistory?.rows ?? []).map(row => row.group))), [upsGroupHistory]);
+  const exportDashboard = (format: "pdf" | "excel" | "csv" | "png") => {
+    const selector = typeof document !== "undefined" ? document.getElementById("facility-selector") as HTMLSelectElement | null : null;
+    const activeSiteName = selector?.selectedOptions[0]?.textContent?.trim() || siteName;
+    const baseName = `Energy_Report_${activeSiteName.replace(/[^a-z0-9]+/giu, "-")}_${activeMonth}`;
+    try {
+      if (format === "csv") {
+        exportCsv(logs, activeSiteName, `${baseName}.csv`);
+        notify("CSV download started.");
+      } else if (format === "excel") {
+        void exportExcel(logs, activeSiteName, `${baseName}.xlsx`, logs).then(() => notify("Excel download started.")).catch(error => notify(readError(error)));
+      } else if (format === "pdf") {
+        const popup = openReportPopup("energy-monitor-dashboard-report");
+        printDesktopPdf(popup, logs, activeSiteName, activeMonth, baseName, null, [], [], logs);
+        notify("PDF print dialog opened.");
+      } else {
+        notify(lang === "th" ? "การส่งออก PNG ต้องใช้ Desktop app" : "Dashboard PNG export requires the Desktop app.");
+      }
+    } catch (error) { notify(readError(error)); }
+  };
   return (
     <div className="space-y-5">
-      <UniversalFilterBar lang={lang} facility={null} upsGroupNames={upsGroupNames} reportViews={DASHBOARD_REPORT_VIEWS} />
+      <UniversalFilterBar lang={lang} onExport={exportDashboard} facility={null} upsGroupNames={upsGroupNames} reportViews={DASHBOARD_REPORT_VIEWS} />
+      {exportNotice && <p role="status" className="text-sm text-teal-300">{exportNotice}</p>}
       {selectedReportView === "dashboard" && <DashboardSummary logs={logs} selectedMonth={activeMonth} lang={lang} upsMapping={upsMapping} />}
       {selectedReportView === "executive" && <><ExecutiveDashboard logs={logs} lang={lang} /><SmartInsightPanel logs={logs} lang={lang} /></>}
       {selectedReportView === "benchmark" && <BenchmarkDashboard logs={logs} lang={lang} />}
