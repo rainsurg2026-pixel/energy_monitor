@@ -25,6 +25,7 @@ assert.match(app, /PASSWORD_MIN_LENGTH = 12/);
 assert.match(app, /passwordHelp/);
 assert.match(app, /const \[lang, setLang\] = useState<AppLanguage>\("th"\)/);
 assert.match(app, /languageStorageKey\(user\.id\)/);
+assert.match(app, /if \(savedLanguage !== null\) setLang\(normalizeLanguage\(savedLanguage\)\)/);
 assert.match(app, /Switch language to Thai/);
 
 // Dashboard accent colors (amber/emerald/purple/rose/sky/teal) are tuned for

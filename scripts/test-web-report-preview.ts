@@ -13,6 +13,6 @@ assert.match(preview, /const \[zoom, setZoom\] = useState\(85\)/);
 assert.match(preview, /aria-label="Zoom out"/);
 assert.match(preview, /aria-label="Zoom in"/);
 assert.match(preview, /minWidth: "640px"/);
-assert.match(app, /<WebReportPreview siteId=\{siteId\}/);
+assert.match(app, /<WebReportPreview lang=\{lang\} siteId=\{siteId\}/);
 
 console.log("web report preview: renders the shared PDF report HTML from API-backed facility data");

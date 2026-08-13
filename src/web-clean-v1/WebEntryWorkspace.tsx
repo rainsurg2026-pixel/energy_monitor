@@ -45,6 +45,7 @@ export default function WebEntryWorkspace({ lang, siteName, siteCode, months, mo
   onDirtyChange?: (dirty: boolean) => void;
   onRegisterActions?: (actions: EntryWorkspaceActions | null) => void;
 }) {
+  const th = lang === "th";
   const sectionApisRef = useRef<Partial<Record<Section, EntrySectionApi>>>({});
   const draftsRef = useRef<LiveDrafts>({});
   const [draftTick, setDraftTick] = useState(0);
@@ -79,7 +80,7 @@ export default function WebEntryWorkspace({ lang, siteName, siteCode, months, mo
     <WebEntryWorkflowHeader lang={lang} facilityName={siteName} months={months} selectedMonth={month} draft={liveDraft} allowedStartMonth={allowedStartMonth} allowedEndMonth={allowedEndMonth} onSelectMonth={onSelectMonth} />
     <WebHistoricalEditNotice selectedMonth={month} latestMonth={latestMonth} onReturnToLatest={() => { if (latestMonth) onSelectMonth(latestMonth); }} />
     <DashboardStats log={liveDraft} />
-    <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">Monthly Data Entry</h2><p className="mt-1 text-sm text-slate-400">Enter validated operating readings for {month}; Save All sends one concurrency-protected Production API update.</p></div>
+    <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">{th ? "กรอกข้อมูลรายเดือน" : "Monthly Data Entry"}</h2><p className="mt-1 text-sm text-slate-400">{th ? `กรอกค่าการทำงานที่ตรวจสอบแล้วสำหรับ ${month}; ปุ่มบันทึกทั้งหมดจะส่งข้อมูลไปยัง Production API ในคำขอเดียว` : `Enter validated operating readings for ${month}; Save All sends one concurrency-protected Production API update.`}</p></div>
       <div id="entry-section-ups">{siteCode === "srinakarin" ? <SrinakarinPowerPhaseTable monthStr={month} initialLog={draft} lastSaved={draft.lastSavedUps} onSave={(ups, srinakarinInputs) => void onSave({ ups, srinakarinInputs })} registerApi={register("ups")} onDraftChange={(ups, srinakarinInputs) => { reportDraft("ups", ups); reportDraft("srinakarinInputs", srinakarinInputs); }} /> : <UpsTable monthStr={month} initialRecords={draft.ups} lastSaved={draft.lastSavedUps} onSave={ups => void onSave({ ups })} registerApi={register("ups")} onDraftChange={ups => reportDraft("ups", ups)} />}</div>
       <div id="entry-section-air"><AirTable monthStr={month} initialRecord={draft.air} lastSaved={draft.lastSavedAir} meterFields={draft.energyCalculation?.airFields} onSave={air => void onSave({ air })} registerApi={register("air")} onDraftChange={air => reportDraft("air", air)} /></div>
       <div id="entry-section-dc"><DcTable monthStr={month} initialRecords={draft.dc} lastSaved={draft.lastSavedDc} onSave={dc => void onSave({ dc })} registerApi={register("dc")} onDraftChange={dc => reportDraft("dc", dc)} /></div>
