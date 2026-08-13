@@ -92,7 +92,20 @@ export default function CleanWebApp() {
     const seed = result.log ?? previous?.logs.at(-1);
     const next = result.log ?? (() => {
       const empty = createEmptyLog(selectedMonth, seed?.ups.map(item => item.upsId), seed?.dc.map(item => item.panelId));
-      return seed?.energyCalculation ? { ...empty, energyCalculation: structuredClone(seed.energyCalculation), air: structuredClone(seed.air) } : empty;
+      if (!seed?.energyCalculation) return empty;
+      // A missing month is a blank Desktop-style record. Preserve only the
+      // prior meter/profile *shape* (including facility-specific meters),
+      // never the prior month's readings.
+      const blankAir = { ...empty.air } as MonthlyLog["air"];
+      for (const key of Object.keys(seed.air)) {
+        if (key in blankAir) continue;
+        if (key === "meters") {
+          blankAir.meters = Object.fromEntries(Object.keys(seed.air.meters ?? {}).map(meter => [meter, null]));
+        } else {
+          (blankAir as unknown as Record<string, number | null>)[key] = null;
+        }
+      }
+      return { ...empty, energyCalculation: structuredClone(seed.energyCalculation), air: blankAir };
     })();
     setMonth(selectedMonth); setRowVersion(result.rowVersion); setDraft(next);
   }, []);
