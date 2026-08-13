@@ -311,9 +311,9 @@ export async function exportSiteComparisonExcel(data: SiteComparisonExport, refe
   download(bytes, `site-comparison-${referenceMonth}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
-function reportRows(logs: MonthlyLog[]): ReportMonthlyRow[] {
+function reportRows(logs: MonthlyLog[], calculationLogs: MonthlyLog[] = logs): ReportMonthlyRow[] {
   return [...logs].sort((left, right) => left.month.localeCompare(right.month)).map(log => {
-    const calculation = calculateEnergyCostForMonth(logs, log.month);
+    const calculation = calculateEnergyCostForMonth(calculationLogs, log.month);
     return {
       month: log.month,
       buildingEnergyKwh: calculation.buildingEnergyKwh,
@@ -330,8 +330,8 @@ function reportRows(logs: MonthlyLog[]): ReportMonthlyRow[] {
   });
 }
 
-export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = []): ReportData {
-  const rows = reportRows(logs);
+export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs): ReportData {
+  const rows = reportRows(logs, calculationLogs);
   const current = rows.find(row => row.month === selectedMonth) ?? null;
   return {
     title: "Data Center Energy & Facility Monitor Report",
@@ -347,7 +347,7 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
     validationWarnings: current?.status === "Partial" ? ["The selected month has incomplete source readings."] : [],
     monthlyRows: rows,
     currentRow: current,
-    engineeringDashboard: buildEngineeringDashboardSnapshot(logs, selectedMonth, null),
+    engineeringDashboard: buildEngineeringDashboardSnapshot(calculationLogs, selectedMonth, null),
     rack,
     rackHistory,
     rackUnitCapacity,
@@ -382,8 +382,8 @@ export function openReportPopup(name: string): Window {
  *  fileName (without extension) becomes the print dialog's suggested "Save
  *  as PDF" name, via document.title - the browser convention for print-to-PDF.
  *  `popup` must come from openReportPopup(), called synchronously on click. */
-export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = []): void {
-  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity);
+export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs): void {
+  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs);
   popup.document.open();
   popup.document.write(buildReportHtml(data));
   popup.document.close();
@@ -472,7 +472,7 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
  *  `popup` must come from openReportPopup(), called synchronously on click. */
 export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[], selectedMonth: string): void {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [])));
+  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs)));
   const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
   const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
   const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");

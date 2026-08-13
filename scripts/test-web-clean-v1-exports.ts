@@ -106,6 +106,11 @@ async function assertExportsShowOnlyMonth(monthLabel: string, selection: Reporti
 await assertExportsShowOnlyMonth("2026-06", { mode: "single", singleMonth: "2026-06", rangeStart: "2026-06", rangeEnd: "2026-06" }, "2026-08");
 await assertExportsShowOnlyMonth("2026-07", { mode: "single", singleMonth: "2026-07", rangeStart: "2026-07", rangeEnd: "2026-07" }, "2026-08");
 
+const previousAir = { ...log("2026-06"), air: { eb41a: 1, eb41b: 1, eb42a: 1, eb42b: 1, meters: {} } };
+const currentAir = { ...log("2026-07"), air: { eb41a: 2, eb41b: 2, eb42a: 2, eb42b: 2, meters: {} } };
+const singleMonthPdfData = facilityReportData([currentAir], "Rangsit", "2026-07", null, [], [], [previousAir, currentAir]);
+check("single-month PDF calculations retain the previous month from full history", singleMonthPdfData.currentRow?.airEnergyKwh === 4_000_000);
+
 // Excel must retain entry values and saved timestamps as real typed cells,
 // then append the exact Desktop calculation outputs.  This is deliberately
 // richer than CSV: values remain usable in formulas/Power BI after download.
