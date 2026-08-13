@@ -10,6 +10,7 @@ assert.match(app, /import \{ StickyHeader as RackCapacityStickyHeader \} from "\
 assert.match(app, /import \{ ExecutiveKpiCards as RackCapacityExecutiveKpiCards \} from "\.\.\/components\/rack\/ExecutiveKpiCards"/);
 assert.match(app, /import \{ CapacityAlerts \} from "\.\.\/components\/rack\/CapacityAlerts"/);
 assert.match(app, /import \{ CapacityGauge \} from "\.\.\/components\/rack\/CapacityGauge"/);
+assert.match(app, /import \{ Timeline as RackCapacityTimeline \} from "\.\.\/components\/rack\/Timeline"/);
 assert.match(app, /rackCapacityHistory=\{history\.rackCapacityHistory \?\? \[\]\}/);
 assert.match(app, /rackCapacityHistory=\{rackCapacityHistory\}/);
 assert.match(app, /<RackCapacityHistoryPanel \/>/);
@@ -20,5 +21,8 @@ assert.match(app, /<RackCapacityStickyHeader \/>/);
 assert.match(app, /<CapacityAlerts \/>/);
 assert.match(app, /<RackCapacityExecutiveKpiCards \/>/);
 assert.match(app, /<CapacityGauge \/>/);
+assert.match(app, /<RackCapacityTimeline canSelectMonth=\{selected => selected === month \|\| selectableMonths\.includes\(selected\)\} onMonthSelect=\{onSelectMonth\} \/>/);
+assert.match(app, /onSelectMonth=\{selected => void selectMonth\(selected\)\}/);
+assert.match(app, /selectableMonths=\{history\.months\}/);
 
 console.log("web-clean-v1 Rack workspace: reuses Desktop monthly history and forecast with API-backed snapshots");
