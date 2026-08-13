@@ -16,6 +16,8 @@ interface EntryWorkflowHeaderProps {
   lastSaved: string | null;
   /** Selecting an existing month switches to it; a missing one asks to create it. */
   onSelectMonth: (month: string, exists: boolean) => void;
+  /** Web mode has no workbook integrity probe, so it must not claim one. */
+  showHealth?: boolean;
 }
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -35,7 +37,8 @@ export default function EntryWorkflowHeader({
   completion,
   health,
   lastSaved,
-  onSelectMonth
+  onSelectMonth,
+  showHealth = true
 }: EntryWorkflowHeaderProps) {
   const th = lang === "th";
   const existing = useMemo(() => new Set(months), [months]);
@@ -180,7 +183,7 @@ export default function EntryWorkflowHeader({
       </span>
 
       {/* Health */}
-      <span
+      {showHealth && <span
         className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[11px] font-bold border ${
           healthIssues === 0
             ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-400"
@@ -190,7 +193,7 @@ export default function EntryWorkflowHeader({
       >
         {healthIssues === 0 ? <ShieldCheck className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}
         {healthIssues === 0 ? (th ? "ปกติ" : "Healthy") : `${healthIssues} ${th ? "ปัญหา" : "issues"}`}
-      </span>
+      </span>}
     </section>
   );
 }
