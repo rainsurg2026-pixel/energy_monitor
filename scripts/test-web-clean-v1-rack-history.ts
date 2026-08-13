@@ -5,9 +5,12 @@ const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.m
 
 assert.match(app, /import RackCapacityHistoryPanel from "\.\.\/components\/rack\/RackCapacityHistoryPanel"/);
 assert.match(app, /import \{ Forecast as RackCapacityForecast \} from "\.\.\/components\/rack\/Forecast"/);
+assert.match(app, /import \{ RackUnitCapacitySummary \} from "\.\.\/components\/rack\/RackUnitCapacitySummary"/);
 assert.match(app, /rackCapacityHistory=\{history\.rackCapacityHistory \?\? \[\]\}/);
 assert.match(app, /rackCapacityHistory=\{rackCapacityHistory\}/);
 assert.match(app, /<RackCapacityHistoryPanel \/>/);
 assert.match(app, /<RackCapacityForecast \/>/);
+assert.match(app, /rackUnitCapacity=\{rackUnitCapacity\}/);
+assert.match(app, /<RackUnitCapacitySummary \/>/);
 
 console.log("web-clean-v1 Rack workspace: reuses Desktop monthly history and forecast with API-backed snapshots");

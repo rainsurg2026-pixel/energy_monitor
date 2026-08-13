@@ -35,7 +35,10 @@ const TREND_MONTHS = 12;
  *  (RackUnitCapacityPanel's onImageHistorySaved), forcing a re-fetch for
  *  the currently selected month even though reportingMonth itself didn't
  *  change. */
-export const RackUnitCapacitySummary: React.FC<{ provider: IDataProvider; refreshKey?: number }> = ({ provider, refreshKey }) => {
+/** `provider` is optional for the Web API workspace: it has the same
+ * capacity snapshot/history data as Desktop but intentionally no filesystem
+ * image provider. */
+export const RackUnitCapacitySummary: React.FC<{ provider?: Pick<IDataProvider, "getRackUnitCapacityImage">; refreshKey?: number }> = ({ provider, refreshKey }) => {
   const { lang, facilityName, reportingMonth, rackUnitCapacity, unitCapacityRow } = useRackCapacity();
 
   const [imageDataUri, setImageDataUri] = React.useState<string | null>(null);
@@ -44,7 +47,7 @@ export const RackUnitCapacitySummary: React.FC<{ provider: IDataProvider; refres
 
   React.useEffect(() => {
     let cancelled = false;
-    if (!facilityName || !provider.getRackUnitCapacityImage) {
+    if (!facilityName || !provider?.getRackUnitCapacityImage) {
       setImageDataUri(null);
       setImageMeta(null);
       return;
