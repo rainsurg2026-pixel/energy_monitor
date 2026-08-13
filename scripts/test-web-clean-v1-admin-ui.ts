@@ -26,4 +26,11 @@ assert.match(admin, /if \(role === target\.role\) return;/);
 assert.match(admin, /if \(!window\.confirm\(`Change/);
 assert.match(admin, /\/admin\/users\/\$\{target\.id\}\/role.*method:\s*"PATCH"/);
 
-console.log("web-clean-v1 admin UI: role, active-state, edit-role, and destructive-action guard assertions passed");
+// The API already supports PATCH /admin/users/:id/display-name. CleanWeb must
+// expose it with an explicit edit mode rather than forcing user recreation.
+assert.match(admin, /editingUserId/);
+assert.match(admin, /aria-label=\{`Display name for \$\{target\.username\}`\}/);
+assert.match(admin, /\/admin\/users\/\$\{target\.id\}\/display-name.*method:\s*"PATCH"/);
+assert.match(admin, /body:\s*JSON\.stringify\(\{ display_name: displayName \}\)/);
+
+console.log("web-clean-v1 admin UI: user lifecycle, role, display name, and destructive-action guard assertions passed");
