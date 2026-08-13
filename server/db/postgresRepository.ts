@@ -3,7 +3,7 @@ import type { MonthlyLog, UpsRecord } from "../../src/types";
 import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
 import { withTransaction, type DbExecutor, query } from "./pool";
 import { HttpError } from "../errors";
-import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "../repositories/contracts";
+import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackFieldChangeInput, RackFieldChangeOutcome, RackSnapshotRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SaveRackCapacityInput, SaveRackUnitCapacityInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "../repositories/contracts";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 function numberOrNull(value: unknown): number | null { return value === null || value === undefined ? null : Number(value); }
@@ -289,6 +289,78 @@ export class PostgresRepository implements BackendRepository {
     const result = await query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown }>(this.executor, "SELECT period_month, row_version, total_u, used_u FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = $2::date", [siteId, `${month}-01`]);
     const row = result.rows[0];
     return row ? { month: monthString(row.period_month), rowVersion: row.row_version, totalU: Number(row.total_u), usedU: Number(row.used_u) } : null;
+  }
+
+  async saveRackCapacity(input: SaveRackCapacityInput): Promise<{ snapshot: RackSnapshotRecord; outcomes: RackFieldChangeOutcome[]; changedCount: number }> {
+    if (!this.pool) return this.saveRackCapacityInTransaction(this.executor as PoolClient, input);
+    return withTransaction(this.pool, client => new PostgresTransactionRepository(client).saveRackCapacity(input));
+  }
+
+  protected async saveRackCapacityInTransaction(client: PoolClient, input: SaveRackCapacityInput): Promise<{ snapshot: RackSnapshotRecord; outcomes: RackFieldChangeOutcome[]; changedCount: number }> {
+    const snapshotResult = await client.query<{ id: string; row_version: number }>("SELECT id, row_version FROM rack_capacity_snapshots WHERE site_id = $1 AND snapshot_month = $2::date FOR UPDATE", [input.siteId, `${input.month}-01`]);
+    const snapshotRow = snapshotResult.rows[0];
+    if (!snapshotRow) throw new HttpError(404, "RACK_SNAPSHOT_NOT_FOUND", "Rack Capacity data is not available for the requested month.");
+    const fields: Array<[keyof Pick<RackFieldChangeInput, "status" | "cabinetSize" | "detail" | "deviceType" | "remarks">, "status" | "cabinet_size" | "detail" | "device_type" | "remarks", "status" | "cabinetSize" | "detail" | "deviceType" | "remarks"]> = [["status", "status", "status"], ["cabinetSize", "cabinet_size", "cabinetSize"], ["detail", "detail", "detail"], ["deviceType", "device_type", "deviceType"], ["remarks", "remarks", "remarks"]];
+    const outcomes: RackFieldChangeOutcome[] = [];
+    let changedCount = 0;
+    for (const change of input.changes) {
+      const recordResult = await client.query<{ id: string; rack_id: string | null; status: string | null; cabinet_size: string | null; detail: string | null; device_type: string | null; remarks: string | null }>("SELECT id, rack_id, status, cabinet_size, detail, device_type, remarks FROM rack_capacity_records WHERE snapshot_id = $1 AND source_row_number = $2 FOR UPDATE", [snapshotRow.id, change.rowNumber]);
+      const record = recordResult.rows[0];
+      if (!record) { outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "row_not_found" }); continue; }
+      if ((record.rack_id ?? "").trim() !== change.rackId.trim()) { outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "rack_id_mismatch" }); continue; }
+      let conflict: RackFieldChangeOutcome | null = null;
+      for (const [inputField, databaseField, outputField] of fields) {
+        const edit = change[inputField];
+        if (!edit) continue;
+        const actual = record[databaseField] ?? null;
+        if (actual !== edit.expected) { conflict = { rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "field_mismatch", conflictField: outputField, conflictActualValue: actual }; break; }
+      }
+      if (conflict) { outcomes.push(conflict); continue; }
+      const updates: Array<{ column: string; value: string | null }> = [];
+      for (const [inputField, databaseField] of fields) {
+        const edit = change[inputField];
+        if (edit && edit.next !== edit.expected) updates.push({ column: databaseField, value: edit.next });
+      }
+      if (updates.length > 0) {
+        const assignments = updates.map((update, index) => `${update.column} = $${index + 1}`).join(", ");
+        await client.query(`UPDATE rack_capacity_records SET ${assignments} WHERE id = $${updates.length + 1}`, [...updates.map(update => update.value), record.id]);
+        changedCount += updates.length;
+      }
+      outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: true });
+    }
+    if (changedCount > 0) {
+      const updated = await client.query<{ row_version: number }>("UPDATE rack_capacity_snapshots SET row_version = row_version + 1, updated_at = now() WHERE id = $1 RETURNING row_version", [snapshotRow.id]);
+      await client.query("INSERT INTO audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [input.actorUserId === null || input.actorUserId === undefined ? "system" : "user", input.actorUserId ?? null, "update", "rack_capacity_snapshot", snapshotRow.id, JSON.stringify({ site_id: input.siteId, snapshot_month: input.month, row_version: snapshotRow.row_version }), JSON.stringify({ site_id: input.siteId, snapshot_month: input.month, row_version: updated.rows[0]?.row_version ?? snapshotRow.row_version + 1, changed_count: changedCount }), input.correlationId]);
+    }
+    const snapshot = await this.getRackSnapshot(input.siteId, input.month);
+    if (!snapshot) throw new Error("Rack Capacity snapshot disappeared during save.");
+    return { snapshot, outcomes, changedCount };
+  }
+
+  async saveRackUnitCapacity(input: SaveRackUnitCapacityInput): Promise<RackUnitSnapshotRecord> {
+    if (!this.pool) return this.saveRackUnitCapacityInTransaction(this.executor as PoolClient, input);
+    return withTransaction(this.pool, client => new PostgresTransactionRepository(client).saveRackUnitCapacity(input));
+  }
+
+  protected async saveRackUnitCapacityInTransaction(client: PoolClient, input: SaveRackUnitCapacityInput): Promise<RackUnitSnapshotRecord> {
+    const existing = await client.query<{ id: string; row_version: number; total_u: unknown; used_u: unknown }>("SELECT id, row_version, total_u, used_u FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = $2::date FOR UPDATE", [input.siteId, `${input.month}-01`]);
+    const current = existing.rows[0];
+    if (current && input.expectedRowVersion !== current.row_version) throw new HttpError(409, "STALE_VERSION", "Rack Unit Capacity changed before this save was committed.");
+    if (!current && input.expectedRowVersion !== null && input.expectedRowVersion !== 0) throw new HttpError(409, "STALE_VERSION", "Rack Unit Capacity changed before this save was committed.");
+    if (current && !input.forceSnapshot && Number(current.total_u) === input.totalU && Number(current.used_u) === input.usedU) return { month: input.month, rowVersion: current.row_version, totalU: Number(current.total_u), usedU: Number(current.used_u) };
+    const saved = current
+      ? await client.query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown }>("UPDATE rack_unit_capacity_snapshots SET total_u = $1, used_u = $2, row_version = row_version + 1, updated_at = now() WHERE id = $3 RETURNING period_month, row_version, total_u, used_u", [input.totalU, input.usedU, current.id])
+      : await client.query<{ period_month: string; row_version: number; total_u: unknown; used_u: unknown }>("INSERT INTO rack_unit_capacity_snapshots(site_id, period_month, total_u, used_u) VALUES ($1,$2::date,$3,$4) RETURNING period_month, row_version, total_u, used_u", [input.siteId, `${input.month}-01`, input.totalU, input.usedU]);
+    const row = saved.rows[0];
+    if (!row) throw new Error("Rack Unit Capacity save did not return a row.");
+    await client.query("INSERT INTO audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)", [input.actorUserId === null || input.actorUserId === undefined ? "system" : "user", input.actorUserId ?? null, current ? "update" : "create", "rack_unit_capacity_snapshot", current?.id ?? `${input.siteId}:${input.month}`, current ? JSON.stringify({ row_version: current.row_version, total_u: Number(current.total_u), used_u: Number(current.used_u) }) : null, JSON.stringify({ row_version: row.row_version, total_u: Number(row.total_u), used_u: Number(row.used_u) }), input.correlationId]);
+    return { month: monthString(row.period_month), rowVersion: row.row_version, totalU: Number(row.total_u), usedU: Number(row.used_u) };
+  }
+
+  async saveRackCapacityHistoryRows(siteId: number, rows: RackCapacityHistoryRecord[]): Promise<void> {
+    for (const row of rows) {
+      await query(this.executor, "INSERT INTO public.rack_capacity_history(site_id, snapshot_month, facility, rack_zone, total_racks, in_use, available, reserved, pending_dismantle, other, usage_pct, availability_pct, reserved_pct, pending_dismantle_pct, other_pct, generated_at, data_version) VALUES ($1,$2::date,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16::timestamptz,$17) ON CONFLICT (site_id, snapshot_month, rack_zone) DO UPDATE SET facility = EXCLUDED.facility, total_racks = EXCLUDED.total_racks, in_use = EXCLUDED.in_use, available = EXCLUDED.available, reserved = EXCLUDED.reserved, pending_dismantle = EXCLUDED.pending_dismantle, other = EXCLUDED.other, usage_pct = EXCLUDED.usage_pct, availability_pct = EXCLUDED.availability_pct, reserved_pct = EXCLUDED.reserved_pct, pending_dismantle_pct = EXCLUDED.pending_dismantle_pct, other_pct = EXCLUDED.other_pct, generated_at = EXCLUDED.generated_at, data_version = EXCLUDED.data_version", [siteId, `${row.month}-01`, row.facility, row.rackZone, row.totalRacks, row.inUse, row.available, row.reserved, row.pendingDismantle, row.other, row.usagePct, row.availabilityPct, row.reservedPct, row.pendingDismantlePct, row.otherPct, row.generatedAt, row.dataVersion]);
+    }
   }
 
   async listRackCapacityHistory(siteId: number): Promise<RackCapacityHistoryRecord[]> {

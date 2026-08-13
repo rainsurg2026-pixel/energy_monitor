@@ -20,7 +20,7 @@ interface SrinakarinPowerPhaseTableProps {
   lastSaved: string | null;
   onSave: (records: UpsRecord[], inputs: SrinakarinInputSnapshot) => void;
   registerApi?: (api: EntrySectionApi | null) => void;
-  onDraftChange?: (draft: UpsRecord[]) => void;
+  onDraftChange?: (draft: UpsRecord[], inputs: SrinakarinInputSnapshot) => void;
 }
 
 const PHASES = ["R", "S", "T"] as const;
@@ -122,8 +122,8 @@ export default function SrinakarinPowerPhaseTable({
   }, [initialLog, inputs, manualLoads]);
 
   useEffect(() => {
-    onDraftChange?.(draftRecords);
-  }, [draftRecords, onDraftChange]);
+    onDraftChange?.(draftRecords, clone(inputs));
+  }, [draftRecords, inputs, onDraftChange]);
 
   const updateUpsPhase = (id: string, field: keyof PhaseReading, value: string) => {
     setHasChanges(true);

@@ -9,6 +9,42 @@ export interface RackSnapshotRecord {
   records: Array<{ rowNumber: number | null; rackZone: string | null; rackId: string | null; status: string | null; cabinetSize: string | null; detail: string | null; deviceType: string | null; remarks: string | null }>;
 }
 export interface RackUnitSnapshotRecord { month: string; rowVersion: number; totalU: number; usedU: number; }
+export interface RackFieldEditInput { expected: string | null; next: string | null; }
+export interface RackFieldChangeInput {
+  rowNumber: number;
+  rackId: string;
+  status?: RackFieldEditInput;
+  cabinetSize?: RackFieldEditInput;
+  detail?: RackFieldEditInput;
+  deviceType?: RackFieldEditInput;
+  remarks?: RackFieldEditInput;
+}
+export interface RackFieldChangeOutcome {
+  rowNumber: number;
+  rackId: string;
+  applied: boolean;
+  conflictField?: "status" | "cabinetSize" | "detail" | "deviceType" | "remarks";
+  conflictActualValue?: string | null;
+  conflictReason?: "row_not_found" | "rack_id_mismatch" | "field_mismatch";
+}
+export interface SaveRackCapacityInput {
+  siteId: number;
+  month: string;
+  changes: RackFieldChangeInput[];
+  forceSnapshot: boolean;
+  correlationId: string;
+  actorUserId?: number | null;
+}
+export interface SaveRackUnitCapacityInput {
+  siteId: number;
+  month: string;
+  totalU: number;
+  usedU: number;
+  expectedRowVersion: number | null;
+  forceSnapshot: boolean;
+  correlationId: string;
+  actorUserId?: number | null;
+}
 export interface RackCapacityHistoryRecord {
   month: string;
   facility: string;
@@ -67,6 +103,9 @@ export interface BackendRepository {
   saveMonthlyLog(input: SaveMonthlyLogInput): Promise<PeriodRecord>;
   getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null>;
   getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null>;
+  saveRackCapacity(input: SaveRackCapacityInput): Promise<{ snapshot: RackSnapshotRecord; outcomes: RackFieldChangeOutcome[]; changedCount: number }>;
+  saveRackUnitCapacity(input: SaveRackUnitCapacityInput): Promise<RackUnitSnapshotRecord>;
+  saveRackCapacityHistoryRows(siteId: number, rows: RackCapacityHistoryRecord[]): Promise<void>;
   listRackCapacityHistory(siteId: number): Promise<RackCapacityHistoryRecord[]>;
   listRackUnitCapacityHistory(siteId: number): Promise<RackUnitSnapshotRecord[]>;
   getUpsGroupHistory(siteId: number): Promise<UpsGroupHistoryRecord[]>;

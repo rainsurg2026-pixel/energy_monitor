@@ -1,17 +1,14 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
-import { BarChart3, Boxes, ChartNoAxesCombined, ClipboardPenLine, Download, FileSpreadsheet, History, LogOut, Printer, Server, Settings, UsersRound } from "lucide-react";
-import { Line, LineChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { BarChart3, ChartNoAxesCombined, ClipboardPenLine, Download, FileSpreadsheet, History, LogOut, Printer, Server, Settings, UsersRound } from "lucide-react";
 import { ReportProvider, useReport } from "../ReportContext";
 import DashboardSummary from "../components/DashboardSummary";
 import ExecutiveDashboard from "../components/ExecutiveDashboard";
+import BenchmarkDashboard from "../components/BenchmarkDashboard";
+import ForecastDashboard from "../components/ForecastDashboard";
 import SmartInsightPanel from "../components/SmartInsightPanel";
 import UniversalFilterBar from "../components/UniversalFilterBar";
 import HistoricalExplorer from "../components/HistoricalExplorer";
-import UpsTable from "../components/UpsTable";
-import SrinakarinPowerPhaseTable from "../components/SrinakarinPowerPhaseTable";
-import AirTable from "../components/AirTable";
-import DcTable from "../components/DcTable";
-import EnergyCostTable from "../components/EnergyCostTable";
+import HistoricalCharts from "../components/HistoricalCharts";
 import { createEmptyLog } from "../utils";
 import { computeCompletion } from "../utils/completion";
 import type { MonthlyLog } from "../types";
@@ -21,12 +18,22 @@ import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter"
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import { RackCapacityProvider, useRackCapacity } from "../components/rack/RackCapacityContext";
 import RackCapacitySummaryCard from "../components/rack/RackCapacitySummaryCard";
-import { formatRatioPercent } from "../utils/rackCapacity";
+import RackCapacityHistoryPanel from "../components/rack/RackCapacityHistoryPanel";
+import { Forecast as RackCapacityForecast } from "../components/rack/Forecast";
+import { RackUnitCapacitySummary } from "../components/rack/RackUnitCapacitySummary";
+import { StickyHeader as RackCapacityStickyHeader } from "../components/rack/StickyHeader";
+import { ExecutiveKpiCards as RackCapacityExecutiveKpiCards } from "../components/rack/ExecutiveKpiCards";
+import { CapacityAlerts } from "../components/rack/CapacityAlerts";
+import { CapacityGauge } from "../components/rack/CapacityGauge";
+import { Timeline as RackCapacityTimeline } from "../components/rack/Timeline";
+import WebSiteComparison from "./WebSiteComparison";
+import WebEntryWorkspace from "./WebEntryWorkspace";
+import WebReportPreview from "./WebReportPreview";
+import { WebRackCapacityEditor, WebRackUnitCapacityEditor } from "./WebRackCapacityEditors";
 import { api, type SessionUser, type Role } from "./api";
-import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportCsv, exportExcel, exportSiteComparisonCsv, exportSiteComparisonExcel, openReportPopup, printAllFacilitiesPdf, printDesktopPdf, printSiteComparisonPdf, rackReportFromSnapshot, type ComparisonMetric, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
+import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportCsv, exportExcel, exportSiteComparisonCsv, exportSiteComparisonExcel, openReportPopup, printAllFacilitiesPdf, printDesktopPdf, printSiteComparisonPdf, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
 import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodSelection } from "./reportPeriod";
-import { formatNumber2 } from "../utils/numberFormatBridge";
 import { facilityStorageKey, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
 import { applyTheme, normalizeTheme, themeStorageKey, type Theme } from "./theme";
 
@@ -140,11 +147,12 @@ export default function CleanWebApp() {
         <main className="min-w-0 flex-1 p-4 md:p-6"><div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">Reporting month</span><div className="text-lg font-semibold">{month}</div></div><input aria-label="Reporting month" type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">Display period {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />Completion <b className="text-teal-300">{completion.overall.percent}%</b></div></div>
           {busy && <div className="mb-4 text-sm text-teal-300">Working…</div>}
           {view === "settings" ? <SettingsPage displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice("Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">Facility context unavailable</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">Retry facility load</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">Loading facility context…</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={month} lang="en" upsGroupHistory={history.upsGroupHistory ?? null} />}
-          {view === "entry" && draft && <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">Monthly Data Entry</h2><p className="mt-1 text-sm text-slate-400">Enter validated operating readings for {month}; calculations remain Desktop v2.3.1-compatible.</p></div>{site?.code === "srinakarin" ? <SrinakarinPowerPhaseTable monthStr={month} initialLog={draft} lastSaved={draft.lastSavedUps} onSave={(ups, srinakarinInputs) => void save({ ups, srinakarinInputs })} /> : <UpsTable monthStr={month} initialRecords={draft.ups} lastSaved={draft.lastSavedUps} onSave={ups => void save({ ups })} />}<AirTable monthStr={month} initialRecord={draft.air} lastSaved={draft.lastSavedAir} meterFields={draft.energyCalculation?.airFields} onSave={air => void save({ air })} /><DcTable monthStr={month} initialRecords={draft.dc} lastSaved={draft.lastSavedDc} onSave={dc => void save({ dc })} /><EnergyCostTable monthStr={month} initialRecord={draft.energyCost} lastSaved={draft.lastSavedEnergyCost} onSave={energyCost => void save({ energyCost })} /></section>}
-          {view === "racks" && siteId && <RackCapacityView siteId={siteId} month={month} lang="en" />}
-          {view === "history" && <HistoricalExplorer logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} upsGroupHistory={history.upsGroupHistory ?? null} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onEditMonth={selected => { setView("entry"); void selectMonth(selected); }} />}
-          {view === "comparison" && <SiteComparison />}
+          {view === "entry" && draft && <WebEntryWorkspace siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} busy={busy} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={selected => void selectMonth(selected)} onOpenReports={() => setView("reports")} onNotice={setNotice} />}
+          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} lang="en" rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onHistorySaved={() => { void loadHistory(siteId); }} onSelectMonth={selected => void selectMonth(selected)} />}
+          {view === "history" && <section className="space-y-8"><HistoricalCharts logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} dataSourceLabel="Source: Production API" /><HistoricalExplorer logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} upsGroupHistory={history.upsGroupHistory ?? null} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onEditMonth={selected => { setView("entry"); void selectMonth(selected); }} /></section>}
+          {view === "comparison" && <WebSiteComparison />}
           {view === "reports" && <Reports siteId={siteId} siteName={site?.name ?? "energy-monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} />}
+          {view === "reports" && <WebReportPreview siteId={siteId} siteName={site.name} logs={history.logs} month={month} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} />}
           </>}
         </main></div>
       <nav className="fixed bottom-0 left-0 right-0 z-30 flex border-t border-slate-800 bg-slate-950 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`flex flex-1 flex-col items-center gap-1 py-2 text-[10px] ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
@@ -153,16 +161,12 @@ export default function CleanWebApp() {
   </ReportProvider>;
 }
 
-const DASHBOARD_REPORT_VIEWS = ["executive", "dashboard"] as const;
+const DASHBOARD_REPORT_VIEWS = ["executive", "dashboard", "benchmark", "forecast"] as const;
 
-/** Dashboard: Executive View (aggregate KPIs/trend) and Engineering View
- *  (single-month operational detail, the existing DashboardSummary). Forecast
- *  and Energy Benchmarking are intentional scope exclusions, not gaps -
- *  UniversalFilterBar's shared 4-tab switcher is restricted to just these
- *  two views via reportViews, so no Benchmark/Forecast tab, route, or
- *  component ever renders here. Year/Period (Executive) and the existing
- *  top-level Reporting month (Engineering) are the real, functional controls
- *  behind the two views - nothing here is decorative.
+/** Dashboard: the same four Desktop views. Executive, Engineering,
+ *  Benchmark, and Forecast all derive from the facility-scoped monthly logs
+ *  returned by the Web API; no Desktop filesystem or Google dependency is
+ *  needed to render them.
  *
  *  DashboardSummary's UPS Groups section reads either a facility.profile.dashboard
  *  topology (Desktop's file-based config/<id>/profile.json - not part of the
@@ -179,15 +183,16 @@ function DashboardView({ logs, month, lang, upsGroupHistory }: { logs: MonthlyLo
   return (
     <div className="space-y-5">
       <UniversalFilterBar lang={lang} facility={null} reportViews={DASHBOARD_REPORT_VIEWS} />
-      {selectedReportView === "dashboard"
-        ? <DashboardSummary logs={logs} selectedMonth={month} lang={lang} upsMapping={upsMapping} />
-        : <><ExecutiveDashboard logs={logs} lang={lang} /><SmartInsightPanel logs={logs} lang={lang} /></>}
+      {selectedReportView === "dashboard" && <DashboardSummary logs={logs} selectedMonth={month} lang={lang} upsMapping={upsMapping} />}
+      {selectedReportView === "executive" && <><ExecutiveDashboard logs={logs} lang={lang} /><SmartInsightPanel logs={logs} lang={lang} /></>}
+      {selectedReportView === "benchmark" && <BenchmarkDashboard logs={logs} lang={lang} />}
+      {selectedReportView === "forecast" && <ForecastDashboard logs={logs} lang={lang} />}
     </div>
   );
 }
 
-interface RackApiSnapshot { records: Array<{ rowNumber: number | null; rackZone: string | null; rackId: string | null; status: string | null; cabinetSize: string | null; detail: string | null; deviceType: string | null; remarks: string | null }> }
-interface RackUnitApiSnapshot { totalU: number; usedU: number; availableU: number; usagePercent: number | null; availabilityPercent: number | null }
+interface RackApiSnapshot { rowVersion: number; records: Array<{ rowNumber: number | null; rackZone: string | null; rackId: string | null; status: string | null; cabinetSize: string | null; detail: string | null; deviceType: string | null; remarks: string | null }> }
+interface RackUnitApiSnapshot { rowVersion: number; totalU: number; usedU: number; availableU: number; usagePercent: number | null; availabilityPercent: number | null }
 
 /** Syncs RackCapacityContext's own reportingMonth (used only for the
  *  Summary Card's header label; defaults to today's real date, since
@@ -200,20 +205,11 @@ function RackCapacityMonthSync({ month, children }: { month: string; children: R
   return <>{children}</>;
 }
 
-/** Read-only Rack Capacity view: the API only exposes GET endpoints (no
- *  create/edit), matching Desktop's Rack Capacity Editor being out of scope
- *  for Web today. Reuses RackCapacityProvider + RackCapacitySummaryCard
- *  (zone/status table, donut, Zone Heatmap) verbatim from Desktop - no
- *  second calculation implementation. Rack Unit Capacity gets its own
- *  lightweight summary here rather than reusing RackUnitCapacitySummary
- *  verbatim: that component's 12-month trend chart and monthly image both
- *  need data (bulk history, image storage) with no corresponding API today
- *  - showing them would mean either fabricating history from 12+ sequential
- *  API calls never designed for that, or a permanently-empty trend/image
- *  section. Both the zone/status metrics and the U-capacity numbers below
- *  come straight from the API's own calculateRackCapacityMetrics/
- *  usagePercent output - nothing is recomputed or invented here. */
-function RackCapacityView({ siteId, month, lang }: { siteId: number; month: string; lang: "th" | "en" }) {
+/** Rack Capacity view: shared Desktop summary/heatmap plus Web-specific
+ *  editors. Field edits retain Desktop's per-field expected-value conflict
+ *  checks; Rack Unit Capacity retains a snapshot row-version. Image upload
+ *  remains intentionally absent until a dedicated Storage API exists. */
+function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, rackUnitCapacity, allowedStartMonth, allowedEndMonth, onHistorySaved, onSelectMonth }: { siteId: number; siteName: string | null; month: string; lang: "th" | "en"; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; allowedStartMonth: string; allowedEndMonth: string; onHistorySaved?: () => void; onSelectMonth: (month: string) => void }) {
   const [rack, setRack] = useState<RackApiSnapshot | null>(null);
   const [rackUnit, setRackUnit] = useState<RackUnitApiSnapshot | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -249,31 +245,22 @@ function RackCapacityView({ siteId, month, lang }: { siteId: number; month: stri
 
   return (
     <div className="space-y-5">
-      <div><h2 className="font-display text-2xl font-bold">Rack Capacity and Utilization</h2><p className="mt-1 text-sm text-slate-400">Read-only summary for {month}; zone/status metrics match Desktop's Rack Capacity model.</p></div>
-      <RackCapacityProvider lang={lang} rackCapacity={rackCapacity} rackUnitCapacity={[]} rackCapacityHistory={[]}>
-        <RackCapacityMonthSync month={month}><RackCapacitySummaryCard /></RackCapacityMonthSync>
-      </RackCapacityProvider>
-      <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm space-y-4">
-        <div className="flex items-start gap-3">
-          <div className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-400"><Boxes className="h-5 w-5" /></div>
-          <div>
-            <h3 className="text-base text-slate-100">{lang === "th" ? "ความจุหน่วยแร็ค (U)" : "Rack Unit Capacity (U)"}</h3>
-            <p className="mt-1 text-xs text-slate-400">{lang === "th" ? "สรุปแบบอ่านอย่างเดียวสำหรับเดือนที่เลือก" : "Read-only summary for the selected month"}</p>
-          </div>
+      <div><h2 className="font-display text-2xl font-bold">Rack Capacity and Utilization</h2><p className="mt-1 text-sm text-slate-400">Desktop-compatible field editing, snapshot history, and rack-unit capacity for {month}.</p></div>
+        <RackCapacityProvider lang={lang} facilityName={siteName} rackCapacity={rackCapacity} rackUnitCapacity={rackUnitCapacity} rackCapacityHistory={rackCapacityHistory}>
+        <RackCapacityStickyHeader />
+        <RackCapacityTimeline canSelectMonth={selected => selected >= allowedStartMonth && selected <= allowedEndMonth} onMonthSelect={onSelectMonth} />
+        <CapacityAlerts />
+        <RackCapacityExecutiveKpiCards />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <CapacityGauge />
+          <RackCapacityForecast />
         </div>
-        {!rackUnit ? (
-          <p className="text-sm text-slate-500">{lang === "th" ? `ไม่มีข้อมูลความจุหน่วยแร็ค (U) สำหรับ ${month}` : `No Rack Unit Capacity (U) data for ${month}.`}</p>
-        ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {[
-              { label: lang === "th" ? "ทั้งหมด (U)" : "Total (U)", value: String(rackUnit.totalU) },
-              { label: lang === "th" ? "ใช้แล้ว (U)" : "Used (U)", value: String(rackUnit.usedU) },
-              { label: lang === "th" ? "ว่าง (U)" : "Available (U)", value: String(rackUnit.availableU) },
-              { label: lang === "th" ? "% การใช้งาน" : "Usage %", value: formatRatioPercent(rackUnit.usagePercent === null ? null : rackUnit.usagePercent / 100) }
-            ].map(item => <div key={item.label} className="rounded-xl border border-slate-800 bg-slate-950/40 p-3"><p className="text-[11px] text-slate-500">{item.label}</p><p className="mt-1 text-lg font-mono text-slate-100">{item.value}</p></div>)}
-          </div>
-        )}
-      </section>
+        <RackCapacityMonthSync month={month}><RackCapacitySummaryCard /></RackCapacityMonthSync>
+        <RackUnitCapacitySummary imageUploadAvailable={false} />
+        <RackCapacityHistoryPanel />
+        <WebRackCapacityEditor siteId={siteId} month={month} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} />
+      </RackCapacityProvider>
+      <WebRackUnitCapacityEditor siteId={siteId} month={month} initialSnapshot={rackUnit} onSaved={(next) => { setRackUnit(next); onHistorySaved?.(); }} />
     </div>
   );
 }
@@ -343,22 +330,6 @@ function Reports({ siteId, siteName, logs, month, sites, rackCapacityHistory, ra
     </div>
 
     <div className="mt-4 grid gap-4 xl:grid-cols-3">{cards("Current Facility", `${siteName}, ${reportingPeriodLabel(period, "en")}.`, () => exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv")), () => exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx")), () => { const popup = openReportPopup("energy-monitor-report"); return (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; printDesktopPdf(popup, scopedLogs, siteName, contextMonth, resolvedFileName, rack, rackCapacityHistory, rackUnitCapacity); })(); })}{cards("All Facilities", "Each facility stays isolated in its own CSV block, Excel sheets, and full PDF section.", async () => exportAllFacilitiesCsv(await loadAll()), async () => exportAllFacilitiesExcel(await loadAll()), () => { const popup = openReportPopup("energy-monitor-all-facilities"); return (async () => { printAllFacilitiesPdf(popup, await loadAll(), month); })(); })}{cards("Site Comparison", `Comparison KPI snapshot for ${month}; no values are fabricated for missing records.`, async () => exportSiteComparisonCsv(await loadComparison(), month), async () => exportSiteComparisonExcel(await loadComparison(), month), () => { const popup = openReportPopup("energy-monitor-site-comparison"); return (async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, month) : null, secondary ? loadRack(secondary.site.id, month) : null]); printSiteComparisonPdf(popup, comparison, month, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack)); })(); })}</div>{message && <p className="mt-4 text-sm text-teal-300">{message}</p>}</section>;
-}
-
-const metric = (value: number | null | undefined, suffix = "") => value === null || value === undefined || !Number.isFinite(value) ? "—" : `${formatNumber2(value)}${suffix}`;
-
-function SiteComparison() {
-  const [data, setData] = useState<SiteComparisonExport | null>(null);
-  const [referenceMonth, setReferenceMonth] = useState("");
-  const [range, setRange] = useState<3 | 6 | 12>(12);
-  const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async () => { try { const result = await api<SiteComparisonExport>("/site-comparison"); setData(result); const common = result.months.filter(month => result.sites.every(site => site.months.some(entry => entry.month === month && entry.metrics))); setReferenceMonth((common.at(-1) ?? result.months.at(-1)) ?? ""); setError(null); } catch (reason) { setError(readError(reason)); } }, []);
-  useEffect(() => { void load(); }, [load]);
-  if (error) return <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-rose-200">{error}</section>;
-  if (!data) return <p className="text-sm text-slate-400">Loading Site Comparison…</p>;
-  const windowMonths = data.months.filter(month => month <= referenceMonth).slice(-range);
-  const chartData = windowMonths.map(month => Object.fromEntries([["month", month], ...data.sites.map(site => [site.site.code, site.months.find(entry => entry.month === month)?.metrics?.buildingEnergy ?? null])]));
-  return <section className="space-y-5"><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-display text-2xl font-bold">Site Comparison</h2><p className="mt-1 text-sm text-slate-400">Same period, same formulas, separate facility records.</p></div><div className="flex flex-wrap items-center gap-2"><label className="text-sm">Reference month<select value={referenceMonth} onChange={event => setReferenceMonth(event.target.value)} className="ml-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{data.months.map(month => <option key={month} value={month}>{month}</option>)}</select></label><div className="flex rounded-lg border border-slate-700 p-1">{([3, 6, 12] as const).map(value => <button key={value} onClick={() => setRange(value)} className={`rounded px-2 py-1 text-xs ${range === value ? "bg-teal-500 text-slate-950" : "text-slate-300"}`}>Last {value}</button>)}</div></div></div><div className="overflow-x-auto rounded-xl border border-slate-800"><table className="min-w-[960px] w-full text-sm"><thead className="bg-slate-900 text-left text-slate-400"><tr><th className="p-3">Facility</th><th className="p-3 text-right">Building energy</th><th className="p-3 text-right">Building cost</th><th className="p-3 text-right">Floor energy</th><th className="p-3 text-right">Floor cost</th><th className="p-3 text-right">Average rate</th><th className="p-3 text-right">Floor share</th></tr></thead><tbody>{data.sites.map(site => { const values: ComparisonMetric | null = site.months.find(entry => entry.month === referenceMonth)?.metrics ?? null; return <tr key={site.site.id} className="border-t border-slate-800"><td className="p-3"><b>{site.site.name}</b><br /><span className="text-xs text-slate-500">{referenceMonth}</span></td><td className="p-3 text-right font-mono">{metric(values?.buildingEnergy)} kWh</td><td className="p-3 text-right font-mono">{metric(values?.buildingCost)} THB</td><td className="p-3 text-right font-mono">{metric(values?.floorEnergy)} kWh</td><td className="p-3 text-right font-mono">{metric(values?.floorCost)} THB</td><td className="p-3 text-right font-mono">{metric(values?.avgRate)} THB/kWh</td><td className="p-3 text-right font-mono">{metric(values?.floorShare, "%")}</td></tr>; })}</tbody></table></div><div className="h-80 rounded-xl border border-slate-800 bg-slate-900 p-4"><h3 className="mb-3 font-semibold">Monthly Energy Consumption Trend</h3><ResponsiveContainer width="100%" height="90%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="month" /><YAxis /><Tooltip /><Legend />{data.sites.map((site, index) => <Line key={site.site.id} type="monotone" dataKey={site.site.code} name={site.site.name} stroke={index % 2 === 0 ? "#e87959" : "#5b8db8"} connectNulls={false} />)}</LineChart></ResponsiveContainer></div></section>;
 }
 
 function SettingsPage({ displayPeriod, isAdmin, theme, onThemeChange, onSaved, onMessage }: { displayPeriod: DisplayPeriod; isAdmin: boolean; theme: Theme; onThemeChange: (theme: Theme) => void; onSaved: () => Promise<void>; onMessage: (message: string) => void }) {
