@@ -103,6 +103,7 @@ assert.match(app, /Create Monthly Record/);
 assert.match(app, /const confirmCreateMonth = async/);
 assert.match(app, /onSelectMonth=\{\(selected, exists\) => void selectMonth\(selected, exists\)\}/);
 assert.match(app, /selectMonth\(event\.target\.value, history\.months\.includes\(event\.target\.value\)\)/);
+assert.match(app, /onEditMonth=\{selected => \{ setView\("entry"\); void selectMonth\(selected\); window\.scrollTo\(\{ top: 0, behavior: "smooth" \}\); \}\}/);
 assert.match(app, /Save &(?:amp;)? Continue/);
 assert.match(app, /Discard/);
 assert.match(app, /Cancel/);
