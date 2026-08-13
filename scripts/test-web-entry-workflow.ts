@@ -43,6 +43,10 @@ assert.match(workspace, /onDirtyChange\?: \(dirty: boolean\) => void/);
 assert.match(workspace, /onDirtyChange\?\.\(hasDraftChanges\)/);
 assert.match(workspace, /EntryWorkspaceActions/);
 assert.match(workspace, /onRegisterActions\?:/);
+assert.match(workspace, /pendingHistoricalSave/);
+assert.match(workspace, /Confirm Saving Historical Data/);
+assert.match(workspace, /requestSectionSave\("air"/);
+assert.match(workspace, /onSaveAll=\{\(\) => void requestSaveAll\(\)\}/);
 assert.match(header, /formatWebSavedTimestamp\(/);
 assert.match(workspace, /formatWebSavedTimestamp\(draft\.lastSavedUps\)/);
 assert.match(workspace, /formatWebSavedTimestamp\(draft\.lastSavedAir\)/);
@@ -69,6 +73,11 @@ assert.match(energyCostTable, /lang\?: "th" \| "en"/);
 assert.match(energyCostTable, /การใช้พลังงานอาคารและค่าไฟฟ้า/);
 assert.match(srinakarinTable, /lang\?: "th" \| "en"/);
 assert.match(srinakarinTable, /ข้อมูลเฟส UPS และ PPC ของศรีนครินทร์/);
+for (const table of [upsTable, airTable, dcTable, energyCostTable, srinakarinTable]) {
+  assert.match(table, /const handleSave = async/);
+  assert.match(table, /if \(result === false\) return/);
+}
+assert.doesNotMatch(workspace, /onSave=\{(?:ups|air|dc|energyCost) => void onSave/);
 assert.match(workspace, /saveAll: \(\) => Promise<boolean>/);
 assert.match(app, /beforeunload/);
 assert.match(app, /Unsaved Data Entry changes/);

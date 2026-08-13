@@ -10,7 +10,7 @@ assert.match(app, /allowedStartMonth=\{bootstrap\?\.displayPeriod\.startMonth \?
 assert.match(app, /allowedEndMonth=\{bootstrap \? \(bootstrap\.displayPeriod\.endMonth < todayMonth\(\) \? bootstrap\.displayPeriod\.endMonth : todayMonth\(\)\) : month\}/);
 assert.match(workspace, /import SrinakarinPowerPhaseTable from "\.\.\/components\/SrinakarinPowerPhaseTable"/);
 assert.match(workspace, /siteCode === "srinakarin" \? <SrinakarinPowerPhaseTable/);
-assert.match(workspace, /initialLog=\{draft\} lastSaved=\{formatWebSavedTimestamp\(draft\.lastSavedUps\)\} onSave=\{\(ups, srinakarinInputs\) => void onSave\(\{ ups, srinakarinInputs \}\)\}/);
+assert.match(workspace, /initialLog=\{draft\} lastSaved=\{formatWebSavedTimestamp\(draft\.lastSavedUps\)\} onSave=\{\(ups, srinakarinInputs\) => requestSectionSave\("ups", \{ ups, srinakarinInputs \}\)\}/);
 assert.match(workspace, /: <UpsTable (?:lang=\{lang\} )?monthStr=\{month\} initialRecords=\{draft\.ups\}/);
 assert.match(workspace, /allowedStartMonth=\{allowedStartMonth\} allowedEndMonth=\{allowedEndMonth\}/);
 

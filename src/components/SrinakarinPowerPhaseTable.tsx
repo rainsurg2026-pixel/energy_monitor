@@ -19,7 +19,7 @@ interface SrinakarinPowerPhaseTableProps {
   initialLog: MonthlyLog;
   lastSaved: string | null;
   lang?: "th" | "en";
-  onSave: (records: UpsRecord[], inputs: SrinakarinInputSnapshot) => void;
+  onSave: (records: UpsRecord[], inputs: SrinakarinInputSnapshot) => void | boolean | Promise<void | boolean>;
   registerApi?: (api: EntrySectionApi | null) => void;
   onDraftChange?: (draft: UpsRecord[], inputs: SrinakarinInputSnapshot) => void;
 }
@@ -223,8 +223,9 @@ export default function SrinakarinPowerPhaseTable({
     setManualLoads(previous => ({ ...previous, [id]: { ...(previous[id] ?? { loadKw: null, loadKva: null }), [field]: inputNumber(value) } }));
   };
 
-  const handleSave = () => {
-    onSave(draftRecords, clone(inputs));
+  const handleSave = async () => {
+    const result = await onSave(draftRecords, clone(inputs));
+    if (result === false) return;
     setIsSaved(true);
     setHasChanges(false);
     setTimeout(() => setIsSaved(false), 3000);

@@ -10,7 +10,7 @@ interface AirTableProps {
   initialRecord: AirRecord;
   lastSaved: string | null;
   lang?: "th" | "en";
-  onSave: (record: AirRecord) => void;
+  onSave: (record: AirRecord) => void | boolean | Promise<void | boolean>;
   /** RC3: register imperative save/reset for the sticky toolbar. */
   registerApi?: (api: EntrySectionApi | null) => void;
   /** RC3/RC4: live draft updates for completion + validation. */
@@ -122,8 +122,9 @@ export default function AirTable({
   const handleSaveRef = { current: () => handleSave() };
   const handleResetRef = { current: () => handleReset() };
 
-  const handleSave = () => {
-    onSave(record);
+  const handleSave = async () => {
+    const result = await onSave(record);
+    if (result === false) return;
     setIsSaved(true);
     setHasChanges(false);
     setTimeout(() => setIsSaved(false), 3000);

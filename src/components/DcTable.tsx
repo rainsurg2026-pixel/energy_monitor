@@ -11,7 +11,7 @@ interface DcTableProps {
   initialRecords: DcRecord[];
   lastSaved: string | null;
   lang?: "th" | "en";
-  onSave: (records: DcRecord[]) => void;
+  onSave: (records: DcRecord[]) => void | boolean | Promise<void | boolean>;
   /** RC3: register imperative save/reset for the sticky toolbar. */
   registerApi?: (api: EntrySectionApi | null) => void;
   /** RC3/RC4: live draft updates for completion + validation. */
@@ -117,8 +117,9 @@ export default function DcTable({
   const handleSaveRef = { current: () => handleSave() };
   const handleResetRef = { current: () => handleReset() };
 
-  const handleSave = () => {
-    onSave(records);
+  const handleSave = async () => {
+    const result = await onSave(records);
+    if (result === false) return;
     setIsSaved(true);
     setHasChanges(false);
     setTimeout(() => setIsSaved(false), 3000);
