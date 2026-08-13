@@ -114,6 +114,21 @@ await withApi(false, async (base, authentication) => {
   check("rack snapshot is exposed with derived metrics", racks.status === 200 && racks.body.data.snapshot.records.length === 3 && racks.body.data.snapshot.metrics.total === 3 && racks.body.data.snapshot.metrics.inUse.count === 1);
   const racksEmptySite = await client.request("/api/v1/racks?siteId=2&month=2026-02");
   check("a site with no rack snapshot returns null, not an error or another site's data", racksEmptySite.status === 200 && racksEmptySite.body.data.snapshot === null);
+  const rackSave = await client.request("/api/v1/racks?siteId=1&month=2026-01", {
+    method: "PUT",
+    body: JSON.stringify({ changes: [{ rowNumber: 2, rackId: "A-02", status: { expected: "Available", next: "Reserved" }, remarks: { expected: null, next: "Reserved for planned expansion" } }] })
+  });
+  check("Rack Capacity field save preserves Desktop-style expected-value concurrency and returns fresh metrics", rackSave.status === 200 && rackSave.body.data.changedCount === 2 && rackSave.body.data.outcomes[0].applied === true && rackSave.body.data.snapshot.rowVersion === 2 && rackSave.body.data.snapshot.metrics.reserved.count === 2);
+  check("Rack Capacity save records the selected month's history snapshot", rackSave.body.data.rackCapacityHistory.some((row: { month: string; rackZone: string; reserved: number }) => row.month === "2026-01" && row.rackZone === "(Total)" && row.reserved === 2));
+  const rackConflict = await client.request("/api/v1/racks?siteId=1&month=2026-01", {
+    method: "PUT",
+    body: JSON.stringify({ changes: [{ rowNumber: 2, rackId: "A-02", status: { expected: "Available", next: "In Use" } }] })
+  });
+  check("Rack Capacity rejects a stale field value without overwriting the newer value", rackConflict.status === 200 && rackConflict.body.data.changedCount === 0 && rackConflict.body.data.outcomes[0].applied === false && rackConflict.body.data.outcomes[0].conflictField === "status" && rackConflict.body.data.outcomes[0].conflictActualValue === "Reserved");
+  const rackUnitSave = await client.request("/api/v1/rack-unit-capacity?siteId=1&month=2026-01", { method: "PUT", body: JSON.stringify({ month: "2026-01", total_u: 400, used_u: 360, expected_row_version: 1 }) });
+  check("Rack Unit Capacity save derives available capacity and advances the row version", rackUnitSave.status === 200 && rackUnitSave.body.data.snapshot.rowVersion === 2 && rackUnitSave.body.data.snapshot.availableU === 40 && rackUnitSave.body.data.snapshot.usagePercent === 90);
+  const rackUnitStale = await client.request("/api/v1/rack-unit-capacity?siteId=1&month=2026-01", { method: "PUT", body: JSON.stringify({ month: "2026-01", total_u: 400, used_u: 370, expected_row_version: 1 }) });
+  check("Rack Unit Capacity rejects a stale row-version save", rackUnitStale.status === 409 && rackUnitStale.body.error?.code === "STALE_VERSION");
   const comparison = await client.request("/api/v1/site-comparison"); check("comparison excludes hidden period", comparison.status === 200 && comparison.body.data.months.join(",") === "2026-01,2026-02" && !JSON.stringify(comparison.body).includes("2025-12"));
   // UPS Group History: was previously never fetched at all (no repository
   // method/route existed), so the History screen's UPS tab always showed
@@ -133,11 +148,11 @@ await withApi(false, async (base, authentication) => {
   // to HistoricalExplorer (rack_capacity_history had a table, migration, and
   // Desktop writer, but zero repository/API/frontend wiring) - the same
   // class of bug as the UPS Group History gap above.
-  check("Rack Capacity History exposes the visible-month rows with correctly mapped fields", site1History.body.data.rackCapacityHistory.length === 2 && site1History.body.data.rackCapacityHistory.every((row: { snapshotMonth: string }) => row.snapshotMonth === "2026-01") && site1History.body.data.rackCapacityHistory.some((row: { rackZone: string; totalRacks: number; inUse: number }) => row.rackZone === "Zone A" && row.totalRacks === 2 && row.inUse === 1));
+  check("Rack Capacity History exposes the visible-month rows with correctly mapped fields", site1History.body.data.rackCapacityHistory.length >= 2 && site1History.body.data.rackCapacityHistory.every((row: { snapshotMonth: string }) => row.snapshotMonth === "2026-01") && site1History.body.data.rackCapacityHistory.some((row: { rackZone: string; totalRacks: number; inUse: number }) => row.rackZone === "Zone A" && row.totalRacks === 2 && row.inUse === 1));
   check("Rack Capacity History rows outside the Display Period are filtered, not fabricated as missing", !site1History.body.data.rackCapacityHistory.some((row: { snapshotMonth: string }) => row.snapshotMonth === "2025-12"));
   check("a site with genuinely no Rack Capacity History rows returns an empty array, not an error", Array.isArray(site2History.body.data.rackCapacityHistory) && site2History.body.data.rackCapacityHistory.length === 0);
   check("Rack Capacity History is scoped per site (no cross-facility contamination)", !JSON.stringify(site2History.body.data.rackCapacityHistory).includes("Zone A"));
-  check("Rack Unit Capacity history exposes the visible-month row with derived availableU/availabilityPct", site1History.body.data.rackUnitCapacity.length === 1 && site1History.body.data.rackUnitCapacity[0].month === "2026-01" && site1History.body.data.rackUnitCapacity[0].availableU === 50 && Math.abs(site1History.body.data.rackUnitCapacity[0].availabilityPct - 0.125) < 1e-9);
+  check("Rack Unit Capacity history exposes the visible-month row with derived availableU/availabilityPct", site1History.body.data.rackUnitCapacity.length === 1 && site1History.body.data.rackUnitCapacity[0].month === "2026-01" && site1History.body.data.rackUnitCapacity[0].availableU === 40 && Math.abs(site1History.body.data.rackUnitCapacity[0].availabilityPct - 0.1) < 1e-9);
   check("Rack Unit Capacity history rows outside the Display Period are filtered, not fabricated as missing", !site1History.body.data.rackUnitCapacity.some((row: { month: string }) => row.month === "2025-12"));
   check("a site with genuinely no Rack Unit Capacity history returns an empty array, not an error", Array.isArray(site2History.body.data.rackUnitCapacity) && site2History.body.data.rackUnitCapacity.length === 0);
   const invalid = await client.request("/api/v1/energy?siteId=1&month=2026/01"); check("strict month validation", invalid.status === 404 || invalid.status === 400);
@@ -206,6 +221,7 @@ await withApi(true, async base => {
   const client = await login(base, { username: "admin", password: "Correct Horse Battery Staple 123!" });
   const get = await client.request("/api/v1/settings"); check("read-only GET allowed", get.status === 200);
   const put = await client.request("/api/v1/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: "2026-01", end_month: "2026-03", expected_row_version: 1 }) }); check("read-only mutation rejected server-side", put.status === 423 && put.body.error?.code === "READ_ONLY_MODE");
+  const rackPut = await client.request("/api/v1/rack-unit-capacity?siteId=1&month=2026-01", { method: "PUT", body: JSON.stringify({ month: "2026-01", total_u: 400, used_u: 350, expected_row_version: 1 }) }); check("read-only mode blocks Rack Unit Capacity writes", rackPut.status === 423 && rackPut.body.error?.code === "READ_ONLY_MODE");
   const userMutation = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "blocked", display_name: "Blocked", password: "Correct Horse Battery Staple 999!", role: "user" }) }); check("read-only blocks user management mutation", userMutation.status === 423 && userMutation.body.error?.code === "READ_ONLY_MODE");
 });
 

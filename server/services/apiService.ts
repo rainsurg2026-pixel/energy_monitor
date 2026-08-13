@@ -7,8 +7,8 @@ import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistory
 import type { MonthlyLog } from "../../src/types";
 import { HttpError } from "../errors";
 import { assertDisplayPeriod, assertStrictMonth, allowedMonths, isAllowedMonth, latestAvailableMonth, previousCalculationMonth, visibleMonths, type DisplayPeriod } from "../policies/displayPeriod";
-import type { BackendRepository, SiteRecord, UpsGroupHistoryRecord } from "../repositories/contracts";
-import { parseExpectedRowVersion, parseMonthlyLog, parseProvenance } from "./rawInputValidation";
+import type { BackendRepository, RackCapacityHistoryRecord, RackSnapshotRecord, SiteRecord, UpsGroupHistoryRecord } from "../repositories/contracts";
+import { parseExpectedRowVersion, parseMonthlyLog, parseProvenance, parseRackFieldChanges, parseRackUnitCapacity } from "./rawInputValidation";
 import { API_HEALTH_RESPONSE } from "../http/health";
 
 export interface ApiServiceOptions { repository: BackendRepository; now?: () => Date; }
@@ -242,6 +242,37 @@ export class ApiService {
     const snapshot = await this.repository.getRackUnitSnapshot(siteId, selected);
     if (!snapshot) return { siteId, month: selected, snapshot: null };
     return { siteId, month: selected, snapshot: { ...snapshot, availableU: snapshot.totalU - snapshot.usedU, usagePercent: usagePercent(snapshot), availabilityPercent: snapshot.totalU > 0 ? ((snapshot.totalU - snapshot.usedU) / snapshot.totalU) * 100 : null } };
+  }
+
+  private rackHistoryRows(facility: string, month: string, snapshot: RackSnapshotRecord): RackCapacityHistoryRecord[] {
+    const metrics = calculateRackCapacityMetrics(snapshot.records);
+    const toRow = (rackZone: string, item: { total: number; inUse: { count: number; ratio: number | null }; available: { count: number; ratio: number | null }; reserved: { count: number; ratio: number | null }; pendingDismantle: { count: number; ratio: number | null }; other: { count: number; ratio: number | null } }): RackCapacityHistoryRecord => ({ month, facility, rackZone, totalRacks: item.total, inUse: item.inUse.count, available: item.available.count, reserved: item.reserved.count, pendingDismantle: item.pendingDismantle.count, other: item.other.count, usagePct: item.inUse.ratio, availabilityPct: item.available.ratio, reservedPct: item.reserved.ratio, pendingDismantlePct: item.pendingDismantle.ratio, otherPct: item.other.ratio, generatedAt: this.now().toISOString(), dataVersion: 1 });
+    return [toRow("(Total)", metrics), ...metrics.zoneMetrics.map(zone => toRow(zone.zone, zone))];
+  }
+
+  async saveRacks(siteId: number, month: unknown, body: unknown, correlationId: string, actorUserId?: number | null): Promise<unknown> {
+    const site = await this.requireSite(siteId);
+    const { month: selected } = await this.requireVisibleMonth(month);
+    if (body === null || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "INVALID_BODY", "Request body must be a JSON object.");
+    const source = body as Record<string, unknown>;
+    const changes = parseRackFieldChanges(source.changes ?? []);
+    const forceSnapshot = source.force_snapshot === true;
+    if (changes.length === 0 && !forceSnapshot) throw new HttpError(400, "INVALID_BODY", "Rack Capacity save requires a field change or an explicit snapshot request.");
+    return this.repository.withTransaction(async repository => {
+      const saved = await repository.saveRackCapacity({ siteId, month: selected, changes, forceSnapshot, correlationId, actorUserId });
+      if (saved.changedCount > 0 || forceSnapshot) await repository.saveRackCapacityHistoryRows(siteId, this.rackHistoryRows(site.code, selected, saved.snapshot));
+      const history = await repository.listRackCapacityHistory(siteId);
+      return { siteId, month: selected, snapshot: { ...saved.snapshot, metrics: calculateRackCapacityMetrics(saved.snapshot.records) }, outcomes: saved.outcomes, changedCount: saved.changedCount, rackCapacityHistory: history };
+    });
+  }
+
+  async saveRackUnit(siteId: number, month: unknown, body: unknown, correlationId: string, actorUserId?: number | null): Promise<unknown> {
+    await this.requireSite(siteId);
+    const { month: selected } = await this.requireVisibleMonth(month);
+    const input = parseRackUnitCapacity(body, selected);
+    const snapshot = await this.repository.saveRackUnitCapacity({ siteId, month: selected, totalU: input.totalU, usedU: input.usedU, expectedRowVersion: input.expectedRowVersion, forceSnapshot: input.forceSnapshot, correlationId, actorUserId });
+    const rows = await this.repository.listRackUnitCapacityHistory(siteId);
+    return { siteId, month: selected, snapshot: { ...snapshot, availableU: snapshot.totalU - snapshot.usedU, usagePercent: usagePercent(snapshot), availabilityPercent: snapshot.totalU > 0 ? ((snapshot.totalU - snapshot.usedU) / snapshot.totalU) * 100 : null }, rows: rows.map(row => ({ month: row.month, totalU: row.totalU, usedU: row.usedU, availableU: row.totalU - row.usedU, availabilityPct: row.totalU > 0 ? (row.totalU - row.usedU) / row.totalU : null })) };
   }
 
   async saveMonthlyLog(siteId: number, month: unknown, body: unknown, correlationId: string, actorUserId?: number | null): Promise<unknown> {

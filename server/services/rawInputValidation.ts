@@ -1,5 +1,7 @@
 import type { AirRecord, EnergyCalculationProfile, MonthlyLog, SrinakarinInputSnapshot, UpsRecord } from "../../src/types";
+import { RACK_CANONICAL_STATUSES } from "../../src/domain/rackCapacity";
 import { HttpError } from "../errors";
+import type { RackFieldChangeInput } from "../repositories/contracts";
 
 type JsonObject = Record<string, unknown>;
 function object(value: unknown, field: string): JsonObject {
@@ -85,6 +87,49 @@ export function parseExpectedRowVersion(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0 || value > 2147483647) throw new HttpError(400, "INVALID_ROW_VERSION", "expected_row_version must be a PostgreSQL-safe non-negative integer or null.");
   return value;
+}
+
+function optionalRackTextEdit(value: unknown, field: string): { expected: string | null; next: string | null } | undefined {
+  if (value === null || value === undefined) return undefined;
+  const source = object(value, field);
+  const expected = source.expected;
+  const next = source.next;
+  if (expected !== null && expected !== undefined && (typeof expected !== "string" || expected.length > 200)) throw new HttpError(400, "INVALID_BODY", `${field}.expected must be a string or null.`);
+  if (next !== null && (typeof next !== "string" || next.length > 200)) throw new HttpError(400, "INVALID_BODY", `${field}.next must be a string or null.`);
+  return { expected: typeof expected === "string" ? expected : null, next: typeof next === "string" ? next : null };
+}
+
+/** Mirrors Desktop's Rack Capacity IPC trust boundary: every staged field
+ * edit includes its previously read value so the repository can reject a
+ * concurrent change without overwriting it. */
+export function parseRackFieldChanges(value: unknown): RackFieldChangeInput[] {
+  if (!Array.isArray(value)) throw new HttpError(400, "INVALID_BODY", "changes must be an array.");
+  if (value.length > 500) throw new HttpError(400, "INVALID_BODY", "Too many Rack Capacity changes in one save (max 500).");
+  return value.map((entry, index) => {
+    const source = object(entry, `changes[${index}]`);
+    const rowNumber = source.rowNumber;
+    if (typeof rowNumber !== "number" || !Number.isSafeInteger(rowNumber) || rowNumber < 1 || rowNumber > 100000) throw new HttpError(400, "INVALID_BODY", `changes[${index}].rowNumber must be a positive integer.`);
+    const rackId = source.rackId;
+    if (typeof rackId !== "string" || rackId.trim() === "" || rackId.length > 200) throw new HttpError(400, "INVALID_BODY", `changes[${index}].rackId must be a non-empty string.`);
+    const status = optionalRackTextEdit(source.status, `changes[${index}].status`);
+    if (status && (status.next === null || !RACK_CANONICAL_STATUSES.includes(status.next as (typeof RACK_CANONICAL_STATUSES)[number]))) throw new HttpError(400, "INVALID_BODY", `changes[${index}].status.next must be a canonical Rack Capacity status.`);
+    const cabinetSize = optionalRackTextEdit(source.cabinetSize, `changes[${index}].cabinetSize`);
+    const detail = optionalRackTextEdit(source.detail, `changes[${index}].detail`);
+    const deviceType = optionalRackTextEdit(source.deviceType, `changes[${index}].deviceType`);
+    const remarks = optionalRackTextEdit(source.remarks, `changes[${index}].remarks`);
+    if (!status && !cabinetSize && !detail && !deviceType && !remarks) throw new HttpError(400, "INVALID_BODY", `changes[${index}] must contain at least one Rack Capacity edit.`);
+    return { rowNumber, rackId, status: status ? { expected: status.expected, next: status.next } : undefined, cabinetSize, detail, deviceType, remarks };
+  });
+}
+
+export function parseRackUnitCapacity(value: unknown, expectedMonth: string): { totalU: number; usedU: number; expectedRowVersion: number | null; forceSnapshot: boolean } {
+  const source = object(value, "body");
+  const totalU = source.total_u;
+  const usedU = source.used_u;
+  if (typeof totalU !== "number" || !Number.isFinite(totalU) || totalU < 0) throw new HttpError(400, "INVALID_BODY", "total_u must be a non-negative finite number.");
+  if (typeof usedU !== "number" || !Number.isFinite(usedU) || usedU < 0) throw new HttpError(400, "INVALID_BODY", "used_u must be a non-negative finite number.");
+  if (source.month !== undefined && source.month !== expectedMonth) throw new HttpError(400, "INVALID_BODY", "month must match the requested month.");
+  return { totalU, usedU, expectedRowVersion: parseExpectedRowVersion(source.expected_row_version), forceSnapshot: source.force_snapshot === true };
 }
 
 export function parseProvenance(value: unknown): { sourceType: string; sourceFileHash?: string | null; sourceFileName?: string | null; sourceSheet?: string | null; sourceLocation?: string | null } | undefined {
