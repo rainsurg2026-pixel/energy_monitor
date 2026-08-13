@@ -21,6 +21,15 @@ assert.match(workspace, /onSave\(\{ ups: liveDraft\.ups/);
 assert.match(workspace, /onDraftChange=\{\(ups, srinakarinInputs\)/);
 assert.match(workspace, /aboveMobileNav/);
 assert.match(workspace, /pb-40 md:pb-24/);
+assert.match(workspace, /onDirtyChange\?: \(dirty: boolean\) => void/);
+assert.match(workspace, /onDirtyChange\?\.\(hasDraftChanges\)/);
+assert.match(app, /beforeunload/);
+assert.match(app, /unsaved Data Entry changes/);
+assert.match(app, /onDirtyChange=\{setEntryDirty\}/);
+assert.match(app, /setViewState/);
+assert.match(app, /const confirmDiscardEntry/);
+assert.match(app, /selected !== month && !confirmDiscardEntry\(\)/);
+assert.match(app, /id !== siteId && !confirmDiscardEntry\(\)/);
 assert.match(desktopHeader, /showHealth\?: boolean/);
 
-console.log("web entry workflow: reuses Desktop month/completion controls without claiming workbook health");
+console.log("web entry workflow: preserves Desktop save/navigation protection and month/completion controls");

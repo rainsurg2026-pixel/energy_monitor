@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AirTable from "../components/AirTable";
 import DashboardStats from "../components/DashboardStats";
 import DcTable from "../components/DcTable";
@@ -27,7 +27,7 @@ export function mergeEntryDraft(draft: MonthlyLog, updates: LiveDrafts): Monthly
 /** Full browser implementation of Desktop's entry workspace.
  * Save All first combines every in-page draft into one MonthlyLog and calls
  * the Web API once, preserving its row-version concurrency contract. */
-export default function WebEntryWorkspace({ siteName, siteCode, months, month, draft, busy, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onOpenReports, onNotice }: {
+export default function WebEntryWorkspace({ siteName, siteCode, months, month, draft, busy, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onOpenReports, onNotice, onDirtyChange }: {
   siteName: string;
   siteCode: string;
   months: string[];
@@ -40,6 +40,7 @@ export default function WebEntryWorkspace({ siteName, siteCode, months, month, d
   onSelectMonth: (month: string) => void;
   onOpenReports: () => void;
   onNotice: (message: string) => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const sectionApisRef = useRef<Partial<Record<Section, EntrySectionApi>>>({});
   const draftsRef = useRef<LiveDrafts>({});
@@ -52,6 +53,7 @@ export default function WebEntryWorkspace({ siteName, siteCode, months, month, d
   const completion = useMemo(() => computeCompletion(liveDraft), [liveDraft]);
   const registeredApis = () => Object.values(sectionApisRef.current).filter((api): api is EntrySectionApi => api !== undefined);
   const hasDraftChanges = useMemo(() => registeredApis().some(api => api.hasChanges()), [draftTick, draft]);
+  useEffect(() => { onDirtyChange?.(hasDraftChanges); }, [hasDraftChanges, onDirtyChange]);
   const latestMonth = months.at(-1) ?? null;
   const lastSaved = draft.lastSavedUps ?? draft.lastSavedAir ?? draft.lastSavedDc ?? draft.lastSavedEnergyCost ?? null;
 
