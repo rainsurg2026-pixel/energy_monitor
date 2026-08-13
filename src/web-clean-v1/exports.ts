@@ -313,6 +313,18 @@ export async function exportAllFacilitiesExcel(facilities: ExportFacility[]): Pr
   download(data, "all-facilities-energy-monitor.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
+function mergeReportHtml(reports: string[], title: string): string {
+  if (reports.length === 0) throw new Error("No facilities are available for export.");
+  const style = reports[0].match(/<style>([\s\S]*?)<\/style>/i)?.[1] ?? "";
+  const body = reports.map(report => report.match(/<body>([\s\S]*?)<\/body>/i)?.[1] ?? report).join('<div style="page-break-before:always"></div>');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${style}</style></head><body>${body}</body></html>`;
+}
+
+export function exportAllFacilitiesHtml(facilities: ExportFacility[], selectedMonth: string, fileName?: string): void {
+  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs)));
+  download(mergeReportHtml(reports, "Data Center Energy & Facility Monitor All Facilities"), fileName ?? "all-facilities-energy-monitor.html", "text/html;charset=utf-8");
+}
+
 const csvCell = (value: string | number | null): string => value === null ? "" : /[",\n]/.test(String(value)) ? `"${String(value).replace(/"/g, '""')}"` : String(value);
 const comparisonNumber = (value: number | null): string => value === null || !Number.isFinite(value) ? "" : value.toFixed(2);
 
@@ -390,6 +402,11 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
   };
 }
 
+export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs): void {
+  const report = buildReportHtml(facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs));
+  download(report, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.html`, "text/html;charset=utf-8");
+}
+
 /**
  * Opens the print popup - must be called synchronously, in the same event
  * loop turn as the triggering click, before any `await`. Browsers key
@@ -451,6 +468,44 @@ function comparisonTrend(site: ComparisonSite, months: string[]): ReportMonthlyR
       status: metrics ? "Complete" : "Partial"
     };
   });
+}
+
+function buildSiteComparisonReportData(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): ReportData {
+  const [primary, secondary] = data.sites;
+  if (!primary) throw new Error("No facilities are available for comparison.");
+  const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
+  return {
+    title: "Data Center Energy & Facility Monitor Site Comparison",
+    thaiSubtitle: "Site comparison report",
+    facility: "All Facilities",
+    sourceWorkbook: "Supabase PostgreSQL",
+    generatedAt: new Date().toISOString(),
+    appVersion: "2.3.1 Web Clean v1",
+    reportingMonth: referenceMonth,
+    historicalStart: trendMonths[0] ?? null,
+    historicalEnd: trendMonths.at(-1) ?? null,
+    status: "Complete",
+    validationWarnings: [],
+    monthlyRows: comparisonTrend(primary, trendMonths),
+    currentRow: null,
+    engineeringDashboard: null,
+    rack: null,
+    rackHistory: [],
+    rackUnitCapacity: [],
+    rackUnitCapacityImageDataUri: null,
+    rackUnitCapacityImageMeta: null,
+    comparison: {
+      self: comparisonRow(primary, referenceMonth),
+      other: secondary ? comparisonRow(secondary, referenceMonth) : null,
+      selfTrend: comparisonTrend(primary, trendMonths),
+      otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
+    },
+    rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
+  };
+}
+
+export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): void {
+  download(buildReportHtml(buildSiteComparisonReportData(data, referenceMonth, selfRack, otherRack)), fileName ?? `site-comparison-${referenceMonth}.html`, "text/html;charset=utf-8");
 }
 
 /** Uses Desktop report renderer; comparison values come from the scoped API DTO.
