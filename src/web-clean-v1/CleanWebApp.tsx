@@ -198,13 +198,19 @@ const DASHBOARD_REPORT_VIEWS = ["executive", "dashboard", "benchmark", "forecast
  *  UMDB/STS/OUDB hardware mapping table has no Web/DB equivalent at all
  *  (Desktop-only busbar data) and is left empty rather than fabricated. */
 function DashboardView({ logs, month, lang, upsGroupHistory }: { logs: MonthlyLog[]; month: string; lang: "th" | "en"; upsGroupHistory: UpsGroupHistoryReport | null }) {
-  const { selectedReportView } = useReport();
-  const upsMapping = useMemo(() => buildDashboardUpsMapping(upsGroupHistory, month), [upsGroupHistory, month]);
+  const { selectedReportView, selectedYear, selectedPeriod } = useReport();
+  const activeMonth = useMemo(() => {
+    const yearLogs = logs.filter(log => log.month.startsWith(`${selectedYear}-`)).sort((left, right) => right.month.localeCompare(left.month));
+    if (selectedPeriod === "Entire Year" || selectedPeriod === "YTD") return yearLogs[0]?.month ?? month;
+    if (selectedPeriod === "Last Month") return yearLogs[1]?.month ?? yearLogs[0]?.month ?? month;
+    return /^\d{2}$/.test(selectedPeriod) ? `${selectedYear}-${selectedPeriod}` : month;
+  }, [logs, month, selectedPeriod, selectedYear]);
+  const upsMapping = useMemo(() => buildDashboardUpsMapping(upsGroupHistory, activeMonth), [upsGroupHistory, activeMonth]);
   const upsGroupNames = useMemo(() => Array.from(new Set((upsGroupHistory?.rows ?? []).map(row => row.group))), [upsGroupHistory]);
   return (
     <div className="space-y-5">
       <UniversalFilterBar lang={lang} facility={null} upsGroupNames={upsGroupNames} reportViews={DASHBOARD_REPORT_VIEWS} />
-      {selectedReportView === "dashboard" && <DashboardSummary logs={logs} selectedMonth={month} lang={lang} upsMapping={upsMapping} />}
+      {selectedReportView === "dashboard" && <DashboardSummary logs={logs} selectedMonth={activeMonth} lang={lang} upsMapping={upsMapping} />}
       {selectedReportView === "executive" && <><ExecutiveDashboard logs={logs} lang={lang} /><SmartInsightPanel logs={logs} lang={lang} /></>}
       {selectedReportView === "benchmark" && <BenchmarkDashboard logs={logs} lang={lang} />}
       {selectedReportView === "forecast" && <ForecastDashboard logs={logs} lang={lang} />}
