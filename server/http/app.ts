@@ -48,6 +48,15 @@ function withPermission(res: Response, permission: (typeof PERMISSIONS)[keyof ty
 function actorNumber(userId: string): number { const value = Number(userId); if (!Number.isSafeInteger(value) || value < 1) throw new HttpError(500, "INVALID_ACTOR", "Authenticated actor identity is invalid."); return value; }
 function parseRole(value: unknown): Role { if (value !== "admin" && value !== "user") throw new HttpError(400, "INVALID_ROLE", "role must be admin or user."); return value; }
 
+/** Classify transport/database failures without exposing driver details. */
+export function databaseFailureCode(error: unknown): string | null {
+  const code = error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string"
+    ? (error as { code: string }).code
+    : "";
+  if (["28P01", "28000", "3D000", "42501", "0LP01", "42P01", "42703", "08P01", "08000", "08001", "08003", "08004", "08006", "53300", "53400", "57P01", "XX000", "CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "ERR_TLS_CERT_ALTNAME_INVALID", "SELF_SIGNED_CERT_IN_CHAIN", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ECONNREFUSED", "ECONNRESET", "ENETUNREACH", "ENOTFOUND", "ETIMEDOUT", "EHOSTUNREACH"].includes(code)) return code;
+  return null;
+}
+
 export function createApp(dependencies: AppDependencies) {
   const app = express();
   const service = dependencies.service ?? new ApiService(dependencies.repository);
@@ -70,8 +79,11 @@ export function createApp(dependencies: AppDependencies) {
   app.get("/api/v1/readiness", asyncRoute(async (_req, res) => sendOk(res, await service.readiness())));
 
   app.use("/api/v1", readOnlyMutationGuard.bind(null, dependencies.config));
-  app.use("/api/v1", createAuthContextMiddleware(auth));
 
+  // These endpoints are intentionally unauthenticated. Register them before
+  // session-context loading so an expired/stale em_session cookie cannot make
+  // a login request depend on a database session lookup before credentials
+  // reach the rate limiter and AuthService.
   app.get("/api/v1/auth/csrf", (req, res) => {
     const token = parseCookieHeader(req.header("cookie"))[SESSION_COOKIE_NAME];
     issueCsrfCookie(res, { secret: dependencies.config.csrfSecret, cookieOptions: csrfCookieOptions(dependencies.config.nodeEnv, dependencies.config.sessionLifetimeMs) }, token);
@@ -87,6 +99,8 @@ export function createApp(dependencies: AppDependencies) {
     issueCsrfCookie(res, { secret: dependencies.config.csrfSecret, cookieOptions: csrfCookieOptions(dependencies.config.nodeEnv, dependencies.config.sessionLifetimeMs) }, result.sessionToken);
     sendOk(res, { user: result.user, expiresAt: result.expiresAt.toISOString() });
   }));
+
+  app.use("/api/v1", createAuthContextMiddleware(auth));
 
   // All remaining mutation routes, including logout and password change, must
   // present the session-bound CSRF token.
@@ -146,6 +160,12 @@ export function createApp(dependencies: AppDependencies) {
     if (error instanceof PasswordPolicyError) { res.status(400).json({ ok: false, error: { code: error.code, message: error.message, requestId: request } }); return; }
     if (error && typeof error === "object" && (("type" in error && (error as { type?: unknown }).type === "entity.too.large") || ("status" in error && (error as { status?: unknown }).status === 413))) { res.status(413).json({ ok: false, error: { code: "PAYLOAD_TOO_LARGE", message: "Request body exceeds the permitted size.", requestId: request } }); return; }
     if (error instanceof SyntaxError) { res.status(400).json({ ok: false, error: { code: "INVALID_JSON", message: "Request body is not valid JSON.", requestId: request } }); return; }
+    const databaseCode = databaseFailureCode(error);
+    if (databaseCode) {
+      console.error(`[${request}] API database error`, databaseCode);
+      res.status(503).json({ ok: false, error: { code: "SERVICE_UNAVAILABLE", message: "The API service is temporarily unavailable.", requestId: request } });
+      return;
+    }
     console.error(`[${request}] API error`, error instanceof Error ? error.name : "UNKNOWN_ERROR");
     res.status(500).json({ ok: false, error: { code: "INTERNAL_ERROR", message: "An unexpected server error occurred.", requestId: request } });
   };
