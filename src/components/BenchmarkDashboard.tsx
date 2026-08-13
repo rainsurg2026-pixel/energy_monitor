@@ -4,6 +4,7 @@ import { MonthlyLog } from "../types";
 import { computeAllMetrics, ComputedMonthMetrics } from "../utils/analytics";
 import { formatMonthYear } from "../utils";
 import { formatNumber2, formatCompactNumber } from "../utils/numberFormatBridge";
+import { selectedDashboardMonth } from "../utils/reportPeriodSelection";
 import { 
   Building, 
   ChevronRight, 
@@ -41,11 +42,8 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
 
   // Current selected month metric
   const currentMonthMetric = useMemo(() => {
-    const exactMonth = /^(0[1-9]|1[0-2])$/.test(selectedPeriod)
-      ? `${selectedYear}-${selectedPeriod}`
-      : null;
-    const exact = exactMonth ? displayMetrics.find(metric => metric.month === exactMonth) : null;
-    return exact ?? displayMetrics[displayMetrics.length - 1] ?? null;
+    const selectedMonth = selectedDashboardMonth(displayMetrics, selectedYear, selectedPeriod, "");
+    return displayMetrics.find(metric => metric.month === selectedMonth) ?? displayMetrics[displayMetrics.length - 1] ?? null;
   }, [displayMetrics, selectedYear, selectedPeriod]);
 
   // Keep the selected reporting month as the right edge and show at most the

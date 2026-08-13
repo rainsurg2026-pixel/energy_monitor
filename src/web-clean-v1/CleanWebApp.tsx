@@ -11,6 +11,7 @@ import HistoricalExplorer from "../components/HistoricalExplorer";
 import HistoricalCharts from "../components/HistoricalCharts";
 import { createEmptyLog } from "../utils";
 import { currentMonth } from "../utils/monthUtils";
+import { selectedDashboardMonth } from "../utils/reportPeriodSelection";
 import { computeCompletion } from "../utils/completion";
 import type { MonthlyLog } from "../types";
 import type { UpsGroupHistoryReport, RackCapacitySummary } from "../reports/reportTypes";
@@ -246,12 +247,7 @@ const DASHBOARD_REPORT_VIEWS = ["executive", "dashboard", "benchmark", "forecast
  *  (Desktop-only busbar data) and is left empty rather than fabricated. */
 function DashboardView({ logs, month, lang, upsGroupHistory }: { logs: MonthlyLog[]; month: string; lang: "th" | "en"; upsGroupHistory: UpsGroupHistoryReport | null }) {
   const { selectedReportView, selectedYear, selectedPeriod } = useReport();
-  const activeMonth = useMemo(() => {
-    const yearLogs = logs.filter(log => log.month.startsWith(`${selectedYear}-`)).sort((left, right) => right.month.localeCompare(left.month));
-    if (selectedPeriod === "Entire Year" || selectedPeriod === "YTD") return yearLogs[0]?.month ?? month;
-    if (selectedPeriod === "Last Month") return yearLogs[1]?.month ?? yearLogs[0]?.month ?? month;
-    return /^\d{2}$/.test(selectedPeriod) ? `${selectedYear}-${selectedPeriod}` : month;
-  }, [logs, month, selectedPeriod, selectedYear]);
+  const activeMonth = useMemo(() => selectedDashboardMonth(logs, selectedYear, selectedPeriod, month), [logs, month, selectedPeriod, selectedYear]);
   const upsMapping = useMemo(() => buildDashboardUpsMapping(upsGroupHistory, activeMonth), [upsGroupHistory, activeMonth]);
   const upsGroupNames = useMemo(() => Array.from(new Set((upsGroupHistory?.rows ?? []).map(row => row.group))), [upsGroupHistory]);
   return (
