@@ -7,6 +7,12 @@ import { getPreviousMonthStr } from "./utils";
  * this constant only controls the active reporting selector. */
 export const REPORTING_YEAR = "2026";
 
+/** Accept only a year that is present in the loaded report data. */
+export function resolveReportYear(requested: string, availableYears: readonly string[], fallbackYear: string): string {
+  const normalized = requested.trim();
+  return /^\d{4}$/u.test(normalized) && availableYears.includes(normalized) ? normalized : fallbackYear;
+}
+
 export interface ReportContextType {
   // Filters
   selectedYear: string; // e.g. "2026", "All", "Current Year"
@@ -77,7 +83,7 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
 
   // Load persistent user preferences or defaults
   const [selectedYear, setSelectedYearState] = useState<string>(() => {
-    return activeDisplayPeriod;
+    return localStorage.getItem("report_pref_year") || activeDisplayPeriod;
   });
   const [selectedPeriod, setSelectedPeriodState] = useState<string>(() => {
     return localStorage.getItem("report_pref_period") || "Entire Year";
@@ -109,9 +115,10 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
   const [refreshCounter, setRefreshCounter] = useState<number>(0);
 
   // Helper setters that also persist to LocalStorage
-  const setSelectedYear = (_val: string) => {
-    setSelectedYearState(activeDisplayPeriod);
-    localStorage.setItem("report_pref_year", activeDisplayPeriod);
+  const setSelectedYear = (val: string) => {
+    const nextYear = resolveReportYear(val, availableYears, activeDisplayPeriod);
+    setSelectedYearState(nextYear);
+    localStorage.setItem("report_pref_year", nextYear);
   };
   const setSelectedPeriod = (val: string) => {
     setSelectedPeriodState(val);
@@ -153,17 +160,17 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     setRefreshCounter(prev => prev + 1);
   };
 
-  // Keep the dashboard selector bound to the persisted global display period.
-  // This does not mutate availableYears or syncedLogs, so historical data is
-  // retained for calculations and source-data operations.
+  // Keep an invalid/stale selection safe without forcing valid historical
+  // years back to the current display-period year.
   useEffect(() => {
-    if (selectedYear !== activeDisplayPeriod) {
-      setSelectedYearState(activeDisplayPeriod);
+    const nextYear = resolveReportYear(selectedYear, availableYears, activeDisplayPeriod);
+    if (nextYear !== selectedYear) {
+      setSelectedYearState(nextYear);
     }
-    if (localStorage.getItem("report_pref_year") !== activeDisplayPeriod) {
-      localStorage.setItem("report_pref_year", activeDisplayPeriod);
+    if (localStorage.getItem("report_pref_year") !== nextYear) {
+      localStorage.setItem("report_pref_year", nextYear);
     }
-  }, [activeDisplayPeriod, selectedYear]);
+  }, [activeDisplayPeriod, availableYears, selectedYear]);
 
   // Derived calculations and configurations
   const contextValue = useMemo<ReportContextType>(() => ({

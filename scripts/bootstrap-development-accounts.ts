@@ -18,7 +18,7 @@ const config = loadServerConfig(process.env, { requireDatabase: true, requireRun
 const pool = createPool(config, "migration");
 const repository = new PostgresAuthRepository(pool);
 const hasher = new Argon2idPasswordHasher();
-const developmentPasswordPolicy = { minLength: 8, maxLength: 1024 };
+const developmentPasswordPolicy = { minLength: 6, maxLength: 1024 };
 
 const accounts = [
   { username: "admin", displayName: "Data Center Energy & Facility Monitor Administrator", role: "admin" as const, password: adminPassword },

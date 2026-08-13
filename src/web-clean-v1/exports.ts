@@ -368,17 +368,32 @@ export function openReportPopup(name: string): Window {
   return popup;
 }
 
+/** Write the report before printing and handle both possible document-load
+ * states. `document.close()` can complete before a listener is registered;
+ * checking readyState and scheduling a fallback avoids a blank/stuck popup. */
+export function renderReportPopup(popup: Window, html: string, fileName?: string): void {
+  popup.document.open();
+  popup.document.write(html);
+  popup.document.close();
+  if (fileName) popup.document.title = fileName;
+  let printed = false;
+  const print = () => {
+    if (printed) return;
+    printed = true;
+    popup.focus();
+    popup.print();
+  };
+  popup.addEventListener("load", print, { once: true });
+  if (popup.document.readyState !== "loading") popup.setTimeout(print, 0);
+}
+
 /** Desktop's print HTML, populated only with the selected facility's API DTOs.
  *  fileName (without extension) becomes the print dialog's suggested "Save
  *  as PDF" name, via document.title - the browser convention for print-to-PDF.
  *  `popup` must come from openReportPopup(), called synchronously on click. */
 export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly import("../reporting/reportingTypes").ReportSectionId[]): void {
   const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs);
-  popup.document.open();
-  popup.document.write(buildReportHtml(data, sections));
-  popup.document.close();
-  if (fileName) popup.document.title = fileName;
-  popup.addEventListener("load", () => popup.print(), { once: true });
+  renderReportPopup(popup, buildReportHtml(data, sections), fileName);
 }
 
 function comparisonRow(site: ComparisonSite, referenceMonth: string) {
@@ -452,10 +467,7 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
     },
     rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
   };
-  popup.document.open();
-  popup.document.write(buildReportHtml(report));
-  popup.document.close();
-  popup.addEventListener("load", () => popup.print(), { once: true });
+  renderReportPopup(popup, buildReportHtml(report));
 }
 
 export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[]): void {
@@ -513,8 +525,5 @@ export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[
   const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
   const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
   const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
-  popup.document.open();
-  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy & Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`);
-  popup.document.close();
-  popup.addEventListener("load", () => popup.print(), { once: true });
+  renderReportPopup(popup, `<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy & Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`);
 }

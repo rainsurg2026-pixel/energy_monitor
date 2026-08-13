@@ -44,6 +44,7 @@ import { ReportRegistry } from "../reporting/ReportRegistry";
 import type { ReportHistoryItem, ReportSectionId } from "../reporting/reportingTypes";
 
 type View = "dashboard" | "entry" | "racks" | "history" | "comparison" | "reports" | "settings" | "admin";
+const HISTORY_DATA_VIEWS: ReadonlySet<View> = new Set(["dashboard", "entry", "racks", "history", "reports"]);
 type Site = FacilitySite;
 type Bootstrap = BootstrapState;
 type BootstrapApi = Omit<Bootstrap, "sites"> & { sites: Array<{ site: Omit<Site, "availableMonths" | "latestAvailableMonth">; availableMonths: string[]; latestAvailableMonth: string | null }> };
@@ -57,7 +58,7 @@ type PendingNavigation = () => void | Promise<void>;
 // show the previous month during the first hours of a new month in Thailand.
 const todayMonth = currentMonth;
 const readError = (error: unknown) => error instanceof Error ? error.message : "The request could not be completed.";
-const PASSWORD_MIN_LENGTH = 12;
+const PASSWORD_MIN_LENGTH = 6;
 const passwordHelp = (lang: AppLanguage) => lang === "th" ? `ต้องมีอย่างน้อย ${PASSWORD_MIN_LENGTH} ตัวอักษร` : `Use at least ${PASSWORD_MIN_LENGTH} characters.`;
 const readStoredFacility = (userId: string) => { try { return sessionStorage.getItem(facilityStorageKey(userId)); } catch { return null; } };
 const storeFacility = (userId: string, siteId: number) => { try { sessionStorage.setItem(facilityStorageKey(userId), String(siteId)); } catch { /* facility remains selected in memory when storage is unavailable */ } };
@@ -91,12 +92,25 @@ export default function CleanWebApp() {
   // is still restored by the user-scoped preference effect below.
   const [theme, setTheme] = useState<Theme>("light");
   const [lang, setLang] = useState<AppLanguage>("th");
+  const activeSiteIdRef = useRef<number | null>(null);
+  const historyRequestsRef = useRef(new Map<number, Promise<HistoryData>>());
+  const loadedPageKeyRef = useRef<string | null>(null);
+  const pageLoadGenerationRef = useRef(0);
   const site = useMemo(() => bootstrap?.sites.find(item => item.id === siteId) ?? null, [bootstrap, siteId]);
 
   const loadHistory = useCallback(async (id: number) => {
-    const result = await api<HistoryData>(`/sites/${id}/history`);
-    setHistory(result);
-    return result;
+    const existing = historyRequestsRef.current.get(id);
+    if (existing) return existing;
+    const request = api<HistoryData>(`/sites/${id}/history`).then(result => {
+      if (activeSiteIdRef.current === id) setHistory(result);
+      return result;
+    });
+    historyRequestsRef.current.set(id, request);
+    void request.then(
+      () => { if (historyRequestsRef.current.get(id) === request) historyRequestsRef.current.delete(id); },
+      () => { if (historyRequestsRef.current.get(id) === request) historyRequestsRef.current.delete(id); }
+    );
+    return request;
   }, []);
   const loadMonth = useCallback(async (id: number, selectedMonth: string, previous?: HistoryData) => {
     const result = await api<MonthData>(`/sites/${id}/periods/${selectedMonth}`);
@@ -118,6 +132,7 @@ export default function CleanWebApp() {
       }
       return { ...empty, energyCalculation: structuredClone(seed.energyCalculation), air: blankAir };
     })();
+    if (activeSiteIdRef.current !== id) return;
     setMonth(selectedMonth); setRowVersion(result.rowVersion); setDraft(next);
   }, []);
   const initialize = useCallback(async () => {
@@ -130,16 +145,29 @@ export default function CleanWebApp() {
       const result = normalizeBootstrap(await api<BootstrapApi>("/bootstrap"));
       const stored = readStoredFacility(user.id);
       const first = selectedFacility(result.sites, stored);
+      activeSiteIdRef.current = first?.id ?? null;
       setBootstrap(result); setSiteId(first?.id ?? null);
       if (!first) { setFacilityError("No facility is available for this account."); return; }
       const records = await loadHistory(first.id);
       await loadMonth(first.id, first.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth()), records);
+      loadedPageKeyRef.current = `${first.id}:dashboard`;
     } catch (error) { setFacilityError(`Unable to load facilities: ${readError(error)}`); throw error; }
     finally { setFacilityLoading(false); }
   }, [loadHistory, loadMonth]);
   useEffect(() => { void initialize().catch(error => setNotice(readError(error))); }, [initialize]);
   useEffect(() => { if (notice) { const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); } }, [notice]);
   useEffect(() => { if (!user) return; let savedTheme: string | null = null; let savedLanguage: string | null = null; try { savedTheme = localStorage.getItem(themeStorageKey(user.id)); savedLanguage = localStorage.getItem(languageStorageKey(user.id)); } catch { /* browser storage is optional; defaults remain available */ } const nextTheme = normalizeTheme(savedTheme); setTheme(nextTheme); applyTheme(nextTheme); if (savedLanguage !== null) setLang(normalizeLanguage(savedLanguage)); }, [user]);
+  useEffect(() => {
+    if (!user || !siteId || facilityLoading || !HISTORY_DATA_VIEWS.has(view)) return;
+    const pageKey = `${siteId}:${view}`;
+    if (loadedPageKeyRef.current === pageKey) return;
+    const generation = ++pageLoadGenerationRef.current;
+    setBusy(true);
+    void loadHistory(siteId)
+      .then(() => { if (pageLoadGenerationRef.current === generation) loadedPageKeyRef.current = pageKey; })
+      .catch(error => { if (pageLoadGenerationRef.current === generation) setNotice(`Unable to load ${view} data: ${readError(error)}`); })
+      .finally(() => { if (pageLoadGenerationRef.current === generation) setBusy(false); });
+  }, [facilityLoading, loadHistory, siteId, user, view]);
   useEffect(() => { if (!entryDirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [entryDirty]);
   type WebUndoEntry = { el: HTMLInputElement | HTMLSelectElement; kind: "input" | "select" | "checkbox"; value: string; checked?: boolean };
   const undoStackRef = useRef<WebUndoEntry[]>([]);
@@ -229,7 +257,7 @@ export default function CleanWebApp() {
 
   const deferNavigation = (action: PendingNavigation) => { if (entryDirty) setPendingNavigation(() => action); else void action(); };
   const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setViewState(next); }); };
-  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setBusy(true); setFacilityError(null); try { setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id); await loadMonth(id, nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()), records); } catch (error) { setFacilityError(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setBusy(false); } }; deferNavigation(action); };
+  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setBusy(true); setFacilityError(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id); await loadMonth(id, nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()), records); loadedPageKeyRef.current = `${id}:${view}`; } catch (error) { setFacilityError(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setBusy(false); } }; deferNavigation(action); };
   const selectMonth = async (selected: string, exists = true) => {
     if (!siteId || selected === month) return;
     const action = async () => {
@@ -265,7 +293,7 @@ export default function CleanWebApp() {
       setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
     } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
-  const logout = async () => { const action = async () => { setEntryDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { setUser(null); setBootstrap(null); setDraft(null); } }; deferNavigation(action); };
+  const logout = async () => { const action = async () => { setEntryDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { activeSiteIdRef.current = null; loadedPageKeyRef.current = null; setUser(null); setBootstrap(null); setDraft(null); } }; deferNavigation(action); };
   const registerEntryActions = useCallback((actions: EntryWorkspaceActions | null) => { entryActionsRef.current = actions; }, []);
   const discardPendingNavigation = () => { const action = pendingNavigation; setPendingNavigation(null); setEntryDirty(false); if (action) void action(); };
   const savePendingNavigation = async () => { const action = pendingNavigation; if (!action) return; const saved = await entryActionsRef.current?.saveAll(); if (!saved) return; setPendingNavigation(null); setEntryDirty(false); void action(); };
@@ -513,7 +541,17 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
   // action() may throw synchronously (e.g. openReportPopup() when the
   // popup was blocked) - awaited inside the try so both a synchronous
   // throw and a rejected promise report the same friendly message.
-  const run = (action: () => void | Promise<void>, success: string, historyFilename: string) => { void (async () => { try { await action(); rememberReport(historyFilename); setMessage(success); } catch (error) { setMessage(readError(error)); } })(); };
+  // Invoke the action in the click handler itself. PDF actions must call
+  // window.open() before the first async boundary or the browser may block
+  // the report popup; only the completion bookkeeping is deferred.
+  const run = (action: () => void | Promise<void>, success: string, historyFilename: string) => {
+    let result: void | Promise<void>;
+    try { result = action(); }
+    catch (error) { setMessage(readError(error)); return; }
+    void Promise.resolve(result)
+      .then(() => { rememberReport(historyFilename); setMessage(success); })
+      .catch(error => setMessage(readError(error)));
+  };
 
   const contextMonth = effectiveMonth(period, month);
   const reportContextKey = `${siteName}\u0000${contextMonth}`;
