@@ -19,5 +19,8 @@ assert.match(workspace, /Save All sends one concurrency-protected Production API
 assert.match(workspace, /listMissingFields\(liveDraft\)/);
 assert.match(workspace, /onSave\(\{ ups: liveDraft\.ups/);
 assert.match(workspace, /onDraftChange=\{\(ups, srinakarinInputs\)/);
+assert.match(workspace, /aboveMobileNav/);
+assert.match(workspace, /pb-40 md:pb-24/);
+assert.match(desktopHeader, /showHealth\?: boolean/);
 
 console.log("web entry workflow: reuses Desktop month/completion controls without claiming workbook health");

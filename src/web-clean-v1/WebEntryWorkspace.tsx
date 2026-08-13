@@ -67,7 +67,7 @@ export default function WebEntryWorkspace({ siteName, siteCode, months, month, d
   }, [busy, hasDraftChanges, liveDraft, onNotice, onSave, savingAll]);
   const jumpToSection = useCallback((section: Section) => document.getElementById(`entry-section-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), []);
 
-  return <div className="space-y-5 pb-24">
+  return <div className="space-y-5 pb-40 md:pb-24">
     <WebEntryWorkflowHeader facilityName={siteName} months={months} selectedMonth={month} draft={liveDraft} onSelectMonth={onSelectMonth} />
     <WebHistoricalEditNotice selectedMonth={month} latestMonth={latestMonth} onReturnToLatest={() => { if (latestMonth) onSelectMonth(latestMonth); }} />
     <DashboardStats log={liveDraft} />
@@ -77,6 +77,6 @@ export default function WebEntryWorkspace({ siteName, siteCode, months, month, d
       <div id="entry-section-dc"><DcTable monthStr={month} initialRecords={draft.dc} lastSaved={draft.lastSavedDc} onSave={dc => void onSave({ dc })} registerApi={register("dc")} onDraftChange={dc => reportDraft("dc", dc)} /></div>
       <div id="entry-section-energy"><EnergyCostTable monthStr={month} initialRecord={draft.energyCost} lastSaved={draft.lastSavedEnergyCost} onSave={energyCost => void onSave({ energyCost })} registerApi={register("energy")} onDraftChange={energy => reportDraft("energy", energy)} /></div>
     </section>
-    <StickyEntryToolbar lang="en" completion={completion} lastSaved={lastSaved} workbookStatus={savingAll || busy ? "busy" : hasDraftChanges ? "dirty" : "saved"} hasDraftChanges={hasDraftChanges} facilityName={siteName} monthLabel={month} provider="Production API" onSaveAll={saveAll} onResetAll={resetAll} onExport={onOpenReports} onJumpToSection={jumpToSection} />
+    <StickyEntryToolbar lang="en" completion={completion} lastSaved={lastSaved} workbookStatus={savingAll || busy ? "busy" : hasDraftChanges ? "dirty" : "saved"} hasDraftChanges={hasDraftChanges} aboveMobileNav facilityName={siteName} monthLabel={month} provider="Production API" onSaveAll={saveAll} onResetAll={resetAll} onExport={onOpenReports} onJumpToSection={jumpToSection} />
   </div>;
 }
