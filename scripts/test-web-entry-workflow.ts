@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { formatTimestamp } from "../src/utils";
+import { formatWebSavedTimestamp } from "../src/web-clean-v1/formatting";
 
 const header = readFileSync(new URL("../src/web-clean-v1/WebEntryWorkflowHeader.tsx", import.meta.url), "utf8");
 const workspace = readFileSync(new URL("../src/web-clean-v1/WebEntryWorkspace.tsx", import.meta.url), "utf8");
@@ -11,6 +13,10 @@ const dcTable = readFileSync(new URL("../src/components/DcTable.tsx", import.met
 const energyCostTable = readFileSync(new URL("../src/components/EnergyCostTable.tsx", import.meta.url), "utf8");
 const srinakarinTable = readFileSync(new URL("../src/components/SrinakarinPowerPhaseTable.tsx", import.meta.url), "utf8");
 const dashboardStats = readFileSync(new URL("../src/components/DashboardStats.tsx", import.meta.url), "utf8");
+
+assert.equal(formatWebSavedTimestamp("2026-08-13T03:30:00.000Z"), formatTimestamp(new Date("2026-08-13T03:30:00.000Z")));
+assert.equal(formatWebSavedTimestamp("legacy saved marker"), "legacy saved marker");
+assert.equal(formatWebSavedTimestamp(null), null);
 
 assert.match(header, /import EntryWorkflowHeader/);
 assert.match(header, /workbookLabel="Production API"/);
@@ -33,6 +39,11 @@ assert.match(workspace, /onDirtyChange\?: \(dirty: boolean\) => void/);
 assert.match(workspace, /onDirtyChange\?\.\(hasDraftChanges\)/);
 assert.match(workspace, /EntryWorkspaceActions/);
 assert.match(workspace, /onRegisterActions\?:/);
+assert.match(header, /formatWebSavedTimestamp\(/);
+assert.match(workspace, /formatWebSavedTimestamp\(draft\.lastSavedUps\)/);
+assert.match(workspace, /formatWebSavedTimestamp\(draft\.lastSavedAir\)/);
+assert.match(workspace, /formatWebSavedTimestamp\(draft\.lastSavedDc\)/);
+assert.match(workspace, /formatWebSavedTimestamp\(draft\.lastSavedEnergyCost\)/);
 assert.match(workspace, /<UpsTable lang=\{lang\}/);
 assert.match(workspace, /<AirTable lang=\{lang\}/);
 assert.match(workspace, /<DcTable lang=\{lang\}/);

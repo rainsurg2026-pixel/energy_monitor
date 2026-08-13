@@ -2,6 +2,7 @@ import EntryWorkflowHeader from "../components/EntryWorkflowHeader";
 import { computeCompletion } from "../utils/completion";
 import type { MonthlyLog } from "../types";
 import { AlertCircle } from "lucide-react";
+import { formatWebSavedTimestamp } from "./formatting";
 
 /** Reuses Desktop's entry month workflow with API-backed data only.
  * Workbook health is deliberately omitted: the browser has no workbook to
@@ -25,7 +26,7 @@ export default function WebEntryWorkflowHeader({
   allowedStartMonth: string;
   allowedEndMonth: string;
 }) {
-  const lastSaved = draft.lastSavedUps ?? draft.lastSavedAir ?? draft.lastSavedDc ?? draft.lastSavedEnergyCost ?? null;
+  const lastSaved = formatWebSavedTimestamp(draft.lastSavedUps ?? draft.lastSavedAir ?? draft.lastSavedDc ?? draft.lastSavedEnergyCost ?? null);
   return <EntryWorkflowHeader
     lang={lang}
     facilityName={facilityName}

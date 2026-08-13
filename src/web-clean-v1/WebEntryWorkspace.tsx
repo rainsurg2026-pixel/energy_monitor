@@ -9,6 +9,7 @@ import UpsTable from "../components/UpsTable";
 import { computeCompletion, listMissingFields, type EntrySectionApi } from "../utils/completion";
 import type { AirRecord, DcRecord, EnergyCostRecord, MonthlyLog, SrinakarinInputSnapshot, UpsRecord } from "../types";
 import WebEntryWorkflowHeader, { WebHistoricalEditNotice } from "./WebEntryWorkflowHeader";
+import { formatWebSavedTimestamp } from "./formatting";
 
 type Section = "ups" | "air" | "dc" | "energy";
 export type LiveDrafts = { ups?: UpsRecord[]; srinakarinInputs?: SrinakarinInputSnapshot; air?: AirRecord; dc?: DcRecord[]; energy?: EnergyCostRecord };
@@ -59,7 +60,7 @@ export default function WebEntryWorkspace({ lang, siteName, siteCode, months, mo
   const hasDraftChanges = useMemo(() => registeredApis().some(api => api.hasChanges()), [draftTick, draft]);
   useEffect(() => { onDirtyChange?.(hasDraftChanges); }, [hasDraftChanges, onDirtyChange]);
   const latestMonth = months.at(-1) ?? null;
-  const lastSaved = draft.lastSavedUps ?? draft.lastSavedAir ?? draft.lastSavedDc ?? draft.lastSavedEnergyCost ?? null;
+  const lastSaved = formatWebSavedTimestamp(draft.lastSavedUps ?? draft.lastSavedAir ?? draft.lastSavedDc ?? draft.lastSavedEnergyCost ?? null);
 
   const resetAll = useCallback(() => {
     registeredApis().forEach(api => api.reset());
@@ -81,10 +82,10 @@ export default function WebEntryWorkspace({ lang, siteName, siteCode, months, mo
     <WebHistoricalEditNotice lang={lang} selectedMonth={month} latestMonth={latestMonth} onReturnToLatest={() => { if (latestMonth) onSelectMonth(latestMonth); }} />
     <DashboardStats lang={lang} log={liveDraft} />
     <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">{th ? "กรอกข้อมูลรายเดือน" : "Monthly Data Entry"}</h2><p className="mt-1 text-sm text-slate-400">{th ? `กรอกค่าการทำงานที่ตรวจสอบแล้วสำหรับ ${month}; ปุ่มบันทึกทั้งหมดจะส่งข้อมูลไปยัง Production API ในคำขอเดียว` : `Enter validated operating readings for ${month}; Save All sends one concurrency-protected Production API update.`}</p></div>
-      <div id="entry-section-ups">{siteCode === "srinakarin" ? <SrinakarinPowerPhaseTable lang={lang} monthStr={month} initialLog={draft} lastSaved={draft.lastSavedUps} onSave={(ups, srinakarinInputs) => void onSave({ ups, srinakarinInputs })} registerApi={register("ups")} onDraftChange={(ups, srinakarinInputs) => { reportDraft("ups", ups); reportDraft("srinakarinInputs", srinakarinInputs); }} /> : <UpsTable lang={lang} monthStr={month} initialRecords={draft.ups} lastSaved={draft.lastSavedUps} onSave={ups => void onSave({ ups })} registerApi={register("ups")} onDraftChange={ups => reportDraft("ups", ups)} />}</div>
-      <div id="entry-section-air"><AirTable lang={lang} monthStr={month} initialRecord={draft.air} lastSaved={draft.lastSavedAir} meterFields={draft.energyCalculation?.airFields} onSave={air => void onSave({ air })} registerApi={register("air")} onDraftChange={air => reportDraft("air", air)} /></div>
-      <div id="entry-section-dc"><DcTable lang={lang} monthStr={month} initialRecords={draft.dc} lastSaved={draft.lastSavedDc} onSave={dc => void onSave({ dc })} registerApi={register("dc")} onDraftChange={dc => reportDraft("dc", dc)} /></div>
-      <div id="entry-section-energy"><EnergyCostTable lang={lang} monthStr={month} initialRecord={draft.energyCost} lastSaved={draft.lastSavedEnergyCost} onSave={energyCost => void onSave({ energyCost })} registerApi={register("energy")} onDraftChange={energy => reportDraft("energy", energy)} /></div>
+      <div id="entry-section-ups">{siteCode === "srinakarin" ? <SrinakarinPowerPhaseTable lang={lang} monthStr={month} initialLog={draft} lastSaved={formatWebSavedTimestamp(draft.lastSavedUps)} onSave={(ups, srinakarinInputs) => void onSave({ ups, srinakarinInputs })} registerApi={register("ups")} onDraftChange={(ups, srinakarinInputs) => { reportDraft("ups", ups); reportDraft("srinakarinInputs", srinakarinInputs); }} /> : <UpsTable lang={lang} monthStr={month} initialRecords={draft.ups} lastSaved={formatWebSavedTimestamp(draft.lastSavedUps)} onSave={ups => void onSave({ ups })} registerApi={register("ups")} onDraftChange={ups => reportDraft("ups", ups)} />}</div>
+      <div id="entry-section-air"><AirTable lang={lang} monthStr={month} initialRecord={draft.air} lastSaved={formatWebSavedTimestamp(draft.lastSavedAir)} meterFields={draft.energyCalculation?.airFields} onSave={air => void onSave({ air })} registerApi={register("air")} onDraftChange={air => reportDraft("air", air)} /></div>
+      <div id="entry-section-dc"><DcTable lang={lang} monthStr={month} initialRecords={draft.dc} lastSaved={formatWebSavedTimestamp(draft.lastSavedDc)} onSave={dc => void onSave({ dc })} registerApi={register("dc")} onDraftChange={dc => reportDraft("dc", dc)} /></div>
+      <div id="entry-section-energy"><EnergyCostTable lang={lang} monthStr={month} initialRecord={draft.energyCost} lastSaved={formatWebSavedTimestamp(draft.lastSavedEnergyCost)} onSave={energyCost => void onSave({ energyCost })} registerApi={register("energy")} onDraftChange={energy => reportDraft("energy", energy)} /></div>
     </section>
     <StickyEntryToolbar lang={lang} completion={completion} lastSaved={lastSaved} workbookStatus={savingAll || busy ? "busy" : hasDraftChanges ? "dirty" : "saved"} hasDraftChanges={hasDraftChanges} aboveMobileNav facilityName={siteName} monthLabel={month} provider="Production API" onSaveAll={saveAll} onResetAll={resetAll} onExport={onOpenReports} onJumpToSection={jumpToSection} />
   </div>;
