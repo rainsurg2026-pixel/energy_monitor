@@ -14,5 +14,7 @@ assert.match(header, /Return to latest/);
 assert.match(desktopHeader, /showHealth\?: boolean/);
 assert.match(app, /<WebEntryWorkflowHeader facilityName=\{site\.name\}/);
 assert.match(app, /<WebHistoricalEditNotice selectedMonth=\{month\}/);
+assert.match(app, /import DashboardStats from "\.\.\/components\/DashboardStats"/);
+assert.match(app, /<DashboardStats log=\{draft\} \/>/);
 
 console.log("web entry workflow: reuses Desktop month/completion controls without claiming workbook health");
