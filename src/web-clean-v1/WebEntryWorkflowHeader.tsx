@@ -22,7 +22,7 @@ export default function WebEntryWorkflowHeader({
   months: string[];
   selectedMonth: string;
   draft: MonthlyLog;
-  onSelectMonth: (month: string) => void;
+  onSelectMonth: (month: string, exists: boolean) => void;
   allowedStartMonth: string;
   allowedEndMonth: string;
 }) {
@@ -38,7 +38,7 @@ export default function WebEntryWorkflowHeader({
     health={null}
     showHealth={false}
     lastSaved={lastSaved}
-    onSelectMonth={target => onSelectMonth(target)}
+    onSelectMonth={onSelectMonth}
     canSelectMonth={target => target >= allowedStartMonth && target <= allowedEndMonth}
   />;
 }
