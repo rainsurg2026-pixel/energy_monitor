@@ -98,12 +98,30 @@ function addTypedSheet(workbook: any, name: string, headers: string[], rows: Exc
   const sheet = workbook.addWorksheet(name);
   sheet.addRow(headers);
   for (const values of rows) sheet.addRow(values);
-  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" }, size: 10 };
+  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF17324D" } };
+  sheet.getRow(1).alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  sheet.getRow(1).height = 34;
   sheet.views = [{ state: "frozen", ySplit: 1 }];
   sheet.autoFilter = { from: "A1", to: { row: 1, column: Math.max(1, headers.length) } };
-  sheet.eachRow({ includeEmpty: false }, (row: any, rowNumber: number) => {
+  sheet.pageSetup = {
+    orientation: "landscape",
+    fitToPage: true,
+    fitToWidth: 1,
+    fitToHeight: 0,
+    paperSize: 9,
+    margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 }
+  };
+  sheet.headerFooter.oddHeader = `&B${name}&B`;
+  sheet.headerFooter.oddFooter = `Data Center Energy & Facility Monitor | ${name} | Page &P of &N`;
+  sheet.properties.defaultRowHeight = 19;
+  sheet.eachRow({ includeEmpty: true }, (row: any, rowNumber: number) => {
     if (rowNumber === 1) return;
+    row.eachCell({ includeEmpty: true }, (cell: any) => {
+      cell.border = { bottom: { style: "hair", color: { argb: "FFE2E8F0" } } };
+      cell.alignment = { vertical: "middle", wrapText: false };
+      if (rowNumber % 2 === 0) cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF8FAFC" } };
+    });
     row.eachCell({ includeEmpty: false }, (cell: any) => {
       if (typeof cell.value === "number") cell.numFmt = "#,##0.00";
       if (cell.value instanceof Date) cell.numFmt = "dd-mmm-yy";

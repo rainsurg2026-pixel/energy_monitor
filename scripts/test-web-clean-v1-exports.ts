@@ -147,6 +147,8 @@ check("Excel keeps the Air calculation saved date beside derived values", typedA
 check("Excel keeps the DC calculation saved date beside derived values", typedDcCalculations.getCell("I2").value instanceof Date && typedDcCalculations.getCell("I2").numFmt === "dd-mmm-yy");
 check("Excel includes raw, saved, and calculated energy values", typedEnergy.columnCount === 13 && typedEnergy.getCell("B2").value === 1000.125 && typedEnergy.getCell("E2").value === 4100.25 && typedEnergy.getCell("F2").value === 4.1 && String(typedEnergy.getCell("M1").value).includes("Calculated"));
 check("Excel includes every Srinakarin phase-level entry value", typedPhase.rowCount === 5 && typedPhase.getCell("D2").value === 230.125);
+check("Excel worksheets use the Desktop print layout", typedSummary?.pageSetup.orientation === "landscape" && typedSummary?.pageSetup.fitToWidth === 1 && typedSummary?.views[0]?.state === "frozen" && typedSummary?.headerFooter.oddHeader.includes("Summary"));
+check("Excel worksheets use wrapped headers and banded detail rows", typedSummary?.getRow(1).alignment.wrapText === true && (typedSummary?.getRow(2).getCell(1).fill as any).fgColor?.argb === "FFF8FAFC" && typedSummary?.getRow(2).getCell(1).border.bottom?.style === "hair");
 for (const sheet of typedReread.worksheets) {
   sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => { if (rowNumber > 1) row.eachCell({ includeEmpty: false }, cell => { if (typeof cell.value === "number") check(`${sheet.name} ${cell.address}: numeric values use two decimals`, cell.numFmt === "#,##0.00"); if (cell.value instanceof Date) check(`${sheet.name} ${cell.address}: dates use dd-Mmm-yy`, cell.numFmt === "dd-mmm-yy"); }); });
 }
