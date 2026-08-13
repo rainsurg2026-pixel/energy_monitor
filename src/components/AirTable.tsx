@@ -9,6 +9,7 @@ interface AirTableProps {
   monthStr: string;
   initialRecord: AirRecord;
   lastSaved: string | null;
+  lang?: "th" | "en";
   onSave: (record: AirRecord) => void;
   /** RC3: register imperative save/reset for the sticky toolbar. */
   registerApi?: (api: EntrySectionApi | null) => void;
@@ -22,11 +23,34 @@ export default function AirTable({
   monthStr,
   initialRecord,
   lastSaved,
+  lang = "en",
   onSave,
   registerApi,
   onDraftChange
   , meterFields, meterLabels
 }: AirTableProps) {
+  const th = lang === "th";
+  const copy = th ? {
+    title: "การใช้พลังงานเครื่องปรับอากาศ",
+    description: "กรอกค่ามิเตอร์พลังงานเครื่องปรับอากาศเป็นกิกะวัตต์-ชั่วโมง (GWh)",
+    reset: "รีเซ็ต",
+    save: "บันทึก AIR",
+    saved: "บันทึก AIR แล้ว",
+    month: "เดือน",
+    meters: (count: number) => `มิเตอร์เครื่องปรับอากาศ: ${count} จุด`,
+    lastSaved: "บันทึกล่าสุด",
+    noSaved: "ยังไม่มีการบันทึกข้อมูลเครื่องปรับอากาศเดือนนี้"
+  } : {
+    title: "Air Conditioning Energy Consumption",
+    description: "Input Giga-Watt Hour (GWh) readings of air conditioning modules for temperature and humidity control.",
+    reset: "Reset",
+    save: "Save AIR",
+    saved: "AIR Saved!",
+    month: "Month",
+    meters: (count: number) => `Combined Air-Con Consumption Units: ${count} meters`,
+    lastSaved: "Last Saved",
+    noSaved: "No AC log saved for this month yet"
+  };
   const fields = meterFields?.length ? meterFields : ["eb41a", "eb41b", "eb42a", "eb42b"];
   const label = (field: string) => meterLabels?.[field] ?? `${field.toUpperCase()} (GWh)`;
   // The original four Rangsit meters are stored directly on AirRecord. Extra
@@ -118,10 +142,10 @@ export default function AirTable({
         <div>
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 bg-teal-500 rounded-full" />
-            <h3 className="font-display font-semibold text-slate-100 text-base">Air Conditioning Energy Consumption</h3>
+            <h3 className="font-display font-semibold text-slate-100 text-base">{copy.title}</h3>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Input Giga-Watt Hour (GWh) readings of air conditioning modules for temperature and humidity control.
+            {copy.description}
           </p>
         </div>
         
@@ -133,7 +157,7 @@ export default function AirTable({
               className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 border border-slate-800 hover:bg-slate-800/50 rounded-lg flex items-center gap-1.5 transition-colors"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset</span>
+              <span>{copy.reset}</span>
             </button>
           )}
 
@@ -148,7 +172,7 @@ export default function AirTable({
             }`}
           >
             {isSaved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-            <span>{isSaved ? "AIR Saved!" : "Save AIR"}</span>
+            <span>{isSaved ? copy.saved : copy.save}</span>
           </button>
         </div>
       </div>
@@ -158,7 +182,7 @@ export default function AirTable({
         <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-teal-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-teal-300 border-b border-slate-800/80">
-              <th className="py-3.5 px-4 font-normal">Month</th>
+              <th className="py-3.5 px-4 font-normal">{copy.month}</th>
               {fields.map(field => <th key={field} className="py-3.5 px-4 font-normal text-right">{label(field)}</th>)}
             </tr>
           </thead>
@@ -188,14 +212,14 @@ export default function AirTable({
 
       {/* Footer info & timestamp */}
       <div className="px-5 py-3 border-t border-slate-850 bg-slate-900/20 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs text-slate-500 font-mono">
-        <span>Combined Air-Con Consumption Units: {fields.length} meters</span>
+        <span>{copy.meters(fields.length)}</span>
         {lastSaved ? (
           <span className="flex items-center gap-1.5 text-slate-400">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
-            <span>Last Saved: {lastSaved}</span>
+            <span>{copy.lastSaved}: {lastSaved}</span>
           </span>
         ) : (
-          <span className="text-slate-500 italic">No AC log saved for this month yet</span>
+          <span className="text-slate-500 italic">{copy.noSaved}</span>
         )}
       </div>
     </div>

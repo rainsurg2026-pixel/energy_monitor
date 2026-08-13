@@ -174,7 +174,6 @@ export default function CleanWebApp() {
           {view === "reports" && <WebReportPreview lang={lang} siteId={siteId} siteName={site.name} logs={history.logs} month={month} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} />}
           </>}
         </main></div>
-      <button type="button" aria-label={lang === "th" ? "เปลี่ยนภาษาเป็นภาษาอังกฤษ" : "Switch language to Thai"} onClick={() => changeLanguage(lang === "th" ? "en" : "th")} className="fixed right-4 top-20 z-40 rounded-lg border border-slate-700 bg-slate-900/90 px-2.5 py-1.5 text-xs font-semibold text-slate-300 shadow-lg backdrop-blur hover:border-teal-500">{lang === "th" ? "EN" : "ไทย"}</button>
       <nav aria-label={lang === "th" ? "เมนูนำทางบนมือถือ" : "Mobile application navigation"} className="fixed bottom-0 left-0 right-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-800 bg-slate-950 px-1 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`min-w-[4.75rem] shrink-0 flex flex-col items-center gap-1 py-2 text-[10px] ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
       {pendingNavigation && <div role="dialog" aria-modal="true" aria-labelledby="unsaved-entry-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><h2 id="unsaved-entry-title" className="font-display text-lg font-bold text-slate-100">Unsaved Data Entry changes</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">Save your current entries before continuing, discard them, or stay on this page.</p><div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setPendingNavigation(null)} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">Cancel</button><button type="button" onClick={discardPendingNavigation} className="rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-300">Discard</button><button type="button" onClick={() => void savePendingNavigation()} className="rounded-lg bg-teal-500 px-3 py-2 text-sm font-semibold text-slate-950">Save &amp; Continue</button></div></section></div>}
       <AppNotice message={notice} />
@@ -282,7 +281,7 @@ function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, 
         <RackCapacityHistoryPanel />
         <WebRackCapacityEditor siteId={siteId} month={month} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} />
       </RackCapacityProvider>
-      <WebRackUnitCapacityEditor siteId={siteId} month={month} initialSnapshot={rackUnit} onSaved={(next) => { setRackUnit(next); onHistorySaved?.(); }} />
+      <WebRackUnitCapacityEditor lang={lang} siteId={siteId} month={month} initialSnapshot={rackUnit} onSaved={(next) => { setRackUnit(next); onHistorySaved?.(); }} />
     </div>
   );
 }

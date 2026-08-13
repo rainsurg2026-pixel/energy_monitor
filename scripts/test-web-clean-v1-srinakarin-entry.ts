@@ -11,7 +11,7 @@ assert.match(app, /allowedEndMonth=\{bootstrap \? \(bootstrap\.displayPeriod\.en
 assert.match(workspace, /import SrinakarinPowerPhaseTable from "\.\.\/components\/SrinakarinPowerPhaseTable"/);
 assert.match(workspace, /siteCode === "srinakarin" \? <SrinakarinPowerPhaseTable/);
 assert.match(workspace, /initialLog=\{draft\} lastSaved=\{draft\.lastSavedUps\} onSave=\{\(ups, srinakarinInputs\) => void onSave\(\{ ups, srinakarinInputs \}\)\}/);
-assert.match(workspace, /: <UpsTable monthStr=\{month\} initialRecords=\{draft\.ups\}/);
+assert.match(workspace, /: <UpsTable (?:lang=\{lang\} )?monthStr=\{month\} initialRecords=\{draft\.ups\}/);
 assert.match(workspace, /allowedStartMonth=\{allowedStartMonth\} allowedEndMonth=\{allowedEndMonth\}/);
 
 console.log("web-clean-v1 Srinakarin entry: preserves Desktop phase-input workflow and generic UPS entry for other sites");

@@ -10,6 +10,7 @@ interface UpsTableProps {
   monthStr: string;
   initialRecords: UpsRecord[];
   lastSaved: string | null;
+  lang?: "th" | "en";
   onSave: (records: UpsRecord[]) => void;
   /** RC3: register imperative save/reset for the sticky toolbar. */
   registerApi?: (api: EntrySectionApi | null) => void;
@@ -21,10 +22,43 @@ export default function UpsTable({
   monthStr,
   initialRecords,
   lastSaved,
+  lang = "en",
   onSave,
   registerApi,
   onDraftChange
 }: UpsTableProps) {
+  const th = lang === "th";
+  const copy = th ? {
+    title: "รายการโหลด UPS",
+    description: "กรอกค่าแรงดัน กระแส และโหลดกำลังไฟฟ้าจริง/ปรากฏของ UPS",
+    reset: "รีเซ็ต",
+    save: "บันทึก UPS",
+    saved: "บันทึก UPS แล้ว",
+    month: "เดือน",
+    id: "รหัส UPS",
+    voltage: "แรงดัน (V)",
+    current: "กระแส (A)",
+    loadKw: "โหลด (kW)",
+    loadKva: "โหลด (kVA)",
+    units: (count: number) => `รายการ UPS: ${count} ชุด`,
+    lastSaved: "บันทึกล่าสุด",
+    noSaved: "ยังไม่มีการบันทึกข้อมูลเดือนนี้"
+  } : {
+    title: "UPS Loading Records",
+    description: "Input facility Uninterruptible Power Supply (UPS) voltage, current, and active/apparent loads.",
+    reset: "Reset",
+    save: "Save UPS",
+    saved: "UPS Saved!",
+    month: "Month",
+    id: "UPS ID",
+    voltage: "Voltage (V)",
+    current: "Current (A)",
+    loadKw: "Load (kW)",
+    loadKva: "Load (kVA)",
+    units: (count: number) => `UPS Unit Logs: ${count} units configured`,
+    lastSaved: "Last Saved",
+    noSaved: "No entry saved for this month yet"
+  };
   const [records, setRecords] = useState<UpsRecord[]>([]);
   const [isSaved, setIsSaved] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
@@ -131,10 +165,10 @@ export default function UpsTable({
         <div>
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 bg-indigo-500 rounded-full" />
-            <h3 className="font-display font-semibold text-slate-100 text-base">UPS Loading Records</h3>
+            <h3 className="font-display font-semibold text-slate-100 text-base">{copy.title}</h3>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Input facility Uninterruptible Power Supply (UPS) voltage, current, and active/apparent loads.
+            {copy.description}
           </p>
         </div>
         
@@ -146,7 +180,7 @@ export default function UpsTable({
               className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 border border-slate-800 hover:bg-slate-800/50 rounded-lg flex items-center gap-1.5 transition-colors"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset</span>
+              <span>{copy.reset}</span>
             </button>
           )}
 
@@ -161,7 +195,7 @@ export default function UpsTable({
             }`}
           >
             {isSaved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-            <span>{isSaved ? "UPS Saved!" : "Save UPS"}</span>
+            <span>{isSaved ? copy.saved : copy.save}</span>
           </button>
         </div>
       </div>
@@ -171,12 +205,12 @@ export default function UpsTable({
         <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-indigo-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-indigo-300 border-b border-slate-800/80">
-              <th className="py-3.5 px-4 font-normal">Month</th>
-              <th className="py-3.5 px-4 font-normal">UPS ID</th>
-              <th className="py-3.5 px-4 font-normal text-right">Voltage (V)</th>
-              <th className="py-3.5 px-4 font-normal text-right">Current (A)</th>
-              <th className="py-3.5 px-4 font-normal text-right">Load (kW)</th>
-              <th className="py-3.5 px-4 font-normal text-right">Load (kVA)</th>
+              <th className="py-3.5 px-4 font-normal">{copy.month}</th>
+              <th className="py-3.5 px-4 font-normal">{copy.id}</th>
+              <th className="py-3.5 px-4 font-normal text-right">{copy.voltage}</th>
+              <th className="py-3.5 px-4 font-normal text-right">{copy.current}</th>
+              <th className="py-3.5 px-4 font-normal text-right">{copy.loadKw}</th>
+              <th className="py-3.5 px-4 font-normal text-right">{copy.loadKva}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/50 font-mono text-sm text-slate-300">
@@ -287,14 +321,14 @@ export default function UpsTable({
 
       {/* Footer Timestamp Label */}
       <div className="px-5 py-3 border-t border-slate-850 bg-slate-900/20 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs text-slate-500 font-mono">
-        <span>UPS Unit Logs: {records.length} units configured</span>
+        <span>{copy.units(records.length)}</span>
         {lastSaved ? (
           <span className="flex items-center gap-1.5 text-slate-400">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
-            <span>Last Saved: {lastSaved}</span>
+            <span>{copy.lastSaved}: {lastSaved}</span>
           </span>
         ) : (
-          <span className="text-slate-500 italic">No entry saved for this month yet</span>
+          <span className="text-slate-500 italic">{copy.noSaved}</span>
         )}
       </div>
     </div>

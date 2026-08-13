@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
+const editors = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityEditors.tsx", import.meta.url), "utf8");
 
 assert.match(app, /import RackCapacityHistoryPanel from "\.\.\/components\/rack\/RackCapacityHistoryPanel"/);
 assert.match(app, /import \{ Forecast as RackCapacityForecast \} from "\.\.\/components\/rack\/Forecast"/);
@@ -25,5 +26,9 @@ assert.match(app, /<RackCapacityTimeline canSelectMonth=\{selected => selected >
 assert.match(app, /onSelectMonth=\{selected => void selectMonth\(selected\)\}/);
 assert.match(app, /allowedStartMonth=\{bootstrap\?\.displayPeriod\.startMonth \?\? month\}/);
 assert.match(app, /allowedEndMonth=\{bootstrap \? \(bootstrap\.displayPeriod\.endMonth < todayMonth\(\) \? bootstrap\.displayPeriod\.endMonth : todayMonth\(\)\) : month\}/);
+assert.match(app, /<WebRackUnitCapacityEditor lang=\{lang\}/);
+assert.match(editors, /lang\?: "th" \| "en"/);
+assert.match(editors, /ความจุหน่วยแร็ก/);
+assert.match(editors, /บันทึก snapshot ประจำเดือน/);
 
 console.log("web-clean-v1 Rack workspace: reuses Desktop monthly history and forecast with API-backed snapshots");

@@ -10,6 +10,7 @@ interface DcTableProps {
   monthStr: string;
   initialRecords: DcRecord[];
   lastSaved: string | null;
+  lang?: "th" | "en";
   onSave: (records: DcRecord[]) => void;
   /** RC3: register imperative save/reset for the sticky toolbar. */
   registerApi?: (api: EntrySectionApi | null) => void;
@@ -21,10 +22,43 @@ export default function DcTable({
   monthStr,
   initialRecords,
   lastSaved,
+  lang = "en",
   onSave,
   registerApi,
   onDraftChange
 }: DcTableProps) {
+  const th = lang === "th";
+  const copy = th ? {
+    title: "รายการแผงจ่ายไฟ DC",
+    description: "กรอกค่าแรงดันและกระแสของแผงจ่ายไฟกระแสตรงสำหรับอุปกรณ์สำคัญ",
+    reset: "รีเซ็ต",
+    save: "บันทึก DC",
+    saved: "บันทึก DC แล้ว",
+    month: "เดือน",
+    panel: "แผงจ่ายไฟ DC",
+    voltage: "แรงดัน DC (V)",
+    current: "กระแส DC (A)",
+    calculated: "กำลังคำนวณ (kW)",
+    waiting: "รอค่า V และ A…",
+    panels: (count: number) => `รายการแผง DC: ${count} แผง`,
+    lastSaved: "บันทึกล่าสุด",
+    noSaved: "ยังไม่มีการบันทึกข้อมูล DC เดือนนี้"
+  } : {
+    title: "DC Power Panel Records",
+    description: "Input direct-current voltage and load currents for critical telecommunications or hardware power distribution panels (PDBs).",
+    reset: "Reset",
+    save: "Save DC",
+    saved: "DC Saved!",
+    month: "Month",
+    panel: "DC Power Panel",
+    voltage: "DC Voltage (V)",
+    current: "DC Current (A)",
+    calculated: "Calculated Power (kW)",
+    waiting: "Waiting for V & A...",
+    panels: (count: number) => `DC Panel Logs: ${count} panels configured`,
+    lastSaved: "Last Saved",
+    noSaved: "No DC logs saved for this month yet"
+  };
   const [records, setRecords] = useState<DcRecord[]>([]);
   const [isSaved, setIsSaved] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
@@ -103,10 +137,10 @@ export default function DcTable({
         <div>
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 bg-amber-500 rounded-full" />
-            <h3 className="font-display font-semibold text-slate-100 text-base">DC Power Panel Records</h3>
+            <h3 className="font-display font-semibold text-slate-100 text-base">{copy.title}</h3>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Input direct-current voltage and load currents for critical telecommunications or hardware power distribution panels (PDBs).
+            {copy.description}
           </p>
         </div>
         
@@ -118,7 +152,7 @@ export default function DcTable({
               className="px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200 border border-slate-800 hover:bg-slate-800/50 rounded-lg flex items-center gap-1.5 transition-colors"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset</span>
+              <span>{copy.reset}</span>
             </button>
           )}
 
@@ -133,7 +167,7 @@ export default function DcTable({
             }`}
           >
             {isSaved ? <Check className="w-3.5 h-3.5" /> : <Save className="w-3.5 h-3.5" />}
-            <span>{isSaved ? "DC Saved!" : "Save DC"}</span>
+            <span>{isSaved ? copy.saved : copy.save}</span>
           </button>
         </div>
       </div>
@@ -143,11 +177,11 @@ export default function DcTable({
         <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-amber-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-amber-300 border-b border-slate-800/80">
-              <th className="py-3.5 px-4 font-normal">Month</th>
-              <th className="py-3.5 px-4 font-normal">DC Power Panel</th>
-              <th className="py-3.5 px-4 font-normal text-right">DC Voltage (V)</th>
-              <th className="py-3.5 px-4 font-normal text-right">DC Current (A)</th>
-              <th className="py-3.5 px-4 font-normal text-right">Calculated Power (kW)</th>
+              <th className="py-3.5 px-4 font-normal">{copy.month}</th>
+              <th className="py-3.5 px-4 font-normal">{copy.panel}</th>
+              <th className="py-3.5 px-4 font-normal text-right">{copy.voltage}</th>
+              <th className="py-3.5 px-4 font-normal text-right">{copy.current}</th>
+              <th className="py-3.5 px-4 font-normal text-right">{copy.calculated}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/50 font-mono text-sm text-slate-300">
@@ -211,7 +245,7 @@ export default function DcTable({
                     }`}>
                       {calculatedPowerKw !== null 
                         ? `${formatNumber2(calculatedPowerKw)} kW`
-                        : "Waiting for V & A..."}
+                        : copy.waiting}
                     </span>
                   </td>
                 </tr>
@@ -223,14 +257,14 @@ export default function DcTable({
 
       {/* Footer info & timestamp */}
       <div className="px-5 py-3 border-t border-slate-850 bg-slate-900/20 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs text-slate-500 font-mono">
-        <span>DC Panel Logs: {records.length} panels configured</span>
+        <span>{copy.panels(records.length)}</span>
         {lastSaved ? (
           <span className="flex items-center gap-1.5 text-slate-400">
             <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
-            <span>Last Saved: {lastSaved}</span>
+            <span>{copy.lastSaved}: {lastSaved}</span>
           </span>
         ) : (
-          <span className="text-slate-500 italic">No DC logs saved for this month yet</span>
+          <span className="text-slate-500 italic">{copy.noSaved}</span>
         )}
       </div>
     </div>
