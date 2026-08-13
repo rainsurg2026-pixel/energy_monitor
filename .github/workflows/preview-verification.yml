@@ -1,0 +1,43 @@
+name: Preview Verification
+
+# Manual only - this never runs automatically on push/PR. It exercises a
+# live, already-deployed Vercel Preview over HTTP; it does not build or
+# deploy anything itself. See docs/web-v3/PREVIEW_VERIFICATION.md.
+on:
+  workflow_dispatch:
+    inputs:
+      preview_url:
+        description: "Vercel Preview URL to verify (e.g. https://energy-monitor-git-feat-web-v3-dcm15.vercel.app)"
+        required: true
+        type: string
+      preview_uat_username:
+        description: "Secondary account username (default: previewuat; use usertest only for older deployments)"
+        required: false
+        type: string
+        default: "previewuat"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+
+      - run: npm ci
+
+      # DEV_ADMIN_PASSWORD and PREVIEW_UAT_PASSWORD must be configured as
+      # repository or environment secrets before this job can run - see
+      # docs/web-v3/PREVIEW_VERIFICATION.md. GitHub Actions automatically
+      # masks any log output matching a registered secret's value, on top
+      # of scripts/lib/redactLog.ts's own redaction.
+      - name: Run Preview HTTP verification
+        env:
+          PREVIEW_URL: ${{ inputs.preview_url }}
+          PREVIEW_UAT_USERNAME: ${{ inputs.preview_uat_username }}
+          DEV_ADMIN_PASSWORD: ${{ secrets.DEV_ADMIN_PASSWORD }}
+          PREVIEW_UAT_PASSWORD: ${{ secrets.PREVIEW_UAT_PASSWORD }}
+          DEV_USER_PASSWORD: ${{ secrets.DEV_USER_PASSWORD }}
+        run: npm run test:preview-http

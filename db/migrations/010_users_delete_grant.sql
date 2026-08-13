@@ -1,0 +1,28 @@
+-- Fixes a real, pre-existing permission gap found during Preview
+-- verification: migration 002_phase3_auth_security.sql granted
+-- energy_monitor_runtime only SELECT/INSERT/UPDATE on public.users, never
+-- DELETE - even though hard delete on users has always been documented as
+-- part of this application's data-access rules
+-- (.claude/rules/03-data-access-security.md: "Hard delete is reserved for
+-- the users table, SuperAdmin-only") and the application's deleteUser()
+-- (server/auth/repository.ts) has always executed
+-- DELETE FROM public.users WHERE id = $1. Without this grant, that
+-- statement fails with a Postgres permission error against any correctly
+-- migrated database - this was never caught because it was only ever
+-- exercised against the in-memory repository test double, which does not
+-- enforce SQL-level grants.
+--
+-- Forward-only fix, per .claude/rules/git.md's rollback policy: migration
+-- 002 is treated as already-applied history and is never modified.
+--
+-- Scope is deliberately minimal: only the DELETE privilege that was
+-- missing, on only the one table, to only the one role that already holds
+-- every other privilege on this table. WHO may actually invoke a user
+-- delete remains governed entirely by the application's own authorization
+-- layer (requireScope(principal, canDeleteUsers) in
+-- server/auth/authService.ts, SuperAdmin/last-admin-protected) - this
+-- grant only allows the already-authorized SQL statement to succeed; it
+-- grants no new capability to any Supabase-facing role (anon/authenticated/
+-- service_role remain fully revoked on this table, unchanged since 002).
+
+GRANT DELETE ON TABLE public.users TO energy_monitor_runtime;

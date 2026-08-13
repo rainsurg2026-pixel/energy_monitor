@@ -27,6 +27,7 @@ import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../.
 import { utilizationColorHex } from "../../utils/capacityHealth";
 import { formatTimestamp } from "../../utils";
 import { findPreviousRackUnitCapacityRow } from "../../utils/rackUnitCapacity";
+import { formatFixedPercentage } from "../../utils/numberFormatBridge";
 
 const TREND_MONTHS = 12;
 
@@ -136,10 +137,10 @@ export const RackUnitCapacitySummary: React.FC<{ provider: IDataProvider; refres
                   { label: lang === "th" ? "ใช้แล้ว (U)" : "Used (U)", value: String(unitCapacityRow.usedU) },
                   { label: lang === "th" ? "ว่าง (U)" : "Available (U)", value: String(unitCapacityRow.availableU) },
                   { label: lang === "th" ? "% ความจุที่ว่าง" : "Availability %", value: formatRatioPercent(unitCapacityRow.availabilityPct) },
-                  { label: lang === "th" ? "% การใช้งาน" : "Usage %", value: usagePctNow === null ? "—" : `${usagePctNow.toFixed(1)}%` },
+                  { label: lang === "th" ? "% การใช้งาน" : "Usage %", value: usagePctNow === null ? "—" : formatFixedPercentage(usagePctNow, 1) },
                   {
                     label: lang === "th" ? "แนวโน้มจากเดือนก่อน" : "Trend vs Prev Month",
-                    value: trend === null ? "—" : `${trend.direction === "Up" ? "▲" : trend.direction === "Down" ? "▼" : "◆"} ${Math.abs(trend.pct).toFixed(1)}%`,
+                    value: trend === null ? "—" : `${trend.direction === "Up" ? "▲" : trend.direction === "Down" ? "▼" : "◆"} ${formatFixedPercentage(Math.abs(trend.pct), 1)}`,
                     caption: trend === null ? (lang === "th" ? "ไม่มีข้อมูลเดือนก่อน" : "no prior month") : getTrendLabel(trend.direction, lang)
                   }
                 ].map(item => (

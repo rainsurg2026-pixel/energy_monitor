@@ -38,7 +38,7 @@ export default function UpsTable({
 
   const handleInputChange = (
     index: number,
-    field: keyof Omit<UpsRecord, "upsId">,
+    field: keyof Omit<UpsRecord, "upsId" | "phases">,
     value: string
   ) => {
     setHasChanges(true);

@@ -620,7 +620,7 @@ export default function App() {
         setSaveProgress(prev => ({
           startedAt: prev?.startedAt ?? tSave,
           current: prev?.current ?? "write",
-          failedAt: (pe?.stage && backendStageMap[pe.stage]) ?? (prev?.current === "refresh" ? "refresh" : "write"),
+          failedAt: (pe?.stage ? backendStageMap[pe.stage] : undefined) ?? (prev?.current === "refresh" ? "refresh" : "write"),
           error: err instanceof Error ? err.message : String(err),
           elapsedMs: performance.now() - tSave
         }));
@@ -1627,7 +1627,7 @@ export default function App() {
     setReportPreviewError(null);
     try {
       const result = await desktopBridge.exportCenter.preview({ workbookPath: workbook.path, facility: activeFacility?.name ?? "Facility", dashboard: activeFacility?.profile.dashboard, selectedMonth: month || null, appVersion: appVersion ?? "Unknown" });
-      if (!result.ok) throw new Error(result.message);
+      if (!result.ok) throw new Error((result as { message: string }).message);
       setReportPreviewHtml(result.html);
       setReportPreviewStatus("ready");
     } catch (error) {

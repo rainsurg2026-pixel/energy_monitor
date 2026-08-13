@@ -199,7 +199,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
     en: {
       title: "Building Energy Dashboard",
       subtitle: "Comprehensive analytics of power operation & efficiency for DCM 4th Floor",
-      noData: "Insufficient data to generate summary reports",
+      noData: "No data for selected facility and reporting month",
       noDataDesc: "Please enter logs in the Data Entry sheet to activate this dashboard.",
       
       // Sections

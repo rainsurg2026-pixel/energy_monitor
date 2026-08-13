@@ -8,6 +8,18 @@ export function formatNumber(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? groupedTwoDecimal.format(value) : "—";
 }
 
+/** Presentation-only fixed precision for metrics that intentionally use a
+ * precision different from the standard two-decimal report format. */
+export function formatFixedNumber(value: number | null | undefined, digits = 0): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
+}
+
+export function formatFixedPercentage(value: number | null | undefined, digits = 1): string {
+  const result = formatFixedNumber(value, digits);
+  return result === "—" ? result : `${result}%`;
+}
+
 /**
  * Rounds to a fixed number of decimals and returns a NUMBER, not a display
  * string - for chart data points (e.g. Recharts Y-values) that need a real

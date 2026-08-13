@@ -4,9 +4,11 @@ import path from 'path';
 import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
+  const hostedBuild = process.env.VERCEL === '1';
   return {
-    // Relative asset paths so the built bundle also works from file:// in Electron.
-    base: './',
+    // Electron's file:// renderer needs relative assets, while Vercel's SPA
+    // rewrites require root-relative assets after a deep-link refresh.
+    base: hostedBuild ? '/' : './',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

@@ -14,6 +14,13 @@ coverage/
 .agents/
 .codex/
 
+# Vercel project/account binding metadata is workstation-local.
+.vercel/
+
+# Local git worktrees (git worktree add) are workstation-local checkouts,
+# not application source. Never track them - each is its own branch/repo.
+.worktrees/
+
 # Workstation-local skills and packaged skill archives. These remain available
 # locally but are not application source.
 .claude/skills/
@@ -25,6 +32,7 @@ skills/**/*.zip
 .cache/
 .vite/
 .tmp/
+skills-lock.json
 tmp/
 work/
 *.tmp
@@ -59,7 +67,11 @@ release/
 # Backups and generated exports
 *.bak
 *.backup
-backup/
+# Anchored to the repo root: the Desktop app's local workbook-backup folder
+# (D:\...\Energy_Monitor\backup\), not source code. An unanchored "backup/"
+# would also match server/backup/ (the new Google Sheets backup service
+# source, which must be tracked).
+/backup/
 exports/
 *.export.*
 *.test.pdf
@@ -72,9 +84,23 @@ exports/
 
 # Live workbook database - not source code
 RST_Dashboard.xlsm
+
+# Operator scratch files holding live DB connection strings / TLS CA certs
+# (never committed - these are pasted in manually for ad-hoc verification).
+.phase7-db-url
+.phase7-supabase-ca.cer
+*.supabase-ca.cer
+*-db-url
+
+# Generated at Vercel build time from the tracked server adapter source.
+/api/runtime.js
 # Portable runtime folders (created beside the exe / project root in dev)
 config/
+!server/
+!server/config/
+!server/config/env.ts
 logs/
 *.appmeta.json
 DC_Rangsit.xlsm
 DC_Srinakarin.xlsm
+.vercel

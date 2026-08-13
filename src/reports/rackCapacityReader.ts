@@ -1,11 +1,11 @@
 import ExcelJS from "exceljs";
 import type { RackCapacityReport, RackRecord } from "./reportTypes";
+import { deriveRackCapacityReport } from "./rackCapacityReportBuilder";
 
 const REQUIRED_FIELDS = ["Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"] as const;
 const HEADER_ALIASES: Record<string, string[]> = {
   "Cabinet Size": ["cabinet size", "cabinet size (wxd cm)", "cabinet size (wxd)"],
 };
-const VALID_STATUSES = new Set(["In Use", "Available", "Reserved", "Pending Dismantle"]);
 
 function headerKey(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
@@ -21,17 +21,6 @@ function cellText(value: ExcelJS.CellValue): string | null {
     return result === null || result === undefined || result === "" ? null : String(result).trim();
   }
   return null;
-}
-
-function increment(map: Map<string, number>, value: string | null): void {
-  const key = value && value.trim() !== "" ? value.trim() : "(blank)";
-  map.set(key, (map.get(key) ?? 0) + 1);
-}
-
-function sortedCounts(map: Map<string, number>): Array<{ [key: string]: string | number }> {
-  return Array.from(map.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, count]) => ({ key, count }));
 }
 
 function findHeaderRow(worksheet: ExcelJS.Worksheet): { rowNumber: number; columns: Map<string, number> } | null {
@@ -89,15 +78,7 @@ export async function readRackCapacityFromBuffer(buffer: Buffer): Promise<RackCa
   if (!header) throw new Error('Rack Capacity sheet is missing the required Table7 headers.');
 
   const records: RackRecord[] = [];
-  const duplicateIds = new Set<string>();
-  const seenIds = new Set<string>();
-  const missingRequiredFields: Array<{ rowNumber: number; field: string }> = [];
-  const invalidStatuses: Array<{ rowNumber: number; status: string }> = [];
   const invalidDataTypes: Array<{ rowNumber: number; field: string; type: string }> = [];
-  const byZone = new Map<string, number>();
-  const byStatus = new Map<string, number>();
-  const byCabinetSize = new Map<string, number>();
-  const byDeviceType = new Map<string, number>();
 
   for (let rowNumber = header.startRow; rowNumber <= header.endRow; rowNumber++) {
     const row = worksheet.getRow(rowNumber);
@@ -122,47 +103,7 @@ export async function readRackCapacityFromBuffer(buffer: Buffer): Promise<RackCa
     // Rows outside Table7 contain charts/formatting and do not have a Rack ID.
     if (!record.rackId && !record.rackZone && !record.status) continue;
     records.push(record);
-
-    for (const field of REQUIRED_FIELDS) {
-      const value = record[field === "Rack Zone" ? "rackZone" : field === "Rack ID" ? "rackId" : field === "Status" ? "status" : field === "Cabinet Size" ? "cabinetSize" : field === "Detail" ? "detail" : field === "Device Type" ? "deviceType" : "remarks"];
-      if (value === null) missingRequiredFields.push({ rowNumber, field });
-    }
-    if (record.rackId) {
-      const normalizedId = record.rackId.toLowerCase();
-      if (seenIds.has(normalizedId)) duplicateIds.add(record.rackId);
-      seenIds.add(normalizedId);
-    }
-    if (record.status && !VALID_STATUSES.has(record.status)) invalidStatuses.push({ rowNumber, status: record.status });
-    increment(byZone, record.rackZone);
-    increment(byStatus, record.status);
-    increment(byCabinetSize, record.cabinetSize);
-    increment(byDeviceType, record.deviceType);
   }
 
-  const toNamedCounts = (map: Map<string, number>, key: string): Array<{ [key: string]: string | number }> =>
-    sortedCounts(map).map(item => ({ [key]: item.key, count: item.count }));
-
-  return {
-    sourceSheet: "Rack Capacity",
-    sourceTable: "Table7",
-    sourceSnapshot: null,
-    records,
-    byZone: toNamedCounts(byZone, "zone") as Array<{ zone: string; count: number }>,
-    byStatus: toNamedCounts(byStatus, "status") as Array<{ status: string; count: number }>,
-    byCabinetSize: toNamedCounts(byCabinetSize, "cabinetSize") as Array<{ cabinetSize: string; count: number }>,
-    byDeviceType: toNamedCounts(byDeviceType, "deviceType") as Array<{ deviceType: string; count: number }>,
-    validation: {
-      duplicateIds: Array.from(duplicateIds).sort(),
-      missingRequiredFields,
-      invalidStatuses,
-      invalidDataTypes,
-      unsupportedUMetrics: [
-        "Total U",
-        "Used U",
-        "Available U",
-        "Reserved U",
-        "Overall Rack Utilization"
-      ]
-    }
-  };
+  return deriveRackCapacityReport(records, "Rack Capacity", "Table7", null, invalidDataTypes);
 }

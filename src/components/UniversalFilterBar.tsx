@@ -14,13 +14,28 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
+type ReportViewId = "executive" | "dashboard" | "benchmark" | "forecast";
+const ALL_REPORT_VIEWS: readonly ReportViewId[] = ["executive", "dashboard", "benchmark", "forecast"];
+const REPORT_VIEW_TABS: ReadonlyArray<{ id: ReportViewId; labelEn: string; labelTh: string }> = [
+  { id: "executive", labelEn: "Executive View", labelTh: "1. แดชบอร์ดผู้บริหาร" },
+  { id: "dashboard", labelEn: "Engineering View", labelTh: "2. วิเคราะห์วิศวกรรม" },
+  { id: "benchmark", labelEn: "Benchmark View", labelTh: "3. เปรียบเทียบเกณฑ์" },
+  { id: "forecast", labelEn: "Forecast View", labelTh: "4. คาดการณ์เทรนด์" }
+];
+
 interface UniversalFilterBarProps {
   onExport?: (format: "pdf" | "excel" | "csv" | "png") => void;
   lang: "th" | "en";
   facility?: FacilityEntry | null;
+  /** Which of the 4 sub-view tabs to render, in order. Defaults to all 4
+   *  (Desktop's existing behavior, unchanged). A caller that only supports a
+   *  subset of views (e.g. a host with no Benchmark/Forecast implementation)
+   *  passes just the views it actually has - never a hidden/disabled tab for
+   *  a view that doesn't exist there. */
+  reportViews?: readonly ReportViewId[];
 }
 
-export default function UniversalFilterBar({ onExport, lang, facility = null }: UniversalFilterBarProps) {
+export default function UniversalFilterBar({ onExport, lang, facility = null, reportViews = ALL_REPORT_VIEWS }: UniversalFilterBarProps) {
   const {
     selectedYear,
     selectedPeriod,
@@ -271,48 +286,21 @@ export default function UniversalFilterBar({ onExport, lang, facility = null }: 
 
       {/* Action buttons (Export, Refresh) */}
       <div className="flex flex-wrap items-center justify-between border-t border-slate-800/80 pt-3 gap-2">
-        {/* Sub-view Segmented Tabs */}
+        {/* Sub-view Segmented Tabs - only the views this host actually implements */}
         <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-850">
-          <button
-            onClick={() => setSelectedReportView("executive")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              selectedReportView === "executive" 
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10" 
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            {lang === "th" ? "1. แดชบอร์ดผู้บริหาร" : "Executive View"}
-          </button>
-          <button
-            onClick={() => setSelectedReportView("dashboard")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              selectedReportView === "dashboard" 
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10" 
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            {lang === "th" ? "2. วิเคราะห์วิศวกรรม" : "Engineering View"}
-          </button>
-          <button
-            onClick={() => setSelectedReportView("benchmark")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              selectedReportView === "benchmark" 
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10" 
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            {lang === "th" ? "3. เปรียบเทียบเกณฑ์" : "Benchmark View"}
-          </button>
-          <button
-            onClick={() => setSelectedReportView("forecast")}
-            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              selectedReportView === "forecast" 
-                ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10" 
-                : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            {lang === "th" ? "4. คาดการณ์เทรนด์" : "Forecast View"}
-          </button>
+          {REPORT_VIEW_TABS.filter(tab => reportViews.includes(tab.id)).map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setSelectedReportView(tab.id)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                selectedReportView === tab.id
+                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {lang === "th" ? tab.labelTh : tab.labelEn}
+            </button>
+          ))}
         </div>
 
         {/* Refresh & Exports */}
