@@ -394,7 +394,25 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
   const run = (action: () => void | Promise<void>, success: string, historyFilename: string) => { void (async () => { try { await action(); rememberReport(historyFilename); setMessage(success); } catch (error) { setMessage(readError(error)); } })(); };
 
   const contextMonth = effectiveMonth(period, month);
-  useEffect(() => { if (!fileNameCustomized) setFileNameInput(defaultReportFilename(siteName, contextMonth)); }, [siteName, contextMonth, fileNameCustomized]);
+  const reportContextKey = `${siteName}\u0000${contextMonth}`;
+  const previousReportContext = useRef(reportContextKey);
+  useEffect(() => {
+    if (previousReportContext.current === reportContextKey) return;
+    previousReportContext.current = reportContextKey;
+    setFileNameInput(defaultReportFilename(siteName, contextMonth));
+    setFileNameCustomized(false);
+  }, [contextMonth, reportContextKey, siteName]);
+  useEffect(() => {
+    const available = [...new Set(logs.map(log => log.month))].sort();
+    const fallback = available.includes(month) ? month : available.at(-1) ?? month;
+    setPeriod(current => {
+      const singleMonth = available.includes(current.singleMonth) ? current.singleMonth : fallback;
+      const rangeStart = available.includes(current.rangeStart) ? current.rangeStart : available[0] ?? fallback;
+      const rangeEnd = available.includes(current.rangeEnd) ? current.rangeEnd : available.at(-1) ?? fallback;
+      if (singleMonth === current.singleMonth && rangeStart === current.rangeStart && rangeEnd === current.rangeEnd) return current;
+      return { ...current, singleMonth, rangeStart, rangeEnd };
+    });
+  }, [logs, month, siteName]);
   const resolvedFileName = resolveFilename(fileNameInput, siteName, contextMonth);
   const scopedLogs = useMemo(() => filterLogsByPeriod(logs, period, month), [logs, period, month]);
   const availableMonths = useMemo(() => [...new Set(logs.map(log => log.month))].sort(), [logs]);
