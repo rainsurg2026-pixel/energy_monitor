@@ -4,13 +4,14 @@ import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter"
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import { buildReportHtml } from "../reports/pdf/reportHtml";
 import type { MonthlyLog } from "../types";
+import type { ReportSectionId } from "../reporting/reportingTypes";
 import { api } from "./api";
 import { facilityReportData, rackReportFromSnapshot, type RackSnapshotApiResponse } from "./exports";
 
 /** Browser counterpart of Desktop's report preview. It deliberately uses the
  * same ReportData builder and HTML renderer as PDF export, so preview cannot
  * display calculations different from the generated report. */
-export default function WebReportPreview({ lang, siteId, siteName, logs, month, rackCapacityHistory, rackUnitCapacity, calculationLogs }: {
+export default function WebReportPreview({ lang, siteId, siteName, logs, month, rackCapacityHistory, rackUnitCapacity, calculationLogs, sections }: {
   lang: "th" | "en";
   siteId: number | null;
   siteName: string;
@@ -21,6 +22,7 @@ export default function WebReportPreview({ lang, siteId, siteName, logs, month, 
   rackUnitCapacity: RackUnitCapacityRow[];
   /** Full history used only as the previous-reading context for calculations. */
   calculationLogs?: MonthlyLog[];
+  sections?: readonly ReportSectionId[];
 }) {
   const th = lang === "th";
   const [rack, setRack] = useState<ReturnType<typeof rackReportFromSnapshot>>(null);
@@ -43,8 +45,8 @@ export default function WebReportPreview({ lang, siteId, siteName, logs, month, 
   useEffect(() => { void loadRack(); }, [loadRack, refreshKey]);
 
   const html = useMemo(
-    () => buildReportHtml(facilityReportData(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs ?? logs)),
-    [calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, siteName]
+    () => buildReportHtml(facilityReportData(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs ?? logs), sections),
+    [calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, sections, siteName]
   );
   const pageCount = (html.match(/page-break-(before|after)/g)?.length ?? 0) + 1;
 

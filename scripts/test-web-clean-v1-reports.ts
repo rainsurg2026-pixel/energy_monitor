@@ -27,9 +27,17 @@ assert.match(exports, /export function exportAllFacilitiesHtml/);
 assert.match(exports, /export function exportSiteComparisonHtml/);
 assert.match(exports, /text\/html;charset=utf-8/);
 assert.match(app, /<WebReportPreview[^>]+logs=\{scopedLogs\} calculationLogs=\{logs\}/);
+assert.match(app, /ReportRegistry\.all\(\)/);
+assert.match(app, /selectedReportSections/);
+assert.match(app, /Choose sections for the preview and PDF\/HTML/);
 const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
 assert.match(preview, /calculationLogs\?: MonthlyLog\[\]/);
 assert.match(preview, /facilityReportData\(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs \?\? logs\)/);
+assert.match(preview, /sections\?: readonly ReportSectionId\[\]/);
+assert.match(preview, /buildReportHtml\(facilityReportData\(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs \?\? logs\), sections\)/);
+const reportHtml = readFileSync(new URL("../src/reports/pdf/reportHtml.ts", import.meta.url), "utf8");
+assert.match(reportHtml, /selectedSections\?: readonly ReportSectionId\[\]/);
+assert.match(reportHtml, /filterReportHtmlBySections/);
 assert.match(historyProvider, /slice\(0, 50\)/);
 
 console.log("web-clean-v1 reports: exports retain a local recent-report history like Desktop");

@@ -110,6 +110,9 @@ const previousAir = { ...log("2026-06"), air: { eb41a: 1, eb41b: 1, eb42a: 1, eb
 const currentAir = { ...log("2026-07"), air: { eb41a: 2, eb41b: 2, eb42a: 2, eb42b: 2, meters: {} } };
 const singleMonthPdfData = facilityReportData([currentAir], "Rangsit", "2026-07", null, [], [], [previousAir, currentAir]);
 check("single-month PDF calculations retain the previous month from full history", singleMonthPdfData.currentRow?.airEnergyKwh === 4_000_000);
+const rackOnlyHtml = buildReportHtml(singleMonthPdfData, ["rack-capacity"]);
+check("custom report sections keep the selected Rack Capacity page", rackOnlyHtml.includes("Rack Capacity and Utilization"));
+check("custom report sections omit the unselected Dashboard page", !rackOnlyHtml.includes("Building Energy Dashboard"));
 
 // Excel must retain entry values and saved timestamps as real typed cells,
 // then append the exact Desktop calculation outputs.  This is deliberately

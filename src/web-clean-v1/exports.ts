@@ -5,6 +5,7 @@ import { daysInUtcMonth, previousUtcMonth } from "../domain/dates";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
 import { buildReportHtml } from "../reports/pdf/reportHtml";
 import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord } from "../reports/reportTypes";
+import type { ReportSectionId } from "../reporting/reportingTypes";
 import { deriveRackCapacityReport } from "../reports/rackCapacityReportBuilder";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
@@ -320,8 +321,8 @@ function mergeReportHtml(reports: string[], title: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${style}</style></head><body>${body}</body></html>`;
 }
 
-export function exportAllFacilitiesHtml(facilities: ExportFacility[], selectedMonth: string, fileName?: string): void {
-  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs)));
+export function exportAllFacilitiesHtml(facilities: ExportFacility[], selectedMonth: string, fileName?: string, selectedSections?: readonly ReportSectionId[]): void {
+  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs), selectedSections));
   download(mergeReportHtml(reports, "Data Center Energy & Facility Monitor All Facilities"), fileName ?? "all-facilities-energy-monitor.html", "text/html;charset=utf-8");
 }
 
@@ -402,8 +403,8 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
   };
 }
 
-export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs): void {
-  const report = buildReportHtml(facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs));
+export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, selectedSections?: readonly ReportSectionId[]): void {
+  const report = buildReportHtml(facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs), selectedSections);
   download(report, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.html`, "text/html;charset=utf-8");
 }
 
@@ -428,10 +429,10 @@ export function openReportPopup(name: string): Window {
  *  fileName (without extension) becomes the print dialog's suggested "Save
  *  as PDF" name, via document.title - the browser convention for print-to-PDF.
  *  `popup` must come from openReportPopup(), called synchronously on click. */
-export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs): void {
+export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, selectedSections?: readonly ReportSectionId[]): void {
   const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs);
   popup.document.open();
-  popup.document.write(buildReportHtml(data));
+  popup.document.write(buildReportHtml(data, selectedSections));
   popup.document.close();
   if (fileName) popup.document.title = fileName;
   popup.addEventListener("load", () => popup.print(), { once: true });
@@ -554,9 +555,9 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
 
 /** Prints one full Desktop-compatible report per facility in one document.
  *  `popup` must come from openReportPopup(), called synchronously on click. */
-export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[], selectedMonth: string): void {
+export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[], selectedMonth: string, selectedSections?: readonly ReportSectionId[]): void {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs)));
+  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs), selectedSections));
   const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
   const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
   const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
