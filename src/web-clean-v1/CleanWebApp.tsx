@@ -3,7 +3,6 @@ import { BarChart3, ChartNoAxesCombined, ClipboardPenLine, Download, FileSpreads
 import { Line, LineChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ReportProvider, useReport } from "../ReportContext";
 import DashboardSummary from "../components/DashboardSummary";
-import DashboardStats from "../components/DashboardStats";
 import ExecutiveDashboard from "../components/ExecutiveDashboard";
 import BenchmarkDashboard from "../components/BenchmarkDashboard";
 import ForecastDashboard from "../components/ForecastDashboard";
@@ -11,11 +10,6 @@ import SmartInsightPanel from "../components/SmartInsightPanel";
 import UniversalFilterBar from "../components/UniversalFilterBar";
 import HistoricalExplorer from "../components/HistoricalExplorer";
 import HistoricalCharts from "../components/HistoricalCharts";
-import UpsTable from "../components/UpsTable";
-import SrinakarinPowerPhaseTable from "../components/SrinakarinPowerPhaseTable";
-import AirTable from "../components/AirTable";
-import DcTable from "../components/DcTable";
-import EnergyCostTable from "../components/EnergyCostTable";
 import { createEmptyLog } from "../utils";
 import { computeCompletion } from "../utils/completion";
 import type { MonthlyLog } from "../types";
@@ -33,7 +27,7 @@ import { ExecutiveKpiCards as RackCapacityExecutiveKpiCards } from "../component
 import { CapacityAlerts } from "../components/rack/CapacityAlerts";
 import { CapacityGauge } from "../components/rack/CapacityGauge";
 import WebSiteComparison from "./WebSiteComparison";
-import WebEntryWorkflowHeader, { WebHistoricalEditNotice } from "./WebEntryWorkflowHeader";
+import WebEntryWorkspace from "./WebEntryWorkspace";
 import WebReportPreview from "./WebReportPreview";
 import { WebRackCapacityEditor, WebRackUnitCapacityEditor } from "./WebRackCapacityEditors";
 import { api, type SessionUser, type Role } from "./api";
@@ -154,10 +148,7 @@ export default function CleanWebApp() {
         <main className="min-w-0 flex-1 p-4 md:p-6"><div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">Reporting month</span><div className="text-lg font-semibold">{month}</div></div><input aria-label="Reporting month" type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">Display period {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />Completion <b className="text-teal-300">{completion.overall.percent}%</b></div></div>
           {busy && <div className="mb-4 text-sm text-teal-300">Working…</div>}
           {view === "settings" ? <SettingsPage displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice("Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">Facility context unavailable</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">Retry facility load</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">Loading facility context…</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={month} lang="en" upsGroupHistory={history.upsGroupHistory ?? null} />}
-          {view === "entry" && draft && <WebEntryWorkflowHeader facilityName={site.name} months={history.months} selectedMonth={month} draft={draft} onSelectMonth={selected => void selectMonth(selected)} />}
-          {view === "entry" && draft && <WebHistoricalEditNotice selectedMonth={month} latestMonth={history.months.at(-1) ?? null} onReturnToLatest={() => { const latest = history.months.at(-1); if (latest) void selectMonth(latest); }} />}
-          {view === "entry" && draft && <div className="mt-5"><DashboardStats log={draft} /></div>}
-          {view === "entry" && draft && <section className="mt-5 space-y-5"><div><h2 className="font-display text-2xl font-bold">Monthly Data Entry</h2><p className="mt-1 text-sm text-slate-400">Enter validated operating readings for {month}; calculations remain Desktop v2.3.1-compatible.</p></div>{site?.code === "srinakarin" ? <SrinakarinPowerPhaseTable monthStr={month} initialLog={draft} lastSaved={draft.lastSavedUps} onSave={(ups, srinakarinInputs) => void save({ ups, srinakarinInputs })} /> : <UpsTable monthStr={month} initialRecords={draft.ups} lastSaved={draft.lastSavedUps} onSave={ups => void save({ ups })} />}<AirTable monthStr={month} initialRecord={draft.air} lastSaved={draft.lastSavedAir} meterFields={draft.energyCalculation?.airFields} onSave={air => void save({ air })} /><DcTable monthStr={month} initialRecords={draft.dc} lastSaved={draft.lastSavedDc} onSave={dc => void save({ dc })} /><EnergyCostTable monthStr={month} initialRecord={draft.energyCost} lastSaved={draft.lastSavedEnergyCost} onSave={energyCost => void save({ energyCost })} /></section>}
+          {view === "entry" && draft && <WebEntryWorkspace siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} busy={busy} onSave={save} onSelectMonth={selected => void selectMonth(selected)} onOpenReports={() => setView("reports")} onNotice={setNotice} />}
           {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} lang="en" rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onHistorySaved={() => { void loadHistory(siteId); }} />}
           {view === "history" && <section className="space-y-8"><HistoricalCharts logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} dataSourceLabel="Source: Production API" /><HistoricalExplorer logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} upsGroupHistory={history.upsGroupHistory ?? null} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onEditMonth={selected => { setView("entry"); void selectMonth(selected); }} /></section>}
           {view === "comparison" && <WebSiteComparison />}
