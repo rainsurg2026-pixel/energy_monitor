@@ -177,6 +177,9 @@ export class PostgresRepository implements BackendRepository {
     }
 
     await client.query("INSERT INTO energy_cost_inputs(period_id, site_id, building_energy_kwh, building_cost_thb, raw_inputs) VALUES ($1,$2,$3,$4,$5)", [periodId, input.siteId, input.log.energyCost.buildingEnergyKwh, input.log.energyCost.buildingElectricityCostThb, input.log.energyCost]);
+    // One Web Save All operation represents all four Desktop entry sections;
+    // advance their persisted timestamps together in the same transaction.
+    await client.query("UPDATE monthly_periods SET last_saved_ups = now(), last_saved_air = now(), last_saved_dc = now(), last_saved_energy_cost = now() WHERE id = $1", [periodId]);
     if (input.log.energyCalculation) {
       await client.query("INSERT INTO electrical_profiles(site_id, profile_version, ups_groups, dc_ids, air_fields) VALUES ($1,'desktop-v2.3.1',$2,$3,$4) ON CONFLICT (site_id) DO UPDATE SET ups_groups = EXCLUDED.ups_groups, dc_ids = EXCLUDED.dc_ids, air_fields = EXCLUDED.air_fields, updated_at = now()", [input.siteId, JSON.stringify(input.log.energyCalculation.upsGroups), JSON.stringify(input.log.energyCalculation.dcIds), JSON.stringify(input.log.energyCalculation.airFields)]);
     }
@@ -235,8 +238,8 @@ export class PostgresRepository implements BackendRepository {
 
   async getMonthlyLogs(siteId: number, months: readonly string[]): Promise<MonthlyLog[]> {
     if (months.length === 0) return [];
-    const periodResult = await query<{ id: string; period_month: string; building_energy_kwh: unknown; building_cost_thb: unknown }>(this.executor,
-      `SELECT p.id, p.period_month, e.building_energy_kwh, e.building_cost_thb
+    const periodResult = await query<{ id: string; period_month: string; building_energy_kwh: unknown; building_cost_thb: unknown; last_saved_ups: string | null; last_saved_air: string | null; last_saved_dc: string | null; last_saved_energy_cost: string | null }>(this.executor,
+      `SELECT p.id, p.period_month, p.last_saved_ups, p.last_saved_air, p.last_saved_dc, p.last_saved_energy_cost, e.building_energy_kwh, e.building_cost_thb
        FROM monthly_periods p LEFT JOIN energy_cost_inputs e ON e.period_id = p.id
        WHERE p.site_id = $1 AND p.period_month = ANY($2::date[]) ORDER BY p.period_month`, [siteId, months.map(month => `${month}-01`)]);
     const periodIds = periodResult.rows.map(row => row.id);
@@ -259,7 +262,7 @@ export class PostgresRepository implements BackendRepository {
       byPeriod.set(row.id, {
         month: monthString(row.period_month), ups: [], air: { eb41a: null, eb41b: null, eb42a: null, eb42b: null, meters: {} }, dc: [],
         energyCost: { buildingEnergyKwh: numberOrNull(row.building_energy_kwh), buildingElectricityCostThb: numberOrNull(row.building_cost_thb) },
-        lastSavedUps: null, lastSavedAir: null, lastSavedDc: null, lastSavedEnergyCost: null,
+        lastSavedUps: row.last_saved_ups ?? null, lastSavedAir: row.last_saved_air ?? null, lastSavedDc: row.last_saved_dc ?? null, lastSavedEnergyCost: row.last_saved_energy_cost ?? null,
         energyCalculation: profileRow ? { upsGroups: (profileRow.ups_groups ?? []) as string[][], dcIds: (profileRow.dc_ids ?? []) as string[], airFields: (profileRow.air_fields ?? []) as string[] } : undefined
       });
     }

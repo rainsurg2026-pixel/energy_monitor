@@ -16,7 +16,12 @@ import { monthLabelShort, shiftMonth } from "../../utils/monthUtils";
 const PAST_PADDING_MONTHS = 6;
 const FUTURE_PADDING_MONTHS = 3;
 
-export const Timeline: React.FC = () => {
+export const Timeline: React.FC<{
+  /** Web supplies this after checking its API-backed monthly records. */
+  canSelectMonth?: (month: string) => boolean;
+  /** Desktop owns snapshots locally; Web asks its parent to load first. */
+  onMonthSelect?: (month: string) => void;
+}> = ({ canSelectMonth, onMonthSelect }) => {
   const { lang, reportingMonth, setReportingMonth, availableMonths } = useRackCapacity();
 
   const strip = React.useMemo(() => {
@@ -35,12 +40,19 @@ export const Timeline: React.FC = () => {
       {strip.map(month => {
         const active = month === reportingMonth;
         const hasData = availableMonths.includes(month);
+        const selectable = onMonthSelect === undefined || canSelectMonth?.(month) !== false;
         return (
           <button
             type="button"
             key={month}
-            onClick={() => setReportingMonth(month)}
-            className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors cursor-pointer ${
+            onClick={() => {
+              // Desktop owns snapshots in the local provider. Web must ask
+              // its parent to load the selected API snapshot before switching.
+              if (onMonthSelect) onMonthSelect(month);
+              else setReportingMonth(month);
+            }}
+            disabled={!selectable}
+            className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-colors ${selectable ? "cursor-pointer" : "cursor-not-allowed opacity-50"} ${
               active
                 ? "bg-indigo-600 text-white border-indigo-600"
                 : hasData

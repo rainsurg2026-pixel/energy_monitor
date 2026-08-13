@@ -138,6 +138,15 @@ export function formatTimestamp(date: Date): string {
   return `${day}-${month}-${year} ${hours}:${minutes}:${seconds}`;
 }
 
+/** Format either an API ISO timestamp or an existing Desktop display value.
+ * Invalid legacy text is retained so history screens never turn a harmless
+ * metadata value into "Invalid Date". */
+export function formatTimestampValue(value: string | null): string | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : formatTimestamp(parsed);
+}
+
 // Storage helpers
 const STORAGE_PREFIX = "facility_monthly_logs_";
 

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { MonthlyLog } from "../types";
-import { formatMonthYear } from "../utils";
+import { formatMonthYear, formatTimestampValue } from "../utils";
 import { calculateEnergyCostForMonth, getAirFields, getAirValue, normalizedMonth } from "../utils/energyCost";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 import { formatRatioPercent } from "../utils/rackCapacity";
@@ -96,6 +96,10 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       dcPower: "กำลังไฟ DC (W)",
       acPower: "กำลังไฟ AC (W)",
       monthlyEnergy: "พลังงานรวม (kWh)",
+      buildingEnergy: "พลังงานทั้งอาคาร (kWh)",
+      buildingCost: "ค่าไฟฟ้าทั้งอาคาร (บาท)",
+      floorEnergy: "พลังงานชั้น 4 (kWh)",
+      floorCost: "ค่าไฟฟ้าชั้น 4 (บาท)",
 
       // Statuses
       editStatus: "สถานะแก้ไข",
@@ -147,6 +151,10 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       dcPower: "DC Power (W)",
       acPower: "AC Power (W)",
       monthlyEnergy: "Monthly Energy (kWh)",
+      buildingEnergy: "Building Energy (kWh)",
+      buildingCost: "Building Cost (THB)",
+      floorEnergy: "4th Floor Energy (kWh)",
+      floorCost: "4th Floor Cost (THB)",
 
       // Statuses
       editStatus: "Edit Status",
@@ -375,7 +383,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
               <th className="py-3.5 px-4 text-right">{t.loadPercent}</th>
               <th className="py-3.5 px-4 text-right">{t.availablePercent}</th>
               <th className="py-3.5 px-4 text-right">{t.monthlyEnergy}</th>
-              <th className="py-3.5 px-4 text-center">Status</th>
+              <th className="py-3.5 px-4 text-center">{lang === "th" ? "สถานะ" : "Status"}</th>
               <th className="py-3.5 px-4 text-right">{t.generatedTimestamp}</th>
             </tr>
           </thead>
@@ -422,7 +430,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
               <th className="py-3.5 px-4">{t.month}</th>
               {airFields.map(field => <th key={field} className="py-3.5 px-4 text-right">{field.toUpperCase()} (GWh)</th>)}
               <th className="py-3.5 px-4 text-right">{t.monthlyEnergy}</th>
-              <th className="py-3.5 px-4 text-center">Status</th>
+              <th className="py-3.5 px-4 text-center">{lang === "th" ? "สถานะ" : "Status"}</th>
               <th className="py-3.5 px-4 text-right">{t.timestamp}</th>
             </tr>
           </thead>
@@ -450,7 +458,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
                       {renderEditBadge(statuses.editStatus)}
                       {renderSyncBadge(statuses.syncStatus)}
                     </td>
-                    <td className="py-3.5 px-4 text-right font-mono text-slate-500 text-[10px]">{log.lastSavedAir || "—"}</td>
+                    <td className="py-3.5 px-4 text-right font-mono text-slate-500 text-[10px]">{formatTimestampValue(log.lastSavedAir) || "—"}</td>
                   </tr>
                 );
               })
@@ -483,7 +491,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
           dcPowerW,
           acPowerW,
           energyKwh,
-          timestamp: log.lastSavedDc,
+          timestamp: formatTimestampValue(log.lastSavedDc),
           statuses
         });
       });
@@ -501,7 +509,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
               <th className="py-3.5 px-4 text-right">{t.dcPower}</th>
               <th className="py-3.5 px-4 text-right">{t.acPower}</th>
               <th className="py-3.5 px-4 text-right">{t.monthlyEnergy}</th>
-              <th className="py-3.5 px-4 text-center">Status</th>
+              <th className="py-3.5 px-4 text-center">{lang === "th" ? "สถานะ" : "Status"}</th>
               <th className="py-3.5 px-4 text-right">{t.timestamp}</th>
             </tr>
           </thead>
@@ -541,13 +549,13 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
           <thead>
             <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
               <th className="py-3.5 px-4">{t.month}</th>
-              <th className="py-3.5 px-4 text-right">Building Energy (kWh)</th>
-              <th className="py-3.5 px-4 text-right">Building Cost (THB)</th>
-              <th className="py-3.5 px-4 text-right">4th Fl. Energy (kWh)</th>
-              <th className="py-3.5 px-4 text-right">4th Fl. Cost (THB)</th>
-              <th className="py-3.5 px-4 text-right">Rate (฿/kWh)</th>
-              <th className="py-3.5 px-4 text-right">Share (%)</th>
-              <th className="py-3.5 px-4 text-center">Status</th>
+              <th className="py-3.5 px-4 text-right">{t.buildingEnergy}</th>
+              <th className="py-3.5 px-4 text-right">{t.buildingCost}</th>
+              <th className="py-3.5 px-4 text-right">{t.floorEnergy}</th>
+              <th className="py-3.5 px-4 text-right">{t.floorCost}</th>
+              <th className="py-3.5 px-4 text-right">{lang === "th" ? "อัตรา (บาท/kWh)" : "Rate (฿/kWh)"}</th>
+              <th className="py-3.5 px-4 text-right">{lang === "th" ? "สัดส่วน (%)" : "Share (%)"}</th>
+              <th className="py-3.5 px-4 text-center">{lang === "th" ? "สถานะ" : "Status"}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-850">
@@ -608,10 +616,10 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
                 <thead>
                   <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
                     <th className="py-3 px-4">{t.month}</th>
-                    <th className="py-3 px-4 text-right">Total (U)</th>
-                    <th className="py-3 px-4 text-right">Used (U)</th>
-                    <th className="py-3 px-4 text-right">Available (U)</th>
-                    <th className="py-3 px-4 text-right">Availability (%)</th>
+                    <th className="py-3 px-4 text-right">{lang === "th" ? "ทั้งหมด (U)" : "Total (U)"}</th>
+                    <th className="py-3 px-4 text-right">{lang === "th" ? "ใช้งาน (U)" : "Used (U)"}</th>
+                    <th className="py-3 px-4 text-right">{lang === "th" ? "คงเหลือ (U)" : "Available (U)"}</th>
+                    <th className="py-3 px-4 text-right">{lang === "th" ? "พร้อมใช้งาน (%)" : "Availability (%)"}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-850">
@@ -665,7 +673,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
 
           {/* Year select */}
           <div className="space-y-1">
-            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Year Filter</label>
+            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">{lang === "th" ? "กรองตามปี" : "Year Filter"}</label>
             <select
               value={yearFilter}
               onChange={(e) => setYearFilter(e.target.value)}
@@ -680,7 +688,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
 
           {/* Month select */}
           <div className="space-y-1">
-            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Month Filter</label>
+            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">{lang === "th" ? "กรองตามเดือน" : "Month Filter"}</label>
             <select
               value={monthFilter}
               onChange={(e) => setMonthFilter(e.target.value)}
@@ -695,7 +703,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
 
           {/* Sort order */}
           <div className="space-y-1">
-            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Sorting Chronological</label>
+            <label className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">{lang === "th" ? "เรียงตามลำดับเวลา" : "Sorting Chronological"}</label>
             <button
               onClick={() => setSortOrder(sortOrder === "newest" ? "oldest" : "newest")}
               className="w-full bg-slate-900 hover:bg-slate-850 text-slate-100 text-xs rounded-lg border border-slate-800 px-3 py-1.5 cursor-pointer flex items-center justify-between transition-colors"
@@ -707,8 +715,8 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
 
           {/* Stats quick count */}
           <div className="flex flex-col justify-center text-right pr-2">
-            <span className="text-[9px] text-slate-500 uppercase font-bold tracking-wider">Filtered Records</span>
-            <strong className="text-base font-mono text-indigo-400">{filteredAndSortedLogs.length} months</strong>
+            <span className="text-[9px] text-slate-500 uppercase font-bold tracking-wider">{lang === "th" ? "รายการที่กรองแล้ว" : "Filtered Records"}</span>
+            <strong className="text-base font-mono text-indigo-400">{filteredAndSortedLogs.length} {lang === "th" ? "เดือน" : "months"}</strong>
           </div>
 
         </div>

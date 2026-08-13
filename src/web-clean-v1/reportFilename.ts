@@ -6,7 +6,7 @@
  */
 
 const INVALID_WINDOWS_CHARS = /[<>:"/\\|?*\x00-\x1F]/g;
-const KNOWN_EXTENSIONS = ["xlsx", "csv", "pdf"] as const;
+const KNOWN_EXTENSIONS = ["xlsx", "csv", "html", "pdf"] as const;
 export type ExportExtension = (typeof KNOWN_EXTENSIONS)[number];
 
 /** Strips characters invalid in a Windows filename, normalizing rather than

@@ -388,7 +388,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
           <Calendar className="w-4 h-4 text-emerald-400" />
           <div className="text-left">
             <div className="text-[10px] uppercase font-mono text-slate-400 font-semibold leading-none">{t.daysInMonthText}</div>
-            <strong className="text-sm font-mono text-slate-200">{daysInMonth} Days</strong>
+            <strong className="text-sm font-mono text-slate-200">{daysInMonth} {lang === "th" ? "วัน" : "Days"}</strong>
           </div>
         </div>
       </div>
@@ -404,7 +404,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
             {formatNumber2(calcs.totalFloorEnergyKwh)} <span className="text-xs font-sans">kWh</span>
           </h3>
           <p className="text-[10px] text-slate-400 leading-none">
-            UPS + AC + DC Power Panels
+              {lang === "th" ? "แผง UPS + AC + DC" : "UPS + AC + DC Power Panels"}
           </p>
         </div>
 
@@ -467,7 +467,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
           >
             <div className="flex items-center gap-2">
               <Zap className="w-4 h-4 text-indigo-400 shrink-0" />
-              <span>{hasOverallUps ? "1. UPS Load Status" : t.upsSection}</span>
+              <span>{hasOverallUps ? (lang === "th" ? "1. สถานะโหลด UPS" : "1. UPS Load Status") : t.upsSection}</span>
             </div>
             
           </button>
@@ -479,7 +479,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
               {hasOverallUps && (
                 <div className="space-y-4">
                   <div className="overflow-x-auto">
-                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">1.1 UPS Load Status - Overall</h4>
+                  <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">{lang === "th" ? "1.1 สถานะโหลด UPS - รวม" : "1.1 UPS Load Status - Overall"}</h4>
                   <table className="dashboard-table w-full text-left text-xs font-sans">
                     <thead><tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
                       <th className="py-2.5 px-3">{t.no}</th><th className="py-2.5 px-3">UPS</th><th className="py-2.5 px-3">{t.totalKw}</th><th className="py-2.5 px-3">{t.totalKva}</th><th className="py-2.5 px-3">{t.capacity}</th><th className="py-2.5 px-3">{t.loadPercent}</th><th className="py-2.5 px-3">{t.availablePercent}</th>
@@ -491,8 +491,8 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                   </div>
                   <div className="bg-slate-900/80 border border-slate-850 p-4 rounded-xl">
                     <div className="space-y-1 mb-4">
-                      <h4 className="text-[11px] uppercase tracking-wider font-bold text-indigo-400">UPS Loads Comparison (%) - Overall</h4>
-                      <p className="text-[10px] text-slate-500">Current load capacity compared with rated maximum</p>
+                      <h4 className="text-[11px] uppercase tracking-wider font-bold text-indigo-400">{lang === "th" ? "เปรียบเทียบโหลด UPS (%) - รวม" : "UPS Loads Comparison (%) - Overall"}</h4>
+                      <p className="text-[10px] text-slate-500">{lang === "th" ? "เปรียบเทียบโหลดปัจจุบันกับพิกัดสูงสุด" : "Current load capacity compared with rated maximum"}</p>
                     </div>
                     <div className="space-y-3.5">
                       {calcs.upsOverallGroups.map((group) => {
@@ -506,7 +506,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                   </div>
                 </div>
               )}
-              {hasOverallUps && <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">1.2 UPS and PPC Load Status – DCM 4th Floor</h4>}
+              {hasOverallUps && <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{lang === "th" ? "1.2 สถานะโหลด UPS และ PPC – DCM ชั้น 4" : "1.2 UPS and PPC Load Status – DCM 4th Floor"}</h4>}
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
                 <div className="lg:col-span-8 overflow-x-auto">
                   <table className="dashboard-table w-full text-left text-xs font-sans">
@@ -537,7 +537,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                       ))}
                       {/* Total row */}
                       <tr className="border-t-2 border-slate-800 bg-slate-900/30 font-bold">
-                        <td className="py-3.5 px-3" colSpan={2}>Total</td>
+                        <td className="py-3.5 px-3" colSpan={2}>{lang === "th" ? "รวม" : "Total"}</td>
                         <td className="py-3.5 px-3 text-right font-mono text-slate-200">{formatNumber2(calcs.totalUpsKw)}</td>
                         <td className="py-3.5 px-3 text-right font-mono text-slate-200">{formatNumber2(calcs.totalUpsKva)}</td>
                         <td className="py-3.5 px-3 text-right text-slate-500">—</td>
@@ -552,8 +552,8 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                 {/* Sidebar UPS bar graph rendering */}
                 <div className="lg:col-span-4 bg-slate-900/80 border border-slate-850 p-4 rounded-xl flex flex-col justify-between">
                   <div className="space-y-1 mb-4">
-                    <h4 className="text-[11px] uppercase tracking-wider font-bold text-indigo-400">{hasOverallUps ? "UPS and PPC Loads Comparison (%) – DCM 4th Floor" : "UPS Loads Comparison (%)"}</h4>
-                    <p className="text-[10px] text-slate-500">Current load capacity compared with rated maximum</p>
+                    <h4 className="text-[11px] uppercase tracking-wider font-bold text-indigo-400">{hasOverallUps ? (lang === "th" ? "เปรียบเทียบโหลด UPS และ PPC (%) – DCM ชั้น 4" : "UPS and PPC Loads Comparison (%) – DCM 4th Floor") : (lang === "th" ? "เปรียบเทียบโหลด UPS (%)" : "UPS Loads Comparison (%)")}</h4>
+                    <p className="text-[10px] text-slate-500">{lang === "th" ? "เปรียบเทียบโหลดปัจจุบันกับพิกัดสูงสุด" : "Current load capacity compared with rated maximum"}</p>
                   </div>
 
                   <div className="space-y-3.5 flex-1 flex flex-col justify-center">
@@ -578,7 +578,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
 
               {/* Table 2: Mapping Detailed UPS */}
               <div className="pt-2 border-t border-slate-850/60">
-                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">{showAcPowerPanel ? "UMDB / UPS / AC Power Panel / STS / OUDB Detailed Configuration Mapping" : "UMDB / UPS / STS / OUDB Detailed Configuration Mapping"}</h4>
+                <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">{showAcPowerPanel ? (lang === "th" ? "รายละเอียดการเชื่อมโยง UMDB / UPS / แผงไฟ AC / STS / OUDB" : "UMDB / UPS / AC Power Panel / STS / OUDB Detailed Configuration Mapping") : (lang === "th" ? "รายละเอียดการเชื่อมโยง UMDB / UPS / STS / OUDB" : "UMDB / UPS / STS / OUDB Detailed Configuration Mapping")}</h4>
                 <div className="overflow-x-auto">
                   <table className="dashboard-table w-full text-left text-[11px] font-sans">
                     <thead>
@@ -616,7 +616,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                       ))}
                       {/* Detailed total row */}
                       <tr className="border-t border-slate-800 bg-slate-900/20 font-semibold text-slate-200">
-                        <td className="py-2 px-2.5" colSpan={showAcPowerPanel ? 6 : 5}>Total</td>
+                        <td className="py-2 px-2.5" colSpan={showAcPowerPanel ? 6 : 5}>{lang === "th" ? "รวม" : "Total"}</td>
                         <td className="py-2 px-2.5 text-right font-mono text-orange-200">{formatNumber2(calcs.detailedVoltageAvg)} (Avg)</td>
                         <td className="py-2 px-2.5 text-right font-mono text-orange-200">{formatNumber2(calcs.detailedCurrentSum)}</td>
                         <td className="py-2 px-2.5 text-right font-mono">{formatNumber2(calcs.totalUpsKw)}</td>
@@ -661,7 +661,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                   <tbody className="divide-y divide-slate-850">
                     {/* Previous Month */}
                     <tr className="text-slate-400">
-                      <td className="py-3 px-3 font-semibold text-slate-500">{calcs.prevMonthDisplay || "Previous Month"}</td>
+                      <td className="py-3 px-3 font-semibold text-slate-500">{calcs.prevMonthDisplay || (lang === "th" ? "เดือนก่อนหน้า" : "Previous Month")}</td>
                       {calcs.airFields.map(field => {
                         const value = prevMonthLog ? getAirValue(prevMonthLog, field) : null;
                         return <td key={field} className="py-3 px-3 text-right font-mono">{formatNumber2(value)}</td>;
@@ -742,7 +742,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                     ))}
                     {/* Total row */}
                     <tr className="border-t-2 border-slate-800 bg-amber-950/10 font-bold">
-                      <td className="py-3.5 px-3" colSpan={2}>Total</td>
+                      <td className="py-3.5 px-3" colSpan={2}>{lang === "th" ? "รวม" : "Total"}</td>
                       <td className="py-3.5 px-3 text-right text-slate-500">—</td>
                       <td className="py-3.5 px-3 text-right text-slate-500">—</td>
                       <td className="py-3.5 px-3 text-right font-mono text-slate-200">{formatNumber2(calcs.totalDcPowerW)}</td>

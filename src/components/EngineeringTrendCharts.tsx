@@ -3,6 +3,7 @@ import { useReport } from "../ReportContext";
 import type { MonthlyLog } from "../types";
 import { formatMonthYear } from "../utils";
 import { calculateEnergyCostForMonth } from "../utils/energyCost";
+import { selectedPeriodAnchorIndex } from "../utils/reportPeriodSelection";
 import TrendLineChart from "./TrendLineChart";
 
 interface EngineeringTrendChartsProps {
@@ -59,12 +60,7 @@ export default function EngineeringTrendCharts({ logs, lang }: EngineeringTrendC
     const visibleRows = processed.filter(row => row.month.startsWith(`${selectedYear}-`));
     if (visibleRows.length === 0) return [];
 
-    const exactMonth = /^(0[1-9]|1[0-2])$/.test(selectedPeriod)
-      ? `${selectedYear}-${selectedPeriod}`
-      : null;
-    const exactIndex = exactMonth ? visibleRows.findIndex(row => row.month === exactMonth) : -1;
-    const yearAnchor = visibleRows.length - 1;
-    const anchorIndex = exactIndex >= 0 ? exactIndex : yearAnchor;
+    const anchorIndex = selectedPeriodAnchorIndex(visibleRows.map(row => row.month), selectedPeriod);
     const windowSize = TREND_WINDOW_SIZE[selectedTrend] ?? 3;
     return visibleRows.slice(Math.max(0, anchorIndex - windowSize + 1), anchorIndex + 1);
   }, [logs, selectedPeriod, selectedTrend, selectedYear]);

@@ -12,6 +12,9 @@ interface StickyEntryToolbarProps {
   readOnly?: boolean;
   /** Lift the toolbar above the desktop status bar. */
   aboveStatusBar?: boolean;
+  /** Browser shell has a fixed mobile navigation rail; keep the entry
+   * toolbar above it instead of covering its actions. */
+  aboveMobileNav?: boolean;
   /** RC3 context chips: facility · month · provider. */
   facilityName?: string | null;
   monthLabel?: string | null;
@@ -35,6 +38,7 @@ export default function StickyEntryToolbar({
   hasDraftChanges,
   readOnly = false,
   aboveStatusBar = false,
+  aboveMobileNav = false,
   facilityName = null,
   monthLabel = null,
   provider = null,
@@ -97,7 +101,7 @@ export default function StickyEntryToolbar({
 
   return (
     <div
-      className={`fixed ${aboveStatusBar ? "bottom-[26px]" : "bottom-0"} inset-x-0 z-40 bg-slate-900/95 backdrop-blur border-t border-slate-800 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]`}
+      className={`fixed ${aboveStatusBar ? "bottom-[26px]" : aboveMobileNav ? "bottom-14 md:bottom-0" : "bottom-0"} inset-x-0 z-40 bg-slate-900/95 backdrop-blur border-t border-slate-800 shadow-[0_-8px_24px_rgba(0,0,0,0.35)]`}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center gap-3">
         {/* Save all */}
