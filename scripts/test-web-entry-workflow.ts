@@ -80,6 +80,11 @@ for (const table of [upsTable, airTable, dcTable, energyCostTable, srinakarinTab
 assert.doesNotMatch(workspace, /onSave=\{(?:ups|air|dc|energyCost) => void onSave/);
 assert.match(workspace, /saveAll: \(\) => Promise<boolean>/);
 assert.match(app, /beforeunload/);
+assert.match(app, /event\.key === "s" \|\| event\.key === "S"/);
+assert.match(app, /event\.key === "e" \|\| event\.key === "E"/);
+assert.match(app, /event\.key === "F5"/);
+assert.match(app, /entryActionsRef\.current\?\.saveAll\(\)/);
+assert.match(app, /setView\("reports"\)/);
 assert.match(app, /Unsaved Data Entry changes/);
 assert.match(app, /onDirtyChange=\{setEntryDirty\}/);
 assert.match(app, /onRegisterActions=\{registerEntryActions\}/);

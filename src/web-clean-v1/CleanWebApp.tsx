@@ -136,6 +136,28 @@ export default function CleanWebApp() {
   useEffect(() => { if (notice) { const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); } }, [notice]);
   useEffect(() => { if (!user) return; let savedTheme: string | null = null; let savedLanguage: string | null = null; try { savedTheme = localStorage.getItem(themeStorageKey(user.id)); savedLanguage = localStorage.getItem(languageStorageKey(user.id)); } catch { /* browser storage is optional; defaults remain available */ } const nextTheme = normalizeTheme(savedTheme); setTheme(nextTheme); applyTheme(nextTheme); if (savedLanguage !== null) setLang(normalizeLanguage(savedLanguage)); }, [user]);
   useEffect(() => { if (!entryDirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [entryDirty]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const editingText = target?.matches("input, textarea, select") ?? false;
+      const command = event.ctrlKey || event.metaKey;
+      if (command && event.shiftKey && !event.altKey && (event.key === "s" || event.key === "S")) {
+        event.preventDefault();
+        setView("reports");
+      } else if (command && !event.shiftKey && !event.altKey && (event.key === "s" || event.key === "S")) {
+        event.preventDefault();
+        if (view === "entry") void entryActionsRef.current?.saveAll();
+      } else if (command && !event.altKey && (event.key === "e" || event.key === "E")) {
+        event.preventDefault();
+        setView("reports");
+      } else if (event.key === "F5" && !event.ctrlKey && !event.metaKey && !event.shiftKey && !editingText) {
+        event.preventDefault();
+        void initialize().catch(error => setNotice(readError(error)));
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [initialize, view]);
 
   const deferNavigation = (action: PendingNavigation) => { if (entryDirty) setPendingNavigation(() => action); else void action(); };
   const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setViewState(next); }); };
