@@ -10,6 +10,6 @@ assert.match(app, /min-w-\[4\.75rem\] shrink-0/);
 assert.match(app, /break-words font-display text-lg/);
 assert.match(app, /break-words font-display text-3xl/);
 assert.match(app, /aria-label=\{lang === "th" \? "à¸™à¸³à¸—à¸²à¸‡à¸«à¸¥à¸±à¸" : "Primary application navigation"\}/);
-assert.match(app, /mb-5 grid grid-cols-1 gap-2 rounded-2xl border border-slate-800 bg-slate-900 p-1\.5 shadow-md/);
+assert.match(app, /mb-5 hidden gap-2 rounded-2xl border border-slate-800 bg-slate-900 p-1\.5 shadow-md sm:grid sm:grid-cols-2/);
 
 console.log("web-clean-v1 responsive shell: mobile navigation scrolls with fixed hit targets and content reserves bottom-nav space");
