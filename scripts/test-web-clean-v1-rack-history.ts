@@ -21,8 +21,9 @@ assert.match(app, /<RackCapacityStickyHeader \/>/);
 assert.match(app, /<CapacityAlerts \/>/);
 assert.match(app, /<RackCapacityExecutiveKpiCards \/>/);
 assert.match(app, /<CapacityGauge \/>/);
-assert.match(app, /<RackCapacityTimeline canSelectMonth=\{selected => selected === month \|\| selectableMonths\.includes\(selected\)\} onMonthSelect=\{onSelectMonth\} \/>/);
+assert.match(app, /<RackCapacityTimeline canSelectMonth=\{selected => selected >= allowedStartMonth && selected <= allowedEndMonth\} onMonthSelect=\{onSelectMonth\} \/>/);
 assert.match(app, /onSelectMonth=\{selected => void selectMonth\(selected\)\}/);
-assert.match(app, /selectableMonths=\{history\.months\}/);
+assert.match(app, /allowedStartMonth=\{bootstrap\?\.displayPeriod\.startMonth \?\? month\}/);
+assert.match(app, /allowedEndMonth=\{bootstrap \? \(bootstrap\.displayPeriod\.endMonth < todayMonth\(\) \? bootstrap\.displayPeriod\.endMonth : todayMonth\(\)\) : month\}/);
 
 console.log("web-clean-v1 Rack workspace: reuses Desktop monthly history and forecast with API-backed snapshots");
