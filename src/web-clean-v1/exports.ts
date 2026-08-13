@@ -172,6 +172,17 @@ function addFacilityExportSheets(workbook: any, facility: ExportFacility): void 
   addTypedSheet(workbook, facilitySheetName(prefix, "UPS_Loads"), ["Reporting Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Last Saved Date"], logs.flatMap(log => log.ups.map(ups => [excelMonth(log.month), ups.upsId, ups.voltage, ups.current, ups.loadKw, ups.loadKva, excelSavedDate(log.lastSavedUps)])));
   const upsPhaseRows = logs.flatMap(log => log.ups.flatMap(ups => Object.entries(ups.phases ?? {}).map(([phase, values]) => [excelMonth(log.month), ups.upsId, phase, values.voltage, values.current, values.loadKw, values.loadKva, excelSavedDate(log.lastSavedUps)] as ExcelCellValue[])));
   if (upsPhaseRows.length > 0) addTypedSheet(workbook, facilitySheetName(prefix, "UPS_Phases"), ["Reporting Month", "UPS ID", "Phase", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Last Saved Date"], upsPhaseRows);
+  addTypedSheet(workbook, facilitySheetName(prefix, "UPS_Calculations"), ["Reporting Month", "UPS ID", "Load (kW)", "Days in Month", "Monthly Energy Calculated (kWh)", "Last Saved Date"], logs.flatMap(log => {
+    const days = daysInUtcMonth(log.month);
+    return log.ups.map(ups => [
+      excelMonth(log.month),
+      ups.upsId,
+      ups.loadKw,
+      days,
+      ups.loadKw === null || days === null ? null : ups.loadKw * 24 * days,
+      excelSavedDate(log.lastSavedUps)
+    ] as ExcelCellValue[]);
+  }));
   addTypedSheet(workbook, facilitySheetName(prefix, "Air_Conditioning"), ["Reporting Month", ...airFields.map(field => `${field.toUpperCase()} (GWh)`), "Last Saved Date"], logs.map(log => [excelMonth(log.month), ...airFields.map(field => getAirValue(log, field)), excelSavedDate(log.lastSavedAir)]));
   addTypedSheet(workbook, facilitySheetName(prefix, "DC_Panels"), ["Reporting Month", "DC Panel", "Voltage (V)", "Current (A)", "Last Saved Date"], logs.flatMap(log => log.dc.map(panel => [excelMonth(log.month), panel.panelId, panel.voltage, panel.current, excelSavedDate(log.lastSavedDc)])));
 
@@ -180,23 +191,23 @@ function addFacilityExportSheets(workbook: any, facility: ExportFacility): void 
     return [excelMonth(log.month), log.energyCost.buildingEnergyKwh, log.energyCost.buildingElectricityCostThb, excelSavedDate(log.lastSavedEnergyCost), log.energyCost.floorElectricityCostThb ?? null, log.energyCost.averageElectricityRateThbPerKwh ?? null, calculation.upsEnergyKwh, calculation.airEnergyKwh, calculation.dcEnergyKwh, calculation.floorEnergyKwh, calculation.floorElectricityCostThb, calculation.averageElectricityRateThbPerKwh, calculation.energySharePercent];
   }));
 
-  addTypedSheet(workbook, facilitySheetName(prefix, "Air_Calculations"), ["Reporting Month", "Meter", "Previous Reading (GWh)", "Current Reading (GWh)", "Difference (GWh)", "Energy Contribution (kWh)"], logs.flatMap(log => {
+  addTypedSheet(workbook, facilitySheetName(prefix, "Air_Calculations"), ["Reporting Month", "Meter", "Previous Reading (GWh)", "Current Reading (GWh)", "Difference (GWh)", "Energy Contribution (kWh)", "Last Saved Date"], logs.flatMap(log => {
     const previousMonth = previousUtcMonth(log.month);
     const previous = previousMonth ? calculationLogs.find(candidate => candidate.month === previousMonth) ?? null : null;
     return getAirFields(log).map(field => {
       const current = getAirValue(log, field);
       const previousValue = previous ? getAirValue(previous, field) : null;
       const difference = current === null || previousValue === null ? null : current - previousValue;
-      return [excelMonth(log.month), field.toUpperCase(), previousValue, current, difference, difference === null ? null : difference * 1000000];
+      return [excelMonth(log.month), field.toUpperCase(), previousValue, current, difference, difference === null ? null : difference * 1000000, excelSavedDate(log.lastSavedAir)];
     });
   }));
 
-  addTypedSheet(workbook, facilitySheetName(prefix, "DC_Calculations"), ["Reporting Month", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current (A)", "AC Power (W)", "Monthly Energy (kWh)"], logs.flatMap(log => {
+  addTypedSheet(workbook, facilitySheetName(prefix, "DC_Calculations"), ["Reporting Month", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current (A)", "AC Power (W)", "Monthly Energy (kWh)", "Last Saved Date"], logs.flatMap(log => {
     const days = daysInUtcMonth(log.month);
     return log.dc.map(panel => {
       const dcPower = panel.voltage === null || panel.current === null ? null : panel.voltage * panel.current;
       const acPower = dcPower === null ? null : dcPower / 200 * 220;
-      return [excelMonth(log.month), panel.panelId, panel.voltage, panel.current, dcPower, acPower === null ? null : acPower / 220, acPower, acPower === null || days === null ? null : acPower * 24 * days / 1000];
+      return [excelMonth(log.month), panel.panelId, panel.voltage, panel.current, dcPower, acPower === null ? null : acPower / 220, acPower, acPower === null || days === null ? null : acPower * 24 * days / 1000, excelSavedDate(log.lastSavedDc)];
     });
   }));
 
