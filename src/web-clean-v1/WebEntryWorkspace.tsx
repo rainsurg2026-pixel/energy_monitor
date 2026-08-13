@@ -27,13 +27,15 @@ export function mergeEntryDraft(draft: MonthlyLog, updates: LiveDrafts): Monthly
 /** Full browser implementation of Desktop's entry workspace.
  * Save All first combines every in-page draft into one MonthlyLog and calls
  * the Web API once, preserving its row-version concurrency contract. */
-export default function WebEntryWorkspace({ siteName, siteCode, months, month, draft, busy, onSave, onSelectMonth, onOpenReports, onNotice }: {
+export default function WebEntryWorkspace({ siteName, siteCode, months, month, draft, busy, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onOpenReports, onNotice }: {
   siteName: string;
   siteCode: string;
   months: string[];
   month: string;
   draft: MonthlyLog;
   busy: boolean;
+  allowedStartMonth: string;
+  allowedEndMonth: string;
   onSave: (patch: Partial<MonthlyLog>) => Promise<void>;
   onSelectMonth: (month: string) => void;
   onOpenReports: () => void;
@@ -68,7 +70,7 @@ export default function WebEntryWorkspace({ siteName, siteCode, months, month, d
   const jumpToSection = useCallback((section: Section) => document.getElementById(`entry-section-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), []);
 
   return <div className="space-y-5 pb-40 md:pb-24">
-    <WebEntryWorkflowHeader facilityName={siteName} months={months} selectedMonth={month} draft={liveDraft} onSelectMonth={onSelectMonth} />
+    <WebEntryWorkflowHeader facilityName={siteName} months={months} selectedMonth={month} draft={liveDraft} allowedStartMonth={allowedStartMonth} allowedEndMonth={allowedEndMonth} onSelectMonth={onSelectMonth} />
     <WebHistoricalEditNotice selectedMonth={month} latestMonth={latestMonth} onReturnToLatest={() => { if (latestMonth) onSelectMonth(latestMonth); }} />
     <DashboardStats log={liveDraft} />
     <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">Monthly Data Entry</h2><p className="mt-1 text-sm text-slate-400">Enter validated operating readings for {month}; Save All sends one concurrency-protected Production API update.</p></div>

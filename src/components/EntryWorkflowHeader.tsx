@@ -16,6 +16,9 @@ interface EntryWorkflowHeaderProps {
   lastSaved: string | null;
   /** Selecting an existing month switches to it; a missing one asks to create it. */
   onSelectMonth: (month: string, exists: boolean) => void;
+  /** Optional hosted-app policy. Desktop leaves this unset and retains its
+   *  workbook-driven month navigation. */
+  canSelectMonth?: (month: string) => boolean;
   /** Web mode has no workbook integrity probe, so it must not claim one. */
   showHealth?: boolean;
 }
@@ -38,18 +41,20 @@ export default function EntryWorkflowHeader({
   health,
   lastSaved,
   onSelectMonth,
+  canSelectMonth,
   showHealth = true
 }: EntryWorkflowHeaderProps) {
   const th = lang === "th";
   const existing = useMemo(() => new Set(months), [months]);
   // Years are listed newest-first; the latest is what a user wants 99% of the time.
+  const selectable = (month: string) => canSelectMonth?.(month) !== false;
   const years = useMemo(() => {
     const ys = new Set(months.map(m => m.split("-")[0]));
     const selYear = selectedMonth?.split("-")[0];
     if (selYear) ys.add(selYear);
     ys.add(String(new Date().getFullYear()));
-    return Array.from(ys).sort().reverse();
-  }, [months, selectedMonth]);
+    return Array.from(ys).filter(year => MONTH_NAMES.some((_, index) => selectable(`${year}-${String(index + 1).padStart(2, "0")}`))).sort().reverse();
+  }, [months, selectedMonth, canSelectMonth]);
 
   const selectedYear = selectedMonth?.split("-")[0] ?? years[0];
 
@@ -62,15 +67,26 @@ export default function EntryWorkflowHeader({
     if (!y || !m) return;
     const d = new Date(y, m - 1 + delta, 1);
     const target = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    if (!selectable(target)) return;
     onSelectMonth(target, existing.has(target));
   };
 
+  const adjacentMonth = (delta: 1 | -1): string | null => {
+    if (!selectedMonth) return null;
+    const [y, m] = selectedMonth.split("-").map(Number);
+    if (!y || !m) return null;
+    const d = new Date(y, m - 1 + delta, 1);
+    const target = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    return selectable(target) ? target : null;
+  };
+
   const handleYearChange = (year: string) => {
-    const inYear = months.filter(m => m.startsWith(`${year}-`));
+    const inYear = months.filter(m => m.startsWith(`${year}-`) && selectable(m));
     if (inYear.length > 0) {
       onSelectMonth(inYear[inYear.length - 1], true); // latest month of that year
     } else {
-      onSelectMonth(`${year}-01`, false);
+      const firstAllowed = MONTH_NAMES.map((_, index) => `${year}-${String(index + 1).padStart(2, "0")}`).find(selectable);
+      if (firstAllowed) onSelectMonth(firstAllowed, false);
     }
   };
 
@@ -122,7 +138,7 @@ export default function EntryWorkflowHeader({
       <div className="flex items-center gap-1.5">
         <button
           onClick={() => stepMonth(-1)}
-          disabled={!selectedMonth}
+          disabled={adjacentMonth(-1) === null}
           className={stepBtn}
           title={th ? "เดือนก่อนหน้า" : "Previous month"}
         >
@@ -143,6 +159,7 @@ export default function EntryWorkflowHeader({
             {MONTH_NAMES.map((name, i) => {
               const value = `${selectedYear}-${String(i + 1).padStart(2, "0")}`;
               const has = existing.has(value);
+              if (!selectable(value)) return null;
               if (value === selectedMonth && !has) return null;
               return (
                 <option key={value} value={value}>
@@ -156,7 +173,7 @@ export default function EntryWorkflowHeader({
         </div>
         <button
           onClick={() => stepMonth(1)}
-          disabled={!selectedMonth}
+          disabled={adjacentMonth(1) === null}
           className={stepBtn}
           title={th ? "เดือนถัดไป" : "Next month"}
         >

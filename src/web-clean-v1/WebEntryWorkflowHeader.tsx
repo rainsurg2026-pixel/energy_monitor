@@ -11,13 +11,17 @@ export default function WebEntryWorkflowHeader({
   months,
   selectedMonth,
   draft,
-  onSelectMonth
+  onSelectMonth,
+  allowedStartMonth,
+  allowedEndMonth
 }: {
   facilityName: string;
   months: string[];
   selectedMonth: string;
   draft: MonthlyLog;
   onSelectMonth: (month: string) => void;
+  allowedStartMonth: string;
+  allowedEndMonth: string;
 }) {
   const lastSaved = draft.lastSavedUps ?? draft.lastSavedAir ?? draft.lastSavedDc ?? draft.lastSavedEnergyCost ?? null;
   return <EntryWorkflowHeader
@@ -32,6 +36,7 @@ export default function WebEntryWorkflowHeader({
     showHealth={false}
     lastSaved={lastSaved}
     onSelectMonth={target => onSelectMonth(target)}
+    canSelectMonth={target => target >= allowedStartMonth && target <= allowedEndMonth}
   />;
 }
 
