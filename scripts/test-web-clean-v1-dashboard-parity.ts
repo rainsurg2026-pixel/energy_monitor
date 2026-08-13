@@ -11,4 +11,6 @@ assert.match(app, /selectedReportView === "forecast" && <ForecastDashboard logs=
 assert.match(app, /import HistoricalCharts from "\.\.\/components\/HistoricalCharts"/);
 assert.match(app, /<HistoricalCharts logs=\{history\.logs\} lang=\{lang\} displayPeriod=\{bootstrap\?\.displayPeriod\.startMonth\.slice\(0, 4\)\} dataSourceLabel=\{lang === "th" \? "แหล่งข้อมูล: Production API" : "Source: Production API"\} \/>/);
 
+assert.match(app, /<UniversalFilterBar lang=\{lang\} facility=\{null\} upsGroupNames=\{upsGroupNames\}/);
+
 console.log("web-clean-v1 dashboard: exposes Desktop Benchmark and Forecast tabs from API-backed monthly logs");

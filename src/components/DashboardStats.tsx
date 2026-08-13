@@ -5,9 +5,20 @@ import { Zap, Thermometer, Database, Cpu } from "lucide-react";
 
 interface DashboardStatsProps {
   log: MonthlyLog;
+  lang?: "th" | "en";
 }
 
-export default function DashboardStats({ log }: DashboardStatsProps) {
+export default function DashboardStats({ log, lang = "en" }: DashboardStatsProps) {
+  const th = lang === "th";
+  const copy = th ? {
+    ups: "โหลด UPS รวม", apparent: "กำลังปรากฏ", pf: "PF", ac: "พลังงานระบบปรับอากาศรวม",
+    noAc: "ยังไม่มีการบันทึกค่าแอร์", equivalent: "เทียบเท่า", dc: "กำลังไฟ DC รวม", panels: "แผงที่บันทึกแล้ว",
+    rate: "อัตราค่าไฟฟ้า", cost: "ค่าใช้จ่าย", noCost: "ยังไม่มีการบันทึกค่าไฟฟ้า", formula: "อัตรา = ค่าใช้จ่าย / ปริมาณการใช้ (kWh)"
+  } : {
+    ups: "Total UPS Load", apparent: "Apparent", pf: "PF", ac: "Total AC Energy",
+    noAc: "No AC logs saved", equivalent: "Equivalent", dc: "Total DC Power", panels: "panels logged",
+    rate: "Electricity Rate", cost: "Cost", noCost: "No energy cost logged", formula: "Rate = Cost / Consumption (kWh)"
+  };
   // 1. UPS calculations
   let totalUpsKw = 0;
   let totalUpsKva = 0;
@@ -46,13 +57,13 @@ export default function DashboardStats({ log }: DashboardStatsProps) {
         {/* Card 1: UPS Total Load */}
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex items-start justify-between shadow-sm">
           <div className="space-y-2">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total UPS Load</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{copy.ups}</p>
             <h3 className="text-2xl font-display font-semibold text-indigo-400">
               {totalUpsKw > 0 ? `${formatNumber2(totalUpsKw)} kW` : "—"}
             </h3>
             <p className="text-xs text-slate-500">
-              {totalUpsKva > 0 ? `Apparent: ${formatNumber2(totalUpsKva)} kVA` : ""}
-              {overallUpsPf ? ` • PF: ${formatNumber2(overallUpsPf)}` : ""}
+              {totalUpsKva > 0 ? `${copy.apparent}: ${formatNumber2(totalUpsKva)} kVA` : ""}
+              {overallUpsPf ? ` • ${copy.pf}: ${formatNumber2(overallUpsPf)}` : ""}
             </p>
           </div>
           <div className="p-3 bg-indigo-500/10 rounded-xl text-indigo-400">
@@ -63,12 +74,12 @@ export default function DashboardStats({ log }: DashboardStatsProps) {
         {/* Card 2: AC Energy Consumption */}
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex items-start justify-between shadow-sm">
           <div className="space-y-2">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total AC Energy</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{copy.ac}</p>
             <h3 className="text-2xl font-display font-semibold text-teal-400">
               {totalAirGwh === null ? "—" : `${formatNumber2(totalAirGwh)} GWh`}
             </h3>
             <p className="text-xs text-slate-500">
-              {totalAirGwh === null ? "No AC logs saved" : `Equivalent: ${formatNumber2(totalAirGwh * 1000)} MWh`}
+              {totalAirGwh === null ? copy.noAc : `${copy.equivalent}: ${formatNumber2(totalAirGwh * 1000)} MWh`}
             </p>
           </div>
           <div className="p-3 bg-teal-500/10 rounded-xl text-teal-400">
@@ -79,12 +90,12 @@ export default function DashboardStats({ log }: DashboardStatsProps) {
         {/* Card 3: DC Power Panel */}
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex items-start justify-between shadow-sm">
           <div className="space-y-2">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total DC Power</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{copy.dc}</p>
             <h3 className="text-2xl font-display font-semibold text-amber-400">
               {totalDcKw > 0 ? `${formatNumber2(totalDcKw)} kW` : "—"}
             </h3>
             <p className="text-xs text-slate-500">
-              {log.dc.filter(d => d.voltage !== null).length} of {log.dc.length} panels logged
+              {log.dc.filter(d => d.voltage !== null).length} / {log.dc.length} {copy.panels}
             </p>
           </div>
           <div className="p-3 bg-amber-500/10 rounded-xl text-amber-400">
@@ -95,17 +106,17 @@ export default function DashboardStats({ log }: DashboardStatsProps) {
         {/* Card 4: Building Cost Analysis */}
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl flex items-start justify-between shadow-sm">
           <div className="space-y-2">
-            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Electricity Rate</p>
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{copy.rate}</p>
             <h3 className="text-2xl font-display font-semibold text-emerald-400">
               {costPerKwh !== null ? `${formatNumber2(costPerKwh)} ฿/kWh` : "—"}
             </h3>
             <p className="text-[10px] text-slate-500 leading-normal">
               {log.energyCost.buildingElectricityCostThb !== null
-                ? `Cost: ฿${formatNumber2(log.energyCost.buildingElectricityCostThb)}`
-                : "No energy cost logged"}
+                ? `${copy.cost}: ฿${formatNumber2(log.energyCost.buildingElectricityCostThb)}`
+                : copy.noCost}
             </p>
             <p className="text-[9px] text-slate-500/80 font-mono leading-none">
-              Rate = Cost / Consumption (kWh)
+              {copy.formula}
             </p>
           </div>
           <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400">

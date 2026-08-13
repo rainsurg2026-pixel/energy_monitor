@@ -78,8 +78,8 @@ export default function WebEntryWorkspace({ lang, siteName, siteCode, months, mo
 
   return <div className="space-y-5 pb-40 md:pb-24">
     <WebEntryWorkflowHeader lang={lang} facilityName={siteName} months={months} selectedMonth={month} draft={liveDraft} allowedStartMonth={allowedStartMonth} allowedEndMonth={allowedEndMonth} onSelectMonth={onSelectMonth} />
-    <WebHistoricalEditNotice selectedMonth={month} latestMonth={latestMonth} onReturnToLatest={() => { if (latestMonth) onSelectMonth(latestMonth); }} />
-    <DashboardStats log={liveDraft} />
+    <WebHistoricalEditNotice lang={lang} selectedMonth={month} latestMonth={latestMonth} onReturnToLatest={() => { if (latestMonth) onSelectMonth(latestMonth); }} />
+    <DashboardStats lang={lang} log={liveDraft} />
     <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">{th ? "กรอกข้อมูลรายเดือน" : "Monthly Data Entry"}</h2><p className="mt-1 text-sm text-slate-400">{th ? `กรอกค่าการทำงานที่ตรวจสอบแล้วสำหรับ ${month}; ปุ่มบันทึกทั้งหมดจะส่งข้อมูลไปยัง Production API ในคำขอเดียว` : `Enter validated operating readings for ${month}; Save All sends one concurrency-protected Production API update.`}</p></div>
       <div id="entry-section-ups">{siteCode === "srinakarin" ? <SrinakarinPowerPhaseTable lang={lang} monthStr={month} initialLog={draft} lastSaved={draft.lastSavedUps} onSave={(ups, srinakarinInputs) => void onSave({ ups, srinakarinInputs })} registerApi={register("ups")} onDraftChange={(ups, srinakarinInputs) => { reportDraft("ups", ups); reportDraft("srinakarinInputs", srinakarinInputs); }} /> : <UpsTable lang={lang} monthStr={month} initialRecords={draft.ups} lastSaved={draft.lastSavedUps} onSave={ups => void onSave({ ups })} registerApi={register("ups")} onDraftChange={ups => reportDraft("ups", ups)} />}</div>
       <div id="entry-section-air"><AirTable lang={lang} monthStr={month} initialRecord={draft.air} lastSaved={draft.lastSavedAir} meterFields={draft.energyCalculation?.airFields} onSave={air => void onSave({ air })} registerApi={register("air")} onDraftChange={air => reportDraft("air", air)} /></div>
