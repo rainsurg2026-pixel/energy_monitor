@@ -123,6 +123,52 @@ function addFacilityExportSheets(workbook: any, facility: ExportFacility): void 
   const prefix = facility.siteName.replace(/[^a-z0-9]+/giu, "-").slice(0, 12) || "facility";
   const airFields = Array.from(new Set(logs.flatMap(log => getAirFields(log)))).sort();
 
+  // Keep the first worksheet useful when a user opens the downloaded file.
+  // This is the web equivalent of Desktop's report/dashboard summary: source
+  // inputs, persisted values, and the same derived calculation snapshot are
+  // visible together, while section-specific sheets below retain every raw
+  // reading.  Nulls remain blank rather than being converted to zero.
+  addTypedSheet(workbook, facilitySheetName(prefix, "Summary"), [
+    "Reporting Month",
+    "Building Energy Input (kWh)",
+    "Building Cost Input (THB)",
+    "Last Saved UPS Date",
+    "Last Saved Air Date",
+    "Last Saved DC Date",
+    "Last Saved Energy/Cost Date",
+    "4th Floor Cost Saved (THB)",
+    "Average Rate Saved (THB/kWh)",
+    "UPS Energy Calculated (kWh)",
+    "Air Energy Calculated (kWh)",
+    "DC Energy Calculated (kWh)",
+    "4th Floor Energy Calculated (kWh)",
+    "4th Floor Cost Calculated (THB)",
+    "Average Rate Calculated (THB/kWh)",
+    "4th Floor Energy Share Calculated (%)",
+    "Data Status"
+  ], logs.map(log => {
+    const calculation = calculateEnergyCostForMonth(calculationLogs, log.month);
+    return [
+      excelMonth(log.month),
+      log.energyCost.buildingEnergyKwh,
+      log.energyCost.buildingElectricityCostThb,
+      excelSavedDate(log.lastSavedUps),
+      excelSavedDate(log.lastSavedAir),
+      excelSavedDate(log.lastSavedDc),
+      excelSavedDate(log.lastSavedEnergyCost),
+      log.energyCost.floorElectricityCostThb ?? null,
+      log.energyCost.averageElectricityRateThbPerKwh ?? null,
+      calculation.upsEnergyKwh,
+      calculation.airEnergyKwh,
+      calculation.dcEnergyKwh,
+      calculation.floorEnergyKwh,
+      calculation.floorElectricityCostThb,
+      calculation.averageElectricityRateThbPerKwh,
+      calculation.energySharePercent,
+      calculation.floorEnergyKwh === null ? "Partial" : "Complete"
+    ] as ExcelCellValue[];
+  }));
+
   addTypedSheet(workbook, facilitySheetName(prefix, "UPS_Loads"), ["Reporting Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Last Saved Date"], logs.flatMap(log => log.ups.map(ups => [excelMonth(log.month), ups.upsId, ups.voltage, ups.current, ups.loadKw, ups.loadKva, excelSavedDate(log.lastSavedUps)])));
   const upsPhaseRows = logs.flatMap(log => log.ups.flatMap(ups => Object.entries(ups.phases ?? {}).map(([phase, values]) => [excelMonth(log.month), ups.upsId, phase, values.voltage, values.current, values.loadKw, values.loadKva, excelSavedDate(log.lastSavedUps)] as ExcelCellValue[])));
   if (upsPhaseRows.length > 0) addTypedSheet(workbook, facilitySheetName(prefix, "UPS_Phases"), ["Reporting Month", "UPS ID", "Phase", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Last Saved Date"], upsPhaseRows);

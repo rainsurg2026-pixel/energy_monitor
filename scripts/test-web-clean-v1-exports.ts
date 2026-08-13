@@ -125,10 +125,12 @@ const typedWorkbook = await workbookForFacilities([{ siteName: "Typed", logs: [t
 const typedBuffer = await typedWorkbook.xlsx.writeBuffer();
 const typedReread = new ExcelJS.Workbook();
 await typedReread.xlsx.load(typedBuffer as unknown as ArrayBuffer);
+const typedSummary = typedReread.worksheets.find(sheet => sheet.name.includes("Summary"));
 const typedEnergy = typedReread.worksheets.find(sheet => sheet.name.includes("Energy_Cost"))!;
 const typedUps = typedReread.worksheets.find(sheet => sheet.name.includes("UPS_Loads"))!;
 const typedUpsPhases = typedReread.worksheets.find(sheet => sheet.name.includes("UPS_Phases"))!;
 const typedPhase = typedReread.worksheets.find(sheet => sheet.name.includes("Srinakarin_Inputs"))!;
+check("Excel includes a Desktop-style summary with inputs, saved values, and calculations", Boolean(typedSummary) && typedSummary!.columnCount === 17 && typedSummary!.getCell("B2").value === 1000.125 && typedSummary!.getCell("D2").value instanceof Date && typedSummary!.getCell("J2").value === null && typedSummary!.getCell("Q2").value === "Partial");
 check("Excel includes raw UPS entry rows", typedUps.getCell("B2").value === "UPS 11A" && typedUps.getCell("C2").value === 230.125);
 check("Excel includes section saved dates as typed dd-Mmm-yy dates", typedUps.getCell("G2").value instanceof Date && typedUps.getCell("G2").numFmt === "dd-mmm-yy");
 check("Excel includes UPS phase entry rows", typedUpsPhases.getCell("B2").value === "UPS 11A" && typedUpsPhases.getCell("D2").value === 229.5);
