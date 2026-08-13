@@ -10,6 +10,7 @@ import UniversalFilterBar from "../components/UniversalFilterBar";
 import HistoricalExplorer from "../components/HistoricalExplorer";
 import HistoricalCharts from "../components/HistoricalCharts";
 import { createEmptyLog } from "../utils";
+import { currentMonth } from "../utils/monthUtils";
 import { computeCompletion } from "../utils/completion";
 import type { MonthlyLog } from "../types";
 import type { UpsGroupHistoryReport, RackCapacitySummary } from "../reports/reportTypes";
@@ -49,7 +50,9 @@ type AdminUser = { id: string; username: string; displayName: string; role: Role
 type DisplayPeriod = { startMonth: string; endMonth: string; rowVersion: number };
 type PendingNavigation = () => void | Promise<void>;
 
-const todayMonth = () => new Date().toISOString().slice(0, 7);
+// Match Desktop's local-calendar month semantics. UTC ISO formatting can
+// show the previous month during the first hours of a new month in Thailand.
+const todayMonth = currentMonth;
 const readError = (error: unknown) => error instanceof Error ? error.message : "The request could not be completed.";
 const PASSWORD_MIN_LENGTH = 12;
 const passwordHelp = (lang: AppLanguage) => lang === "th" ? `ต้องมีอย่างน้อย ${PASSWORD_MIN_LENGTH} ตัวอักษร` : `Use at least ${PASSWORD_MIN_LENGTH} characters.`;
