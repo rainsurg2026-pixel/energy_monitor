@@ -57,12 +57,12 @@ export interface DomainEngineeringDashboardSnapshot {
   previousMonth: string | null;
   upsGroups: Array<{ name: string; totalKw: number; totalKva: number; capacity: number | null; loadPercent: number | null; availablePercent: number | null; monthlyEnergyKwh: number }>;
   upsOverallGroups: Array<{ name: string; totalKw: number; totalKva: number; capacity: number | null; loadPercent: number | null; availablePercent: number | null; monthlyEnergyKwh: number }>;
-  upsDetails: Array<{ no: number; umdb: string; upsId: string; acPowerPanel: string; sts: string; oudb: string; voltage: number; current: number; loadKw: number; loadKva: number; capacity: number | null; loadPercent: number | null }>;
+  upsDetails: Array<{ no: number; umdb: string; upsId: string; acPowerPanel: string; sts: string; oudb: string; voltage: number | null; current: number | null; loadKw: number | null; loadKva: number | null; capacity: number | null; loadPercent: number | null }>;
   totalUpsKw: number;
   totalUpsKva: number;
   totalUpsEnergyKwh: number;
   detailedVoltageAvg: number | null;
-  detailedCurrentSum: number;
+  detailedCurrentSum: number | null;
   airFields: string[];
   airPrevious: Record<string, number | null>;
   airCurrent: Record<string, number | null>;

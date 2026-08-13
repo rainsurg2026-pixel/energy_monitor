@@ -8,7 +8,11 @@ import { normalizeMonthCell } from "../../src/excel/ExcelSchema";
 import type { DeviceLists } from "../../src/excel/SheetMapper";
 import { DEFAULT_DEVICE_LISTS } from "../../src/excel/SheetMapper";
 import { readRackCapacityFromBuffer } from "../../src/reports/rackCapacityReader";
+import { readRackCapacityHistoryFromBuffer } from "../../src/excel/RackCapacityHistoryWriter";
+import { readUpsGroupHistoryFromBuffer } from "../../src/reports/upsGroupHistoryReader";
+import { readUpsMappingFromBuffer } from "../../src/reports/upsMappingReader";
 import { readRackUnitCapacityFromBuffer } from "../../src/excel/RackUnitCapacityWriter";
+import { readRackUnitCapacityImageSources } from "./rackUnitImageSource";
 import type { CachedEvidenceRecord, MigrationSource } from "./types";
 
 type PlainValue = string | number | Date | null;
@@ -103,18 +107,28 @@ function readCachedEvidence(workbook: ExcelJS.Workbook): { evidence: CachedEvide
   return { evidence, locations };
 }
 
-export async function readWorkbookSource(filePath: string, devices: DeviceLists = DEFAULT_DEVICE_LISTS): Promise<MigrationSource> {
+export async function readWorkbookSource(
+  filePath: string,
+  devices: DeviceLists = DEFAULT_DEVICE_LISTS,
+  options: { imagesRootDir?: string; siteCode?: string } = {}
+): Promise<MigrationSource> {
   const sourcePath = path.resolve(filePath);
   const buffer = await readFile(sourcePath);
-  const [workbookResult, rackCapacity, rackUnitCapacityRows] = await Promise.all([
+  const [workbookResult, rackCapacity, rackCapacityHistoryRows, rackUnitCapacityRows, upsGroupHistory, dashboardMapping] = await Promise.all([
     readWorkbookFromBuffer(buffer, devices),
     readRackCapacityFromBuffer(buffer),
-    readRackUnitCapacityFromBuffer(buffer)
+    readRackCapacityHistoryFromBuffer(buffer),
+    readRackUnitCapacityFromBuffer(buffer),
+    readUpsGroupHistoryFromBuffer(buffer),
+    readUpsMappingFromBuffer(buffer)
   ]);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
   const cached = readCachedEvidence(workbook);
   const sourceFileHash = createHash("sha256").update(buffer).digest("hex");
+  const rackUnitCapacityImages = options.imagesRootDir && options.siteCode
+    ? await readRackUnitCapacityImageSources(options.imagesRootDir, options.siteCode)
+    : [];
   return {
     sourceType: "desktop_workbook",
     sourcePath,
@@ -129,6 +143,10 @@ export async function readWorkbookSource(filePath: string, devices: DeviceLists 
     rackCapacitySnapshot: rackCapacity && workbookResult.logs.length > 0
       ? { month: [...workbookResult.logs].sort((a, b) => b.month.localeCompare(a.month))[0].month, sourceSheet: rackCapacity.sourceSheet, records: rackCapacity.records }
       : null,
-    rackUnitCapacityRows
+    rackCapacityHistoryRows,
+    rackUnitCapacityRows,
+    upsGroupHistoryRows: upsGroupHistory?.rows ?? [],
+    rackUnitCapacityImages,
+    dashboardMapping
   };
 }

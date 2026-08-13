@@ -5,9 +5,9 @@ export function themeStorageKey(userId: string): string { return `energy-monitor
 export function languageStorageKey(userId: string): string { return `energy-monitor:language:${userId}`; }
 
 /** Desktop's packaged DEFAULT_CONFIG starts in the warm light theme.  Keep
- * an explicit saved "dark" preference, but make a first browser visit match
- * that same Desktop default instead of silently choosing a different theme. */
-export function normalizeTheme(value: string | null): Theme { return value === "dark" ? "dark" : "light"; }
+ * an explicit saved "dark" preference, while keeping the existing CleanWeb
+ * default stable for stored and unknown values. */
+export function normalizeTheme(value: string | null): Theme { return value === "light" ? "light" : "dark"; }
 export function normalizeLanguage(value: string | null): AppLanguage { return value === "en" ? "en" : "th"; }
 
 export function applyTheme(theme: Theme): void {

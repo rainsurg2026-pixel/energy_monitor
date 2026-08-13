@@ -3,13 +3,19 @@ import { DESKTOP_FORMULA_VERSION } from "../../src/domain/formulaVersion";
 import type { MonthlyLog } from "../../src/types";
 import { PostgresTransactionRepository } from "../db/postgresRepository";
 import { withTransaction } from "../db/pool";
+import { imageObjectKey, type RackUnitImageStorage } from "../storage/rackUnitImageStorage";
 import { verifyCalculatedParity } from "./engine";
+import { canonicalizeUpsGroupHistoryRows } from "./upsGroupHistory";
 import type { MigrationImportResult, MigrationPlan } from "./types";
 
 export interface MigrationImportOptions {
   allowWrite: boolean;
   targetEnvironment: "development" | "test" | "production";
   readOnlyMode?: boolean;
+  /** Production imports are only reachable through the dedicated guarded CLI. */
+  allowProductionImport?: boolean;
+  /** Required when the source includes external Desktop Rack Unit images. */
+  rackUnitImageStorage?: RackUnitImageStorage;
 }
 
 export class MigrationImportError extends Error {
@@ -32,6 +38,17 @@ function sourceLocationForMonth(plan: MigrationPlan, month: string): { sheet: st
   };
 }
 
+async function persistDashboardMappingPolicy(client: PoolClient, siteId: string | number, mapping: MigrationPlan["source"]["dashboardMapping"]): Promise<void> {
+  if (!mapping) return;
+  const result = await client.query(
+    "UPDATE site_profiles SET policy = policy || $2::jsonb, updated_at = now() WHERE site_id = $1",
+    [siteId, JSON.stringify({ dashboardMapping: mapping })]
+  );
+  if (result.rowCount !== 1) {
+    throw new MigrationImportError("PROFILE_MAPPING_MISSING", "Target site profile row was not found; source Dashboard-FAC mapping was not persisted.");
+  }
+}
+
 function authoritativeLog(log: MonthlyLog): MonthlyLog {
   return {
     ...log,
@@ -42,7 +59,8 @@ function authoritativeLog(log: MonthlyLog): MonthlyLog {
   };
 }
 
-async function importRackSnapshots(client: PoolClient, siteId: number, plan: MigrationPlan): Promise<void> {
+async function importRackSnapshots(client: PoolClient, siteId: number, plan: MigrationPlan): Promise<Map<string, string>> {
+  const rackUnitSnapshotIds = new Map<string, string>();
   const rackCapacity = plan.source.rackCapacitySnapshot;
   if (rackCapacity) {
     const inserted = await client.query<{ id: string }>(
@@ -57,11 +75,48 @@ async function importRackSnapshots(client: PoolClient, siteId: number, plan: Mig
     }
   }
   for (const row of plan.source.rackUnitCapacityRows) {
-    await client.query(
-      "INSERT INTO rack_unit_capacity_snapshots(site_id, period_month, total_u, used_u) VALUES ($1, $2::date, $3, $4)",
+    const inserted = await client.query<{ id: string }>(
+      "INSERT INTO rack_unit_capacity_snapshots(site_id, period_month, total_u, used_u) VALUES ($1, $2::date, $3, $4) RETURNING id",
       [siteId, `${row.month}-01`, row.totalU, row.usedU]
     );
+    rackUnitSnapshotIds.set(row.month, inserted.rows[0].id);
   }
+  for (const row of plan.source.rackCapacityHistoryRows) {
+    await client.query(
+      `INSERT INTO rack_capacity_history
+        (site_id, snapshot_month, facility, rack_zone, total_racks, in_use, available, reserved, pending_dismantle, other, usage_pct, availability_pct, reserved_pct, pending_dismantle_pct, other_pct, generated_at, data_version)
+       VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+      [siteId, `${row.snapshotMonth}-01`, row.facility, row.rackZone, row.totalRacks, row.inUse, row.available, row.reserved, row.pendingDismantle, row.other, row.usagePct, row.availabilityPct, row.reservedPct, row.pendingDismantlePct, row.otherPct, row.generatedAt, row.dataVersion]
+    );
+  }
+  return rackUnitSnapshotIds;
+}
+
+async function importUpsGroupHistory(client: PoolClient, siteId: number, plan: MigrationPlan): Promise<number> {
+  const canonical = canonicalizeUpsGroupHistoryRows(plan.source.upsGroupHistoryRows);
+  if (canonical.conflictingKeys.length > 0) {
+    throw new MigrationImportError("DUPLICATE_UPS_HISTORY_CONFLICT", "UPS Group History contains conflicting values for the same facility/month/group key.");
+  }
+  for (const row of canonical.rows) {
+    await client.query(
+      `INSERT INTO public.ups_group_history
+        (site_id, source_sheet, facility, history_month, group_name, total_load_kw, total_load_kva, capacity, load_percent, available_percent, monthly_energy_kwh, generated_at, data_version)
+       VALUES ($1,'2. UPS Group History',$2,$3::date,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (site_id, history_month, group_name) DO UPDATE SET
+         source_sheet = EXCLUDED.source_sheet,
+         facility = EXCLUDED.facility,
+         total_load_kw = EXCLUDED.total_load_kw,
+         total_load_kva = EXCLUDED.total_load_kva,
+         capacity = EXCLUDED.capacity,
+         load_percent = EXCLUDED.load_percent,
+         available_percent = EXCLUDED.available_percent,
+         monthly_energy_kwh = EXCLUDED.monthly_energy_kwh,
+         generated_at = EXCLUDED.generated_at,
+         data_version = EXCLUDED.data_version`,
+      [siteId, row.facility, `${row.month}-01`, row.group, row.totalLoadKw, row.totalLoadKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh, row.generatedAt, row.dataVersion]
+    );
+  }
+  return canonical.rows.length;
 }
 
 async function insertCalculationOutputs(client: PoolClient, periodId: number, plan: MigrationPlan, month: string, batchId: number): Promise<void> {
@@ -128,15 +183,32 @@ async function recordFailedBatch(pool: Pool, plan: MigrationPlan, code: string, 
 export async function importMigrationPlan(pool: Pool, plan: MigrationPlan, options: MigrationImportOptions): Promise<MigrationImportResult> {
   if (!options.allowWrite) throw new MigrationImportError("WRITE_NOT_ENABLED", "Import requires an explicit write flag.");
   if (options.readOnlyMode) throw new MigrationImportError("READ_ONLY_MODE", "Migration import is disabled while READ_ONLY_MODE is enabled.");
-  if (options.targetEnvironment === "production") throw new MigrationImportError("PRODUCTION_IMPORT_BLOCKED", "Direct production migration is prohibited.");
+  if (options.targetEnvironment === "production" && options.allowProductionImport !== true) {
+    throw new MigrationImportError("PRODUCTION_IMPORT_BLOCKED", "Production import requires the dedicated guarded production importer.");
+  }
   const errors = plan.issues.filter(entry => entry.severity === "error");
   if (errors.length > 0) throw new MigrationImportError("PLAN_INVALID", "Migration plan contains validation errors.");
+  const imageSources = plan.source.rackUnitCapacityImages ?? [];
+  if (imageSources.length > 0 && !options.rackUnitImageStorage) throw new MigrationImportError("IMAGE_STORAGE_REQUIRED", "The migration source contains Rack Unit Capacity images but no image storage provider was configured.");
 
+  const uploadedImageKeys: string[] = [];
   try {
     return await withTransaction(pool, async client => {
       const existingBatch = await client.query<{ id: string; status: string }>("SELECT id, status FROM migration_batches WHERE idempotency_key = $1 FOR UPDATE", [plan.idempotencyKey]);
       if (existingBatch.rows[0]) {
-        if (existingBatch.rows[0].status === "verified" || existingBatch.rows[0].status === "imported") return { status: "skipped", batchId: Number(existingBatch.rows[0].id), verified: existingBatch.rows[0].status === "verified", importedMonths: [], cachedEvidenceCount: 0 };
+        if (existingBatch.rows[0].status === "verified" || existingBatch.rows[0].status === "imported") {
+          // A prior import may predate Dashboard-FAC mapping retention. A
+          // same-hash rerun remains data-idempotent but is allowed to refresh
+          // this read-only site-profile metadata.
+          if (plan.source.dashboardMapping) {
+            const existingSite = await client.query<{ id: string; name: string; active: boolean }>("SELECT id, name, active FROM sites WHERE code = $1 FOR SHARE", [plan.mapping.siteCode]);
+            const existingSiteRow = existingSite.rows[0];
+            if (!existingSiteRow || !existingSiteRow.active) throw new MigrationImportError("SITE_MAPPING_INVALID", `Active site mapping was not found for ${plan.mapping.siteCode}.`);
+            if (plan.mapping.expectedSiteName && existingSiteRow.name !== plan.mapping.expectedSiteName) throw new MigrationImportError("SITE_NAME_MISMATCH", "Target site name does not match the migration mapping.");
+            await persistDashboardMappingPolicy(client, existingSiteRow.id, plan.source.dashboardMapping);
+          }
+          return { status: "skipped", batchId: Number(existingBatch.rows[0].id), verified: existingBatch.rows[0].status === "verified", importedMonths: [], cachedEvidenceCount: 0 };
+        }
         throw new MigrationImportError("DUPLICATE_BATCH", "A previous migration batch with this source hash is not verified.");
       }
 
@@ -149,17 +221,24 @@ export async function importMigrationPlan(pool: Pool, plan: MigrationPlan, optio
       if (!siteRow || !siteRow.active) throw new MigrationImportError("SITE_MAPPING_INVALID", `Active site mapping was not found for ${plan.mapping.siteCode}.`);
       if (plan.mapping.expectedSiteName && siteRow.name !== plan.mapping.expectedSiteName) throw new MigrationImportError("SITE_NAME_MISMATCH", "Target site name does not match the migration mapping.");
       if (plan.mapping.expectedProfileCode && siteRow.profile_code !== plan.mapping.expectedProfileCode) throw new MigrationImportError("PROFILE_MAPPING_INVALID", "Target site profile does not match the migration mapping.");
+      // Dashboard-FAC is fixed wiring/topology in the Desktop workbook, not a
+      // monthly reading. Persist the source-derived report in the existing
+      // site_profiles.policy JSON so Web bootstrap/export can use the same
+      // authoritative mapping after migration without adding a new table or
+      // inventing a second topology definition.
+      await persistDashboardMappingPolicy(client, siteRow.id, plan.source.dashboardMapping);
 
       const months = plan.source.logs.map(log => `${log.month}-01`);
       const existingPeriods = await client.query<{ period_month: string }>("SELECT period_month FROM monthly_periods WHERE site_id = $1 AND period_month = ANY($2::date[]) FOR SHARE", [siteRow.id, months]);
       if (existingPeriods.rows.length > 0) throw new MigrationImportError("DUPLICATE_TARGET_PERIOD", "One or more target months already contain data; no overwrite was attempted.");
       const rackMonths = [
         ...(plan.source.rackCapacitySnapshot ? [plan.source.rackCapacitySnapshot.month] : []),
+        ...plan.source.rackCapacityHistoryRows.map(row => row.snapshotMonth),
         ...plan.source.rackUnitCapacityRows.map(row => row.month)
       ];
       if (rackMonths.length > 0) {
         const existingRacks = await client.query<{ count: string }>(
-          "SELECT (SELECT count(*) FROM rack_capacity_snapshots WHERE site_id = $1 AND snapshot_month = ANY($2::date[])) + (SELECT count(*) FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = ANY($2::date[])) AS count",
+          "SELECT (SELECT count(*) FROM rack_capacity_snapshots WHERE site_id = $1 AND snapshot_month = ANY($2::date[])) + (SELECT count(*) FROM rack_capacity_history WHERE site_id = $1 AND snapshot_month = ANY($2::date[])) + (SELECT count(*) FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = ANY($2::date[])) AS count",
           [siteRow.id, rackMonths.map(month => `${month}-01`)]
         );
         if (Number(existingRacks.rows[0].count) > 0) throw new MigrationImportError("DUPLICATE_TARGET_RACK_SNAPSHOT", "One or more target rack snapshots already contain data; no overwrite was attempted.");
@@ -192,24 +271,40 @@ export async function importMigrationPlan(pool: Pool, plan: MigrationPlan, optio
         }
         await insertCalculationOutputs(client, period.id, plan, log.month, batchId);
       }
-      await importRackSnapshots(client, Number(siteRow.id), plan);
+      const rackUnitSnapshotIds = await importRackSnapshots(client, Number(siteRow.id), plan);
+      const importedUpsGroupHistoryCount = await importUpsGroupHistory(client, Number(siteRow.id), plan);
+      for (const image of imageSources) {
+        const snapshotId = rackUnitSnapshotIds.get(image.reportingMonth);
+        if (!snapshotId) throw new MigrationImportError("IMAGE_SNAPSHOT_MISSING", `No imported Rack Unit Capacity snapshot exists for ${image.reportingMonth}.`);
+        const objectKey = imageObjectKey(plan.mapping.siteCode, image.reportingMonth, image.bytes, image.contentType);
+        await options.rackUnitImageStorage!.putObject(objectKey, image.bytes, image.contentType);
+        uploadedImageKeys.push(objectKey);
+        await client.query(
+          "INSERT INTO rack_unit_capacity_images(snapshot_id, object_key, content_type, byte_size, sha256, width, height, saved_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+          [snapshotId, objectKey, image.contentType, image.byteSize, image.sha256, image.width, image.height, "migration"]
+        );
+      }
 
       const actualLogs = await transactionRepository.getMonthlyLogs(Number(siteRow.id), plan.source.logs.map(log => log.month));
       const parityIssues = verifyCalculatedParity(plan.calculations, actualLogs);
       if (parityIssues.length > 0) throw new MigrationImportError("GOLDEN_PARITY_MISMATCH", "Recomputed database inputs did not match the Phase 1 calculation outputs.");
       const periodIdValues = [...periodIds.values()];
-      const [provenance, evidence, runs, rackCapacity, rackUnits] = await Promise.all([
+      const [provenance, evidence, runs, rackCapacity, rackCapacityHistory, rackUnits, upsGroupHistory] = await Promise.all([
         client.query<{ count: string }>("SELECT count(*)::text AS count FROM provenance_records WHERE entity_type = 'monthly_period' AND source_file_hash = $1 AND entity_id = ANY($2::bigint[])", [plan.source.sourceFileHash, periodIdValues]),
         client.query<{ count: string }>("SELECT count(*)::text AS count FROM legacy_cached_evidence WHERE period_id = ANY($1::bigint[])", [periodIdValues]),
         client.query<{ count: string }>("SELECT count(*)::text AS count FROM calculation_runs WHERE period_id = ANY($1::bigint[]) AND input_hash = $2", [periodIdValues, plan.source.sourceFileHash]),
         client.query<{ count: string }>("SELECT count(*)::text AS count FROM rack_capacity_records r JOIN rack_capacity_snapshots s ON s.id = r.snapshot_id WHERE s.site_id = $1 AND s.snapshot_month = $2::date", [siteRow.id, `${plan.source.rackCapacitySnapshot?.month ?? "0001-01"}-01`]),
-        client.query<{ count: string }>("SELECT count(*)::text AS count FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = ANY($2::date[])", [siteRow.id, plan.source.rackUnitCapacityRows.map(row => `${row.month}-01`)])
+        client.query<{ count: string }>("SELECT count(*)::text AS count FROM rack_capacity_history WHERE site_id = $1 AND snapshot_month = ANY($2::date[])", [siteRow.id, plan.source.rackCapacityHistoryRows.map(row => `${row.snapshotMonth}-01`)]),
+        client.query<{ count: string }>("SELECT count(*)::text AS count FROM rack_unit_capacity_snapshots WHERE site_id = $1 AND period_month = ANY($2::date[])", [siteRow.id, plan.source.rackUnitCapacityRows.map(row => `${row.month}-01`)]),
+        client.query<{ count: string }>("SELECT count(*)::text AS count FROM ups_group_history WHERE site_id = $1 AND history_month = ANY($2::date[])", [siteRow.id, [...new Set(plan.source.upsGroupHistoryRows.map(row => `${row.month}-01`))]])
       ]);
-      if (Number(provenance.rows[0].count) !== plan.source.logs.length || Number(evidence.rows[0].count) !== plan.source.cachedEvidence.length || Number(runs.rows[0].count) !== plan.source.logs.length || Number(rackCapacity.rows[0].count) !== (plan.source.rackCapacitySnapshot?.records.length ?? 0) || Number(rackUnits.rows[0].count) !== plan.source.rackUnitCapacityRows.length) throw new MigrationImportError("IMPORT_VERIFY_FAILED", "Raw provenance, cached evidence, calculation runs, or rack snapshot counts did not match the migration plan.");
+      const images = await client.query<{ count: string }>("SELECT count(*)::text AS count FROM rack_unit_capacity_images i JOIN rack_unit_capacity_snapshots s ON s.id = i.snapshot_id WHERE s.site_id = $1 AND s.period_month = ANY($2::date[])", [siteRow.id, imageSources.map(image => `${image.reportingMonth}-01`)]);
+      if (Number(provenance.rows[0].count) !== plan.source.logs.length || Number(evidence.rows[0].count) !== plan.source.cachedEvidence.length || Number(runs.rows[0].count) !== plan.source.logs.length || Number(rackCapacity.rows[0].count) !== (plan.source.rackCapacitySnapshot?.records.length ?? 0) || Number(rackCapacityHistory.rows[0].count) !== plan.source.rackCapacityHistoryRows.length || Number(rackUnits.rows[0].count) !== plan.source.rackUnitCapacityRows.length || Number(upsGroupHistory.rows[0].count) !== importedUpsGroupHistoryCount || Number(images.rows[0].count) !== imageSources.length) throw new MigrationImportError("IMPORT_VERIFY_FAILED", "Raw provenance, cached evidence, calculation runs, rack snapshot/history counts, UPS Group History, or image counts did not match the migration plan.");
       await client.query("UPDATE migration_batches SET status='verified', success_count=$2, completed_at=now() WHERE id=$1", [batchId, plan.source.logs.length]);
       return { status: "imported", batchId, verified: true, importedMonths: plan.source.logs.map(log => log.month).sort(), cachedEvidenceCount: plan.source.cachedEvidence.length };
     });
   } catch (error) {
+    if (options.rackUnitImageStorage) for (const objectKey of uploadedImageKeys) await options.rackUnitImageStorage.deleteObject(objectKey).catch(() => undefined);
     const code = error instanceof MigrationImportError ? error.code : "IMPORT_FAILED";
     await recordFailedBatch(pool, plan, code, redactedError(error));
     throw error;

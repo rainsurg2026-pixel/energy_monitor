@@ -6,6 +6,7 @@ import { ApiService } from "../services/apiService";
 import type { BackendRepository } from "../repositories/contracts";
 import { AuthService } from "../auth/authService";
 import { PasswordPolicyError } from "../auth/passwordPolicy";
+import type { RackUnitImageStorage } from "../storage/rackUnitImageStorage";
 import { authContext, createAuthContextMiddleware } from "../auth/http";
 import { PERMISSIONS } from "../authz/permissions";
 import { requirePermission, type AuthenticatedPrincipal, isAuthorizationError, type Role } from "../authz";
@@ -16,6 +17,7 @@ export interface AppDependencies {
   config: ServerConfig;
   authService: AuthService;
   rateLimitStore?: RateLimitStore;
+  imageStorage?: RackUnitImageStorage;
   service?: ApiService;
 }
 
@@ -59,7 +61,7 @@ export function databaseFailureCode(error: unknown): string | null {
 
 export function createApp(dependencies: AppDependencies) {
   const app = express();
-  const service = dependencies.service ?? new ApiService(dependencies.repository);
+  const service = dependencies.service ?? new ApiService(dependencies.repository, undefined, dependencies.imageStorage);
   const auth = dependencies.authService;
   const originPolicy = createOriginPolicy({ allowedOrigins: dependencies.config.allowedOrigins, allowedPreviewOrigins: dependencies.config.allowedPreviewOrigins });
   if (dependencies.config.nodeEnv === "production" && !dependencies.rateLimitStore) throw new Error("A durable rate-limit store is required in production.");
@@ -141,8 +143,23 @@ export function createApp(dependencies: AppDependencies) {
   app.get("/api/v1/site-comparison", asyncRoute(async (_req, res) => { withPermission(res, PERMISSIONS.siteComparisonRead); sendOk(res, await service.getSiteComparison()); }));
   app.get("/api/v1/racks", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.rackRead); sendOk(res, await service.getRacks(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
   app.get("/api/v1/rack-unit-capacity", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.rackRead); sendOk(res, await service.getRackUnit(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
-  app.put("/api/v1/racks", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.operationalDataWrite); sendOk(res, await service.saveRacks(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month), req.body, res.locals.requestId, actorNumber(actor.userId))); }));
-  app.put("/api/v1/rack-unit-capacity", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.operationalDataWrite); sendOk(res, await service.saveRackUnit(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month), req.body, res.locals.requestId, actorNumber(actor.userId))); }));
+  app.get("/api/v1/sites/:siteId/rack-unit-capacity/:month/image", asyncRoute(async (req, res) => {
+    withPermission(res, PERMISSIONS.rackRead);
+    const image = await service.getRackUnitImage(parseSiteId(req.params.siteId), req.params.month);
+    res.setHeader("Content-Type", image.contentType);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(image.bytes);
+  }));
+  app.put("/api/v1/sites/:siteId/rack-unit-capacity/:month", asyncRoute(async (req, res) => {
+    const actor = withPermission(res, PERMISSIONS.operationalDataWrite);
+    const body = parseObjectBody(req.body);
+    sendOk(res, await service.saveRackUnit(parseSiteId(req.params.siteId), req.params.month, body, res.locals.requestId, actorNumber(actor.userId)));
+  }));
+  app.put("/api/v1/sites/:siteId/rack-unit-capacity/:month/image", express.raw({ type: ["image/png", "image/jpeg"], limit: "8mb" }), asyncRoute(async (req, res) => {
+    const actor = withPermission(res, PERMISSIONS.operationalDataWrite);
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0) throw new HttpError(400, "INVALID_IMAGE", "A PNG or JPEG image body is required.");
+    sendOk(res, await service.saveRackUnitImage(parseSiteId(req.params.siteId), req.params.month, req.body, req.header("content-type"), res.locals.requestId, actorNumber(actor.userId)));
+  }));
   app.put("/api/v1/sites/:siteId/periods/:month", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.operationalDataWrite); sendOk(res, await service.saveMonthlyLog(parseSiteId(req.params.siteId), req.params.month, req.body, res.locals.requestId, actorNumber(actor.userId))); }));
   app.get("/api/v1/sites/:siteId/history", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.operationalDataRead); sendOk(res, await service.getHistory(parseSiteId(req.params.siteId))); }));
 

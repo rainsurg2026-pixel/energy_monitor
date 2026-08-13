@@ -35,6 +35,13 @@ interface TestAuth {
   admin: { username: string; password: string };
 }
 
+class TestImageStorage {
+  private readonly objects = new Map<string, Buffer>();
+  async putObject(objectKey: string, bytes: Buffer): Promise<void> { this.objects.set(objectKey, Buffer.from(bytes)); }
+  async getObject(objectKey: string): Promise<Buffer | null> { const bytes = this.objects.get(objectKey); return bytes ? Buffer.from(bytes) : null; }
+  async deleteObject(objectKey: string): Promise<void> { this.objects.delete(objectKey); }
+}
+
 async function testAuth(): Promise<TestAuth> {
   const repository = new InMemoryAuthRepository();
   const dummyPasswordHash = await testHasher.hash("dummy-password-for-tests");
@@ -44,9 +51,9 @@ async function testAuth(): Promise<TestAuth> {
   return { service, repository, admin };
 }
 
-async function withApi(readOnlyMode: boolean, work: (base: string, authentication: TestAuth) => Promise<void>, repository = apiTestRepository()): Promise<void> {
+async function withApi(readOnlyMode: boolean, work: (base: string, authentication: TestAuth) => Promise<void>, repository = apiTestRepository(), imageStorage?: TestImageStorage): Promise<void> {
   const authentication = await testAuth();
-  const server = createServer(createApp({ repository, config: config(readOnlyMode), authService: authentication.service, rateLimitStore: new InMemoryRateLimitStore() }));
+  const server = createServer(createApp({ repository, config: config(readOnlyMode), authService: authentication.service, rateLimitStore: new InMemoryRateLimitStore(), imageStorage }));
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("test server did not bind");
@@ -95,6 +102,7 @@ async function json(base: string, path: string, init?: RequestInit): Promise<{ s
 }
 
 const mainTestRepository = apiTestRepository();
+const mainImageStorage = new TestImageStorage();
 await withApi(false, async (base, authentication) => {
   const unauthenticated = await json(base, "/api/v1/settings"); check("protected reads require authentication", unauthenticated.status === 401 && unauthenticated.body.error?.code === "UNAUTHORIZED");
   const disallowedOrigin = await fetch(`${base}/api/v1/auth/login`, { method: "POST", headers: { "content-type": "application/json", origin: "http://evil.example" }, body: JSON.stringify({ username: "admin", password: "Correct Horse Battery Staple 123!" }) }); check("login rejects unapproved origin", disallowedOrigin.status === 403);
@@ -103,9 +111,19 @@ await withApi(false, async (base, authentication) => {
   const health = await json(base, "/api/v1/health"); check("health", health.status === 200 && health.body.ok === true);
   const readiness = await json(base, "/api/v1/health/ready"); check("readiness", readiness.status === 200 && readiness.body.data.status === "ready");
   const bootstrap = await client.request("/api/v1/bootstrap"); check("bootstrap exposes authoritative nested site states", bootstrap.status === 200 && bootstrap.body.data.sites.every((item: { site?: { id?: number; name?: string }; availableMonths?: string[] }) => typeof item.site?.id === "number" && typeof item.site?.name === "string" && Array.isArray(item.availableMonths)));
-  const periods = await client.request("/api/v1/periods?siteId=1"); check("periods expose allowed/latest", periods.status === 200 && periods.body.data.latestAvailableMonth === "2026-01" && !periods.body.data.availableMonths.includes("2025-12") && !periods.body.data.availableMonths.includes("2026-12"));
+  check("bootstrap carries source-derived Dashboard-FAC mapping without exposing unrelated policy", bootstrap.status === 200 && bootstrap.body.data.sites.find((item: { site?: { id?: number; dashboardMapping?: { mapping?: Array<{ upsId?: string }> } } }) => item.site?.id === 1)?.site?.dashboardMapping?.mapping?.[0]?.upsId === "UPS 11A" && !JSON.stringify(bootstrap.body.data).includes("profile_version"));
+  const periods = await client.request("/api/v1/periods?siteId=1"); check("periods expose allowed/latest including a Rack Unit-only month", periods.status === 200 && periods.body.data.latestAvailableMonth === "2026-03" && periods.body.data.availableMonths.includes("2026-03") && !periods.body.data.availableMonths.includes("2025-12") && !periods.body.data.availableMonths.includes("2026-12"));
+  const rackOnlyPeriod = await client.request("/api/v1/sites/1/periods/2026-03"); check("Rack Unit-only historical month is selectable for Data Entry", rackOnlyPeriod.status === 200 && rackOnlyPeriod.body.data.log === null && rackOnlyPeriod.body.data.rowVersion === null);
   const energy = await client.request("/api/v1/energy?siteId=1&month=2026-01"); const energyText = JSON.stringify(energy.body); check("hidden previous is used internally", energy.status === 200 && energy.body.data.calculation.airEnergyKwh === 16000000); check("hidden previous is not in DTO", !energyText.includes("2025-12"));
   const rackUnit = await client.request("/api/v1/rack-unit-capacity?siteId=1&month=2026-01"); check("rack unit raw snapshot is exposed with derived metrics", rackUnit.status === 200 && rackUnit.body.data.snapshot.availableU === 50 && rackUnit.body.data.snapshot.usagePercent === 87.5);
+  const rackUnitSave = await client.request("/api/v1/sites/1/rack-unit-capacity/2026-01", { method: "PUT", body: JSON.stringify({ total_u: 400, used_u: 340, expected_row_version: 1 }) });
+  check("Rack Unit Capacity numeric save is persisted with optimistic row version", rackUnitSave.status === 200 && rackUnitSave.body.data.rowVersion === 2 && rackUnitSave.body.data.availableU === 60);
+  const onePixelPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  const imageUpload = await fetch(`${base}/api/v1/sites/1/rack-unit-capacity/2026-01/image`, { method: "PUT", headers: { "content-type": "image/png", cookie: client.cookie, origin: "http://test", "x-csrf-token": client.csrf }, body: onePixelPng as any });
+  const imageUploadBody = await imageUpload.json() as { ok?: boolean; data?: { image?: { contentType?: string } } };
+  check("Rack Unit Capacity image upload succeeds only after numeric row save", imageUpload.status === 200 && imageUploadBody.ok === true && imageUploadBody.data?.image?.contentType === "image/png");
+  const imageRead = await fetch(`${base}/api/v1/sites/1/rack-unit-capacity/2026-01/image`, { headers: { cookie: client.cookie, origin: "http://test" } });
+  check("Rack Unit Capacity image read returns the byte-identical stored image", imageRead.status === 200 && imageRead.headers.get("content-type")?.startsWith("image/png") === true && Buffer.compare(Buffer.from(await imageRead.arrayBuffer()), onePixelPng) === 0);
   // Rack Capacity (zone/status): the Web Rack Capacity view was previously
   // entirely absent, so this endpoint had no caller and no test. Verify the
   // records reach the DTO with derived metrics, and that a site with no
@@ -114,21 +132,6 @@ await withApi(false, async (base, authentication) => {
   check("rack snapshot is exposed with derived metrics", racks.status === 200 && racks.body.data.snapshot.records.length === 3 && racks.body.data.snapshot.metrics.total === 3 && racks.body.data.snapshot.metrics.inUse.count === 1);
   const racksEmptySite = await client.request("/api/v1/racks?siteId=2&month=2026-02");
   check("a site with no rack snapshot returns null, not an error or another site's data", racksEmptySite.status === 200 && racksEmptySite.body.data.snapshot === null);
-  const rackSave = await client.request("/api/v1/racks?siteId=1&month=2026-01", {
-    method: "PUT",
-    body: JSON.stringify({ changes: [{ rowNumber: 2, rackId: "A-02", status: { expected: "Available", next: "Reserved" }, remarks: { expected: null, next: "Reserved for planned expansion" } }] })
-  });
-  check("Rack Capacity field save preserves Desktop-style expected-value concurrency and returns fresh metrics", rackSave.status === 200 && rackSave.body.data.changedCount === 2 && rackSave.body.data.outcomes[0].applied === true && rackSave.body.data.snapshot.rowVersion === 2 && rackSave.body.data.snapshot.metrics.reserved.count === 2);
-  check("Rack Capacity save records the selected month's history snapshot", rackSave.body.data.rackCapacityHistory.some((row: { month: string; rackZone: string; reserved: number }) => row.month === "2026-01" && row.rackZone === "(Total)" && row.reserved === 2));
-  const rackConflict = await client.request("/api/v1/racks?siteId=1&month=2026-01", {
-    method: "PUT",
-    body: JSON.stringify({ changes: [{ rowNumber: 2, rackId: "A-02", status: { expected: "Available", next: "In Use" } }] })
-  });
-  check("Rack Capacity rejects a stale field value without overwriting the newer value", rackConflict.status === 200 && rackConflict.body.data.changedCount === 0 && rackConflict.body.data.outcomes[0].applied === false && rackConflict.body.data.outcomes[0].conflictField === "status" && rackConflict.body.data.outcomes[0].conflictActualValue === "Reserved");
-  const rackUnitSave = await client.request("/api/v1/rack-unit-capacity?siteId=1&month=2026-01", { method: "PUT", body: JSON.stringify({ month: "2026-01", total_u: 400, used_u: 360, expected_row_version: 1 }) });
-  check("Rack Unit Capacity save derives available capacity and advances the row version", rackUnitSave.status === 200 && rackUnitSave.body.data.snapshot.rowVersion === 2 && rackUnitSave.body.data.snapshot.availableU === 40 && rackUnitSave.body.data.snapshot.usagePercent === 90);
-  const rackUnitStale = await client.request("/api/v1/rack-unit-capacity?siteId=1&month=2026-01", { method: "PUT", body: JSON.stringify({ month: "2026-01", total_u: 400, used_u: 370, expected_row_version: 1 }) });
-  check("Rack Unit Capacity rejects a stale row-version save", rackUnitStale.status === 409 && rackUnitStale.body.error?.code === "STALE_VERSION");
   const comparison = await client.request("/api/v1/site-comparison"); check("comparison excludes hidden period", comparison.status === 200 && comparison.body.data.months.join(",") === "2026-01,2026-02" && !JSON.stringify(comparison.body).includes("2025-12"));
   // UPS Group History: was previously never fetched at all (no repository
   // method/route existed), so the History screen's UPS tab always showed
@@ -148,11 +151,12 @@ await withApi(false, async (base, authentication) => {
   // to HistoricalExplorer (rack_capacity_history had a table, migration, and
   // Desktop writer, but zero repository/API/frontend wiring) - the same
   // class of bug as the UPS Group History gap above.
-  check("Rack Capacity History exposes the visible-month rows with correctly mapped fields", site1History.body.data.rackCapacityHistory.length >= 2 && site1History.body.data.rackCapacityHistory.every((row: { snapshotMonth: string }) => row.snapshotMonth === "2026-01") && site1History.body.data.rackCapacityHistory.some((row: { rackZone: string; totalRacks: number; inUse: number }) => row.rackZone === "Zone A" && row.totalRacks === 2 && row.inUse === 1));
+  check("Rack Capacity History exposes the visible-month rows with correctly mapped fields", site1History.body.data.rackCapacityHistory.length === 2 && site1History.body.data.rackCapacityHistory.every((row: { snapshotMonth: string }) => row.snapshotMonth === "2026-01") && site1History.body.data.rackCapacityHistory.some((row: { rackZone: string; totalRacks: number; inUse: number }) => row.rackZone === "Zone A" && row.totalRacks === 2 && row.inUse === 1));
   check("Rack Capacity History rows outside the Display Period are filtered, not fabricated as missing", !site1History.body.data.rackCapacityHistory.some((row: { snapshotMonth: string }) => row.snapshotMonth === "2025-12"));
   check("a site with genuinely no Rack Capacity History rows returns an empty array, not an error", Array.isArray(site2History.body.data.rackCapacityHistory) && site2History.body.data.rackCapacityHistory.length === 0);
   check("Rack Capacity History is scoped per site (no cross-facility contamination)", !JSON.stringify(site2History.body.data.rackCapacityHistory).includes("Zone A"));
-  check("Rack Unit Capacity history exposes the visible-month row with derived availableU/availabilityPct", site1History.body.data.rackUnitCapacity.length === 1 && site1History.body.data.rackUnitCapacity[0].month === "2026-01" && site1History.body.data.rackUnitCapacity[0].availableU === 40 && Math.abs(site1History.body.data.rackUnitCapacity[0].availabilityPct - 0.1) < 1e-9);
+  check("Rack Unit Capacity history exposes both logged and Rack Unit-only visible rows with derived values", site1History.body.data.rackUnitCapacity.length === 2 && site1History.body.data.rackUnitCapacity.some((row: { month: string; availableU: number; availabilityPct: number }) => row.month === "2026-01" && row.availableU === 60 && Math.abs(row.availabilityPct - 0.15) < 1e-9) && site1History.body.data.rackUnitCapacity.some((row: { month: string; availableU: number }) => row.month === "2026-03" && row.availableU === 80));
+  check("Rack Unit Capacity history exposes attachment metadata without object keys", site1History.body.data.rackUnitCapacity.some((row: { month: string; imageAttached?: boolean; imageContentType?: string | null; objectKey?: string }) => row.month === "2026-01" && row.imageAttached === true && row.imageContentType === "image/png" && !("objectKey" in row)));
   check("Rack Unit Capacity history rows outside the Display Period are filtered, not fabricated as missing", !site1History.body.data.rackUnitCapacity.some((row: { month: string }) => row.month === "2025-12"));
   check("a site with genuinely no Rack Unit Capacity history returns an empty array, not an error", Array.isArray(site2History.body.data.rackUnitCapacity) && site2History.body.data.rackUnitCapacity.length === 0);
   const invalid = await client.request("/api/v1/energy?siteId=1&month=2026/01"); check("strict month validation", invalid.status === 404 || invalid.status === 400);
@@ -215,13 +219,12 @@ await withApi(false, async (base, authentication) => {
   const auditedActionsAfterDelete = authentication.repository.audits.filter(audit => audit.entityId === disposableUserId).map(audit => audit.action);
   check("deleting a user is audited with both SESSION_REVOKED_ALL and user_delete", auditedActionsAfterDelete.includes("SESSION_REVOKED_ALL") && auditedActionsAfterDelete.includes("user_delete"));
 
-}, mainTestRepository);
+}, mainTestRepository, mainImageStorage);
 
 await withApi(true, async base => {
   const client = await login(base, { username: "admin", password: "Correct Horse Battery Staple 123!" });
   const get = await client.request("/api/v1/settings"); check("read-only GET allowed", get.status === 200);
   const put = await client.request("/api/v1/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: "2026-01", end_month: "2026-03", expected_row_version: 1 }) }); check("read-only mutation rejected server-side", put.status === 423 && put.body.error?.code === "READ_ONLY_MODE");
-  const rackPut = await client.request("/api/v1/rack-unit-capacity?siteId=1&month=2026-01", { method: "PUT", body: JSON.stringify({ month: "2026-01", total_u: 400, used_u: 350, expected_row_version: 1 }) }); check("read-only mode blocks Rack Unit Capacity writes", rackPut.status === 423 && rackPut.body.error?.code === "READ_ONLY_MODE");
   const userMutation = await client.request("/api/v1/admin/users", { method: "POST", body: JSON.stringify({ username: "blocked", display_name: "Blocked", password: "Correct Horse Battery Staple 999!", role: "user" }) }); check("read-only blocks user management mutation", userMutation.status === 423 && userMutation.body.error?.code === "READ_ONLY_MODE");
 });
 

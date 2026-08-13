@@ -126,7 +126,9 @@ Either way: **do not copy automatically, do not copy silently, and do not skip v
 - [ ] `TRUST_PROXY=true` (literal string, code-required).
 - [ ] `READ_ONLY_MODE` — unset or `false`.
 - [ ] `DB_POOL_MAX` — optional, ≤10.
-- [ ] Confirm absent: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON`, `CRON_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`.
+- [ ] `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` — server-only; required for Rack Unit Capacity image read/upload and Desktop image import. Never expose them to the browser.
+- [ ] `RACK_UNIT_IMAGE_BUCKET` — existing Supabase Storage bucket name, default `rack-unit-capacity`.
+- [ ] Confirm absent: `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_BACKUP_SERVICE_ACCOUNT_JSON`, `CRON_SECRET`.
 
 ## H. Pre-merge Production smoke test
 

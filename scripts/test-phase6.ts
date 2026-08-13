@@ -114,6 +114,9 @@ await withApi(readOnlyRepository, async base => {
 await assert.rejects(() => importMigrationPlan(null as never, null as never, { allowWrite: true, targetEnvironment: "development", readOnlyMode: true }), error => error instanceof Error && error.message.includes("READ_ONLY_MODE"));
 check("READ_ONLY_MODE blocks migration/import control", true);
 
+await assert.rejects(() => importMigrationPlan(null as never, null as never, { allowWrite: true, targetEnvironment: "production" }), error => error instanceof Error && error.message.includes("dedicated guarded production importer"));
+check("Production import remains blocked without the dedicated production gate", true);
+
 const auditFailureRepository = new InMemoryRepository({ sites: [{ id: 1, code: "site-a", name: "Site A", active: true }], logs: {}, settings: { startMonth: "2026-01", endMonth: "2026-12", rowVersion: 1 }, auditFailure: true });
 await assert.rejects(() => auditFailureRepository.saveMonthlyLog({ siteId: 1, log: fixtureLog("2026-01", 1, 1, 1), expectedRowVersion: null, correlationId: "phase6-audit-failure" }));
 check("audit failure rolls back operational data", (await auditFailureRepository.getMonthlyLogs(1, ["2026-01"])).length === 0 && auditFailureRepository.auditEvents.length === 0);

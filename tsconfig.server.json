@@ -19,6 +19,7 @@
     "scripts/run-migrations.ts",
     "scripts/bootstrap-development-accounts.ts",
     "scripts/migrate-workbook.ts",
+    "scripts/migrate-workbook-production.ts",
     "scripts/generate-supabase-connector-import-sql.ts",
     "scripts/test-migration-tooling.ts",
     "scripts/test-api-foundation.ts",

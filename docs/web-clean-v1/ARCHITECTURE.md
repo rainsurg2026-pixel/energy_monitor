@@ -103,16 +103,24 @@ as authoritative values. Each save is one transaction with optimistic
 `row_version` checking and an audit event.
 
 The existing core schema is retained. Clean v1 does not recreate data or add
-the web-v3-only workbook/Google/rack-history infrastructure.
+the unrelated web-v3-only Google/workbook infrastructure; the existing Rack
+Capacity/Rack Unit history tables are intentionally retained and exposed so
+Desktop historical data remains visible and exportable.
 
 ## Export design
 
 All three formats consume the same normalized monthly-log collection and the
 same Desktop calculation functions:
 
-- Excel: a new report workbook with Summary, UPS Loads, Air Conditioning, DC
-  Power Panels, and Energy & Cost sheets. It is a report export, not a
-  macro-preserving workbook round trip.
+- Excel: a new report workbook with entered input tables, saved/audit values,
+  raw Srinakarin phase/panel values, calculated energy, persisted UPS Group
+  History, Dashboard-FAC summary and detail tables, UPS/Air/DC Dashboard-FAC
+  tables, Rack Capacity/Rack Unit history, and image-attachment metadata.
+  Dashboard-FAC wiring labels are
+  retained from the migrated Desktop workbook in site profile policy. Binary
+  Rack Unit images stay in
+  server-side Storage; the export never exposes object keys or credentials.
+  It is a report export, not a macro-preserving workbook round trip.
 - CSV: Desktop-compatible section blocks with raw inputs and calculated energy
   and cost columns; blanks stay blank rather than becoming zero.
 - PDF: Desktop report HTML structure rendered server-side: cover, selected-month
@@ -130,8 +138,11 @@ static UI assets. Server-only configuration is validated at startup:
 - `SESSION_SECRET` and `CSRF_SECRET` — independent random secrets, each at
   least 32 characters
 
-`SUPABASE_SERVICE_ROLE_KEY` is not required by clean v1. If a future privileged
-operation needs it, that operation must be server-only and explicitly reviewed.
+`SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_URL` are server-only and are required
+when Rack Unit Capacity images are enabled. They are used only by the server
+Storage adapter; the browser receives image bytes through the authenticated API
+and never receives the service-role credential. `RACK_UNIT_IMAGE_BUCKET` names
+an already-provisioned Storage bucket and defaults to `rack-unit-capacity`.
 
 ## Deployment rules
 

@@ -49,7 +49,7 @@ function LoginView({ onAuthenticated }: { onAuthenticated: (user: SessionUser) =
     <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
       <form onSubmit={submit} className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl p-7 shadow-2xl space-y-5">
         <div>
-          <p className="break-words text-[11px] uppercase tracking-[0.2em] text-indigo-400 font-bold">Data Center Energy & Facility Monitor Web v3</p>
+          <p className="text-[11px] uppercase tracking-[0.2em] text-indigo-400 font-bold">Data Center Energy & Facility Monitor Web v3</p>
           <h1 className="text-2xl font-semibold mt-2">Sign in to Settings</h1>
           <p className="text-sm text-slate-400 mt-2">User Management is available to administrators only.</p>
         </div>
@@ -86,7 +86,7 @@ function SettingsNav({ user, onLogout }: { user: SessionUser; onLogout: () => Pr
     <header className="border-b border-slate-800 bg-slate-950/90 sticky top-0 z-10">
       <div className="max-w-7xl mx-auto px-6 py-4 flex flex-wrap items-center gap-4 justify-between">
         <div>
-          <a href="/settings" className="break-words text-[11px] uppercase tracking-[0.2em] text-indigo-400 font-bold">Data Center Energy & Facility Monitor</a>
+          <a href="/settings" className="text-[11px] uppercase tracking-[0.2em] text-indigo-400 font-bold">Data Center Energy & Facility Monitor</a>
           <p className="text-lg font-semibold mt-1">Settings</p>
         </div>
         <div className="flex items-center gap-3 text-sm">

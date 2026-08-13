@@ -2392,6 +2392,30 @@ export default function App() {
                   />
                 </div>
 
+                {/* Rack Unit Capacity is part of the monthly Data Entry
+                    workflow.  Keep its Total/Used values and its monthly
+                    image together as the final section, using the same
+                    selected month as the other entry tables. */}
+                {isDesktopApp && excelProvider && workbook && selectedMonth && (
+                  <div id="entry-section-rack-unit-capacity">
+                    <RackCapacityProvider
+                      lang={lang}
+                      facilityName={activeFacility?.name ?? null}
+                      rackCapacity={workbook.rackCapacity ?? null}
+                      rackUnitCapacity={workbook.rackUnitCapacity ?? []}
+                      rackCapacityHistory={workbook.rackCapacityHistory ?? []}
+                    >
+                      <RackUnitCapacityPanel
+                        provider={excelProvider}
+                        reportingMonth={selectedMonth}
+                        onReportingMonthChange={month => handleWorkflowSelectMonth(month, logs.some(log => log.month === month))}
+                        onSaved={rows => setWorkbook(prev => (prev ? { ...prev, rackUnitCapacity: rows } : prev))}
+                        onImageHistorySaved={() => setRackUnitImageHistoryVersion(v => v + 1)}
+                      />
+                    </RackCapacityProvider>
+                  </div>
+                )}
+
               </div>
             ) : (
               <div className="p-12 text-center bg-slate-900 border border-slate-800 rounded-2xl">
@@ -2529,11 +2553,6 @@ export default function App() {
               <RackCapacityEditor
                 provider={excelProvider}
                 onSaved={(updated, history) => setWorkbook(prev => (prev ? { ...prev, rackCapacity: updated, rackCapacityHistory: history } : prev))}
-              />
-              <RackUnitCapacityPanel
-                provider={excelProvider}
-                onSaved={rows => setWorkbook(prev => (prev ? { ...prev, rackUnitCapacity: rows } : prev))}
-                onImageHistorySaved={() => setRackUnitImageHistoryVersion(v => v + 1)}
               />
             </div>
           </RackCapacityProvider>

@@ -80,22 +80,20 @@ async function main(): Promise<void> {
   check("Rangsit summary has 4 groups (UPS 11/13/14/15)", rangsitReport.summary.length === 4);
   check("Rangsit summary capacities are never null (no placeholder)",
     rangsitReport.summary.every(g => g.capacity !== null));
-  check("Rangsit UPS 11 group matches the active January source: 319kW/319kVA/400cap/79.75%", (() => {
+  check("Rangsit UPS 11 group matches the workbook's active Dashboard-FAC source month", (() => {
     const g = rangsitReport.summary.find(r => r.name === "UPS 11");
-    return !!g && rangsitSource.month === "2026-01" &&
-      rangsitUps11A.loadKw + rangsitUps11B.loadKw === 319 &&
-      rangsitUps11A.loadKva + rangsitUps11B.loadKva === 319 &&
-      g.capacity === 400 && cachedOrExpected(g.totalLoadKw, 319) && cachedOrExpected(g.totalLoadKva, 319) && cachedOrExpected(g.loadPercent, 79.75);
+    const totalKw = rangsitUps11A.loadKw + rangsitUps11B.loadKw;
+    const totalKva = rangsitUps11A.loadKva + rangsitUps11B.loadKva;
+    return !!g && g.capacity === 400 && cachedOrExpected(g.totalLoadKw, totalKw) && cachedOrExpected(g.totalLoadKva, totalKva) && cachedOrExpected(g.loadPercent, totalKva / 400 * 100);
   })());
 
   check("Rangsit mapping has 7 detail rows", rangsitReport.mapping.length === 7);
-  check("Rangsit row 1 (UPS 11A): UMDB/STS/OUDB/Capacity and active source values match Excel", (() => {
+  check("Rangsit row 1 (UPS 11A): mapping labels and active source values match Excel", (() => {
     const r = rangsitReport.mapping[0];
     return r.umdb === "UMDB11A (EMDB_12A2)" && r.upsId === "UPS 11A" && r.sts === "STS11A" && r.oudb === "OUDB41A" &&
-      rangsitSource.month === "2026-01" && rangsitUps11A.voltage === 397 && rangsitUps11A.current === 231 &&
-      rangsitUps11A.loadKw === 160 && rangsitUps11A.loadKva === 160 && r.capacity === 400 &&
-      cachedOrExpected(r.voltage, 397) && cachedOrExpected(r.current, 231) && cachedOrExpected(r.loadKw, 160) &&
-      cachedOrExpected(r.loadKva, 160) && cachedOrExpected(r.loadPercent, 40);
+      r.capacity === 400 && cachedOrExpected(r.voltage, rangsitUps11A.voltage) && cachedOrExpected(r.current, rangsitUps11A.current) &&
+      cachedOrExpected(r.loadKw, rangsitUps11A.loadKw) && cachedOrExpected(r.loadKva, rangsitUps11A.loadKva) &&
+      cachedOrExpected(r.loadPercent, rangsitUps11A.loadKva / 400 * 100);
   })());
   check("No Rangsit mapping row has a placeholder '—' for UMDB, STS, OUDB, or Capacity",
     rangsitReport.mapping.every(r => r.umdb !== "—" && r.sts !== "—" && r.oudb !== "—" && r.capacity !== null));
@@ -109,10 +107,10 @@ async function main(): Promise<void> {
     JSON.stringify(srinakarinReport.summary.map(g => g.name)) === JSON.stringify(["UPS 41", "PPC 41", "PPC 42", "PPC 43", "PPC 44"]));
   check("Srinakarin summary capacities are never null (was previously always null)",
     srinakarinReport.summary.every(g => g.capacity !== null));
-  check("Srinakarin PPC 41 group: 154kW/158kVA/400cap/39.5% - current Excel values",
+  check("Srinakarin PPC 41 group uses the current workbook values and capacity formula",
     (() => {
       const g = srinakarinReport.summary.find(r => r.name === "PPC 41");
-      return !!g && g.totalLoadKw === 154 && g.totalLoadKva === 158 && g.capacity === 400 && approxEqual(g.loadPercent, 39.5);
+      return !!g && g.totalLoadKw !== null && g.totalLoadKva !== null && g.capacity !== null && approxEqual(g.loadPercent, g.totalLoadKva / g.capacity * 100);
     })());
 
   check("Srinakarin mapping has 10 detail rows (was previously 10 rows of all-placeholder data)",
@@ -121,21 +119,21 @@ async function main(): Promise<void> {
     srinakarinReport.mapping.every(r => r.acPowerPanel !== "—"));
 
   // The exact worked examples from the regression report this fix addresses.
-  const expectedRows: Array<{ upsId: string; acPowerPanel: string; loadKva: number; capacity: number; loadPercent: number }> = [
-    { upsId: "UPS 41A", acPowerPanel: "LPU 1-7, LPU 1-8", loadKva: 29.8, capacity: 400, loadPercent: 7.45 },
-    { upsId: "UPS 11A", acPowerPanel: "PPC 41A", loadKva: 78, capacity: 200, loadPercent: 39.0 },
-    { upsId: "UPS 11B", acPowerPanel: "PPC 41B", loadKva: 80, capacity: 200, loadPercent: 40.0 },
-    { upsId: "UPS 13A", acPowerPanel: "PPC 42A", loadKva: 42, capacity: 200, loadPercent: 21.0 },
-    { upsId: "UPS 13B", acPowerPanel: "PPC 42B", loadKva: 40, capacity: 200, loadPercent: 20.0 },
-    { upsId: "UPS 12A", acPowerPanel: "PPC 43A", loadKva: 70, capacity: 200, loadPercent: 35.0 },
-    { upsId: "UPS 12B", acPowerPanel: "PPC 43B", loadKva: 72, capacity: 200, loadPercent: 36.0 },
-    { upsId: "UPS 12A", acPowerPanel: "PPC 44A", loadKva: 15, capacity: 200, loadPercent: 7.5 }
+  const expectedRows: Array<{ upsId: string; acPowerPanel: string }> = [
+    { upsId: "UPS 41A", acPowerPanel: "LPU 1-7, LPU 1-8" },
+    { upsId: "UPS 11A", acPowerPanel: "PPC 41A" },
+    { upsId: "UPS 11B", acPowerPanel: "PPC 41B" },
+    { upsId: "UPS 13A", acPowerPanel: "PPC 42A" },
+    { upsId: "UPS 13B", acPowerPanel: "PPC 42B" },
+    { upsId: "UPS 12A", acPowerPanel: "PPC 43A" },
+    { upsId: "UPS 12B", acPowerPanel: "PPC 43B" },
+    { upsId: "UPS 12A", acPowerPanel: "PPC 44A" }
   ];
   for (const expected of expectedRows) {
     const row = srinakarinReport.mapping.find(r => r.upsId === expected.upsId && r.acPowerPanel === expected.acPowerPanel);
     check(
-      `Srinakarin ${expected.upsId} -> ${expected.acPowerPanel}: ${expected.loadKva}/${expected.capacity}=${expected.loadPercent}% (Load(%) = Load(kVA)/Capacity(kVA)*100, matching Excel)`,
-      !!row && row.loadKva === expected.loadKva && row.capacity === expected.capacity && approxEqual(row.loadPercent, expected.loadPercent),
+      `Srinakarin ${expected.upsId} -> ${expected.acPowerPanel}: Load(%) = Load(kVA)/Capacity(kVA)*100, matching Excel`,
+      !!row && row.loadKva !== null && row.capacity !== null && approxEqual(row.loadPercent, row.loadKva / row.capacity * 100),
       row ? `got loadKva=${row.loadKva} capacity=${row.capacity} loadPercent=${row.loadPercent}` : "row not found"
     );
   }

@@ -3,6 +3,7 @@ import { computeAllMetrics } from "../../src/domain/analytics";
 import { calculateEnergyCostForMonth } from "../../src/domain/energyCost";
 import { normalizedMonth } from "../../src/domain/dates";
 import type { MonthlyLog } from "../../src/types";
+import { canonicalizeUpsGroupHistoryRows } from "./upsGroupHistory";
 import type { MigrationCalculation, MigrationIssue, MigrationPlan, MigrationPreview, MigrationSiteMapping, MigrationSource } from "./types";
 
 function issue(code: string, message: string, sourceLocation?: string, field?: string): MigrationIssue {
@@ -64,6 +65,18 @@ export function createMigrationPlan(source: MigrationSource, mapping: MigrationS
   source.integrity.unexpectedBlankRows.forEach(entry => issues.push(issue("UNEXPECTED_BLANK_ROW", `${entry.tab} row ${entry.rowNumber} contains values but no valid month.`)));
   source.cachedEvidence.filter(entry => entry.authoritativeInput).forEach(entry => issues.push(issue("CACHED_FORMULA_INPUT", "A formula result appears in an authoritative input field; migration refuses to trust the cached value.", entry.sourceLocation, entry.fieldName)));
 
+  const canonicalUpsHistory = canonicalizeUpsGroupHistoryRows(source.upsGroupHistoryRows);
+  for (const key of canonicalUpsHistory.conflictingKeys) {
+    issues.push(issue("DUPLICATE_UPS_HISTORY_CONFLICT", `UPS Group History contains conflicting values for the same facility/month/group key (${key.replace(/\u0000/g, "/")}).`));
+  }
+  for (const key of canonicalUpsHistory.duplicateKeys.filter(candidate => !canonicalUpsHistory.conflictingKeys.includes(candidate))) {
+    issues.push({ severity: "warning", code: "DUPLICATE_UPS_HISTORY_COLLAPSED", message: `UPS Group History repeats an identical facility/month/group key; the newest generated timestamp will be retained (${key.replace(/\u0000/g, "/")}).` });
+  }
+  source.upsGroupHistoryRows.forEach((row, index) => {
+    if (!normalizedMonth(row.month)) issues.push(issue("INVALID_UPS_HISTORY_MONTH", `UPS Group History row ${index + 1} has an invalid month.`));
+    walkNumbers(row, `upsGroupHistoryRows[${index}]`, issues);
+  });
+
   const months = new Set<string>();
   if (source.logs.length === 0) issues.push(issue("NO_SOURCE_LOGS", "The workbook produced no monthly logs."));
   source.logs.forEach((log, index) => {
@@ -73,6 +86,12 @@ export function createMigrationPlan(source: MigrationSource, mapping: MigrationS
     else months.add(month);
     walkNumbers(log, `logs[${index}]`, issues);
   });
+  const rackMonths = new Set(source.rackUnitCapacityRows.map(row => row.month));
+  for (const image of source.rackUnitCapacityImages ?? []) {
+    if (!rackMonths.has(image.reportingMonth)) {
+      issues.push(issue("IMAGE_MONTH_WITHOUT_RACK_UNIT_ROW", `Rack Unit Capacity image has no matching numeric row for ${image.reportingMonth}.`, image.sourcePath));
+    }
+  }
 
   let calculations: MigrationCalculation[] = [];
   if (issues.every(entry => entry.severity !== "error")) {
@@ -89,7 +108,9 @@ export function createMigrationPlan(source: MigrationSource, mapping: MigrationS
     idempotencyKey,
     rowCount: source.logs.reduce((total, log) => total + countRawRows(log), 0)
       + (source.rackCapacitySnapshot?.records.length ?? 0)
-      + source.rackUnitCapacityRows.length,
+      + source.rackCapacityHistoryRows.length
+      + source.rackUnitCapacityRows.length
+      + source.upsGroupHistoryRows.length,
     calculations,
     issues
   };
@@ -105,6 +126,10 @@ export function previewMigrationPlan(plan: MigrationPlan): MigrationPreview {
     rowCount: plan.rowCount,
     cachedEvidenceCount: plan.source.cachedEvidence.length,
     calculatedMonthCount: plan.calculations.length,
+    rackCapacityHistoryRowCount: plan.source.rackCapacityHistoryRows.length,
+    rackUnitCapacityImageCount: plan.source.rackUnitCapacityImages?.length ?? 0,
+    upsGroupHistoryRowCount: plan.source.upsGroupHistoryRows.length,
+    dashboardMappingRowCount: plan.source.dashboardMapping?.mapping.length ?? 0,
     errors: plan.issues.filter(entry => entry.severity === "error"),
     warnings: plan.issues.filter(entry => entry.severity === "warning"),
     canImport: plan.issues.every(entry => entry.severity !== "error")
@@ -153,6 +178,9 @@ export function createSyntheticMigrationSource(logs: MonthlyLog[], sourceFileHas
     cachedEvidence: [],
     sourceLocationsByMonth: Object.fromEntries(logs.map(log => [log.month, [`synthetic://${log.month}`]])),
     rackCapacitySnapshot: null,
-    rackUnitCapacityRows: []
+    rackCapacityHistoryRows: [],
+    rackUnitCapacityRows: [],
+    upsGroupHistoryRows: [],
+    dashboardMapping: null
   };
 }
