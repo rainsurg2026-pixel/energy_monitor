@@ -4,6 +4,8 @@ import { Line, LineChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, X
 import { ReportProvider, useReport } from "../ReportContext";
 import DashboardSummary from "../components/DashboardSummary";
 import ExecutiveDashboard from "../components/ExecutiveDashboard";
+import BenchmarkDashboard from "../components/BenchmarkDashboard";
+import ForecastDashboard from "../components/ForecastDashboard";
 import SmartInsightPanel from "../components/SmartInsightPanel";
 import UniversalFilterBar from "../components/UniversalFilterBar";
 import HistoricalExplorer from "../components/HistoricalExplorer";
@@ -158,16 +160,12 @@ export default function CleanWebApp() {
   </ReportProvider>;
 }
 
-const DASHBOARD_REPORT_VIEWS = ["executive", "dashboard"] as const;
+const DASHBOARD_REPORT_VIEWS = ["executive", "dashboard", "benchmark", "forecast"] as const;
 
-/** Dashboard: Executive View (aggregate KPIs/trend) and Engineering View
- *  (single-month operational detail, the existing DashboardSummary). Forecast
- *  and Energy Benchmarking are intentional scope exclusions, not gaps -
- *  UniversalFilterBar's shared 4-tab switcher is restricted to just these
- *  two views via reportViews, so no Benchmark/Forecast tab, route, or
- *  component ever renders here. Year/Period (Executive) and the existing
- *  top-level Reporting month (Engineering) are the real, functional controls
- *  behind the two views - nothing here is decorative.
+/** Dashboard: the same four Desktop views. Executive, Engineering,
+ *  Benchmark, and Forecast all derive from the facility-scoped monthly logs
+ *  returned by the Web API; no Desktop filesystem or Google dependency is
+ *  needed to render them.
  *
  *  DashboardSummary's UPS Groups section reads either a facility.profile.dashboard
  *  topology (Desktop's file-based config/<id>/profile.json - not part of the
@@ -184,9 +182,10 @@ function DashboardView({ logs, month, lang, upsGroupHistory }: { logs: MonthlyLo
   return (
     <div className="space-y-5">
       <UniversalFilterBar lang={lang} facility={null} reportViews={DASHBOARD_REPORT_VIEWS} />
-      {selectedReportView === "dashboard"
-        ? <DashboardSummary logs={logs} selectedMonth={month} lang={lang} upsMapping={upsMapping} />
-        : <><ExecutiveDashboard logs={logs} lang={lang} /><SmartInsightPanel logs={logs} lang={lang} /></>}
+      {selectedReportView === "dashboard" && <DashboardSummary logs={logs} selectedMonth={month} lang={lang} upsMapping={upsMapping} />}
+      {selectedReportView === "executive" && <><ExecutiveDashboard logs={logs} lang={lang} /><SmartInsightPanel logs={logs} lang={lang} /></>}
+      {selectedReportView === "benchmark" && <BenchmarkDashboard logs={logs} lang={lang} />}
+      {selectedReportView === "forecast" && <ForecastDashboard logs={logs} lang={lang} />}
     </div>
   );
 }
