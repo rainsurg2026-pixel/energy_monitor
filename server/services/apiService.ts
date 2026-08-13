@@ -16,6 +16,8 @@ import { API_HEALTH_RESPONSE } from "../http/health";
 
 export interface ApiServiceOptions { repository: BackendRepository; now?: () => Date; imageStorage?: RackUnitImageStorage; }
 
+export type HistoryScope = "dashboard" | "rack" | "full";
+
 function monthOfDate(date: Date): string { return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`; }
 
 export class ApiService {
@@ -191,17 +193,23 @@ export class ApiService {
    * screens.  The server owns the visibility rule so a browser cannot use an
    * editor endpoint to enumerate months outside the configured period.
    */
-  async getHistory(siteId: number): Promise<unknown> {
+  async getHistory(siteId: number, scope: HistoryScope = "full"): Promise<unknown> {
     const site = await this.requireSite(siteId);
     const period = await this.requirePeriod();
     const availability = await this.availableForSite(siteId, period);
+    const includeLogs = scope !== "rack";
+    const includeUpsGroupHistory = scope !== "rack";
+    const includeRackHistory = scope !== "dashboard";
+    const includeRackUnitCapacity = scope !== "dashboard";
     const [logs, upsGroupHistoryRowsRaw, rackCapacityHistoryRows, rackUnitCapacityRows] = await Promise.all([
-      this.repository.getMonthlyLogs(siteId, availability.availableMonths),
-      this.repository.getUpsGroupHistory(siteId),
-      this.repository.listRackCapacityHistory(siteId),
-      this.repository.listRackUnitCapacityHistory(siteId)
+      includeLogs ? this.repository.getMonthlyLogs(siteId, availability.availableMonths) : Promise.resolve([]),
+      includeUpsGroupHistory ? this.repository.getUpsGroupHistory(siteId) : Promise.resolve([]),
+      includeRackHistory ? this.repository.listRackCapacityHistory(siteId) : Promise.resolve([]),
+      includeRackUnitCapacity ? this.repository.listRackUnitCapacityHistory(siteId) : Promise.resolve([])
     ]);
-    const upsGroupHistoryRows = await this.backfillMissingUpsGroupHistory(siteId, site.code, logs, upsGroupHistoryRowsRaw);
+    const upsGroupHistoryRows = includeUpsGroupHistory
+      ? await this.backfillMissingUpsGroupHistory(siteId, site.code, logs, upsGroupHistoryRowsRaw)
+      : [];
     const visibleMonths = new Set(availability.availableMonths);
     return {
       siteId,

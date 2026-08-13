@@ -159,6 +159,12 @@ await withApi(false, async (base, authentication) => {
   check("Rack Unit Capacity history exposes attachment metadata without object keys", site1History.body.data.rackUnitCapacity.some((row: { month: string; imageAttached?: boolean; imageContentType?: string | null; objectKey?: string }) => row.month === "2026-01" && row.imageAttached === true && row.imageContentType === "image/png" && !("objectKey" in row)));
   check("Rack Unit Capacity history rows outside the Display Period are filtered, not fabricated as missing", !site1History.body.data.rackUnitCapacity.some((row: { month: string }) => row.month === "2025-12"));
   check("a site with genuinely no Rack Unit Capacity history returns an empty array, not an error", Array.isArray(site2History.body.data.rackUnitCapacity) && site2History.body.data.rackUnitCapacity.length === 0);
+  const dashboardHistory = await client.request("/api/v1/sites/1/history?scope=dashboard");
+  check("dashboard history scope omits rack payloads while retaining monthly and UPS data", dashboardHistory.status === 200 && dashboardHistory.body.data.logs.length > 0 && dashboardHistory.body.data.upsGroupHistory.rows.length > 0 && dashboardHistory.body.data.rackCapacityHistory.length === 0 && dashboardHistory.body.data.rackUnitCapacity.length === 0);
+  const rackHistory = await client.request("/api/v1/sites/1/history?scope=rack");
+  check("rack history scope omits monthly and UPS payloads while retaining rack data", rackHistory.status === 200 && rackHistory.body.data.logs.length === 0 && rackHistory.body.data.upsGroupHistory.rows.length === 0 && rackHistory.body.data.rackCapacityHistory.length > 0 && rackHistory.body.data.rackUnitCapacity.length > 0);
+  const invalidHistoryScope = await client.request("/api/v1/sites/1/history?scope=unexpected");
+  check("history rejects unknown scopes", invalidHistoryScope.status === 400 && invalidHistoryScope.body.error?.code === "INVALID_HISTORY_SCOPE");
   const invalid = await client.request("/api/v1/energy?siteId=1&month=2026/01"); check("strict month validation", invalid.status === 404 || invalid.status === 400);
   const outside = await client.request("/api/v1/energy?siteId=1&month=2025-12"); check("outside period rejected", outside.status === 404 && outside.body.error?.code === "MONTH_OUTSIDE_DISPLAY_PERIOD");
   const future = await client.request("/api/v1/energy?siteId=1&month=2026-12"); check("future month rejected", future.status === 404 && future.body.error?.code === "MONTH_NOT_AVAILABLE");

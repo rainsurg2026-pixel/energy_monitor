@@ -92,7 +92,7 @@ assert.match(app, /event\.key === "Enter"/);
 assert.match(app, /Unsaved Data Entry changes/);
 assert.match(app, /onDirtyChange=\{setEntryDirty\}/);
 assert.match(app, /onRegisterActions=\{registerEntryActions\}/);
-assert.match(app, /const refreshed = await loadHistory\(siteId\)/);
+assert.match(app, /const refreshed = await loadHistory\(siteId, \{ force: true, scope: "dashboard" \}\)/);
 assert.match(app, /const refreshedDraft = refreshed\.logs\.find\(item => item\.month === month\)/);
 assert.match(app, /const blankAir = \{ \.\.\.empty\.air \}/);
 assert.doesNotMatch(app, /air: structuredClone\(seed\.air\)/);

@@ -31,5 +31,10 @@ assert.equal(printed, 1);
 const appSource = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 assert.match(appSource, /HISTORY_DATA_VIEWS/);
 assert.match(appSource, /loadedPageKeyRef/);
+assert.match(appSource, /const DashboardSummary = lazy\(\(\) => import\("\.\.\/components\/DashboardSummary"\)\)/);
+assert.match(appSource, /historyCacheRef/);
+assert.match(appSource, /\/history\?scope=\$\{scope\}/);
+assert.match(appSource, /historyRequestsRef\.current\.set\(cacheKey, request\)/);
+assert.match(appSource, /scope: HistoryScope/);
 
-console.log("web-clean-v1 dashboard fixes: 8 assertions passed");
+console.log("web-clean-v1 dashboard fixes: 13 assertions passed");

@@ -16,7 +16,7 @@ assert.match(comparison, /No rack-unit snapshot for this month/);
 assert.match(comparison, /const copy = th \?/);
 assert.match(comparison, /ความจุแร็คและการใช้งาน/);
 assert.match(comparison, /ความจุหน่วยแร็คและการใช้งาน/);
-assert.match(app, /import WebSiteComparison from "\.\/WebSiteComparison"/);
+assert.match(app, /const WebSiteComparison = lazy\(\(\) => import\("\.\/WebSiteComparison"\)\)/);
 assert.match(app, /\{view === "comparison" && <WebSiteComparison lang=\{lang\} \/>\}/);
 assert.doesNotMatch(app, /function SiteComparison\(/);
 
