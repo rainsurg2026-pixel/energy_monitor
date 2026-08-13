@@ -36,7 +36,7 @@ export async function downloadPdf(siteId: number, month: string): Promise<void> 
   const blob = await response.blob();
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `Energy-Monitor-${month}.pdf`;
+  link.download = `Data-Center-Energy-Facility-Monitor-${month}.pdf`;
   link.click();
   URL.revokeObjectURL(link.href);
 }

@@ -241,7 +241,7 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
   const rows = reportRows(logs);
   const current = rows.find(row => row.month === selectedMonth) ?? null;
   return {
-    title: "Energy Monitor Report",
+    title: "Data Center Energy & Facility Monitor Report",
     thaiSubtitle: "รายงานการใช้พลังงานและระบบวิศวกรรม",
     facility: siteName,
     sourceWorkbook: "Supabase PostgreSQL",
@@ -342,7 +342,7 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
   const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
   const primaryRow = comparisonRow(primary, referenceMonth);
   const report: ReportData = {
-    title: "Energy Monitor Site Comparison",
+    title: "Data Center Energy & Facility Monitor Site Comparison",
     thaiSubtitle: "รายงานเปรียบเทียบการใช้พลังงานระหว่างไซต์",
     facility: "All Facilities",
     sourceWorkbook: "Supabase PostgreSQL",
@@ -384,7 +384,7 @@ export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[
   const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
   const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
   popup.document.open();
-  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Energy Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`);
+  popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy & Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`);
   popup.document.close();
   popup.addEventListener("load", () => popup.print(), { once: true });
 }
