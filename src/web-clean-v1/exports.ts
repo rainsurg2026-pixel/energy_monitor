@@ -162,6 +162,51 @@ function addFacilityExportSheets(workbook: any, facility: ExportFacility): void 
     for (const [id, value] of Object.entries(inputs.ppc43Panel)) phaseRows.push([excelMonth(log.month), "PPC43 panel", id, null, null, value.loadKw, value.loadKva, excelSavedDate(log.lastSavedUps)]);
   }
   if (phaseRows.length > 0) addTypedSheet(workbook, facilitySheetName(prefix, "Srinakarin_Inputs"), ["Reporting Month", "Input Group", "Input ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Last Saved Date"], phaseRows);
+
+  if (facility.rack?.records.length) {
+    addTypedSheet(workbook, facilitySheetName(prefix, "Rack_Capacity_Snapshot"), ["Reporting Month", "Row Number", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], facility.rack.records.map(record => [
+      excelMonth(facility.rack?.sourceSnapshot ?? ""),
+      record.rowNumber,
+      record.rackZone,
+      record.rackId,
+      record.status,
+      record.cabinetSize,
+      record.detail,
+      record.deviceType,
+      record.remarks
+    ]));
+  }
+
+  if (facility.rackHistory && facility.rackHistory.length > 0) {
+    addTypedSheet(workbook, facilitySheetName(prefix, "Rack_Capacity_History"), ["Snapshot Month", "Facility", "Rack Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle", "Other", "Usage Ratio", "Availability Ratio", "Reserved Ratio", "Pending Dismantle Ratio", "Other Ratio", "Generated Date", "Data Version"], facility.rackHistory.map(row => [
+      excelMonth(row.snapshotMonth),
+      row.facility,
+      row.rackZone,
+      row.totalRacks,
+      row.inUse,
+      row.available,
+      row.reserved,
+      row.pendingDismantle,
+      row.other,
+      row.usagePct,
+      row.availabilityPct,
+      row.reservedPct,
+      row.pendingDismantlePct,
+      row.otherPct,
+      excelSavedDate(row.generatedAt),
+      row.dataVersion
+    ]));
+  }
+
+  if (facility.rackUnitCapacity && facility.rackUnitCapacity.length > 0) {
+    addTypedSheet(workbook, facilitySheetName(prefix, "Rack_Unit_Capacity"), ["Reporting Month", "Total (U)", "Used (U)", "Available (U)", "Availability Ratio"], facility.rackUnitCapacity.map(row => [
+      excelMonth(row.month),
+      row.totalU,
+      row.usedU,
+      row.availableU,
+      row.availabilityPct
+    ]));
+  }
 }
 
 export async function workbookForFacilities(facilities: ExportFacility[]) {
@@ -171,8 +216,8 @@ export async function workbookForFacilities(facilities: ExportFacility[]) {
   return workbook;
 }
 
-export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, calculationLogs: MonthlyLog[] = logs): Promise<void> {
-  const workbook = await workbookForFacilities([{ siteName, logs, calculationLogs }]);
+export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, calculationLogs: MonthlyLog[] = logs, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = []): Promise<void> {
+  const workbook = await workbookForFacilities([{ siteName, logs, calculationLogs, rack, rackHistory, rackUnitCapacity }]);
   const data = await workbook.xlsx.writeBuffer();
   download(data, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }

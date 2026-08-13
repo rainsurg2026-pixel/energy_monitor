@@ -9,6 +9,10 @@ assert.match(preview, /\/racks\?siteId=\$\{siteId\}&month=\$\{month\}/);
 assert.match(preview, /sandbox=""/);
 assert.match(preview, /Uses the same renderer as the PDF report/);
 assert.match(preview, /Rack Capacity is unavailable for this preview/);
+assert.match(preview, /const \[zoom, setZoom\] = useState\(85\)/);
+assert.match(preview, /aria-label="Zoom out"/);
+assert.match(preview, /aria-label="Zoom in"/);
+assert.match(preview, /minWidth: "640px"/);
 assert.match(app, /<WebReportPreview siteId=\{siteId\}/);
 
 console.log("web report preview: renders the shared PDF report HTML from API-backed facility data");

@@ -198,6 +198,23 @@ check("byZone grouping reuses Desktop's exact rule (2 zones, 2 records each)", r
 check("duplicate rack IDs are detected using the same rule the Excel reader uses", rackReport!.validation.duplicateIds.includes("A-01"));
 check("sourceSheet/sourceTable match Desktop's Rack Capacity sheet/table naming", rackReport!.sourceSheet === "Rack Capacity" && rackReport!.sourceTable === "Table7");
 
+const rackExcelWorkbook = await workbookForFacilities([{
+  siteName: "Racks",
+  logs: [log("2026-06")],
+  rack: rackReport,
+  rackHistory: [{ snapshotMonth: "2026-06", facility: "Rangsit", rackZone: "Zone A", totalRacks: 2, inUse: 1, available: 1, reserved: 0, pendingDismantle: 0, other: 0, usagePct: 0.5, availabilityPct: 0.5, reservedPct: 0, pendingDismantlePct: 0, otherPct: 0, generatedAt: "2026-06-30T06:30:00.000Z", dataVersion: 1 }],
+  rackUnitCapacity: [{ month: "2026-06", totalU: 100, usedU: 40, availableU: 60, availabilityPct: 0.6 }]
+}]);
+const rackExcelBuffer = await rackExcelWorkbook.xlsx.writeBuffer();
+const rackExcelReread = new ExcelJS.Workbook();
+await rackExcelReread.xlsx.load(rackExcelBuffer as unknown as ArrayBuffer);
+const rackSnapshotSheet = rackExcelReread.worksheets.find(sheet => sheet.name.includes("Rack_Capacity_Snapshot"));
+const rackHistorySheet = rackExcelReread.worksheets.find(sheet => sheet.name.includes("Rack_Capacity_History"));
+const rackUnitSheet = rackExcelReread.worksheets.find(sheet => sheet.name.includes("Rack_Unit_Capacity"));
+check("Excel includes the current Rack Capacity snapshot values", Boolean(rackSnapshotSheet) && rackSnapshotSheet!.getCell("C2").value === "Zone A" && rackSnapshotSheet!.getCell("D2").value === "A-01");
+check("Excel includes Rack Capacity history with typed month/date values", Boolean(rackHistorySheet) && rackHistorySheet!.getCell("A2").value instanceof Date && rackHistorySheet!.getCell("A2").numFmt === "dd-mmm-yy" && rackHistorySheet!.getCell("O2").value instanceof Date && rackHistorySheet!.getCell("O2").numFmt === "dd-mmm-yy");
+check("Excel includes Rack Unit Capacity entry and calculated values", Boolean(rackUnitSheet) && rackUnitSheet!.getCell("B2").value === 100 && rackUnitSheet!.getCell("C2").value === 40 && rackUnitSheet!.getCell("D2").value === 60 && rackUnitSheet!.getCell("E2").value === 0.6);
+
 // PDF content: the "Rack Capacity and Utilization" page must show real,
 // non-fabricated numbers computed by the exact same calculateRackCapacityMetrics
 // the live Rack Capacity view uses - not a second, Web-only calculation.
