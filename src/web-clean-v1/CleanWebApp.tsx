@@ -33,6 +33,7 @@ import { CapacityAlerts } from "../components/rack/CapacityAlerts";
 import { CapacityGauge } from "../components/rack/CapacityGauge";
 import WebSiteComparison from "./WebSiteComparison";
 import WebEntryWorkflowHeader, { WebHistoricalEditNotice } from "./WebEntryWorkflowHeader";
+import WebReportPreview from "./WebReportPreview";
 import { WebRackCapacityEditor, WebRackUnitCapacityEditor } from "./WebRackCapacityEditors";
 import { api, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportCsv, exportExcel, exportSiteComparisonCsv, exportSiteComparisonExcel, openReportPopup, printAllFacilitiesPdf, printDesktopPdf, printSiteComparisonPdf, rackReportFromSnapshot, type ComparisonMetric, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
@@ -159,6 +160,7 @@ export default function CleanWebApp() {
           {view === "history" && <section className="space-y-8"><HistoricalCharts logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} dataSourceLabel="Source: Production API" /><HistoricalExplorer logs={history.logs} lang="en" displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} upsGroupHistory={history.upsGroupHistory ?? null} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onEditMonth={selected => { setView("entry"); void selectMonth(selected); }} /></section>}
           {view === "comparison" && <WebSiteComparison />}
           {view === "reports" && <Reports siteId={siteId} siteName={site?.name ?? "energy-monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} />}
+          {view === "reports" && <WebReportPreview siteId={siteId} siteName={site.name} logs={history.logs} month={month} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} />}
           </>}
         </main></div>
       <nav className="fixed bottom-0 left-0 right-0 z-30 flex border-t border-slate-800 bg-slate-950 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`flex flex-1 flex-col items-center gap-1 py-2 text-[10px] ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
