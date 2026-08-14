@@ -18,6 +18,18 @@ function encodedObjectPath(bucket: string, objectKey: string): string {
   return `${encodeURIComponent(bucket)}/${objectKey.split("/").map(segment => encodeURIComponent(segment)).join("/")}`;
 }
 
+function logStorageTransportFailure(operation: string, baseUrl: string, bucket: string, error: unknown): void {
+  const cause = error && typeof error === "object" && "cause" in error ? (error as { cause?: unknown }).cause : undefined;
+  const causeCode = cause && typeof cause === "object" && "code" in cause && typeof (cause as { code?: unknown }).code === "string"
+    ? (cause as { code: string }).code
+    : null;
+  const name = error instanceof Error ? error.name : "UNKNOWN_ERROR";
+  const message = error instanceof Error ? error.message.replace(/https?:\/\/[^\s]+/gi, "[url]").slice(0, 160) : "";
+  let host = "invalid-url";
+  try { host = new URL(baseUrl).hostname; } catch { /* keep the safe placeholder */ }
+  console.error("Rack Unit Capacity image storage transport failure", { operation, host, bucketConfigured: Boolean(bucket), name, message, causeCode });
+}
+
 /** Server-only Supabase Storage adapter. The service-role key is never
  * returned to callers, logged, or sent to the browser. */
 export class SupabaseRackUnitImageStorage implements RackUnitImageStorage {
@@ -36,11 +48,17 @@ export class SupabaseRackUnitImageStorage implements RackUnitImageStorage {
 
   async putObject(objectKey: string, bytes: Buffer, contentType: "image/png" | "image/jpeg"): Promise<void> {
     const key = safeObjectKey(objectKey);
-    const response = await fetch(`${this.baseUrl}/storage/v1/object/${encodedObjectPath(this.bucket, key)}`, {
-      method: "POST",
-      headers: { ...this.headers(contentType), "x-upsert": "true", "cache-control": "3600" },
-      body: bytes
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/storage/v1/object/${encodedObjectPath(this.bucket, key)}`, {
+        method: "POST",
+        headers: { ...this.headers(contentType), "x-upsert": "true", "cache-control": "3600" },
+        body: bytes
+      });
+    } catch (error) {
+      logStorageTransportFailure("upload", this.baseUrl, this.bucket, error);
+      throw error;
+    }
     if (!response.ok) throw new Error(`Rack Unit Capacity image storage upload failed (HTTP ${response.status}).`);
   }
 
