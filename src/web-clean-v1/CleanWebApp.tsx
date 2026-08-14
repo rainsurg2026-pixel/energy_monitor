@@ -508,7 +508,7 @@ function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, 
           <RackCapacityForecast />
         </div>
         <RackCapacityMonthSync month={month}><RackCapacitySummaryCard /></RackCapacityMonthSync>
-        <RackUnitCapacitySummary imageUploadAvailable={false} />
+        <RackUnitCapacitySummary />
         <RackCapacityHistoryPanel />
         <WebRackCapacityEditor siteId={siteId} month={month} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} />
       </RackCapacityProvider>

@@ -55,6 +55,7 @@ if (previousWindow === undefined) delete (globalThis as { window?: unknown }).wi
 else (globalThis as { window?: unknown }).window = previousWindow;
 
 const appSource = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
+const rackUnitSummarySource = readFileSync(new URL("../src/components/rack/RackUnitCapacitySummary.tsx", import.meta.url), "utf8");
 assert.match(appSource, /HISTORY_DATA_VIEWS/);
 assert.match(appSource, /loadedPageKeyRef/);
 assert.match(appSource, /const DashboardSummary = lazy\(\(\) => import\("\.\.\/components\/DashboardSummary"\)\)/);
@@ -62,5 +63,8 @@ assert.match(appSource, /historyCacheRef/);
 assert.match(appSource, /\/history\?scope=\$\{scope\}/);
 assert.match(appSource, /historyRequestsRef\.current\.set\(cacheKey, request\)/);
 assert.match(appSource, /scope: HistoryScope/);
+assert.doesNotMatch(appSource, /RackUnitCapacitySummary imageUploadAvailable=/);
+assert.match(rackUnitSummarySource, /provider\?: Pick<IDataProvider, "getRackUnitCapacityImage">/);
+assert.match(rackUnitSummarySource, /!provider\?\.getRackUnitCapacityImage/);
 
-console.log("web-clean-v1 dashboard fixes: 18 assertions passed");
+console.log("web-clean-v1 dashboard fixes: 21 assertions passed");
