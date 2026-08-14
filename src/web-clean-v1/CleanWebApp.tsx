@@ -1,49 +1,56 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { BarChart3, Calendar, ChartNoAxesCombined, ClipboardPenLine, Download, FileCode2, FileSpreadsheet, History, LogOut, Printer, Server, Settings, UsersRound } from "lucide-react";
 import { ReportProvider, useReport } from "../ReportContext";
-import DashboardSummary from "../components/DashboardSummary";
-import ExecutiveDashboard from "../components/ExecutiveDashboard";
-import BenchmarkDashboard from "../components/BenchmarkDashboard";
-import ForecastDashboard from "../components/ForecastDashboard";
-import SmartInsightPanel from "../components/SmartInsightPanel";
 import UniversalFilterBar from "../components/UniversalFilterBar";
-import HistoricalExplorer from "../components/HistoricalExplorer";
-import HistoricalCharts from "../components/HistoricalCharts";
 import { createEmptyLog } from "../utils";
-import { currentMonth } from "../utils/monthUtils";
+import { currentMonth, monthLabelShort } from "../utils/monthUtils";
 import { selectedDashboardMonth } from "../utils/reportPeriodSelection";
 import { computeCompletion } from "../utils/completion";
 import type { MonthlyLog } from "../types";
+import type { IDataProvider } from "../data/IDataProvider";
+import type { StoredImageMeta } from "../storage/ImageStorageProvider";
 import type { DashboardUpsMappingReport, UpsGroupHistoryReport, RackCapacitySummary } from "../reports/reportTypes";
 import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
 import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import { RackCapacityProvider, useRackCapacity } from "../components/rack/RackCapacityContext";
-import RackCapacitySummaryCard from "../components/rack/RackCapacitySummaryCard";
-import RackCapacityHistoryPanel from "../components/rack/RackCapacityHistoryPanel";
-import { Forecast as RackCapacityForecast } from "../components/rack/Forecast";
-import { RackUnitCapacitySummary } from "../components/rack/RackUnitCapacitySummary";
-import { StickyHeader as RackCapacityStickyHeader } from "../components/rack/StickyHeader";
-import { ExecutiveKpiCards as RackCapacityExecutiveKpiCards } from "../components/rack/ExecutiveKpiCards";
-import { CapacityAlerts } from "../components/rack/CapacityAlerts";
-import { CapacityGauge } from "../components/rack/CapacityGauge";
-import { Timeline as RackCapacityTimeline } from "../components/rack/Timeline";
-import WebSiteComparison from "./WebSiteComparison";
-import WebEntryWorkspace, { type EntryWorkspaceActions } from "./WebEntryWorkspace";
-import WebReportPreview from "./WebReportPreview";
-import { WebRackCapacityEditor, WebRackUnitCapacityEditor } from "./WebRackCapacityEditors";
+import type { EntryWorkspaceActions } from "./WebEntryWorkspace";
 import { api, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportAllFacilitiesHtml as exportAllFacilitiesHtmlFile, exportCsv, exportExcel, exportHtml as exportHtmlFile, exportSiteComparisonCsv, exportSiteComparisonExcel, exportSiteComparisonHtml, openReportPopup, printAllFacilitiesPdf as printAllFacilitiesPdfFile, printDesktopPdf as printDesktopPdfFile, printSiteComparisonPdf, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
 import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodSelection } from "./reportPeriod";
-import { facilityStorageKey, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
+import { facilityStorageKey, latestEnergyMonth, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
 import { applyTheme, languageStorageKey, normalizeLanguage, normalizeTheme, themeStorageKey, type AppLanguage, type Theme } from "./theme";
 import { HistoryProvider } from "../reporting/HistoryProvider";
 import { ReportRegistry } from "../reporting/ReportRegistry";
 import type { ReportHistoryItem, ReportSectionId } from "../reporting/reportingTypes";
 
+const DashboardSummary = lazy(() => import("../components/DashboardSummary"));
+const ExecutiveDashboard = lazy(() => import("../components/ExecutiveDashboard"));
+const BenchmarkDashboard = lazy(() => import("../components/BenchmarkDashboard"));
+const ForecastDashboard = lazy(() => import("../components/ForecastDashboard"));
+const SmartInsightPanel = lazy(() => import("../components/SmartInsightPanel"));
+const HistoricalExplorer = lazy(() => import("../components/HistoricalExplorer"));
+const HistoricalCharts = lazy(() => import("../components/HistoricalCharts"));
+const WebSiteComparison = lazy(() => import("./WebSiteComparison"));
+const WebEntryWorkspace = lazy(() => import("./WebEntryWorkspace"));
+const WebReportPreview = lazy(() => import("./WebReportPreview"));
+const RackCapacitySummaryCard = lazy(() => import("../components/rack/RackCapacitySummaryCard"));
+const RackCapacityHistoryPanel = lazy(() => import("../components/rack/RackCapacityHistoryPanel"));
+const RackCapacityForecast = lazy(() => import("../components/rack/Forecast").then(module => ({ default: module.Forecast })));
+const RackUnitCapacitySummary = lazy(() => import("../components/rack/RackUnitCapacitySummary").then(module => ({ default: module.RackUnitCapacitySummary })));
+const RackCapacityStickyHeader = lazy(() => import("../components/rack/StickyHeader").then(module => ({ default: module.StickyHeader })));
+const RackCapacityExecutiveKpiCards = lazy(() => import("../components/rack/ExecutiveKpiCards").then(module => ({ default: module.ExecutiveKpiCards })));
+const CapacityAlerts = lazy(() => import("../components/rack/CapacityAlerts").then(module => ({ default: module.CapacityAlerts })));
+const CapacityGauge = lazy(() => import("../components/rack/CapacityGauge").then(module => ({ default: module.CapacityGauge })));
+const RackCapacityTimeline = lazy(() => import("../components/rack/Timeline").then(module => ({ default: module.Timeline })));
+const WebRackCapacityEditor = lazy(() => import("./WebRackCapacityEditors").then(module => ({ default: module.WebRackCapacityEditor })));
+const WebRackUnitCapacityEditor = lazy(() => import("./WebRackCapacityEditors").then(module => ({ default: module.WebRackUnitCapacityEditor })));
+
 type View = "dashboard" | "entry" | "racks" | "history" | "comparison" | "reports" | "settings" | "admin";
+const HISTORY_DATA_VIEWS: ReadonlySet<View> = new Set(["dashboard", "entry", "racks", "history", "reports"]);
+type HistoryScope = "dashboard" | "rack" | "full";
 type Site = FacilitySite;
 type Bootstrap = BootstrapState;
 type BootstrapApi = Omit<Bootstrap, "sites"> & { sites: Array<{ site: Omit<Site, "availableMonths" | "latestAvailableMonth">; availableMonths: string[]; latestAvailableMonth: string | null }> };
@@ -57,14 +64,75 @@ type PendingNavigation = () => void | Promise<void>;
 // show the previous month during the first hours of a new month in Thailand.
 const todayMonth = currentMonth;
 const readError = (error: unknown) => error instanceof Error ? error.message : "The request could not be completed.";
-const PASSWORD_MIN_LENGTH = 12;
+const PASSWORD_MIN_LENGTH = 6;
 const passwordHelp = (lang: AppLanguage) => lang === "th" ? `ต้องมีอย่างน้อย ${PASSWORD_MIN_LENGTH} ตัวอักษร` : `Use at least ${PASSWORD_MIN_LENGTH} characters.`;
 const readStoredFacility = (userId: string) => { try { return sessionStorage.getItem(facilityStorageKey(userId)); } catch { return null; } };
 const storeFacility = (userId: string, siteId: number) => { try { sessionStorage.setItem(facilityStorageKey(userId), String(siteId)); } catch { /* facility remains selected in memory when storage is unavailable */ } };
 const readRecentReports = (): ReportHistoryItem[] => { try { return HistoryProvider.list(); } catch { return []; } };
 
+interface WebRackUnitImageSnapshot {
+  snapshot: {
+    image: {
+      available: boolean;
+      contentType: "image/png" | "image/jpeg";
+      byteSize: number | null;
+      sha256: string;
+      width: number;
+      height: number;
+      savedAt: string;
+      savedBy: string;
+    } | null;
+  } | null;
+}
+
+function blobToDataUri(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("The Rack Unit Capacity image could not be read."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function createWebRackUnitImageProvider(siteId: number): Pick<IDataProvider, "getRackUnitCapacityImage"> {
+  return {
+    getRackUnitCapacityImage: async (facility, reportingMonth) => {
+      const snapshotResult = await api<WebRackUnitImageSnapshot>(`/rack-unit-capacity?siteId=${siteId}&month=${encodeURIComponent(reportingMonth)}`);
+      const image = snapshotResult.snapshot?.image;
+      // The metadata endpoint is fail-closed when storage has a transient
+      // transport issue. The image endpoint is authoritative for the actual
+      // read, so do not suppress a valid image request solely because the
+      // availability probe was false for that response.
+      if (!image || image.width === null || image.height === null || !image.sha256) return null;
+      const response = await fetch(`/api/v1/sites/${siteId}/rack-unit-capacity/${encodeURIComponent(reportingMonth)}/image`, { credentials: "include" });
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      const extension = image.contentType === "image/jpeg" ? "jpg" : "png";
+      const meta: StoredImageMeta = {
+        facility,
+        reportingMonth,
+        fileName: `RUC-${monthLabelShort(reportingMonth, "en")}.${extension}`,
+        mimeType: image.contentType,
+        width: image.width,
+        height: image.height,
+        sizeBytes: image.byteSize ?? blob.size,
+        savedAt: image.savedAt,
+        savedBy: image.savedBy,
+        checksum: image.sha256
+      };
+      return { dataUri: await blobToDataUri(blob), meta };
+    }
+  };
+}
+
 function AppNotice({ message }: { message: string | null }) {
   return message ? <div role="status" className="fixed bottom-5 right-5 z-50 max-w-sm rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-100 shadow-2xl">{message}</div> : null;
+}
+
+function ViewLoading({ lang }: { lang: AppLanguage }) {
+  return <section role="status" className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">
+    {lang === "th" ? "กำลังโหลดหน้านี้…" : "Loading this page…"}
+  </section>;
 }
 
 // Static compatibility marker for the entry-workflow contract:
@@ -87,16 +155,41 @@ export default function CleanWebApp() {
   const [notice, setNotice] = useState<string | null>(null);
   const [facilityLoading, setFacilityLoading] = useState(false);
   const [facilityError, setFacilityError] = useState<string | null>(null);
+  const [initialHistoryLoading, setInitialHistoryLoading] = useState(false);
   // Match src/electron/config.ts DEFAULT_CONFIG.theme. A stored dark choice
   // is still restored by the user-scoped preference effect below.
   const [theme, setTheme] = useState<Theme>("light");
   const [lang, setLang] = useState<AppLanguage>("th");
+  const activeSiteIdRef = useRef<number | null>(null);
+  const historyCacheRef = useRef(new Map<string, HistoryData>());
+  const historyRequestsRef = useRef(new Map<string, Promise<HistoryData>>());
+  const loadedPageKeyRef = useRef<string | null>(null);
+  const pageLoadGenerationRef = useRef(0);
   const site = useMemo(() => bootstrap?.sites.find(item => item.id === siteId) ?? null, [bootstrap, siteId]);
 
-  const loadHistory = useCallback(async (id: number) => {
-    const result = await api<HistoryData>(`/sites/${id}/history`);
-    setHistory(result);
-    return result;
+  const loadHistory = useCallback(async (id: number, options: { force?: boolean; scope?: HistoryScope } = {}) => {
+    const scope = options.scope ?? "full";
+    const cacheKey = `${id}:${scope}`;
+    if (!options.force) {
+      const cached = historyCacheRef.current.get(cacheKey);
+      if (cached) {
+        if (activeSiteIdRef.current === id) setHistory(cached);
+        return cached;
+      }
+    }
+    const existing = historyRequestsRef.current.get(cacheKey);
+    if (existing) return existing;
+    const request = api<HistoryData>(`/sites/${id}/history?scope=${scope}`).then(result => {
+      historyCacheRef.current.set(cacheKey, result);
+      if (activeSiteIdRef.current === id) setHistory(result);
+      return result;
+    });
+    historyRequestsRef.current.set(cacheKey, request);
+    void request.then(
+      () => { if (historyRequestsRef.current.get(cacheKey) === request) historyRequestsRef.current.delete(cacheKey); },
+      () => { if (historyRequestsRef.current.get(cacheKey) === request) historyRequestsRef.current.delete(cacheKey); }
+    );
+    return request;
   }, []);
   const loadMonth = useCallback(async (id: number, selectedMonth: string, previous?: HistoryData) => {
     const result = await api<MonthData>(`/sites/${id}/periods/${selectedMonth}`);
@@ -118,6 +211,7 @@ export default function CleanWebApp() {
       }
       return { ...empty, energyCalculation: structuredClone(seed.energyCalculation), air: blankAir };
     })();
+    if (activeSiteIdRef.current !== id) return;
     setMonth(selectedMonth); setRowVersion(result.rowVersion); setDraft(next);
   }, []);
   const initialize = useCallback(async () => {
@@ -130,16 +224,39 @@ export default function CleanWebApp() {
       const result = normalizeBootstrap(await api<BootstrapApi>("/bootstrap"));
       const stored = readStoredFacility(user.id);
       const first = selectedFacility(result.sites, stored);
+      activeSiteIdRef.current = first?.id ?? null;
       setBootstrap(result); setSiteId(first?.id ?? null);
       if (!first) { setFacilityError("No facility is available for this account."); return; }
-      const records = await loadHistory(first.id);
-      await loadMonth(first.id, first.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth()), records);
-    } catch (error) { setFacilityError(`Unable to load facilities: ${readError(error)}`); throw error; }
-    finally { setFacilityLoading(false); }
+      const initialMonth = first.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth());
+      setInitialHistoryLoading(true); setBusy(true); setFacilityLoading(false);
+      const historyPromise = loadHistory(first.id, { scope: "dashboard" });
+      const monthPromise = loadMonth(first.id, initialMonth);
+      const [initialHistory] = await Promise.all([historyPromise, monthPromise]);
+      const energyMonth = latestEnergyMonth(initialHistory.logs, initialMonth);
+      if (energyMonth !== initialMonth) await loadMonth(first.id, energyMonth, initialHistory);
+      loadedPageKeyRef.current = `${first.id}:dashboard`;
+    } catch (error) {
+      if (activeSiteIdRef.current === null) setFacilityError(`Unable to load facilities: ${readError(error)}`);
+      else setNotice(`Unable to load initial site data: ${readError(error)}`);
+      throw error;
+    }
+    finally { setInitialHistoryLoading(false); setBusy(false); setFacilityLoading(false); }
   }, [loadHistory, loadMonth]);
   useEffect(() => { void initialize().catch(error => setNotice(readError(error))); }, [initialize]);
   useEffect(() => { if (notice) { const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); } }, [notice]);
   useEffect(() => { if (!user) return; let savedTheme: string | null = null; let savedLanguage: string | null = null; try { savedTheme = localStorage.getItem(themeStorageKey(user.id)); savedLanguage = localStorage.getItem(languageStorageKey(user.id)); } catch { /* browser storage is optional; defaults remain available */ } const nextTheme = normalizeTheme(savedTheme); setTheme(nextTheme); applyTheme(nextTheme); if (savedLanguage !== null) setLang(normalizeLanguage(savedLanguage)); }, [user]);
+  useEffect(() => {
+    if (!user || !siteId || facilityLoading || !HISTORY_DATA_VIEWS.has(view)) return;
+    const pageKey = `${siteId}:${view}`;
+    if (loadedPageKeyRef.current === pageKey) return;
+    const generation = ++pageLoadGenerationRef.current;
+    setBusy(true);
+    const scope: HistoryScope = view === "racks" ? "rack" : view === "history" || view === "reports" ? "full" : "dashboard";
+    void loadHistory(siteId, { scope })
+      .then(() => { if (pageLoadGenerationRef.current === generation) loadedPageKeyRef.current = pageKey; })
+      .catch(error => { if (pageLoadGenerationRef.current === generation) setNotice(`Unable to load ${view} data: ${readError(error)}`); })
+      .finally(() => { if (pageLoadGenerationRef.current === generation) setBusy(false); });
+  }, [facilityLoading, loadHistory, siteId, user, view]);
   useEffect(() => { if (!entryDirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [entryDirty]);
   type WebUndoEntry = { el: HTMLInputElement | HTMLSelectElement; kind: "input" | "select" | "checkbox"; value: string; checked?: boolean };
   const undoStackRef = useRef<WebUndoEntry[]>([]);
@@ -229,7 +346,7 @@ export default function CleanWebApp() {
 
   const deferNavigation = (action: PendingNavigation) => { if (entryDirty) setPendingNavigation(() => action); else void action(); };
   const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setViewState(next); }); };
-  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setBusy(true); setFacilityError(null); try { setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id); await loadMonth(id, nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()), records); } catch (error) { setFacilityError(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setBusy(false); } }; deferNavigation(action); };
+  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setBusy(true); setInitialHistoryLoading(true); setFacilityError(null); setHistory({ months: [], logs: [] }); setDraft(null); setRowVersion(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id, { force: true, scope: "dashboard" }); const candidate = nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()); await loadMonth(id, latestEnergyMonth(records.logs, candidate), records); loadedPageKeyRef.current = `${id}:dashboard`; } catch (error) { setNotice(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setInitialHistoryLoading(false); setBusy(false); } }; deferNavigation(action); };
   const selectMonth = async (selected: string, exists = true) => {
     if (!siteId || selected === month) return;
     const action = async () => {
@@ -259,13 +376,13 @@ export default function CleanWebApp() {
     try {
       const result = await api<{ rowVersion: number }>(`/sites/${siteId}/periods/${month}`, { method: "PUT", body: JSON.stringify({ log, expected_row_version: rowVersion, provenance: { sourceType: "web-clean-v1" } }) });
       setDraft(log); setRowVersion(result.rowVersion);
-      const refreshed = await loadHistory(siteId);
+      const refreshed = await loadHistory(siteId, { force: true, scope: "dashboard" });
       const refreshedDraft = refreshed.logs.find(item => item.month === month);
       if (refreshedDraft) setDraft(refreshedDraft);
       setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
     } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
-  const logout = async () => { const action = async () => { setEntryDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { setUser(null); setBootstrap(null); setDraft(null); } }; deferNavigation(action); };
+  const logout = async () => { const action = async () => { setEntryDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setUser(null); setBootstrap(null); setDraft(null); } }; deferNavigation(action); };
   const registerEntryActions = useCallback((actions: EntryWorkspaceActions | null) => { entryActionsRef.current = actions; }, []);
   const discardPendingNavigation = () => { const action = pendingNavigation; setPendingNavigation(null); setEntryDirty(false); if (action) void action(); };
   const savePendingNavigation = async () => { const action = pendingNavigation; if (!action) return; const saved = await entryActionsRef.current?.saveAll(); if (!saved) return; setPendingNavigation(null); setEntryDirty(false); void action(); };
@@ -276,8 +393,9 @@ export default function CleanWebApp() {
     const current = result.sites.find(item => item.id === siteId) ?? result.sites[0] ?? null;
     setBootstrap(result); setSiteId(current?.id ?? null); setFacilityError(null);
     if (current) {
-      const records = await loadHistory(current.id);
-      await loadMonth(current.id, current.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth()), records);
+      const records = await loadHistory(current.id, { force: true, scope: "dashboard" });
+      const candidate = current.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth());
+      await loadMonth(current.id, latestEnergyMonth(records.logs, candidate), records);
     }
   };
 
@@ -302,15 +420,17 @@ export default function CleanWebApp() {
       <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 backdrop-blur"><div className="mx-auto flex max-w-[1600px] items-center gap-4 px-4 py-3"><div className="min-w-0 flex-1"><h1 className="break-words font-display text-lg font-bold tracking-tight">Data Center Energy & Facility Monitor <span className="text-teal-400">v2.3.1</span></h1><p className="truncate text-xs text-slate-400">{facilityLoading ? shellCopy.loadingFacilities : site?.name ?? shellCopy.noFacility} · {user.displayName}</p></div><label className="sr-only" htmlFor="facility-selector">{shellCopy.facility}</label><select id="facility-selector" aria-label={shellCopy.facility} disabled={facilityLoading || !bootstrap || bootstrap.sites.length === 0} value={siteId ?? ""} onChange={event => void selectSite(Number(event.target.value))} className="min-w-44 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm disabled:opacity-60"><option value="">{facilityLoading ? shellCopy.loadingFacilities : bootstrap?.sites.length ? shellCopy.selectFacility : shellCopy.noFacility}</option>{bootstrap?.sites.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => changeLanguage(lang === "th" ? "en" : "th")} className="rounded-lg border border-slate-700 px-2.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800" aria-label={lang === "th" ? "เปลี่ยนภาษาเป็นภาษาอังกฤษ" : "Switch language to Thai"}>{lang === "th" ? "EN" : "ไทย"}</button><button type="button" onClick={() => void logout()} className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800" title={shellCopy.logout} aria-label={shellCopy.logout}><LogOut className="h-4 w-4" /></button></div></header>
       <div className="mx-auto max-w-[1600px] px-4 py-4 md:px-6 md:py-6"><nav aria-label={lang === "th" ? "à¸™à¸³à¸—à¸²à¸‡à¸«à¸¥à¸±à¸" : "Primary application navigation"} className="mb-5 hidden gap-2 rounded-2xl border border-slate-800 bg-slate-900 p-1.5 shadow-md sm:grid sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? "page" : undefined} className={`flex items-center justify-center gap-2.5 rounded-xl px-4 py-3.5 text-xs font-bold transition-all ${view === item.id ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/15" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
         <main className="min-w-0 pb-20 md:pb-6"><div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">{shellCopy.reportingMonth}</span><div className="text-lg font-semibold">{month}</div></div><input aria-label={shellCopy.reportingMonth} type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value, history.months.includes(event.target.value))} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">{shellCopy.displayPeriod} {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />{shellCopy.completion} <b className="text-teal-300">{completion.overall.percent}%</b></div></div>
-          {busy && <div className="mb-4 text-sm text-teal-300">{shellCopy.working}</div>}
+           <Suspense fallback={<ViewLoading lang={lang} />}>
+           {(busy || initialHistoryLoading) && <div className="mb-4 text-sm text-teal-300">{shellCopy.working}</div>}
           {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={month} lang={lang} upsGroupHistory={history.upsGroupHistory ?? null} />}
-          {view === "entry" && draft && <WebEntryWorkspace lang={lang} siteId={siteId!} siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} rackUnitInitialRow={history.rackUnitCapacity?.find(row => row.month === month) ?? null} busy={busy} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={(selected, exists) => void selectMonth(selected, exists)} onRackUnitSaved={async () => { if (!siteId) return; const records = await loadHistory(siteId); await loadMonth(siteId, month, records); }} onOpenReports={() => setView("reports")} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
-          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} lang={lang} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onHistorySaved={() => { void loadHistory(siteId); }} onSelectMonth={selected => void selectMonth(selected)} />}
+          {view === "entry" && draft && <WebEntryWorkspace lang={lang} siteId={siteId!} siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} rackUnitInitialRow={history.rackUnitCapacity?.find(row => row.month === month) ?? null} busy={busy} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={(selected, exists) => void selectMonth(selected, exists)} onRackUnitSaved={async () => { if (!siteId) return; const records = await loadHistory(siteId, { force: true, scope: "dashboard" }); await loadMonth(siteId, month, records); }} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
+          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} lang={lang} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onHistorySaved={() => { void loadHistory(siteId, { force: true, scope: "rack" }); }} onSelectMonth={selected => void selectMonth(selected)} />}
           {view === "history" && <section className="space-y-8"><HistoricalCharts logs={history.logs} lang={lang} displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} dataSourceLabel={lang === "th" ? "แหล่งข้อมูล: Production API" : "Source: Production API"} /><HistoricalExplorer logs={history.logs} lang={lang} displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)} upsGroupHistory={history.upsGroupHistory ?? null} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onEditMonth={selected => { setView("entry"); void selectMonth(selected); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></section>}
           {view === "comparison" && <WebSiteComparison lang={lang} />}
           {view === "reports" && <Reports lang={lang} siteId={siteId} siteName={site?.name ?? "Data Center Energy & Facility Monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} />}
           </>}
-        </main></div>
+           </Suspense>
+         </main></div>
       <nav aria-label={lang === "th" ? "เมนูนำทางบนมือถือ" : "Mobile application navigation"} className="fixed bottom-0 left-0 right-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-800 bg-slate-950 px-1 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`min-w-[4.75rem] shrink-0 flex flex-col items-center gap-1 py-2 text-[10px] ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
       {pendingCreateMonth && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/85 px-4 backdrop-blur-sm"><section role="dialog" aria-modal="true" aria-labelledby="create-month-title" className="w-full max-w-sm overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl"><div className="space-y-4 p-6"><div className="flex items-center gap-3"><div className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-2.5 text-indigo-400"><Calendar className="h-5 w-5" /></div><div><h2 id="create-month-title" className="font-display text-base font-bold text-slate-100">{lang === "th" ? "สร้างบันทึกรายเดือน" : "Create Monthly Record"}</h2><p className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-400">{pendingCreateMonth}</p></div></div><p className="rounded-xl border border-slate-800 bg-slate-950/50 p-4 text-xs leading-relaxed text-slate-300">{lang === "th" ? "ยังไม่มีบันทึกของเดือนนี้ในฐานข้อมูล ต้องการสร้างบันทึกใหม่เพื่อเริ่มกรอกข้อมูลหรือไม่" : "No record exists for this month yet. Create a new monthly record to start entering data?"}</p><div className="flex gap-2.5"><button type="button" onClick={() => setPendingCreateMonth(null)} className="flex-1 rounded-xl border border-slate-700/50 bg-slate-800 px-3 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-700">{lang === "th" ? "ยกเลิก" : "Cancel"}</button><button type="button" onClick={() => void confirmCreateMonth()} className="flex-1 rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-600/15 hover:bg-indigo-500">{lang === "th" ? "สร้างบันทึก" : "Create"}</button></div></div></section></div>}
       {pendingNavigation && <div role="dialog" aria-modal="true" aria-labelledby="unsaved-entry-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><h2 id="unsaved-entry-title" className="font-display text-lg font-bold text-slate-100">{lang === "th" ? "มีข้อมูลที่ยังไม่ได้บันทึก" : "Unsaved Data Entry changes"}</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">{lang === "th" ? "ต้องการบันทึกข้อมูลก่อนออกจากหน้านี้ หรือละทิ้งการแก้ไข?" : "Save your current entries before continuing, discard them, or stay on this page."}</p><div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setPendingNavigation(null)} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">{lang === "th" ? "ยกเลิก" : "Cancel"}</button><button type="button" onClick={discardPendingNavigation} className="rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-300">{lang === "th" ? "ละทิ้ง" : "Discard"}</button><button type="button" onClick={() => void savePendingNavigation()} className="rounded-lg bg-teal-500 px-3 py-2 text-sm font-semibold text-slate-950">{lang === "th" ? "บันทึกและดำเนินการต่อ" : "Save & Continue"}</button></div></section></div>}
@@ -395,14 +515,15 @@ function RackCapacityMonthSync({ month, children }: { month: string; children: R
 
 /** Rack Capacity view: shared Desktop summary/heatmap plus Web-specific
  *  editors. Field edits retain Desktop's per-field expected-value conflict
- *  checks; Rack Unit Capacity retains a snapshot row-version. Image upload
- *  remains intentionally absent until a dedicated Storage API exists. */
+ *  checks; Rack Unit Capacity retains a snapshot row-version and loads the
+ *  selected month's image through the Production Storage API. */
 function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, rackUnitCapacity, allowedStartMonth, allowedEndMonth, onHistorySaved, onSelectMonth }: { siteId: number; siteName: string | null; month: string; lang: "th" | "en"; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; allowedStartMonth: string; allowedEndMonth: string; onHistorySaved?: () => void; onSelectMonth: (month: string) => void }) {
   const th = lang === "th";
   const [rack, setRack] = useState<RackApiSnapshot | null>(null);
   const [rackUnit, setRackUnit] = useState<RackUnitApiSnapshot | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
+  const rackUnitImageProvider = useMemo(() => createWebRackUnitImageProvider(siteId), [siteId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -435,7 +556,7 @@ function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, 
   return (
     <div className="space-y-5">
       <div><h2 className="font-display text-2xl font-bold">{th ? "ความจุแร็คและการใช้งาน" : "Rack Capacity and Utilization"}</h2><p className="mt-1 text-sm text-slate-400">{th ? `แก้ไขข้อมูลตาม Desktop ประวัติ snapshot และความจุหน่วยแร็คสำหรับ ${month}` : `Desktop-compatible field editing, snapshot history, and rack-unit capacity for ${month}.`}</p></div>
-        <RackCapacityProvider lang={lang} facilityName={siteName} rackCapacity={rackCapacity} rackUnitCapacity={rackUnitCapacity} rackCapacityHistory={rackCapacityHistory}>
+        <RackCapacityProvider lang={lang} facilityName={siteName} initialReportingMonth={month} rackCapacity={rackCapacity} rackUnitCapacity={rackUnitCapacity} rackCapacityHistory={rackCapacityHistory}>
         <RackCapacityStickyHeader />
         <RackCapacityTimeline canSelectMonth={selected => selected >= allowedStartMonth && selected <= allowedEndMonth} onMonthSelect={onSelectMonth} />
         <CapacityAlerts />
@@ -445,7 +566,7 @@ function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, 
           <RackCapacityForecast />
         </div>
         <RackCapacityMonthSync month={month}><RackCapacitySummaryCard /></RackCapacityMonthSync>
-        <RackUnitCapacitySummary imageUploadAvailable={false} />
+        <RackUnitCapacitySummary provider={rackUnitImageProvider} />
         <RackCapacityHistoryPanel />
         <WebRackCapacityEditor siteId={siteId} month={month} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} />
       </RackCapacityProvider>
@@ -513,7 +634,17 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
   // action() may throw synchronously (e.g. openReportPopup() when the
   // popup was blocked) - awaited inside the try so both a synchronous
   // throw and a rejected promise report the same friendly message.
-  const run = (action: () => void | Promise<void>, success: string, historyFilename: string) => { void (async () => { try { await action(); rememberReport(historyFilename); setMessage(success); } catch (error) { setMessage(readError(error)); } })(); };
+  // Invoke the action in the click handler itself. PDF actions must call
+  // window.open() before the first async boundary or the browser may block
+  // the report popup; only the completion bookkeeping is deferred.
+  const run = (action: () => void | Promise<void>, success: string, historyFilename: string) => {
+    let result: void | Promise<void>;
+    try { result = action(); }
+    catch (error) { setMessage(readError(error)); return; }
+    void Promise.resolve(result)
+      .then(() => { rememberReport(historyFilename); setMessage(success); })
+      .catch(error => setMessage(readError(error)));
+  };
 
   const contextMonth = effectiveMonth(period, month);
   const reportContextKey = `${siteName}\u0000${contextMonth}`;

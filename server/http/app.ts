@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import express, { type ErrorRequestHandler, type Request, type Response, type NextFunction } from "express";
 import type { ServerConfig } from "../config/env";
 import { isHttpError, HttpError } from "../errors";
-import { ApiService } from "../services/apiService";
+import { ApiService, type HistoryScope } from "../services/apiService";
 import type { BackendRepository } from "../repositories/contracts";
 import { AuthService } from "../auth/authService";
 import { PasswordPolicyError } from "../auth/passwordPolicy";
@@ -161,7 +161,12 @@ export function createApp(dependencies: AppDependencies) {
     sendOk(res, await service.saveRackUnitImage(parseSiteId(req.params.siteId), req.params.month, req.body, req.header("content-type"), res.locals.requestId, actorNumber(actor.userId)));
   }));
   app.put("/api/v1/sites/:siteId/periods/:month", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.operationalDataWrite); sendOk(res, await service.saveMonthlyLog(parseSiteId(req.params.siteId), req.params.month, req.body, res.locals.requestId, actorNumber(actor.userId))); }));
-  app.get("/api/v1/sites/:siteId/history", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.operationalDataRead); sendOk(res, await service.getHistory(parseSiteId(req.params.siteId))); }));
+  app.get("/api/v1/sites/:siteId/history", asyncRoute(async (req, res) => {
+    withPermission(res, PERMISSIONS.operationalDataRead);
+    const requestedScope = req.query.scope;
+    const scope: HistoryScope = requestedScope === undefined ? "full" : requestedScope === "dashboard" || requestedScope === "rack" || requestedScope === "full" ? requestedScope : (() => { throw new HttpError(400, "INVALID_HISTORY_SCOPE", "scope must be dashboard, rack, or full."); })();
+    sendOk(res, await service.getHistory(parseSiteId(req.params.siteId), scope));
+  }));
 
   app.get("/api/v1/admin/users", asyncRoute(async (_req, res) => { const actor = withPermission(res, PERMISSIONS.usersList); sendOk(res, await auth.listUsers(actor)); }));
   app.post("/api/v1/admin/users", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.usersCreate); const body = parseObjectBody(req.body); sendOk(res, await auth.createUser(actor, { username: body.username, displayName: body.display_name, password: body.password, role: parseRole(body.role), active: body.active }, res.locals.requestId)); }));

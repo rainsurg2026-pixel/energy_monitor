@@ -2483,7 +2483,6 @@ export default function App() {
               provider={isDesktopApp ? "Excel" : "Browser"}
               onSaveAll={handleToolbarSave}
               onResetAll={handleToolbarReset}
-              onExport={handleToolbarExport}
               onJumpToSection={jumpToSection}
             />
           </div>

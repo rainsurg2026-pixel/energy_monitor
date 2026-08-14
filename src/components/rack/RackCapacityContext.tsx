@@ -53,6 +53,9 @@ export interface RackCapacityContextValue {
 export interface RackCapacityProviderProps {
   lang: "th" | "en";
   facilityName?: string | null;
+  /** Optional page-owned month used by hosted views to avoid first-rendering
+   *  the Rack Capacity widgets against the actual current month. */
+  initialReportingMonth?: string;
   rackCapacity: RackCapacitySummary | null;
   rackUnitCapacity: RackUnitCapacityRow[];
   rackCapacityHistory: RackCapacityHistoryRow[];
@@ -64,12 +67,13 @@ const RackCapacityContext = createContext<RackCapacityContextValue | undefined>(
 export const RackCapacityProvider: React.FC<RackCapacityProviderProps> = ({
   lang,
   facilityName = null,
+  initialReportingMonth,
   rackCapacity,
   rackUnitCapacity,
   rackCapacityHistory,
   children
 }) => {
-  const [reportingMonth, setReportingMonth] = useState<string>(() => currentMonth());
+  const [reportingMonth, setReportingMonth] = useState<string>(() => initialReportingMonth ?? currentMonth());
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
 
   const metrics = useMemo(() => calculateRackCapacityMetrics(rackCapacity?.records ?? []), [rackCapacity]);

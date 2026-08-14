@@ -3,6 +3,7 @@ import { ImagePlus, Save, Trash2 } from "lucide-react";
 import { api } from "./api";
 import { validateImageBytes } from "../utils/imageValidation";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
+import { computeRackUnitCompletion, type SectionCompletion } from "../utils/completion";
 
 interface RackUnitSnapshotResponse {
   snapshot: (RackUnitCapacityRow & { rowVersion: number; image: { available: boolean } | null }) | null;
@@ -14,15 +15,17 @@ interface Props {
   initialRow: RackUnitCapacityRow | null;
   onSaved: () => Promise<void> | void;
   onMessage: (message: string) => void;
+  onCompletionChange?: (completion: SectionCompletion) => void;
 }
 
 interface StagedImage { bytes: Uint8Array; previewUrl: string; contentType: "image/png" | "image/jpeg"; }
 
-export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSaved, onMessage }: Props) {
+export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSaved, onMessage, onCompletionChange }: Props) {
   const [totalU, setTotalU] = useState(initialRow ? String(initialRow.totalU) : "");
   const [usedU, setUsedU] = useState(initialRow ? String(initialRow.usedU) : "");
   const [rowVersion, setRowVersion] = useState<number | null>(null);
   const [hasSavedImage, setHasSavedImage] = useState(false);
+  const [imageLoadError, setImageLoadError] = useState(false);
   const [stagedImage, setStagedImage] = useState<StagedImage | null>(null);
   const [imageError, setImageError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -30,11 +33,16 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    onCompletionChange?.(computeRackUnitCompletion(totalU, usedU));
+  }, [onCompletionChange, totalU, usedU]);
+
+  useEffect(() => {
     let cancelled = false;
     setTotalU(initialRow ? String(initialRow.totalU) : "");
     setUsedU(initialRow ? String(initialRow.usedU) : "");
     setRowVersion(null);
     setHasSavedImage(false);
+    setImageLoadError(false);
     void api<RackUnitSnapshotResponse>(`/rack-unit-capacity?siteId=${siteId}&month=${encodeURIComponent(month)}`)
       .then(result => {
         if (cancelled) return;
@@ -44,6 +52,7 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
         setUsedU(String(row.usedU));
         setRowVersion(row.rowVersion);
         setHasSavedImage(Boolean(row.image?.available));
+        setImageLoadError(false);
       })
       .catch(() => undefined);
     return () => { cancelled = true; };
@@ -123,7 +132,7 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
     <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 space-y-3">
       <div className="flex items-center justify-between"><h4 className="text-sm text-slate-200">Rack Unit Capacity Image</h4>{stagedImage && <button type="button" onClick={removePending} className="inline-flex items-center gap-1 text-xs text-rose-400"><Trash2 className="h-3.5 w-3.5" />Remove pending image</button>}</div>
       <div tabIndex={0} onPaste={handlePaste} onDragOver={event => { event.preventDefault(); setDragActive(true); }} onDragLeave={() => setDragActive(false)} onDrop={event => { event.preventDefault(); setDragActive(false); const file = event.dataTransfer.files?.[0]; if (file) void acceptImage(file); }} className={`flex items-center gap-4 rounded-lg border-2 border-dashed p-4 focus:outline-none focus:ring-2 focus:ring-teal-500/50 ${dragActive ? "border-teal-400 bg-teal-500/5" : "border-slate-800"}`}>
-        {stagedImage ? <img src={stagedImage.previewUrl} alt="Pending Rack Unit Capacity" className="h-24 w-auto max-w-[240px] rounded-md border border-slate-800 object-contain" /> : hasSavedImage ? <img src={imageUrl} alt={`Rack Unit Capacity ${month}`} className="h-24 w-auto max-w-[240px] rounded-md border border-slate-800 object-contain" /> : <div className="flex h-24 w-24 items-center justify-center rounded-md border border-slate-800 text-slate-600"><ImagePlus className="h-8 w-8" /></div>}
+        {stagedImage ? <img src={stagedImage.previewUrl} alt="Pending Rack Unit Capacity" className="h-24 w-auto max-w-[240px] rounded-md border border-slate-800 object-contain" /> : hasSavedImage && !imageLoadError ? <img src={imageUrl} alt={`Rack Unit Capacity ${month}`} onError={() => { setImageLoadError(true); setHasSavedImage(false); }} className="h-24 w-auto max-w-[240px] rounded-md border border-slate-800 object-contain" /> : <div className="flex h-24 w-24 items-center justify-center rounded-md border border-slate-800 text-slate-600"><ImagePlus className="h-8 w-8" /></div>}
         <div className="flex-1 space-y-1 text-xs text-slate-400"><p>Drop an image here, paste with Ctrl+V, or <button type="button" onClick={() => fileInputRef.current?.click()} className="text-teal-400 underline underline-offset-2">choose a file</button></p><p className="text-slate-600">PNG or JPEG only, maximum 8 MB</p>{imageError && <p className="text-rose-400">{imageError}</p>}<input ref={fileInputRef} type="file" accept="image/png,image/jpeg" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void acceptImage(file); }} /></div>
       </div>
     </div>

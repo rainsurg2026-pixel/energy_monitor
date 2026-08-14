@@ -8,13 +8,16 @@ import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistory
 import type { MonthlyLog } from "../../src/types";
 import { HttpError } from "../errors";
 import { assertDisplayPeriod, assertStrictMonth, allowedMonths, isAllowedMonth, latestAvailableMonth, previousCalculationMonth, visibleMonths, type DisplayPeriod } from "../policies/displayPeriod";
-import type { BackendRepository, SiteRecord, UpsGroupHistoryRecord } from "../repositories/contracts";
+import type { BackendRepository, RackUnitImageRecord, SiteRecord, UpsGroupHistoryRecord } from "../repositories/contracts";
 import { validateImageBytes } from "../../src/utils/imageValidation";
 import { imageObjectKey, type RackUnitImageStorage } from "../storage/rackUnitImageStorage";
 import { parseExpectedRowVersion, parseMonthlyLog, parseProvenance } from "./rawInputValidation";
 import { API_HEALTH_RESPONSE } from "../http/health";
+import { historyMonthsForScope } from "./historyScope";
 
 export interface ApiServiceOptions { repository: BackendRepository; now?: () => Date; imageStorage?: RackUnitImageStorage; }
+
+export type HistoryScope = "dashboard" | "rack" | "full";
 
 function monthOfDate(date: Date): string { return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`; }
 
@@ -46,6 +49,18 @@ export class ApiService {
     const site = await this.repository.getSite(siteId);
     if (!site || !site.active) throw new HttpError(404, "SITE_NOT_FOUND", "Site was not found.");
     return site;
+  }
+
+  private async rackUnitImageAvailable(image: RackUnitImageRecord | null | undefined): Promise<boolean> {
+    if (!image || !this.imageStorage) return false;
+    try {
+      if (this.imageStorage.hasObject) return await this.imageStorage.hasObject(image.objectKey);
+      return Boolean(await this.imageStorage.getObject(image.objectKey));
+    } catch {
+      // Metadata must never make the UI request a broken image URL. The image
+      // endpoint still performs the authoritative read and integrity check.
+      return false;
+    }
   }
 
   private async availableForSite(siteId: number, period: DisplayPeriod): Promise<{ availableMonths: string[]; latestAvailableMonth: string | null }> {
@@ -191,18 +206,26 @@ export class ApiService {
    * screens.  The server owns the visibility rule so a browser cannot use an
    * editor endpoint to enumerate months outside the configured period.
    */
-  async getHistory(siteId: number): Promise<unknown> {
+  async getHistory(siteId: number, scope: HistoryScope = "full"): Promise<unknown> {
     const site = await this.requireSite(siteId);
     const period = await this.requirePeriod();
     const availability = await this.availableForSite(siteId, period);
+    const includeLogs = scope !== "rack";
+    const includeUpsGroupHistory = scope !== "rack";
+    const includeRackHistory = scope !== "dashboard";
+    const includeRackUnitCapacity = scope !== "dashboard";
+    const requestedLogMonths = historyMonthsForScope(availability.availableMonths, scope);
     const [logs, upsGroupHistoryRowsRaw, rackCapacityHistoryRows, rackUnitCapacityRows] = await Promise.all([
-      this.repository.getMonthlyLogs(siteId, availability.availableMonths),
-      this.repository.getUpsGroupHistory(siteId),
-      this.repository.listRackCapacityHistory(siteId),
-      this.repository.listRackUnitCapacityHistory(siteId)
+      includeLogs ? this.repository.getMonthlyLogs(siteId, requestedLogMonths) : Promise.resolve([]),
+      includeUpsGroupHistory ? this.repository.getUpsGroupHistory(siteId) : Promise.resolve([]),
+      includeRackHistory ? this.repository.listRackCapacityHistory(siteId) : Promise.resolve([]),
+      includeRackUnitCapacity ? this.repository.listRackUnitCapacityHistory(siteId) : Promise.resolve([])
     ]);
-    const upsGroupHistoryRows = await this.backfillMissingUpsGroupHistory(siteId, site.code, logs, upsGroupHistoryRowsRaw);
+    const upsGroupHistoryRows = includeUpsGroupHistory
+      ? await this.backfillMissingUpsGroupHistory(siteId, site.code, logs, upsGroupHistoryRowsRaw)
+      : [];
     const visibleMonths = new Set(availability.availableMonths);
+    const returnedHistoryMonths = new Set(requestedLogMonths);
     return {
       siteId,
       displayPeriod: period,
@@ -211,7 +234,7 @@ export class ApiService {
       logs: logs.sort((left, right) => left.month.localeCompare(right.month)),
       upsGroupHistory: {
         sourceSheet: "2. UPS Group History",
-        rows: upsGroupHistoryRows.filter(row => visibleMonths.has(row.month))
+        rows: upsGroupHistoryRows.filter(row => visibleMonths.has(row.month) && returnedHistoryMonths.has(row.month))
       },
       rackCapacityHistory: rackCapacityHistoryRows
         .filter(row => visibleMonths.has(row.month))
@@ -235,17 +258,45 @@ export class ApiService {
     const period = await this.requirePeriod();
     const sites = await this.repository.listSites();
     const states = await Promise.all(sites.map(async site => {
-      const state = await this.availableForSite(site.id, period);
-      const monthlyMonths = new Set((await this.repository.listPeriods(site.id)).filter(record => record.hasData).map(record => record.month));
-      const comparisonMonths = state.availableMonths.filter(month => monthlyMonths.has(month));
+      // Keep all source reads for a site in one fan-out. The previous code
+      // called availableForSite(), then fetched monthly periods and rack-unit
+      // history again, which multiplied the cold-start/database latency of
+      // the comparison page without changing the result.
+      const [periods, rackHistory, rackUnitRows] = await Promise.all([
+        this.repository.listPeriods(site.id),
+        this.repository.listRackCapacityHistory(site.id),
+        this.repository.listRackUnitCapacityHistory(site.id)
+      ]);
+      const available = [
+        ...periods.filter(record => record.hasData).map(record => record.month),
+        ...rackHistory.map(record => record.month),
+        ...rackUnitRows.map(record => record.month)
+      ].filter(month => month <= monthOfDate(this.now()));
+      const availableMonths = visibleMonths(period, available);
+      const monthlyMonths = new Set(periods.filter(record => record.hasData).map(record => record.month));
+      const comparisonMonths = availableMonths.filter(month => monthlyMonths.has(month));
       const logs = await this.repository.getMonthlyLogs(site.id, comparisonMonths);
       const metrics = buildFacilityComparisonMetrics(logs, period.endMonth);
-      return { site, availableMonths: comparisonMonths, metrics: Object.fromEntries(metrics) };
+      return {
+        site,
+        availableMonths: comparisonMonths,
+        metrics: Object.fromEntries(metrics),
+        rackUnitCapacity: rackUnitRows
+          .filter(row => availableMonths.includes(row.month))
+          .map(row => ({
+            month: row.month,
+            totalU: row.totalU,
+            usedU: row.usedU,
+            availableU: row.totalU - row.usedU,
+            usagePercent: usagePercent(row)
+          }))
+      };
     }));
     const months = [...new Set(states.flatMap(state => state.availableMonths))].sort();
     const data = states.map(state => ({
       site: state.site,
-      months: months.map(month => ({ month, metrics: state.metrics[month] ?? null }))
+      months: months.map(month => ({ month, metrics: state.metrics[month] ?? null })),
+      rackUnitCapacity: state.rackUnitCapacity
     }));
     return { displayPeriod: period, months, sites: data };
   }
@@ -262,7 +313,8 @@ export class ApiService {
     const { month: selected } = await this.requireVisibleMonth(month);
     const snapshot = await this.repository.getRackUnitSnapshot(siteId, selected);
     if (!snapshot) return { siteId, month: selected, snapshot: null };
-    return { siteId, month: selected, snapshot: { ...snapshot, image: snapshot.image ? { ...snapshot.image, available: true } : null, availableU: snapshot.totalU - snapshot.usedU, usagePercent: usagePercent(snapshot), availabilityPercent: snapshot.totalU > 0 ? ((snapshot.totalU - snapshot.usedU) / snapshot.totalU) * 100 : null } };
+    const imageAvailable = await this.rackUnitImageAvailable(snapshot.image);
+    return { siteId, month: selected, snapshot: { ...snapshot, image: snapshot.image ? { ...snapshot.image, available: imageAvailable } : null, availableU: snapshot.totalU - snapshot.usedU, usagePercent: usagePercent(snapshot), availabilityPercent: snapshot.totalU > 0 ? ((snapshot.totalU - snapshot.usedU) / snapshot.totalU) * 100 : null } };
   }
 
   async getRackUnitImage(siteId: number, month: unknown): Promise<{ contentType: "image/png" | "image/jpeg"; bytes: Buffer }> {
@@ -271,7 +323,12 @@ export class ApiService {
     const snapshot = await this.repository.getRackUnitSnapshot(siteId, selected);
     if (!snapshot?.image) throw new HttpError(404, "IMAGE_NOT_FOUND", "No Rack Unit Capacity image exists for the requested month.");
     if (!this.imageStorage) throw new HttpError(503, "IMAGE_STORAGE_UNAVAILABLE", "Rack Unit Capacity image storage is not configured.");
-    const bytes = await this.imageStorage.getObject(snapshot.image.objectKey);
+    let bytes: Buffer | null;
+    try {
+      bytes = await this.imageStorage.getObject(snapshot.image.objectKey);
+    } catch {
+      throw new HttpError(503, "IMAGE_STORAGE_UNAVAILABLE", "Rack Unit Capacity image storage could not be read.");
+    }
     if (!bytes) throw new HttpError(503, "IMAGE_OBJECT_MISSING", "Rack Unit Capacity image metadata exists but the stored object is unavailable.");
     if (snapshot.image.sha256 && createHash("sha256").update(bytes).digest("hex") !== snapshot.image.sha256) throw new HttpError(503, "IMAGE_CHECKSUM_MISMATCH", "Rack Unit Capacity image integrity verification failed.");
     return { contentType: snapshot.image.contentType, bytes };

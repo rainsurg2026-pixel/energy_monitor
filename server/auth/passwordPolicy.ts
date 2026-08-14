@@ -1,5 +1,5 @@
 export const DEFAULT_PASSWORD_POLICY = Object.freeze({
-  minLength: 12,
+  minLength: 6,
   maxLength: 1024
 });
 

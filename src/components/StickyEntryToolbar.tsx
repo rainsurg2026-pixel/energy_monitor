@@ -1,5 +1,5 @@
 import React from "react";
-import { Download, Lock, RefreshCw, RotateCcw, Save } from "lucide-react";
+import { Lock, RefreshCw, RotateCcw, Save } from "lucide-react";
 import { CompletionSummary } from "../utils/completion";
 
 interface StickyEntryToolbarProps {
@@ -21,14 +21,14 @@ interface StickyEntryToolbarProps {
   provider?: string | null;
   onSaveAll: () => void;
   onResetAll: () => void;
-  onExport: () => void;
+  rackUnitCompletion?: CompletionSummary["rackUnit"];
   /** RC3 jump-to-error: scroll/focus/highlight the section's first empty field. */
-  onJumpToSection?: (section: "ups" | "air" | "dc" | "energy") => void;
+  onJumpToSection?: (section: "ups" | "air" | "dc" | "energy" | "rackUnit") => void;
 }
 
 /**
  * RC3: always-visible bottom toolbar on the data-entry page.
- * Save (all sections) · Reset · Export · Completion · Last saved · Workbook status.
+ * Save (all sections) · Reset · Completion · Last saved · Workbook status.
  */
 export default function StickyEntryToolbar({
   lang,
@@ -44,7 +44,7 @@ export default function StickyEntryToolbar({
   provider = null,
   onSaveAll,
   onResetAll,
-  onExport,
+  rackUnitCompletion,
   onJumpToSection
 }: StickyEntryToolbarProps) {
   const th = lang === "th";
@@ -73,8 +73,8 @@ export default function StickyEntryToolbar({
 
   // RC3 interactive validation summary: "UPS 18/18 ✔" — clicking an
   // incomplete section jumps to its first empty field.
-  const sectionSummary = (key: "ups" | "air" | "dc" | "energy", label: string) => {
-    const s = completion[key];
+  const sectionSummary = (key: "ups" | "air" | "dc" | "energy" | "rackUnit", label: string, summary = completion[key]) => {
+    const s = summary;
     const complete = s.total > 0 && s.filled >= s.total;
     return (
       <button
@@ -129,15 +129,7 @@ export default function StickyEntryToolbar({
           <span>{th ? "คืนค่า" : "Reset"}</span>
         </button>
 
-        {/* Export */}
-        <button
-          onClick={onExport}
-          className="px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 text-slate-300 hover:text-slate-100 border border-slate-800 hover:bg-slate-800/50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
-          title="Ctrl+E / Ctrl+Shift+S"
-        >
-          <Download className="w-3.5 h-3.5 text-teal-400" />
-          <span>{th ? "ส่งออก" : "Export"}</span>
-        </button>
+        {/* Export is available from the Reports view, not this Data Entry toolbar. */}
 
         {/* RC3 context: facility · month · provider */}
         {(facilityName || monthLabel || provider) && (
@@ -161,6 +153,7 @@ export default function StickyEntryToolbar({
           {sectionSummary("ups", "UPS")}
           {sectionSummary("air", "Air")}
           {sectionSummary("dc", "DC")}
+          {rackUnitCompletion && sectionSummary("rackUnit", "Rack U", rackUnitCompletion)}
           {sectionSummary("energy", th ? "พลังงาน" : "Energy")}
           <span className="text-slate-700">│</span>
           <span className="flex items-center gap-1">

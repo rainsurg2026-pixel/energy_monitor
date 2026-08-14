@@ -47,6 +47,7 @@ export default function UniversalFilterBar({ onExport, lang, facility = null, up
     selectedCategory,
     selectedUPSGroup,
     selectedReportView,
+    availableYears,
     
     setSelectedYear,
     setSelectedPeriod,
@@ -175,7 +176,9 @@ export default function UniversalFilterBar({ onExport, lang, facility = null, up
               onChange={(e) => setSelectedYear(e.target.value)}
               className="w-full bg-slate-950 text-slate-100 font-semibold text-xs border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 cursor-pointer appearance-none transition-all"
             >
-              <option value={selectedYear}>{selectedYear}</option>
+              {[...new Set([selectedYear, ...availableYears])]
+                .sort((left, right) => right.localeCompare(left))
+                .map(year => <option key={year} value={year}>{year}</option>)}
             </select>
             <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>

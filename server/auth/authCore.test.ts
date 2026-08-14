@@ -14,6 +14,7 @@ const TEST_ARGON2_PARAMETERS = { memoryCost: 8 * 1024, timeCost: 1, parallelism:
 test("normalizes usernames at the server boundary and applies password policy", () => {
   assert.equal(normalizeUsername("  ALICE\u0301  "), "alicé");
   assert.doesNotThrow(() => assertPasswordPolicy("manager-generated / passphrase"));
+  assert.doesNotThrow(() => assertPasswordPolicy("123456"));
   assert.throws(() => assertPasswordPolicy("short"), /at least/);
   assert.throws(() => assertPasswordPolicy("\t\n"), /blank/);
 });
