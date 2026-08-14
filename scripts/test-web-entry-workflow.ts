@@ -121,5 +121,7 @@ assert.match(toolbar, /sectionSummary\("rackUnit"/);
 assert.doesNotMatch(toolbar, /onExport/);
 assert.doesNotMatch(toolbar, /title="Ctrl\+E \/ Ctrl\+Shift\+S"/);
 assert.match(rackUnitEntry, /onCompletionChange/);
+assert.match(rackUnitEntry, /imageLoadError/);
+assert.match(rackUnitEntry, /onError=\{\(\) =>/);
 
 console.log("web entry workflow: preserves Desktop save/navigation protection and month/completion controls");

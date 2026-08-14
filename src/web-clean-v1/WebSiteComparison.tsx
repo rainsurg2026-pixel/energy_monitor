@@ -50,8 +50,8 @@ function TrendCard({ title, icon, data, sites, suffix, unit }: {
         <YAxis tickFormatter={value => formatCompact(Number(value), unit)} />
         <Tooltip labelFormatter={label => formatMonthLabel(String(label))} formatter={(value: number | string | undefined) => value === null || value === undefined ? "—" : `${formatNumber2(Number(value))} ${unit}`} />
         <Legend />
-        {sites.map((site, index) => <Line key={`${site.site.id}-${suffix}`} type="monotone" dataKey={`${site.site.code}-${suffix}`} name={site.site.name} stroke={siteColour(index)} connectNulls={false} dot={{ r: 3 }}>
-          <LabelList dataKey={`${site.site.code}-${suffix}`} position="top" formatter={value => formatCompact(Number(value), unit)} />
+        {sites.map((site, index) => <Line key={`${site.site.id}-${suffix}`} type="monotone" dataKey={`${site.site.code}-${suffix}`} name={site.site.name} stroke={siteColour(index)} connectNulls={false} dot={{ r: 3 }} isAnimationActive={false}>
+          <LabelList dataKey={`${site.site.code}-${suffix}`} position="top" offset={8} fill={siteColour(index)} fontSize={10} formatter={value => formatCompact(Number(value), unit)} />
         </Line>)}
       </LineChart>
     </ResponsiveContainer>

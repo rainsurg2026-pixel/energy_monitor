@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 export interface RackUnitImageStorage {
   putObject(objectKey: string, bytes: Buffer, contentType: "image/png" | "image/jpeg"): Promise<void>;
   getObject(objectKey: string): Promise<Buffer | null>;
+  hasObject?(objectKey: string): Promise<boolean>;
   deleteObject(objectKey: string): Promise<void>;
 }
 
@@ -49,6 +50,15 @@ export class SupabaseRackUnitImageStorage implements RackUnitImageStorage {
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`Rack Unit Capacity image storage read failed (HTTP ${response.status}).`);
     return Buffer.from(await response.arrayBuffer());
+  }
+
+  async hasObject(objectKey: string): Promise<boolean> {
+    const key = safeObjectKey(objectKey);
+    const url = `${this.baseUrl}/storage/v1/object/info/${encodedObjectPath(this.bucket, key)}`;
+    const response = await fetch(url, { method: "HEAD", headers: this.headers() });
+    if (response.status === 404) return false;
+    if (!response.ok) throw new Error(`Rack Unit Capacity image storage availability check failed (HTTP ${response.status}).`);
+    return true;
   }
 
   async deleteObject(objectKey: string): Promise<void> {

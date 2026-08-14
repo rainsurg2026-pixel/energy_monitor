@@ -13,6 +13,8 @@ assert.match(comparison, /Floor 4 Electricity Cost Trend/);
 assert.match(comparison, /Rack Capacity and Utilization/);
 assert.match(comparison, /Rack Unit Capacity and Utilization/);
 assert.match(comparison, /LabelList/);
+assert.match(comparison, /isAnimationActive=\{false\}/);
+assert.match(comparison, /fill=\{siteColour\(index\)\}/);
 assert.match(comparison, /formatMonthLabel/);
 assert.match(comparison, /formatCompact/);
 assert.match(comparison, /grid-cols-1/);
@@ -26,5 +28,7 @@ assert.match(app, /const WebSiteComparison = lazy\(\(\) => import\("\.\/WebSiteC
 assert.match(app, /\{view === "comparison" && <WebSiteComparison lang=\{lang\} \/>\}/);
 assert.doesNotMatch(app, /function SiteComparison\(/);
 assert.match(apiService, /rackUnitCapacity/);
+assert.match(apiService, /hasObject/);
+assert.match(apiService, /const \[periods, rackHistory, rackUnitRows\] = await Promise\.all/);
 
 console.log("web site comparison: uses only isolated API snapshots and does not infer missing rack capacity");
