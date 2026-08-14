@@ -80,7 +80,8 @@
     "test:report-image-pipeline": "node node_modules/tsx/dist/cli.mjs scripts/test-report-image-pipeline.ts",
     "test:all-report:pdf": "node scripts/run-all-report-pdf-test.mjs",
     "test:packaged-report": "node scripts/run-packaged-report-test.mjs",
-    "test:e2e": "node node_modules/tsx/dist/cli.mjs scripts/e2e-cdp.mjs"
+    "test:e2e": "node node_modules/tsx/dist/cli.mjs scripts/e2e-cdp.mjs",
+    "test:e2e:web": "node scripts/e2e-web-cdp.mjs"
   },
   "devDependencies": {
     "@google/genai": "^2.4.0",
@@ -110,7 +111,9 @@
     "argon2": "^0.45.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "html2canvas": "^1.4.1",
     "jose": "^6.2.8",
+    "jspdf": "^4.2.1",
     "pg": "^8.22.0"
   }
 }

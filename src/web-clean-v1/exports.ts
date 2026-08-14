@@ -84,8 +84,14 @@ function download(content: BlobPart, fileName: string, type: string): void {
   const link = document.createElement("a");
   link.href = url;
   link.download = fileName;
+  link.style.display = "none";
+  document.body.appendChild(link);
   link.click();
-  URL.revokeObjectURL(url);
+  link.remove();
+  // Chromium may not have consumed the object URL at the instant click()
+  // returns. Keep it alive for one task so downloads are not intermittently
+  // reported as started while producing a zero-byte file.
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export function exportCsv(logs: MonthlyLog[], siteName: string, fileName?: string): void {
@@ -353,6 +359,80 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
   };
 }
 
+function ensureExtension(fileName: string, extension: string): string {
+  const suffix = `.${extension}`;
+  return fileName.toLowerCase().endsWith(suffix) ? fileName : `${fileName}${suffix}`;
+}
+
+async function waitForReportImages(root: HTMLElement): Promise<void> {
+  const images = [...root.querySelectorAll<HTMLImageElement>("img")];
+  await Promise.all(images.map(async image => {
+    if (image.complete) return;
+    try { await image.decode(); } catch { /* html2canvas will render the placeholder */ }
+  }));
+  if (typeof document.fonts?.ready?.then === "function") await document.fonts.ready;
+}
+
+/**
+ * Creates a real PDF download from the same report HTML used by the preview
+ * and the old print renderer. The report is rendered by the user's browser,
+ * so Thai glyphs and inline SVG charts are captured exactly as displayed;
+ * jsPDF then packages each report page into a downloadable PDF blob. This is
+ * intentionally asynchronous and does not open a popup or invoke print().
+ */
+export async function exportReportPdfFromHtml(html: string, fileName: string): Promise<void> {
+  if (typeof document === "undefined") throw new Error("PDF export requires a browser document.");
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import("html2canvas"),
+    import("jspdf")
+  ]);
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  const host = document.createElement("div");
+  host.dataset.energyMonitorPdfRenderer = "true";
+  Object.assign(host.style, {
+    position: "absolute",
+    left: "-12000px",
+    top: "0",
+    width: "1123px",
+    minHeight: "1px",
+    overflow: "visible",
+    background: "#ffffff",
+    color: "#243247",
+    fontFamily: '"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif',
+    pointerEvents: "none"
+  });
+  const reportStyle = parsed.head.querySelector("style");
+  if (reportStyle) host.appendChild(reportStyle.cloneNode(true));
+  for (const child of [...parsed.body.childNodes]) host.appendChild(child.cloneNode(true));
+  document.body.appendChild(host);
+  try {
+    await waitForReportImages(host);
+    const pages = [...host.querySelectorAll<HTMLElement>(".cover, .page")];
+    if (pages.length === 0) throw new Error("The report did not contain any printable pages.");
+    const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
+    for (const [index, page] of pages.entries()) {
+      const canvas = await html2canvas(page, {
+        backgroundColor: "#ffffff",
+        scale: Math.min(2, Math.max(1, window.devicePixelRatio || 1)),
+        useCORS: true,
+        logging: false,
+        width: Math.max(page.scrollWidth, 1),
+        windowWidth: Math.max(page.scrollWidth, 1)
+      });
+      if (index > 0) pdf.addPage("a4", "landscape");
+      pdf.addImage(canvas.toDataURL("image/jpeg", 0.94), "JPEG", 0, 0, 297, 210, undefined, "FAST");
+    }
+    pdf.save(ensureExtension(fileName, "pdf"));
+  } finally {
+    host.remove();
+  }
+}
+
+export async function exportDesktopPdf(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[]): Promise<void> {
+  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs);
+  await exportReportPdfFromHtml(buildReportHtml(data, sections), fileName ?? `Energy_Report_${siteName}_${selectedMonth}`);
+}
+
 /**
  * Opens the print popup - must be called synchronously, in the same event
  * loop turn as the triggering click, before any `await`. Browsers key
@@ -466,6 +546,40 @@ function comparisonTrend(site: ComparisonSite, months: string[]): ReportMonthlyR
   });
 }
 
+function siteComparisonReportForDownload(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): ReportData {
+  const [primary, secondary] = data.sites;
+  if (!primary) throw new Error("No facilities are available for comparison.");
+  const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
+  return {
+    title: "Data Center Energy & Facility Monitor Site Comparison",
+    thaiSubtitle: "รายงานเปรียบเทียบการใช้พลังงานระหว่างไซต์",
+    facility: "All Facilities",
+    sourceWorkbook: "Supabase PostgreSQL",
+    generatedAt: new Date().toISOString(),
+    appVersion: "2.3.1 Web Clean v1",
+    reportingMonth: referenceMonth,
+    historicalStart: trendMonths[0] ?? null,
+    historicalEnd: trendMonths.at(-1) ?? null,
+    status: "Complete",
+    validationWarnings: [],
+    monthlyRows: comparisonTrend(primary, trendMonths),
+    currentRow: null,
+    engineeringDashboard: null,
+    rack: null,
+    rackHistory: [],
+    rackUnitCapacity: [],
+    rackUnitCapacityImageDataUri: null,
+    rackUnitCapacityImageMeta: null,
+    comparison: {
+      self: comparisonRow(primary, referenceMonth),
+      other: secondary ? comparisonRow(secondary, referenceMonth) : null,
+      selfTrend: comparisonTrend(primary, trendMonths),
+      otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
+    },
+    rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
+  };
+}
+
 /** Uses Desktop report renderer; comparison values come from the scoped API DTO.
  *  selfRack/otherRack feed the shared renderer's "Rack Capacity Site
  *  Comparison" page (rackComparisonPage in reportHtml.ts) - the same
@@ -505,6 +619,12 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
     rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
   };
   renderReportPopup(popup, buildReportHtml(report));
+}
+
+/** Generates a real PDF download for the site-comparison report without
+ * opening a popup or invoking the browser print dialog. */
+export async function exportSiteComparisonPdf(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): Promise<void> {
+  await exportReportPdfFromHtml(buildReportHtml(siteComparisonReportForDownload(data, referenceMonth, selfRack, otherRack), sections), fileName ?? `site-comparison-${referenceMonth}`);
 }
 
 export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[]): void {
@@ -552,6 +672,20 @@ export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMo
     rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
   };
   download(buildReportHtml(report, sections), fileName ?? `site-comparison-${referenceMonth}.html`, "text/html;charset=utf-8");
+}
+
+function allFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: string, sections?: readonly ReportSectionId[]): string {
+  if (facilities.length === 0) throw new Error("No facilities are available for export.");
+  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs), sections));
+  const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
+  const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
+  const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
+  return `<!doctype html><html><head><meta charset=\"utf-8\"><title>Data Center Energy &amp; Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`;
+}
+
+/** Generates one real PDF download containing one report per facility. */
+export async function exportAllFacilitiesPdf(facilities: ExportFacility[], selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): Promise<void> {
+  await exportReportPdfFromHtml(allFacilitiesReportHtml(facilities, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
 }
 
 /** Prints one full Desktop-compatible report per facility in one document.
