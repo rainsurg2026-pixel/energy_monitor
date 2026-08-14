@@ -3,6 +3,7 @@ import { ImagePlus, Save, Trash2 } from "lucide-react";
 import { api } from "./api";
 import { validateImageBytes } from "../utils/imageValidation";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
+import { computeRackUnitCompletion, type SectionCompletion } from "../utils/completion";
 
 interface RackUnitSnapshotResponse {
   snapshot: (RackUnitCapacityRow & { rowVersion: number; image: { available: boolean } | null }) | null;
@@ -14,11 +15,12 @@ interface Props {
   initialRow: RackUnitCapacityRow | null;
   onSaved: () => Promise<void> | void;
   onMessage: (message: string) => void;
+  onCompletionChange?: (completion: SectionCompletion) => void;
 }
 
 interface StagedImage { bytes: Uint8Array; previewUrl: string; contentType: "image/png" | "image/jpeg"; }
 
-export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSaved, onMessage }: Props) {
+export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSaved, onMessage, onCompletionChange }: Props) {
   const [totalU, setTotalU] = useState(initialRow ? String(initialRow.totalU) : "");
   const [usedU, setUsedU] = useState(initialRow ? String(initialRow.usedU) : "");
   const [rowVersion, setRowVersion] = useState<number | null>(null);
@@ -28,6 +30,10 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
   const [busy, setBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    onCompletionChange?.(computeRackUnitCompletion(totalU, usedU));
+  }, [onCompletionChange, totalU, usedU]);
 
   useEffect(() => {
     let cancelled = false;

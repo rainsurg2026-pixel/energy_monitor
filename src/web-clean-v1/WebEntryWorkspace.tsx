@@ -7,7 +7,7 @@ import SrinakarinPowerPhaseTable from "../components/SrinakarinPowerPhaseTable";
 import StickyEntryToolbar from "../components/StickyEntryToolbar";
 import UpsTable from "../components/UpsTable";
 import { AlertTriangle } from "lucide-react";
-import { computeCompletion, listMissingFields, type EntrySectionApi } from "../utils/completion";
+import { computeCompletion, computeRackUnitCompletion, listMissingFields, type EntrySectionApi, type SectionCompletion } from "../utils/completion";
 import type { AirRecord, DcRecord, EnergyCostRecord, MonthlyLog, SrinakarinInputSnapshot, UpsRecord } from "../types";
 import WebEntryWorkflowHeader, { WebHistoricalEditNotice } from "./WebEntryWorkflowHeader";
 import { formatWebSavedTimestamp } from "./formatting";
@@ -33,7 +33,7 @@ export function mergeEntryDraft(draft: MonthlyLog, updates: LiveDrafts): Monthly
 /** Full browser implementation of Desktop's entry workspace.
  * Save All first combines every in-page draft into one MonthlyLog and calls
  * the Web API once, preserving its row-version concurrency contract. */
-export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, months, month, draft, rackUnitInitialRow, busy, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onRackUnitSaved, onOpenReports, onNotice, onDirtyChange, onRegisterActions }: {
+export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, months, month, draft, rackUnitInitialRow, busy, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onRackUnitSaved, onNotice, onDirtyChange, onRegisterActions }: {
   lang: "th" | "en";
   siteId: number;
   siteName: string;
@@ -48,7 +48,6 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
   onSave: (patch: Partial<MonthlyLog>) => Promise<boolean>;
   onSelectMonth: (month: string, exists: boolean) => void;
   onRackUnitSaved: () => Promise<void> | void;
-  onOpenReports: () => void;
   onNotice: (message: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
   onRegisterActions?: (actions: EntryWorkspaceActions | null) => void;
@@ -58,6 +57,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
   const draftsRef = useRef<LiveDrafts>({});
   const [draftTick, setDraftTick] = useState(0);
   const [savingAll, setSavingAll] = useState(false);
+  const [rackUnitCompletion, setRackUnitCompletion] = useState<SectionCompletion>(() => computeRackUnitCompletion(rackUnitInitialRow?.totalU, rackUnitInitialRow?.usedU));
   const [pendingHistoricalSave, setPendingHistoricalSave] = useState<PendingHistoricalSave | null>(null);
 
   const register = useCallback((section: Section) => (api: EntrySectionApi | null) => { if (api) sectionApisRef.current[section] = api; else delete sectionApisRef.current[section]; }, []);
@@ -111,7 +111,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
     try { pending.resolve(await pending.execute()); } catch { pending.resolve(false); }
   };
   useEffect(() => { onRegisterActions?.({ saveAll, resetAll }); return () => onRegisterActions?.(null); }, [onRegisterActions, resetAll, saveAll]);
-  const jumpToSection = useCallback((section: Section) => document.getElementById(`entry-section-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), []);
+  const jumpToSection = useCallback((section: Section | "rackUnit") => document.getElementById(`entry-section-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), []);
 
   return <div className="space-y-5 pb-40 md:pb-24">
     <WebEntryWorkflowHeader lang={lang} facilityName={siteName} months={months} selectedMonth={month} draft={liveDraft} allowedStartMonth={allowedStartMonth} allowedEndMonth={allowedEndMonth} onSelectMonth={onSelectMonth} />
@@ -122,9 +122,9 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
       <div id="entry-section-air"><AirTable lang={lang} monthStr={month} initialRecord={draft.air} lastSaved={formatWebSavedTimestamp(draft.lastSavedAir)} meterFields={draft.energyCalculation?.airFields} onSave={air => requestSectionSave("air", { air })} registerApi={register("air")} onDraftChange={air => reportDraft("air", air)} /></div>
       <div id="entry-section-dc"><DcTable lang={lang} monthStr={month} initialRecords={draft.dc} lastSaved={formatWebSavedTimestamp(draft.lastSavedDc)} onSave={dc => requestSectionSave("dc", { dc })} registerApi={register("dc")} onDraftChange={dc => reportDraft("dc", dc)} /></div>
       <div id="entry-section-energy"><EnergyCostTable lang={lang} monthStr={month} initialRecord={draft.energyCost} lastSaved={formatWebSavedTimestamp(draft.lastSavedEnergyCost)} onSave={energyCost => requestSectionSave("energy", { energyCost })} registerApi={register("energy")} onDraftChange={energy => reportDraft("energy", energy)} /></div>
-      <RackUnitCapacityEntry siteId={siteId} month={month} initialRow={rackUnitInitialRow} onSaved={onRackUnitSaved} onMessage={onNotice} />
+      <div id="entry-section-rack-unit"><RackUnitCapacityEntry siteId={siteId} month={month} initialRow={rackUnitInitialRow} onSaved={onRackUnitSaved} onMessage={onNotice} onCompletionChange={setRackUnitCompletion} /></div>
     </section>
-    <StickyEntryToolbar lang={lang} completion={completion} lastSaved={lastSaved} workbookStatus={savingAll || busy ? "busy" : hasDraftChanges ? "dirty" : "saved"} hasDraftChanges={hasDraftChanges} aboveMobileNav facilityName={siteName} monthLabel={month} provider="Production API" onSaveAll={() => void requestSaveAll()} onResetAll={resetAll} onExport={onOpenReports} onJumpToSection={jumpToSection} />
+    <StickyEntryToolbar lang={lang} completion={completion} rackUnitCompletion={rackUnitCompletion} lastSaved={lastSaved} workbookStatus={savingAll || busy ? "busy" : hasDraftChanges ? "dirty" : "saved"} hasDraftChanges={hasDraftChanges} aboveMobileNav facilityName={siteName} monthLabel={month} provider="Production API" onSaveAll={() => void requestSaveAll()} onResetAll={resetAll} onJumpToSection={jumpToSection} />
     {pendingHistoricalSave && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm"><section role="dialog" aria-modal="true" aria-labelledby="historical-save-title" className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl"><div className="space-y-4 p-6"><div className="flex items-center gap-3"><div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-amber-400"><AlertTriangle className="h-5 w-5" /></div><div><h3 id="historical-save-title" className="font-display text-base font-bold text-slate-100">{th ? "ยืนยันการบันทึกข้อมูลย้อนหลัง" : "Confirm Saving Historical Data"}</h3><p className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-400">{th ? `เดือน: ${month}` : `Log month: ${month}`}</p></div></div><div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-4 text-xs leading-relaxed text-slate-300"><p>{th ? "คุณกำลังแก้ไขข้อมูลย้อนหลังนอกเหนือจากเดือนล่าสุด โปรดตรวจสอบตัวเลขก่อนบันทึก" : "You are saving edits to a historical record outside the latest available month. Review all figures before saving."}</p><p className="font-medium text-amber-400">{th ? "การแก้ไขนี้จะมีผลต่อการคำนวณและรายงานย้อนหลัง" : "This change affects historical calculations and reports."}</p></div><div className="flex gap-2.5 pt-2"><button type="button" onClick={cancelHistoricalSave} className="flex-1 rounded-xl border border-slate-700/50 bg-slate-800 px-3 py-2.5 text-xs font-semibold text-slate-300">{th ? "ยกเลิก / ตรวจสอบอีกครั้ง" : "Cancel / Verify Again"}</button><button type="button" onClick={() => void confirmHistoricalSave()} className="flex-1 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white">{th ? "ยืนยันและบันทึก" : "Confirm & Save"}</button></div></div></section></div>}
   </div>;
 }

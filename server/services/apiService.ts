@@ -13,6 +13,7 @@ import { validateImageBytes } from "../../src/utils/imageValidation";
 import { imageObjectKey, type RackUnitImageStorage } from "../storage/rackUnitImageStorage";
 import { parseExpectedRowVersion, parseMonthlyLog, parseProvenance } from "./rawInputValidation";
 import { API_HEALTH_RESPONSE } from "../http/health";
+import { historyMonthsForScope } from "./historyScope";
 
 export interface ApiServiceOptions { repository: BackendRepository; now?: () => Date; imageStorage?: RackUnitImageStorage; }
 
@@ -201,8 +202,9 @@ export class ApiService {
     const includeUpsGroupHistory = scope !== "rack";
     const includeRackHistory = scope !== "dashboard";
     const includeRackUnitCapacity = scope !== "dashboard";
+    const requestedLogMonths = historyMonthsForScope(availability.availableMonths, scope);
     const [logs, upsGroupHistoryRowsRaw, rackCapacityHistoryRows, rackUnitCapacityRows] = await Promise.all([
-      includeLogs ? this.repository.getMonthlyLogs(siteId, availability.availableMonths) : Promise.resolve([]),
+      includeLogs ? this.repository.getMonthlyLogs(siteId, requestedLogMonths) : Promise.resolve([]),
       includeUpsGroupHistory ? this.repository.getUpsGroupHistory(siteId) : Promise.resolve([]),
       includeRackHistory ? this.repository.listRackCapacityHistory(siteId) : Promise.resolve([]),
       includeRackUnitCapacity ? this.repository.listRackUnitCapacityHistory(siteId) : Promise.resolve([])
@@ -211,6 +213,7 @@ export class ApiService {
       ? await this.backfillMissingUpsGroupHistory(siteId, site.code, logs, upsGroupHistoryRowsRaw)
       : [];
     const visibleMonths = new Set(availability.availableMonths);
+    const returnedHistoryMonths = new Set(requestedLogMonths);
     return {
       siteId,
       displayPeriod: period,
@@ -219,7 +222,7 @@ export class ApiService {
       logs: logs.sort((left, right) => left.month.localeCompare(right.month)),
       upsGroupHistory: {
         sourceSheet: "2. UPS Group History",
-        rows: upsGroupHistoryRows.filter(row => visibleMonths.has(row.month))
+        rows: upsGroupHistoryRows.filter(row => visibleMonths.has(row.month) && returnedHistoryMonths.has(row.month))
       },
       rackCapacityHistory: rackCapacityHistoryRows
         .filter(row => visibleMonths.has(row.month))
@@ -246,14 +249,31 @@ export class ApiService {
       const state = await this.availableForSite(site.id, period);
       const monthlyMonths = new Set((await this.repository.listPeriods(site.id)).filter(record => record.hasData).map(record => record.month));
       const comparisonMonths = state.availableMonths.filter(month => monthlyMonths.has(month));
-      const logs = await this.repository.getMonthlyLogs(site.id, comparisonMonths);
+      const [logs, rackUnitRows] = await Promise.all([
+        this.repository.getMonthlyLogs(site.id, comparisonMonths),
+        this.repository.listRackUnitCapacityHistory(site.id)
+      ]);
       const metrics = buildFacilityComparisonMetrics(logs, period.endMonth);
-      return { site, availableMonths: comparisonMonths, metrics: Object.fromEntries(metrics) };
+      return {
+        site,
+        availableMonths: comparisonMonths,
+        metrics: Object.fromEntries(metrics),
+        rackUnitCapacity: rackUnitRows
+          .filter(row => state.availableMonths.includes(row.month))
+          .map(row => ({
+            month: row.month,
+            totalU: row.totalU,
+            usedU: row.usedU,
+            availableU: row.totalU - row.usedU,
+            usagePercent: usagePercent(row)
+          }))
+      };
     }));
     const months = [...new Set(states.flatMap(state => state.availableMonths))].sort();
     const data = states.map(state => ({
       site: state.site,
-      months: months.map(month => ({ month, metrics: state.metrics[month] ?? null }))
+      months: months.map(month => ({ month, metrics: state.metrics[month] ?? null })),
+      rackUnitCapacity: state.rackUnitCapacity
     }));
     return { displayPeriod: period, months, sites: data };
   }

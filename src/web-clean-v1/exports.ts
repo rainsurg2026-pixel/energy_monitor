@@ -74,7 +74,9 @@ export interface ComparisonSite {
 export interface SiteComparisonExport {
   displayPeriod: { startMonth: string; endMonth: string };
   months: string[];
-  sites: ComparisonSite[];
+  sites: Array<ComparisonSite & {
+    rackUnitCapacity?: Array<{ month: string; totalU: number; usedU: number; availableU: number; usagePercent: number | null }>;
+  }>;
 }
 
 function download(content: BlobPart, fileName: string, type: string): void {
@@ -361,30 +363,60 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
  * writes the real report into it once any async data has loaded, via
  * printDesktopPdf/printSiteComparisonPdf/printAllFacilitiesPdf below.
  */
+const reportPopupStyle = "body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;padding:32px;background:#f8fafc;color:#0f172a}main{max-width:720px;margin:10vh auto;padding:28px;border:1px solid #cbd5e1;border-radius:16px;background:#fff;box-shadow:0 12px 32px #0f172a1a}h1{font-size:20px;margin:0 0 10px}p{line-height:1.6;color:#475569}.spinner{display:inline-block;width:14px;height:14px;margin-right:8px;border:2px solid #cbd5e1;border-top-color:#0f766e;border-radius:50%;vertical-align:-2px;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}";
+
+function popupStatusHtml(title: string, heading: string, message: string, loading: boolean): string {
+  const indicator = loading ? '<span class="spinner" aria-hidden="true"></span>' : "";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${reportPopupStyle}</style></head><body><main><h1>${indicator}${heading}</h1><p>${message}</p></main></body></html>`;
+}
+
+function writePopupDocument(popup: Window, html: string, title: string): void {
+  if (popup.closed) throw new Error("The report window was closed before the report was ready.");
+  popup.document.open();
+  popup.document.write(html);
+  popup.document.close();
+  popup.document.title = title;
+}
+
 export function openReportPopup(name: string): Window {
   const popup = window.open("", name, "noopener,noreferrer");
   if (!popup) throw new Error("The report window was blocked by the browser.");
+  // The report data may require an API request before it can be rendered. A
+  // real loading document prevents the browser from showing a blank tab while
+  // that request is in flight.
+  writePopupDocument(popup, popupStatusHtml("Preparing report…", "Preparing report", "The report is being assembled. This window will open the print dialog when it is ready.", true), "Preparing report…");
   popup.document.title = "Preparing report…";
+  popup.setTimeout(() => { if (!popup.closed) popup.document.title = "Preparing report…"; }, 0);
   return popup;
+}
+
+/** Replaces a stalled/failed report popup with a visible, non-sensitive error. */
+export function renderReportErrorPopup(popup: Window): void {
+  try {
+    writePopupDocument(popup, popupStatusHtml("Report export failed", "Report could not be generated", "The report data could not be prepared. Return to the application and try again.", false), "Report export failed");
+  } catch {
+    // The user may have closed the popup. The main application still receives
+    // the original error through the caller's promise and can show a notice.
+  }
 }
 
 /** Write the report before printing and handle both possible document-load
  * states. `document.close()` can complete before a listener is registered;
  * checking readyState and scheduling a fallback avoids a blank/stuck popup. */
 export function renderReportPopup(popup: Window, html: string, fileName?: string): void {
-  popup.document.open();
-  popup.document.write(html);
-  popup.document.close();
-  if (fileName) popup.document.title = fileName;
+  writePopupDocument(popup, html, fileName ?? "Energy Monitor report");
   let printed = false;
   const print = () => {
-    if (printed) return;
+    if (printed || popup.closed) return;
     printed = true;
     popup.focus();
     popup.print();
   };
   popup.addEventListener("load", print, { once: true });
-  if (popup.document.readyState !== "loading") popup.setTimeout(print, 0);
+  // `load` is the normal path. The timeout is a compatibility fallback for a
+  // document written with document.open/write/close where the load event can
+  // race the listener registration.
+  popup.setTimeout(print, popup.document.readyState !== "loading" ? 0 : 750);
 }
 
 /** Desktop's print HTML, populated only with the selected facility's API DTOs.

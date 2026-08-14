@@ -18,6 +18,10 @@ export interface CompletionSummary {
   air: SectionCompletion;
   dc: SectionCompletion;
   energy: SectionCompletion;
+  /** Rack Unit Capacity is saved by its own API action, so it is reported as
+   * a separate completion chip and is intentionally excluded from the core
+   * Save All denominator. */
+  rackUnit: SectionCompletion;
   overall: SectionCompletion;
 }
 
@@ -46,7 +50,7 @@ function section(filled: number, total: number): SectionCompletion {
 export function computeCompletion(log: MonthlyLog | null, configuredAirFields?: readonly string[]): CompletionSummary {
   if (!log) {
     const empty = section(0, 0);
-    return { ups: empty, air: empty, dc: empty, energy: empty, overall: section(0, 1) };
+    return { ups: empty, air: empty, dc: empty, energy: empty, rackUnit: empty, overall: section(0, 1) };
   }
 
   let upsFilled = 0;
@@ -76,7 +80,14 @@ export function computeCompletion(log: MonthlyLog | null, configuredAirFields?: 
     ups.filled + air.filled + dc.filled + energy.filled,
     ups.total + air.total + dc.total + energy.total
   );
-  return { ups, air, dc, energy, overall };
+  return { ups, air, dc, energy, rackUnit: section(0, 0), overall };
+}
+
+/** Rack Unit Capacity has two entered values (Total and Used). Available and
+ * percentage are derived, so they are not counted as additional inputs. */
+export function computeRackUnitCompletion(totalU: unknown, usedU: unknown): SectionCompletion {
+  const values = [totalU, usedU].map(value => parseSafeNumber(value));
+  return section(values.filter(value => value !== null).length, values.length);
 }
 
 /** Field-level list of everything still empty (RC4 validation popup). */

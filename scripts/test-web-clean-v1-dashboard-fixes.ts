@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolveReportYear } from "../src/ReportContext";
-import { renderReportPopup } from "../src/web-clean-v1/exports";
+import { openReportPopup, renderReportErrorPopup, renderReportPopup } from "../src/web-clean-v1/exports";
 
 assert.equal(resolveReportYear("2024", ["2025", "2024"], "2025"), "2024");
 assert.equal(resolveReportYear("not-a-year", ["2025", "2024"], "2025"), "2025");
@@ -9,14 +9,16 @@ assert.equal(resolveReportYear("2026", ["2025", "2024"], "2025"), "2025");
 
 let printed = 0;
 let written = "";
+const popupDocument = {
+  readyState: "complete",
+  title: "",
+  open: () => undefined,
+  write: (html: string) => { written = html; },
+  close: () => undefined
+};
 const popup = {
-  document: {
-    readyState: "complete",
-    title: "",
-    open: () => undefined,
-    write: (html: string) => { written = html; },
-    close: () => undefined
-  },
+  document: popupDocument,
+  closed: false,
   addEventListener: () => undefined,
   setTimeout: (callback: () => void) => { callback(); return 0; },
   focus: () => undefined,
@@ -28,6 +30,22 @@ assert.equal(written, "<html><body>report</body></html>");
 assert.equal(popup.document.title, "energy-report");
 assert.equal(printed, 1);
 
+// A report popup must never be visually blank while asynchronous report data
+// is loading, and a rejected data request must leave a useful visible error
+// instead of an empty window that appears to have stalled.
+const previousWindow = (globalThis as { window?: unknown }).window;
+(globalThis as { window?: unknown }).window = {
+  open: () => popup
+};
+const loadingPopup = openReportPopup("energy-report-loading");
+assert.equal(loadingPopup, popup);
+assert.match(written, /Preparing report/);
+assert.equal(popup.document.title, "Preparing report…");
+renderReportErrorPopup(popup);
+assert.match(written, /Report could not be generated/);
+if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
+else (globalThis as { window?: unknown }).window = previousWindow;
+
 const appSource = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 assert.match(appSource, /HISTORY_DATA_VIEWS/);
 assert.match(appSource, /loadedPageKeyRef/);
@@ -37,4 +55,4 @@ assert.match(appSource, /\/history\?scope=\$\{scope\}/);
 assert.match(appSource, /historyRequestsRef\.current\.set\(cacheKey, request\)/);
 assert.match(appSource, /scope: HistoryScope/);
 
-console.log("web-clean-v1 dashboard fixes: 13 assertions passed");
+console.log("web-clean-v1 dashboard fixes: 18 assertions passed");

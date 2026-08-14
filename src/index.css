@@ -30,6 +30,9 @@
   --color-success: #16a34a;
   --color-warning: #d97706;
   --color-danger: #e00000;
+  --chart-series-a: #e87959;
+  --chart-series-b: #5b8db8;
+  --chart-grid: #334155;
   --color-shadow: 0 1px 3px rgb(0 0 0 / 0.10);
   --ui-text: #ffffff;
   --color-indigo-50: #fff1f2;
@@ -245,6 +248,9 @@ html.theme-light {
   --color-success: #16a34a;
   --color-warning: #d97706;
   --color-danger: #e00000;
+  --chart-series-a: #c7462a;
+  --chart-series-b: #23679b;
+  --chart-grid: #9a8f82;
   --color-shadow: 0 1px 3px rgb(0 0 0 / 0.10);
   --ui-text: #2f2923;
   --color-indigo-300: #c8102e;
