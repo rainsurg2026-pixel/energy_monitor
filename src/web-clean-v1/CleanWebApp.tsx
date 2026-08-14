@@ -99,7 +99,11 @@ function createWebRackUnitImageProvider(siteId: number): Pick<IDataProvider, "ge
     getRackUnitCapacityImage: async (facility, reportingMonth) => {
       const snapshotResult = await api<WebRackUnitImageSnapshot>(`/rack-unit-capacity?siteId=${siteId}&month=${encodeURIComponent(reportingMonth)}`);
       const image = snapshotResult.snapshot?.image;
-      if (!image?.available || image.width === null || image.height === null || !image.sha256) return null;
+      // The metadata endpoint is fail-closed when storage has a transient
+      // transport issue. The image endpoint is authoritative for the actual
+      // read, so do not suppress a valid image request solely because the
+      // availability probe was false for that response.
+      if (!image || image.width === null || image.height === null || !image.sha256) return null;
       const response = await fetch(`/api/v1/sites/${siteId}/rack-unit-capacity/${encodeURIComponent(reportingMonth)}/image`, { credentials: "include" });
       if (!response.ok) return null;
       const blob = await response.blob();
