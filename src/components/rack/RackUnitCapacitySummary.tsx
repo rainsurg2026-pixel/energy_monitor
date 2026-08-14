@@ -44,13 +44,13 @@ export const RackUnitCapacitySummary: React.FC<{ provider?: Pick<IDataProvider, 
 
   React.useEffect(() => {
     let cancelled = false;
-    if (!facilityName || !provider?.getRackUnitCapacityImage) {
+    if (!provider?.getRackUnitCapacityImage) {
       setImageDataUri(null);
       setImageMeta(null);
       return;
     }
     setImageLoading(true);
-    provider.getRackUnitCapacityImage(facilityName, reportingMonth)
+    provider.getRackUnitCapacityImage(facilityName ?? "", reportingMonth)
       .then(result => {
         if (cancelled) return;
         setImageDataUri(result?.dataUri ?? null);

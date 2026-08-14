@@ -68,5 +68,6 @@ assert.match(appSource, /createWebRackUnitImageProvider/);
 assert.match(appSource, /<RackUnitCapacitySummary provider=\{rackUnitImageProvider\}/);
 assert.match(rackUnitSummarySource, /provider\?: Pick<IDataProvider, "getRackUnitCapacityImage">/);
 assert.match(rackUnitSummarySource, /!provider\?\.getRackUnitCapacityImage/);
+assert.match(rackUnitSummarySource, /facilityName \?\? ""/);
 
 console.log("web-clean-v1 dashboard fixes: 23 assertions passed");
