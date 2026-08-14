@@ -375,6 +375,8 @@ export interface PdfImagePlacement {
   heightMm: number;
 }
 
+const PDF_RENDER_SCALE = 2;
+
 /** Fit a rendered report page inside an A4 landscape content box without
  * changing its aspect ratio. This is deliberately pure so the geometry can
  * be regression-tested without a browser or PDF viewer. */
@@ -448,7 +450,10 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
     for (const [index, page] of pages.entries()) {
       const canvas = await html2canvas(page, {
         backgroundColor: "#ffffff",
-        scale: 1,
+        // Render every PDF page at 2x before fitting it into A4. The prior
+        // 1x JPEG pipeline visibly softened SVG text, chart labels, and
+        // attached Rack Unit Capacity images across the whole document.
+        scale: PDF_RENDER_SCALE,
         useCORS: true,
         logging: false,
         width: Math.max(page.scrollWidth, 1),
@@ -457,7 +462,7 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
       });
       if (index > 0) pdf.addPage("a4", "landscape");
       const placement = fitPdfImageToPage(canvas.width, canvas.height);
-      pdf.addImage(canvas.toDataURL("image/jpeg", 0.94), "JPEG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
     }
     pdf.save(ensureExtension(fileName, "pdf"));
   } finally {

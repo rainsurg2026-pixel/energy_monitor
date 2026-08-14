@@ -5,6 +5,7 @@ import { buildAllFacilitiesCsv, buildSiteComparisonCsv, facilityReportData, fitP
 import type { ReportData } from "../src/reports/reportTypes";
 import { buildCombinedCsv } from "../src/utils/exportData";
 import { buildReportHtml } from "../src/reports/pdf/reportHtml";
+import { trendChartXPosition } from "../src/reports/pdf/reportHtml";
 import { calculateRackCapacityMetrics } from "../src/domain/rackCapacity";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, type ReportingPeriodSelection } from "../src/web-clean-v1/reportPeriod";
 import { defaultReportFilename, withExtension } from "../src/web-clean-v1/reportFilename";
@@ -180,6 +181,10 @@ check("PDF page fit leaves a 10mm minimum outer margin", landscapePlacement.xMm 
 check("PDF page fit preserves the rendered page aspect ratio", Math.abs(landscapePlacement.widthMm / landscapePlacement.heightMm - 1123 / 794) < 0.000001);
 const tallPlacement = fitPdfImageToPage(800, 1200);
 check("Tall PDF content is contained without cropping or distortion", tallPlacement.widthMm <= 277 && tallPlacement.heightMm <= 190 && Math.abs(tallPlacement.widthMm / tallPlacement.heightMm - 800 / 1200) < 0.000001);
+const firstTrendX = trendChartXPosition(0, 7);
+const secondTrendX = trendChartXPosition(1, 7);
+check("Trend charts reserve one category slot before the first point", firstTrendX > 140 && Math.abs(firstTrendX - 140 - (1600 - 140 - 80) / 7) < 0.000001);
+check("Trend chart category spacing remains uniform after the left offset", Math.abs((secondTrendX - firstTrendX) - (1600 - 140 - 80) / 7) < 0.000001);
 
 // Filename actually reaches every format, with the correct extension and
 // no duplicate/missing extension, and the displayed preview matches what

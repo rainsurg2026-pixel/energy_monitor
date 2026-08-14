@@ -94,6 +94,15 @@ function trendSeriesDetails(unit: string, values: Array<number | null>, rows: Re
  *  self-vs-sibling comparison) - single-series rendering (path/point/label
  *  markup and count) is byte-identical to before multi-series support was
  *  added, so existing single-series pages/tests are unaffected. */
+export function trendChartXPosition(index: number, rowCount: number, width = 1600, left = 140, right = 80): number {
+  const plotWidth = width - left - right;
+  if (rowCount < 2) return left + plotWidth / 2;
+  // Reserve one complete category slot before the first point. This keeps
+  // every trend line visually detached from the Y axis while still ending the
+  // final point on the right side of the plot area.
+  return left + ((index + 1) * plotWidth) / rowCount;
+}
+
 function trendPage(title: string, unit: string, series: TrendSeries[], rows: ReportMonthlyRow[], explanation: string, sectionLabel?: string): string {
   const eyebrow = sectionLabel ? `<p class="eyebrow">${escapeHtml(sectionLabel)}</p>` : "";
   const allValues = series.flatMap(s => s.values);
@@ -103,7 +112,7 @@ function trendPage(title: string, unit: string, series: TrendSeries[], rows: Rep
   const actualMin = Math.min(...defined), actualMax = Math.max(...defined), rawRange = actualMax - actualMin || Math.max(Math.abs(actualMax) * 0.2, 1);
   const domainMin = Math.min(0, actualMin - rawRange * 0.16), domainMax = actualMax + rawRange * 0.18;
   const range = domainMax - domainMin || 1;
-  const x = (index: number) => left + (rows.length < 2 ? (width - left - right) / 2 : index * (width - left - right) / (rows.length - 1));
+  const x = (index: number) => trendChartXPosition(index, rows.length, width, left, right);
   const y = (value: number) => top + (domainMax - value) / range * (height - top - bottom);
   const grid = [0, 1, 2, 3, 4].map(step => {
     const value = domainMax - range * step / 4;
