@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
-import { buildAllFacilitiesCsv, buildSiteComparisonCsv, facilityReportData, workbookForFacilities, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
+import { buildAllFacilitiesCsv, buildSiteComparisonCsv, facilityReportData, fitPdfImageToPage, workbookForFacilities, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
 import type { ReportData } from "../src/reports/reportTypes";
 import { buildCombinedCsv } from "../src/utils/exportData";
 import { buildReportHtml } from "../src/reports/pdf/reportHtml";
@@ -169,6 +169,17 @@ const juneToJuly: ReportingPeriodSelection = { mode: "range", singleMonth: "2026
 const rangeScoped = filterLogsByPeriod(threeMonthLogs, juneToJuly, "2026-08");
 check("Month Range includes both boundary months", rangeScoped.some(l => l.month === "2026-06") && rangeScoped.some(l => l.month === "2026-07"));
 check("Month Range excludes a month outside the range", !rangeScoped.some(l => l.month === "2026-08"));
+const rangeReport = facilityReportData(rangeScoped, "Rangsit", "2026-07", null, [], [], threeMonthLogs);
+const rangeReportHtml = buildReportHtml(rangeReport);
+check("Month Range changes the actual PDF report scope, not only the UI label", rangeReport.monthlyRows.map(row => row.month).join(",") === "2026-06,2026-07" && !rangeReportHtml.includes(humanMonthLabel("2026-08")));
+check("PDF cover omits the internal source workbook label", !rangeReportHtml.includes("Source workbook:"));
+check("PDF cover omits the application version label", !rangeReportHtml.includes("Application version:"));
+
+const landscapePlacement = fitPdfImageToPage(1123, 794);
+check("PDF page fit leaves a 10mm minimum outer margin", landscapePlacement.xMm >= 10 && landscapePlacement.yMm >= 10);
+check("PDF page fit preserves the rendered page aspect ratio", Math.abs(landscapePlacement.widthMm / landscapePlacement.heightMm - 1123 / 794) < 0.000001);
+const tallPlacement = fitPdfImageToPage(800, 1200);
+check("Tall PDF content is contained without cropping or distortion", tallPlacement.widthMm <= 277 && tallPlacement.heightMm <= 190 && Math.abs(tallPlacement.widthMm / tallPlacement.heightMm - 800 / 1200) < 0.000001);
 
 // Filename actually reaches every format, with the correct extension and
 // no duplicate/missing extension, and the displayed preview matches what
