@@ -1,11 +1,10 @@
 /**
- * Regression suite for the UPS History pipeline gap: public.ups_group_history
- * had a read path (getUpsGroupHistory) wired into getHistory(), but no
- * writer ever existed server-side, so History -> UPS Loads History was
- * always empty in Preview/Production regardless of how much real monthly
- * data had been saved. This suite exercises the real fix end-to-end
- * through ApiService + InMemoryRepository (the same classes the HTTP layer
- * uses) - not a reimplementation of the calculation.
+ * Regression suite for the UPS History pipeline: GET /history may compute
+ * missing derived rows for compatibility with older imports, but it must not
+ * write to the database. Durable rows are produced by the transactional save
+ * path. This suite exercises the real behavior through ApiService +
+ * InMemoryRepository (the same classes the HTTP layer uses), not a
+ * reimplementation of the calculation.
  *
  * Run: node node_modules/tsx/dist/cli.mjs scripts/test-ups-group-history-sync.ts
  */
@@ -77,11 +76,11 @@ function buildRepository(): InMemoryRepository {
 }
 
 async function main(): Promise<void> {
-  console.log("UPS Group History sync (backfill + incremental save) checks");
+  console.log("UPS Group History sync (read-only compatibility + incremental save) checks");
 
-  // 1. Backfill-on-read: months already saved before this fix existed must
-  // surface real computed UPS Group History on the very next History read,
-  // with no separate migration step required.
+  // 1. Read-only compatibility: months already saved before the writer existed
+  // must still surface real computed UPS Group History on the next History
+  // read, without turning that GET into a database write.
   {
     const repository = buildRepository();
     const api = new ApiService(repository, () => new Date("2026-05-15T00:00:00.000Z"));
@@ -97,10 +96,10 @@ async function main(): Promise<void> {
     check("every backfilled row is tagged with the real facility code (rangsit), never fabricated", rows.every(r => r.facility === "rangsit"));
     check("the second available month (April) is backfilled too, not just the first", rows.some(r => r.month === "2026-04"));
 
-    // Backfilled rows must actually be persisted, not just returned once -
-    // a second independent read must see the same rows without recomputing.
+    const persistedAfterRead = await repository.getUpsGroupHistory(8);
+    check("GET /history does not persist computed UPS Group History rows", persistedAfterRead.length === 0);
     const historyAgain = await api.getHistory(8) as typeof history;
-    check("a second read returns the same persisted rows (not merely computed transiently)", historyAgain.upsGroupHistory.rows.length === rows.length);
+    check("a second read deterministically returns the same computed rows", historyAgain.upsGroupHistory.rows.length === rows.length);
   }
 
   // 2. Facility isolation: Srinakarin's real (different) topology - do not
@@ -110,7 +109,7 @@ async function main(): Promise<void> {
     const api = new ApiService(repository, () => new Date("2026-05-15T00:00:00.000Z"));
     const rangsitHistory = await api.getHistory(8) as { upsGroupHistory: { rows: Array<{ facility: string; group: string }> } };
     const srinakarinHistory = await api.getHistory(9) as { upsGroupHistory: { rows: Array<{ facility: string; group: string; totalLoadKw: number; totalLoadKva: number }> } };
-    check("Srinakarin backfill produces its own 5 configured groups (UPS41 + PPC41-44), not Rangsit's 4", srinakarinHistory.upsGroupHistory.rows.length === 5);
+    check("Srinakarin computed response produces its own 5 configured groups (UPS41 + PPC41-44), not Rangsit's 4", srinakarinHistory.upsGroupHistory.rows.length === 5);
     check("Srinakarin rows are all tagged facility=srinakarin, never rangsit", srinakarinHistory.upsGroupHistory.rows.every(r => r.facility === "srinakarin"));
     check("Rangsit's getHistory response contains zero srinakarin-facility rows", rangsitHistory.upsGroupHistory.rows.every(r => r.facility === "rangsit"));
     check("Rangsit's getHistory response contains no PPC-named groups (Srinakarin-only naming)", rangsitHistory.upsGroupHistory.rows.every(r => !r.group.startsWith("PPC")));
@@ -127,15 +126,15 @@ async function main(): Promise<void> {
     check("a facility with no configured UPS group topology gets zero fabricated rows", history.upsGroupHistory.rows.length === 0);
   }
 
-  // 4. Backfill never overwrites a pre-existing row (same guarantee Desktop
-  // gives via UpsGroupHistoryWriter.ts's overwriteExisting=false path).
+  // 4. Computed compatibility rows never overwrite a pre-existing row (same
+  // guarantee Desktop gives via its overwriteExisting=false path).
   {
     const repository = buildRepository();
     await repository.saveUpsGroupHistoryRows(8, "rangsit", [{ month: "2026-03", group: "UPS 11", totalLoadKw: -1, totalLoadKva: -1, capacity: 1, loadPercent: 0, availablePercent: 100, monthlyEnergyKwh: 0 }], true);
     const api = new ApiService(repository, () => new Date("2026-05-15T00:00:00.000Z"));
     const history = await api.getHistory(8) as { upsGroupHistory: { rows: Array<{ month: string; group: string; totalLoadKw: number }> } };
     const ups11March = history.upsGroupHistory.rows.find(r => r.month === "2026-03" && r.group === "UPS 11");
-    check("backfill never overwrites a row that already exists for that (site, month, group) key", ups11March?.totalLoadKw === -1);
+    check("computed compatibility never overwrites a row for that (site, month, group) key", ups11March?.totalLoadKw === -1);
   }
 
   // 5. Incremental save: editing and re-saving a month's UPS readings must
@@ -145,7 +144,11 @@ async function main(): Promise<void> {
   {
     const repository = buildRepository();
     const api = new ApiService(repository, () => new Date("2026-05-15T00:00:00.000Z"));
-    await api.getHistory(8); // backfill March + April first, matching real usage order
+    await api.getHistory(8); // compute March + April for the response only
+
+    // Establish April through the durable save path so the test proves that
+    // saved derived rows remain independent from the later March edit.
+    await api.saveMonthlyLog(8, "2026-04", { log: { ...rangsitLog("2026-04", 1.1), energyCalculation: undefined }, expected_row_version: 1 }, "test-correlation-setup");
 
     const edited = rangsitLog("2026-03", 2); // double every UPS reading
     const saveBody = { log: { ...edited, energyCalculation: undefined }, expected_row_version: null };
@@ -170,7 +173,7 @@ async function main(): Promise<void> {
     const ups11AfterEdit = historyAfterEdit.upsGroupHistory.rows.find(r => r.month === "2026-03" && r.group === "UPS 11");
     check("re-saving March with doubled readings immediately doubles UPS 11's UPS Group History totals (200 kW / 208 kVA)", ups11AfterEdit?.totalLoadKw === 200 && ups11AfterEdit?.totalLoadKva === 208);
     const aprilUnaffected = historyAfterEdit.upsGroupHistory.rows.find(r => r.month === "2026-04" && r.group === "UPS 11");
-    check("editing March leaves April's already-backfilled UPS Group History untouched", Math.abs((aprilUnaffected?.totalLoadKw ?? 0) - 110) < 1e-9);
+    check("editing March leaves April's already-saved UPS Group History untouched", Math.abs((aprilUnaffected?.totalLoadKw ?? 0) - 110) < 1e-9);
   }
 
   console.log(`\n${checks} UPS Group History sync checks passed.`);

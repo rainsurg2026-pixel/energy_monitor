@@ -57,6 +57,8 @@ else (globalThis as { window?: unknown }).window = previousWindow;
 
 const appSource = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const rackUnitSummarySource = readFileSync(new URL("../src/components/rack/RackUnitCapacitySummary.tsx", import.meta.url), "utf8");
+const exportSource = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
+const browserE2eSource = readFileSync(new URL("./e2e-web-cdp.mjs", import.meta.url), "utf8");
 assert.match(appSource, /HISTORY_DATA_VIEWS/);
 assert.match(appSource, /loadedPageKeyRef/);
 assert.match(appSource, /const DashboardSummary = lazy\(\(\) => import\("\.\.\/components\/DashboardSummary"\)\)/);
@@ -70,5 +72,13 @@ assert.match(appSource, /<RackUnitCapacitySummary provider=\{rackUnitImageProvid
 assert.match(rackUnitSummarySource, /provider\?: Pick<IDataProvider, "getRackUnitCapacityImage">/);
 assert.match(rackUnitSummarySource, /!provider\?\.getRackUnitCapacityImage/);
 assert.match(rackUnitSummarySource, /facilityName \?\? ""/);
+assert.match(exportSource, /import\("html2canvas"\)/);
+assert.match(exportSource, /import\("jspdf"\)/);
+assert.match(exportSource, /pdf\.save\(ensureExtension\(fileName, "pdf"\)\)/);
+assert.match(appSource, /exportDesktopPdfFile/);
+assert.doesNotMatch(appSource, /openReportPopup/);
+assert.match(browserE2eSource, /E2E_REQUIRE_AUTH/);
+assert.match(browserE2eSource, /Browser\.downloadProgress/);
+assert.match(browserE2eSource, /Network\.responseReceived/);
 
-console.log("web-clean-v1 dashboard fixes: 23 assertions passed");
+console.log("web-clean-v1 dashboard fixes: browser PDF/download E2E contract assertions passed");

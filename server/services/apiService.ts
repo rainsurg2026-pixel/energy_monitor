@@ -174,19 +174,16 @@ export class ApiService {
   }
 
   /**
-   * Backfills any (month, group) key that has no ups_group_history row yet
-   * - computed with the exact same shared formula Desktop uses to generate
-   * its own persisted "2. UPS Group History" sheet (see
-   * computeUpsGroupHistorySnapshot), from that month's real saved readings.
-   * Checked per key, not per month, so a month with partial history (e.g.
-   * one group's row missing) still gets exactly the missing rows filled in
-   * - matching UpsGroupHistoryWriter.ts's own key-level backfill semantics
-   * on the Desktop side, never a coarser "skip the whole month" check.
-   * Never overwrites an existing row (overwrite=false) and never fabricates
-   * data for a facility with no known topology. Mirrors Desktop's own
-   * migrateUpsGroupHistoryIfNeeded: lazy, idempotent, backfill-only.
+   * Computes missing (month, group) rows for the response without persisting
+   * them. GET /history must remain read-only; durable UPS Group History rows
+   * are written by the transactional monthly-save and migration paths.
+   *
+   * The same shared formula Desktop uses for its persisted "2. UPS Group
+   * History" sheet is used here, and existing rows always win. This keeps
+   * older imported datasets readable without making a browser GET mutate the
+   * database or race another reader.
    */
-  private async backfillMissingUpsGroupHistory(siteId: number, facility: string, logs: MonthlyLog[], existingRows: UpsGroupHistoryRecord[]): Promise<UpsGroupHistoryRecord[]> {
+  private mergeComputedUpsGroupHistory(facility: string, logs: MonthlyLog[], existingRows: UpsGroupHistoryRecord[]): UpsGroupHistoryRecord[] {
     const existingKeys = new Set(existingRows.map(row => `${row.month}\u0000${row.group}`));
     const generatedAt = this.now().toISOString();
     const newRows: UpsGroupHistoryRecord[] = [];
@@ -195,7 +192,6 @@ export class ApiService {
       if (!rows) continue;
       const missing = rows.filter(row => !existingKeys.has(`${row.month}\u0000${row.group}`));
       if (missing.length === 0) continue;
-      await this.repository.saveUpsGroupHistoryRows(siteId, facility, missing, false);
       for (const row of missing) newRows.push({ facility, ...row, generatedAt, dataVersion: 1 });
     }
     return newRows.length === 0 ? existingRows : [...existingRows, ...newRows];
@@ -222,7 +218,7 @@ export class ApiService {
       includeRackUnitCapacity ? this.repository.listRackUnitCapacityHistory(siteId) : Promise.resolve([])
     ]);
     const upsGroupHistoryRows = includeUpsGroupHistory
-      ? await this.backfillMissingUpsGroupHistory(siteId, site.code, logs, upsGroupHistoryRowsRaw)
+      ? this.mergeComputedUpsGroupHistory(site.code, logs, upsGroupHistoryRowsRaw)
       : [];
     const visibleMonths = new Set(availability.availableMonths);
     const returnedHistoryMonths = new Set(requestedLogMonths);
