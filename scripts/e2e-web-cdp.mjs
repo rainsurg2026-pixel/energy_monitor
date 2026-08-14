@@ -44,11 +44,14 @@ function blocked(name, detail) {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-async function waitForDownloadedFile(directory, extension, timeout = 60000) {
+async function waitForDownloadedFile(directory, extension, beforeFiles = new Set(), timeout = 60000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
+    const browserDownload = [...downloads.values()].find(item => item.state === "completed" && typeof item.filename === "string" && item.filename.toLowerCase().endsWith(extension) && Number(item.receivedBytes) > 0 && !beforeFiles.has(item.filename));
+    if (browserDownload) return browserDownload.filename;
     const files = await fs.readdir(directory);
     for (const file of files) {
+      if (beforeFiles.has(file)) continue;
       if (!file.toLowerCase().endsWith(extension) || file.endsWith(".crdownload")) continue;
       const stat = await fs.stat(path.join(directory, file));
       if (stat.isFile() && stat.size > 0) return file;
@@ -57,6 +60,8 @@ async function waitForDownloadedFile(directory, extension, timeout = 60000) {
   }
   return null;
 }
+
+const exportWaitTimeout = Number(process.env.E2E_EXPORT_TIMEOUT ?? 60000);
 
 function chromePath() {
   const candidates = [
@@ -151,7 +156,8 @@ async function main() {
   if (!executable) throw new Error("Chrome executable was not found. Set E2E_CHROME_PATH.");
   const temporaryUserData = process.env.E2E_CHROME_USER_DATA_DIR ? null : await fs.mkdtemp(path.join(os.tmpdir(), "energy-monitor-web-e2e-"));
   const userData = process.env.E2E_CHROME_USER_DATA_DIR ?? temporaryUserData;
-  const downloadDir = await fs.mkdtemp(path.join(os.tmpdir(), "energy-monitor-web-downloads-"));
+  const temporaryDownloadDir = !process.env.E2E_DOWNLOAD_DIR;
+  const downloadDir = process.env.E2E_DOWNLOAD_DIR ?? await fs.mkdtemp(path.join(os.tmpdir(), "energy-monitor-web-downloads-"));
   const chromeArgs = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${userData}`,
@@ -172,7 +178,11 @@ async function main() {
       else { ws.addEventListener("open", resolve, { once: true }); ws.addEventListener("error", reject, { once: true }); }
     });
     const cdp = makeClient(ws);
-    await Promise.all([cdp.send("Runtime.enable"), cdp.send("Page.enable"), cdp.send("Network.enable"), cdp.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloadDir }), cdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: downloadDir }).catch(() => undefined)]);
+    await Promise.all([cdp.send("Runtime.enable"), cdp.send("Page.enable"), cdp.send("Network.enable"), cdp.send("Network.setCacheDisabled", { cacheDisabled: true }), cdp.send("Browser.setDownloadBehavior", { behavior: "allow", downloadPath: downloadDir }), cdp.send("Page.setDownloadBehavior", { behavior: "allow", downloadPath: downloadDir }).catch(() => undefined)]);
+    if (attachToExistingChrome && process.env.E2E_SKIP_ATTACH_NAVIGATION !== "1") {
+      await cdp.send("Page.navigate", { url: `${baseUrl}/?e2e_cache_bust=${Date.now()}` });
+      await sleep(500);
+    }
     const evaluate = async (expression) => {
       const result = await cdp.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
       if (result.result?.exceptionDetails) throw new Error("Browser evaluation failed.");
@@ -192,6 +202,11 @@ async function main() {
 
     await waitFor("document.readyState === 'complete'", 30000);
     await waitFor("document.body && document.body.innerText.length > 0", 30000);
+    if (process.env.E2E_PROBE_ONLY === "1") {
+      const probe = await evaluate("JSON.stringify({ url: location.href, passwordField: Boolean(document.querySelector('input[type=password]')), navButtons: document.querySelectorAll('nav button').length, visibleExportButtons: [...document.querySelectorAll('button')].filter(node => node.offsetParent !== null && /PDF|EXCEL|Excel/i.test(node.innerText)).map(node => node.innerText.trim()), pdfRenderer: Boolean(document.querySelector('[data-energy-monitor-pdf-renderer]')), rendererCount: document.querySelectorAll('[data-energy-monitor-pdf-renderer]').length, rendererPages: [...document.querySelectorAll('[data-energy-monitor-pdf-renderer]')].map(host => ({ pages: host.querySelectorAll('.cover, .page').length, images: [...host.querySelectorAll('img')].map(image => ({ complete: image.complete, naturalWidth: image.naturalWidth })).slice(0, 12), width: host.scrollWidth, height: host.scrollHeight })), notices: document.body.innerText.split(/\\n+/).map(line => line.trim()).filter(line => /download|failed|error|report/i.test(line)).slice(-12) });");
+      console.log(`  PROBE  ${probe}`);
+      return;
+    }
     await waitFor("Boolean(document.querySelector('input[type=password]')) || document.querySelectorAll('nav button').length > 0", 30000);
     pass("application page loaded");
 
@@ -246,22 +261,28 @@ async function main() {
     // Chrome's CDP connection on a native print dialog. The fixed implementation
     // never calls window.open(), so this does not affect a real download test.
     await evaluate("window.open = () => null");
-    const beforePdf = new Set(downloads.keys());
+    const beforePdf = new Set(await fs.readdir(downloadDir));
     const pdfButton = await clickByText("PDF");
     if (!pdfButton) fail("PDF export button is available");
     else {
-      const download = await waitForDownloadedFile(downloadDir, ".pdf");
+      const download = await waitForDownloadedFile(downloadDir, ".pdf", beforePdf, exportWaitTimeout);
       if (download) pass("PDF export downloads a real .pdf file");
-      else fail("PDF export downloads a real .pdf file", "no completed PDF download was observed");
+      else {
+        const diagnostics = await evaluate("JSON.stringify({ url: location.href, buttons: [...document.querySelectorAll('button')].filter(node => node.offsetParent !== null && /PDF|EXCEL|Excel/i.test(node.innerText)).map(node => node.innerText.trim()), exportErrors: document.body.innerText.split(/\\n+/).map(line => line.trim()).filter(line => /failed|error|export/i.test(line)).slice(-8) })");
+        fail("PDF export downloads a real .pdf file", `no completed PDF download was observed; ${diagnostics}`);
+      }
     }
 
-    const beforeExcel = new Set(downloads.keys());
+    const beforeExcel = new Set(await fs.readdir(downloadDir));
     const excelButton = await clickByText("EXCEL") || await clickByText("Excel");
     if (!excelButton) fail("Excel export button is available");
     else {
-      const download = await waitForDownloadedFile(downloadDir, ".xlsx");
+      const download = await waitForDownloadedFile(downloadDir, ".xlsx", beforeExcel, exportWaitTimeout);
       if (download) pass("Excel export downloads a real .xlsx file");
-      else fail("Excel export downloads a real .xlsx file", "no completed XLSX download was observed");
+      else {
+        const diagnostics = await evaluate("JSON.stringify({ url: location.href, buttons: [...document.querySelectorAll('button')].filter(node => node.offsetParent !== null && /PDF|EXCEL|Excel/i.test(node.innerText)).map(node => node.innerText.trim()), exportErrors: document.body.innerText.split(/\\n+/).map(line => line.trim()).filter(line => /failed|error|export/i.test(line)).slice(-8) })");
+        fail("Excel export downloads a real .xlsx file", `no completed XLSX download was observed; ${diagnostics}`);
+      }
     }
 
     const allowedUnauthenticated = new Set(["/api/v1/auth/me", "/api/v1/auth/csrf"]);
@@ -273,7 +294,9 @@ async function main() {
   } finally {
     try { ws?.close(); } catch { /* already closed */ }
     if (chrome) stopProcessTree(chrome);
-    try { await fs.rm(downloadDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { console.warn("  WARN  browser download directory cleanup was deferred"); }
+    if (temporaryDownloadDir) {
+      try { await fs.rm(downloadDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { console.warn("  WARN  browser download directory cleanup was deferred"); }
+    }
     if (temporaryUserData) {
       try { await fs.rm(temporaryUserData, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 }); } catch { console.warn("  WARN  browser profile cleanup was deferred"); }
     }

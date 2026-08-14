@@ -487,7 +487,11 @@ function DashboardView({ logs, month, siteName = "Facility", siteCode = "", dash
       } else if (format === "excel") {
         void exportExcel(logs, activeSiteName, `${baseName}.xlsx`, logs).then(() => notify("Excel download started.")).catch(error => notify(readError(error)));
       } else if (format === "pdf") {
-        void exportDesktopPdfFile(logs, activeSiteName, activeMonth, baseName, null, [], [], logs)
+        // The Dashboard toolbar is a snapshot action. Keeping it to the
+        // selected dashboard section avoids making the browser rasterize the
+        // full 10+ page report (which can stall html2canvas on large history
+        // ranges). The Reports view remains the place for the full report.
+        void exportDesktopPdfFile(logs, activeSiteName, activeMonth, baseName, null, [], [], logs, ["dashboard"])
           .then(() => notify("PDF download started."))
           .catch(error => notify(readError(error)));
       } else {
