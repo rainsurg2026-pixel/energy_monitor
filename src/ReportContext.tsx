@@ -2,10 +2,22 @@ import React, { createContext, useContext, useState, useEffect, useMemo } from "
 import { MonthlyLog } from "./types";
 import { getPreviousMonthStr } from "./utils";
 
-/** Reporting Center v2.3.1 is intentionally scoped to the 2026 operating year.
- * Historical logs remain available to the data providers and report history;
- * this constant only controls the active reporting selector. */
+/** Default reporting year used only when no persisted or available year can
+ * be resolved. Historical years remain selectable when they are in the
+ * configured display period. */
 export const REPORTING_YEAR = "2026";
+
+/** Return years available from the server's complete month availability list.
+ * Dashboard logs may be intentionally limited to the initial six-month
+ * window, so deriving this list from logs alone hides older selectable years. */
+export function reportYearsFromMonths(logs: readonly ({ month: string } | string)[], availableMonths: readonly string[] = []): string[] {
+  const years = new Set<string>();
+  for (const month of [...logs.map(item => typeof item === "string" ? item : item.month), ...availableMonths]) {
+    const year = month.slice(0, 4);
+    if (/^\d{4}$/u.test(year)) years.add(year);
+  }
+  return Array.from(years).sort((left, right) => right.localeCompare(left));
+}
 
 /** Accept only a year that is present in the loaded report data. */
 export function resolveReportYear(requested: string, availableYears: readonly string[], fallbackYear: string): string {
@@ -69,19 +81,17 @@ interface ReportProviderProps {
   syncedLogs: MonthlyLog[];
   /** Persisted app-level visible reporting year/range. */
   displayPeriod?: string;
+  /** Complete month availability returned by the API, independent of the
+   * intentionally bounded initial log payload. */
+  availableMonths?: readonly string[];
+  /** Allows a host to fetch older logs lazily after a historical year is
+   * selected. */
+  onYearChange?: (year: string) => void;
 }
 
-export const ReportProvider: React.FC<ReportProviderProps> = ({ children, syncedLogs, displayPeriod }) => {
+export const ReportProvider: React.FC<ReportProviderProps> = ({ children, syncedLogs, displayPeriod, availableMonths = [], onYearChange }) => {
   const activeDisplayPeriod = displayPeriod?.trim() || REPORTING_YEAR;
-  // Dynamic Options derived exclusively from syncedLogs (Google Sheets)
-  const availableYears = useMemo(() => {
-    const years = new Set<string>();
-    syncedLogs.forEach(l => {
-      const y = l.month.split("-")[0];
-      if (y) years.add(y);
-    });
-    return Array.from(years).sort((a, b) => b.localeCompare(a));
-  }, [syncedLogs]);
+  const availableYears = useMemo(() => reportYearsFromMonths(syncedLogs, availableMonths), [availableMonths, syncedLogs]);
 
   // Load persistent user preferences or defaults
   const [selectedYear, setSelectedYearState] = useState<string>(() => {
@@ -121,6 +131,7 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     const nextYear = resolveReportYear(val, availableYears, activeDisplayPeriod);
     setSelectedYearState(nextYear);
     localStorage.setItem("report_pref_year", nextYear);
+    if (nextYear !== selectedYear) onYearChange?.(nextYear);
   };
   const setSelectedPeriod = (val: string) => {
     setSelectedPeriodState(val);
@@ -214,6 +225,7 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     selectedUPSGroup,
     selectedReportView,
     availableYears,
+    onYearChange,
     darkMode,
     dashboardLayout,
     refreshCounter
