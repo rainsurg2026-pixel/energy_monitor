@@ -102,7 +102,7 @@ assert.match(app, /const refreshed = await loadHistory\(siteId, \{ force: true, 
 assert.match(app, /const refreshedDraft = refreshed\.logs\.find\(item => item\.month === month\)/);
 assert.match(app, /const blankAir = \{ \.\.\.empty\.air \}/);
 assert.doesNotMatch(app, /air: structuredClone\(seed\.air\)/);
-assert.match(app, /import \{ currentMonth \} from "\.\.\/utils\/monthUtils"/);
+assert.match(app, /import \{ currentMonth(?:, monthLabelShort)? \} from "\.\.\/utils\/monthUtils"/);
 assert.match(app, /const todayMonth = currentMonth/);
 assert.match(app, /pendingCreateMonth/);
 assert.match(app, /Create Monthly Record/);

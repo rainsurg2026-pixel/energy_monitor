@@ -17,7 +17,7 @@ assert.match(app, /rackCapacityHistory=\{rackCapacityHistory\}/);
 assert.match(app, /<RackCapacityHistoryPanel \/>/);
 assert.match(app, /<RackCapacityForecast \/>/);
 assert.match(app, /rackUnitCapacity=\{rackUnitCapacity\}/);
-assert.match(app, /<RackUnitCapacitySummary imageUploadAvailable=\{false\} \/>/);
+assert.match(app, /<RackUnitCapacitySummary provider=\{rackUnitImageProvider\} \/>/);
 assert.match(app, /<RackCapacityStickyHeader \/>/);
 assert.match(app, /<CapacityAlerts \/>/);
 assert.match(app, /<RackCapacityExecutiveKpiCards \/>/);
