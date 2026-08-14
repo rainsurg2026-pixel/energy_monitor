@@ -10,7 +10,9 @@ export const REPORTING_YEAR = "2026";
 /** Accept only a year that is present in the loaded report data. */
 export function resolveReportYear(requested: string, availableYears: readonly string[], fallbackYear: string): string {
   const normalized = requested.trim();
-  return /^\d{4}$/u.test(normalized) && availableYears.includes(normalized) ? normalized : fallbackYear;
+  if (/^\d{4}$/u.test(normalized) && availableYears.includes(normalized)) return normalized;
+  if (availableYears.includes(fallbackYear)) return fallbackYear;
+  return availableYears[0] ?? fallbackYear;
 }
 
 export interface ReportContextType {

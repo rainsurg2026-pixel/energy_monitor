@@ -6,6 +6,7 @@ import { openReportPopup, renderReportErrorPopup, renderReportPopup } from "../s
 assert.equal(resolveReportYear("2024", ["2025", "2024"], "2025"), "2024");
 assert.equal(resolveReportYear("not-a-year", ["2025", "2024"], "2025"), "2025");
 assert.equal(resolveReportYear("2026", ["2025", "2024"], "2025"), "2025");
+assert.equal(resolveReportYear("not-a-year", ["2026"], "2025"), "2026");
 
 let printed = 0;
 let written = "";
