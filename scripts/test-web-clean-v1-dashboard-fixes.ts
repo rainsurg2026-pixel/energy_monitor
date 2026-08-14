@@ -64,7 +64,9 @@ assert.match(appSource, /\/history\?scope=\$\{scope\}/);
 assert.match(appSource, /historyRequestsRef\.current\.set\(cacheKey, request\)/);
 assert.match(appSource, /scope: HistoryScope/);
 assert.doesNotMatch(appSource, /RackUnitCapacitySummary imageUploadAvailable=/);
+assert.match(appSource, /createWebRackUnitImageProvider/);
+assert.match(appSource, /<RackUnitCapacitySummary provider=\{rackUnitImageProvider\}/);
 assert.match(rackUnitSummarySource, /provider\?: Pick<IDataProvider, "getRackUnitCapacityImage">/);
 assert.match(rackUnitSummarySource, /!provider\?\.getRackUnitCapacityImage/);
 
-console.log("web-clean-v1 dashboard fixes: 21 assertions passed");
+console.log("web-clean-v1 dashboard fixes: 23 assertions passed");

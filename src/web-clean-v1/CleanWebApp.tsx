@@ -3,10 +3,12 @@ import { BarChart3, Calendar, ChartNoAxesCombined, ClipboardPenLine, Download, F
 import { ReportProvider, useReport } from "../ReportContext";
 import UniversalFilterBar from "../components/UniversalFilterBar";
 import { createEmptyLog } from "../utils";
-import { currentMonth } from "../utils/monthUtils";
+import { currentMonth, monthLabelShort } from "../utils/monthUtils";
 import { selectedDashboardMonth } from "../utils/reportPeriodSelection";
 import { computeCompletion } from "../utils/completion";
 import type { MonthlyLog } from "../types";
+import type { IDataProvider } from "../data/IDataProvider";
+import type { StoredImageMeta } from "../storage/ImageStorageProvider";
 import type { DashboardUpsMappingReport, UpsGroupHistoryReport, RackCapacitySummary } from "../reports/reportTypes";
 import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
 import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
@@ -67,6 +69,57 @@ const passwordHelp = (lang: AppLanguage) => lang === "th" ? `ต้องมี�
 const readStoredFacility = (userId: string) => { try { return sessionStorage.getItem(facilityStorageKey(userId)); } catch { return null; } };
 const storeFacility = (userId: string, siteId: number) => { try { sessionStorage.setItem(facilityStorageKey(userId), String(siteId)); } catch { /* facility remains selected in memory when storage is unavailable */ } };
 const readRecentReports = (): ReportHistoryItem[] => { try { return HistoryProvider.list(); } catch { return []; } };
+
+interface WebRackUnitImageSnapshot {
+  snapshot: {
+    image: {
+      available: boolean;
+      contentType: "image/png" | "image/jpeg";
+      byteSize: number | null;
+      sha256: string;
+      width: number;
+      height: number;
+      savedAt: string;
+      savedBy: string;
+    } | null;
+  } | null;
+}
+
+function blobToDataUri(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("The Rack Unit Capacity image could not be read."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function createWebRackUnitImageProvider(siteId: number): Pick<IDataProvider, "getRackUnitCapacityImage"> {
+  return {
+    getRackUnitCapacityImage: async (facility, reportingMonth) => {
+      const snapshotResult = await api<WebRackUnitImageSnapshot>(`/rack-unit-capacity?siteId=${siteId}&month=${encodeURIComponent(reportingMonth)}`);
+      const image = snapshotResult.snapshot?.image;
+      if (!image?.available || image.width === null || image.height === null || !image.sha256) return null;
+      const response = await fetch(`/api/v1/sites/${siteId}/rack-unit-capacity/${encodeURIComponent(reportingMonth)}/image`, { credentials: "include" });
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      const extension = image.contentType === "image/jpeg" ? "jpg" : "png";
+      const meta: StoredImageMeta = {
+        facility,
+        reportingMonth,
+        fileName: `RUC-${monthLabelShort(reportingMonth, "en")}.${extension}`,
+        mimeType: image.contentType,
+        width: image.width,
+        height: image.height,
+        sizeBytes: image.byteSize ?? blob.size,
+        savedAt: image.savedAt,
+        savedBy: image.savedBy,
+        checksum: image.sha256
+      };
+      return { dataUri: await blobToDataUri(blob), meta };
+    }
+  };
+}
 
 function AppNotice({ message }: { message: string | null }) {
   return message ? <div role="status" className="fixed bottom-5 right-5 z-50 max-w-sm rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-100 shadow-2xl">{message}</div> : null;
@@ -458,14 +511,15 @@ function RackCapacityMonthSync({ month, children }: { month: string; children: R
 
 /** Rack Capacity view: shared Desktop summary/heatmap plus Web-specific
  *  editors. Field edits retain Desktop's per-field expected-value conflict
- *  checks; Rack Unit Capacity retains a snapshot row-version. Image upload
- *  remains intentionally absent until a dedicated Storage API exists. */
+ *  checks; Rack Unit Capacity retains a snapshot row-version and loads the
+ *  selected month's image through the Production Storage API. */
 function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, rackUnitCapacity, allowedStartMonth, allowedEndMonth, onHistorySaved, onSelectMonth }: { siteId: number; siteName: string | null; month: string; lang: "th" | "en"; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; allowedStartMonth: string; allowedEndMonth: string; onHistorySaved?: () => void; onSelectMonth: (month: string) => void }) {
   const th = lang === "th";
   const [rack, setRack] = useState<RackApiSnapshot | null>(null);
   const [rackUnit, setRackUnit] = useState<RackUnitApiSnapshot | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
+  const rackUnitImageProvider = useMemo(() => createWebRackUnitImageProvider(siteId), [siteId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -508,7 +562,7 @@ function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, 
           <RackCapacityForecast />
         </div>
         <RackCapacityMonthSync month={month}><RackCapacitySummaryCard /></RackCapacityMonthSync>
-        <RackUnitCapacitySummary />
+        <RackUnitCapacitySummary provider={rackUnitImageProvider} />
         <RackCapacityHistoryPanel />
         <WebRackCapacityEditor siteId={siteId} month={month} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} />
       </RackCapacityProvider>
