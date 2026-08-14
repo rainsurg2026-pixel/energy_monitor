@@ -387,11 +387,12 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
     import("jspdf")
   ]);
   const parsed = new DOMParser().parseFromString(html, "text/html");
+  for (const staleHost of [...document.querySelectorAll<HTMLElement>("[data-energy-monitor-pdf-renderer]")]) staleHost.remove();
   const host = document.createElement("div");
   host.dataset.energyMonitorPdfRenderer = "true";
   Object.assign(host.style, {
     position: "absolute",
-    left: "-12000px",
+    left: "0",
     top: "0",
     width: "1123px",
     minHeight: "1px",
@@ -399,7 +400,9 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
     background: "#ffffff",
     color: "#243247",
     fontFamily: '"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif',
-    pointerEvents: "none"
+    pointerEvents: "none",
+    opacity: "0.01",
+    zIndex: "-1"
   });
   const reportStyle = parsed.head.querySelector("style");
   if (reportStyle) host.appendChild(reportStyle.cloneNode(true));
@@ -413,7 +416,7 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
     for (const [index, page] of pages.entries()) {
       const canvas = await html2canvas(page, {
         backgroundColor: "#ffffff",
-        scale: Math.min(2, Math.max(1, window.devicePixelRatio || 1)),
+        scale: 1,
         useCORS: true,
         logging: false,
         width: Math.max(page.scrollWidth, 1),
