@@ -34,11 +34,18 @@ assert.equal(printed, 1);
 // is loading, and a rejected data request must leave a useful visible error
 // instead of an empty window that appears to have stalled.
 const previousWindow = (globalThis as { window?: unknown }).window;
+(popup as unknown as { opener: unknown }).opener = {};
+let popupFeatures = "";
 (globalThis as { window?: unknown }).window = {
-  open: () => popup
+  open: (_url: string, _name: string, features: string) => {
+    popupFeatures = features;
+    return popup;
+  }
 };
 const loadingPopup = openReportPopup("energy-report-loading");
 assert.equal(loadingPopup, popup);
+assert.equal(popupFeatures, "popup");
+assert.equal((popup as unknown as { opener: unknown }).opener, null);
 assert.match(written, /Preparing report/);
 assert.equal(popup.document.title, "Preparing report…");
 renderReportErrorPopup(popup);

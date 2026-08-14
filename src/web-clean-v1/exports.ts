@@ -379,8 +379,13 @@ function writePopupDocument(popup: Window, html: string, title: string): void {
 }
 
 export function openReportPopup(name: string): Window {
-  const popup = window.open("", name, "noopener,noreferrer");
+  // `noopener`/`noreferrer` make window.open() return null in Chromium. That
+  // leaves a visible about:blank tab but removes the WindowProxy needed to
+  // write the report into it. Open the same-origin blank popup first, sever
+  // its opener immediately, then populate it below.
+  const popup = window.open("", name, "popup");
   if (!popup) throw new Error("The report window was blocked by the browser.");
+  popup.opener = null;
   // The report data may require an API request before it can be rendered. A
   // real loading document prevents the browser from showing a blank tab while
   // that request is in flight.
