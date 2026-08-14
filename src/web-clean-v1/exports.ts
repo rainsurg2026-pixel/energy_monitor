@@ -309,9 +309,9 @@ export async function exportSiteComparisonExcel(data: SiteComparisonExport, refe
   download(bytes, `site-comparison-${referenceMonth}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
-function reportRows(logs: MonthlyLog[]): ReportMonthlyRow[] {
+function reportRows(logs: MonthlyLog[], calculationLogs: MonthlyLog[] = logs): ReportMonthlyRow[] {
   return [...logs].sort((left, right) => left.month.localeCompare(right.month)).map(log => {
-    const calculation = calculateEnergyCostForMonth(logs, log.month);
+    const calculation = calculateEnergyCostForMonth(calculationLogs, log.month);
     return {
       month: log.month,
       buildingEnergyKwh: calculation.buildingEnergyKwh,
@@ -329,7 +329,11 @@ function reportRows(logs: MonthlyLog[]): ReportMonthlyRow[] {
 }
 
 export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs): ReportData {
-  const rows = reportRows(calculationLogs);
+  // `logs` is the visible/reporting-period scope. `calculationLogs` is the
+  // complete history used only to resolve previous readings and derived
+  // values. Keeping these separate makes a Month Range affect the actual
+  // report pages instead of silently exporting the full calculation history.
+  const rows = reportRows(logs, calculationLogs);
   const current = rows.find(row => row.month === selectedMonth) ?? null;
   return {
     title: "Data Center Energy & Facility Monitor Report",
@@ -362,6 +366,34 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
 function ensureExtension(fileName: string, extension: string): string {
   const suffix = `.${extension}`;
   return fileName.toLowerCase().endsWith(suffix) ? fileName : `${fileName}${suffix}`;
+}
+
+export interface PdfImagePlacement {
+  xMm: number;
+  yMm: number;
+  widthMm: number;
+  heightMm: number;
+}
+
+/** Fit a rendered report page inside an A4 landscape content box without
+ * changing its aspect ratio. This is deliberately pure so the geometry can
+ * be regression-tested without a browser or PDF viewer. */
+export function fitPdfImageToPage(canvasWidth: number, canvasHeight: number, pageWidthMm = 297, pageHeightMm = 210, marginMm = 10): PdfImagePlacement {
+  if (![canvasWidth, canvasHeight, pageWidthMm, pageHeightMm, marginMm].every(value => Number.isFinite(value) && value > 0)) {
+    throw new Error("PDF image dimensions and margin must be positive finite numbers.");
+  }
+  const availableWidth = pageWidthMm - (marginMm * 2);
+  const availableHeight = pageHeightMm - (marginMm * 2);
+  if (availableWidth <= 0 || availableHeight <= 0) throw new Error("PDF margin leaves no printable area.");
+  const scale = Math.min(availableWidth / canvasWidth, availableHeight / canvasHeight);
+  const widthMm = canvasWidth * scale;
+  const heightMm = canvasHeight * scale;
+  return {
+    xMm: (pageWidthMm - widthMm) / 2,
+    yMm: (pageHeightMm - heightMm) / 2,
+    widthMm,
+    heightMm
+  };
 }
 
 async function waitForReportImages(root: HTMLElement): Promise<void> {
@@ -420,10 +452,12 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
         useCORS: true,
         logging: false,
         width: Math.max(page.scrollWidth, 1),
+        height: Math.max(page.scrollHeight, page.offsetHeight, 1),
         windowWidth: Math.max(page.scrollWidth, 1)
       });
       if (index > 0) pdf.addPage("a4", "landscape");
-      pdf.addImage(canvas.toDataURL("image/jpeg", 0.94), "JPEG", 0, 0, 297, 210, undefined, "FAST");
+      const placement = fitPdfImageToPage(canvas.width, canvas.height);
+      pdf.addImage(canvas.toDataURL("image/jpeg", 0.94), "JPEG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
     }
     pdf.save(ensureExtension(fileName, "pdf"));
   } finally {

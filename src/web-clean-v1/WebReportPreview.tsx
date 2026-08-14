@@ -46,7 +46,7 @@ export default function WebReportPreview({ lang, siteId, siteName, logs, month, 
 
   const html = useMemo(
     () => buildReportHtml(facilityReportData(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs ?? logs), sections),
-    [calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, sections, siteName]
+    [calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, refreshKey, sections, siteName]
   );
   const pageCount = (html.match(/page-break-(before|after)/g)?.length ?? 0) + 1;
 
