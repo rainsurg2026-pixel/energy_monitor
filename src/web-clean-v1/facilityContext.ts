@@ -41,4 +41,11 @@ export function selectedFacility(sites: readonly FacilitySite[], storedSiteId: s
   return sites.find(site => site.id === parsed) ?? sites[0] ?? null;
 }
 
+/** Select the newest month with an actual monthly energy log. Bootstrap
+ * availability also includes Rack Capacity and Rack Unit-only rows, which
+ * must not make the dashboard open on an empty energy month. */
+export function latestEnergyMonth(logs: readonly { month: string }[], fallback: string): string {
+  return logs.map(log => log.month).filter(month => /^\d{4}-(0[1-9]|1[0-2])$/.test(month)).sort().at(-1) ?? fallback;
+}
+
 export function facilityStorageKey(userId: string): string { return `energy-monitor:selected-facility:${userId}`; }

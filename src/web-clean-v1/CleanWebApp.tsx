@@ -18,7 +18,7 @@ import { api, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportAllFacilitiesHtml as exportAllFacilitiesHtmlFile, exportCsv, exportExcel, exportHtml as exportHtmlFile, exportSiteComparisonCsv, exportSiteComparisonExcel, exportSiteComparisonHtml, openReportPopup, printAllFacilitiesPdf as printAllFacilitiesPdfFile, printDesktopPdf as printDesktopPdfFile, printSiteComparisonPdf, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
 import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodSelection } from "./reportPeriod";
-import { facilityStorageKey, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
+import { facilityStorageKey, latestEnergyMonth, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
 import { applyTheme, languageStorageKey, normalizeLanguage, normalizeTheme, themeStorageKey, type AppLanguage, type Theme } from "./theme";
 import { HistoryProvider } from "../reporting/HistoryProvider";
 import { ReportRegistry } from "../reporting/ReportRegistry";
@@ -172,10 +172,11 @@ export default function CleanWebApp() {
       if (!first) { setFacilityError("No facility is available for this account."); return; }
       const initialMonth = first.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth());
       setInitialHistoryLoading(true); setBusy(true); setFacilityLoading(false);
-      await Promise.all([
-        loadHistory(first.id, { scope: "dashboard" }),
-        loadMonth(first.id, initialMonth)
-      ]);
+      const historyPromise = loadHistory(first.id, { scope: "dashboard" });
+      const monthPromise = loadMonth(first.id, initialMonth);
+      const [initialHistory] = await Promise.all([historyPromise, monthPromise]);
+      const energyMonth = latestEnergyMonth(initialHistory.logs, initialMonth);
+      if (energyMonth !== initialMonth) await loadMonth(first.id, energyMonth, initialHistory);
       loadedPageKeyRef.current = `${first.id}:dashboard`;
     } catch (error) {
       if (activeSiteIdRef.current === null) setFacilityError(`Unable to load facilities: ${readError(error)}`);
@@ -288,7 +289,7 @@ export default function CleanWebApp() {
 
   const deferNavigation = (action: PendingNavigation) => { if (entryDirty) setPendingNavigation(() => action); else void action(); };
   const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setViewState(next); }); };
-  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setBusy(true); setInitialHistoryLoading(true); setFacilityError(null); setHistory({ months: [], logs: [] }); setDraft(null); setRowVersion(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id, { force: true, scope: "dashboard" }); await loadMonth(id, nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()), records); loadedPageKeyRef.current = `${id}:dashboard`; } catch (error) { setNotice(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setInitialHistoryLoading(false); setBusy(false); } }; deferNavigation(action); };
+  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setBusy(true); setInitialHistoryLoading(true); setFacilityError(null); setHistory({ months: [], logs: [] }); setDraft(null); setRowVersion(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id, { force: true, scope: "dashboard" }); const candidate = nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()); await loadMonth(id, latestEnergyMonth(records.logs, candidate), records); loadedPageKeyRef.current = `${id}:dashboard`; } catch (error) { setNotice(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setInitialHistoryLoading(false); setBusy(false); } }; deferNavigation(action); };
   const selectMonth = async (selected: string, exists = true) => {
     if (!siteId || selected === month) return;
     const action = async () => {
@@ -336,7 +337,8 @@ export default function CleanWebApp() {
     setBootstrap(result); setSiteId(current?.id ?? null); setFacilityError(null);
     if (current) {
       const records = await loadHistory(current.id, { force: true, scope: "dashboard" });
-      await loadMonth(current.id, current.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth()), records);
+      const candidate = current.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth());
+      await loadMonth(current.id, latestEnergyMonth(records.logs, candidate), records);
     }
   };
 
