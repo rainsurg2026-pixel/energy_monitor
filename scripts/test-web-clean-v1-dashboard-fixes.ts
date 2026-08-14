@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { resolveReportYear } from "../src/ReportContext";
+import { reportYearsFromMonths, resolveReportYear } from "../src/ReportContext";
 import { openReportPopup, renderReportErrorPopup, renderReportPopup } from "../src/web-clean-v1/exports";
 
 assert.equal(resolveReportYear("2024", ["2025", "2024"], "2025"), "2024");
 assert.equal(resolveReportYear("not-a-year", ["2025", "2024"], "2025"), "2025");
 assert.equal(resolveReportYear("2026", ["2025", "2024"], "2025"), "2025");
 assert.equal(resolveReportYear("not-a-year", ["2026"], "2025"), "2026");
+assert.deepEqual(reportYearsFromMonths(["2026-02", "2026-07"], ["2025-01", "2025-12", "2026-07"]), ["2026", "2025"], "year selector includes years available outside the initial six-month log window");
 
 let printed = 0;
 let written = "";

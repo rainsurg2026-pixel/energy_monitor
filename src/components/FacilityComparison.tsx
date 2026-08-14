@@ -48,6 +48,15 @@ interface CapacityRow {
   rackUnitRow: NonNullable<DataSnapshot["rackUnitCapacity"]>[number] | null;
 }
 
+/** Keep the first real month one category cell away from the Y-axis so the
+ * Desktop comparison charts follow the same visual contract as Clean Web. */
+function withLeadingChartGap(data: Array<Record<string, number | null | string>>, seriesKeys: readonly string[]) {
+  if (data.length === 0) return data;
+  const gap: Record<string, number | null | string> = { ...data[0], month: "", label: "" };
+  for (const key of seriesKeys) gap[key] = null;
+  return [gap, ...data];
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -197,6 +206,10 @@ export default function FacilityComparison({ facilities, provider, lang, display
       return base;
     });
   }, [visibleMonths, metricsCache, facilities]);
+  const chartDataWithLeadingGap = useMemo(
+    () => withLeadingChartGap(chartData, facilities.flatMap(f => [`${f.id}_energy`, `${f.id}_cost`])),
+    [chartData, facilities]
+  );
 
   const capacityRows = useMemo<CapacityRow[]>(() => facilities.map(facility => {
     const snapshot = snapshots?.get(facility.workbook);
@@ -368,7 +381,7 @@ export default function FacilityComparison({ facilities, provider, lang, display
             <div className="h-72 overflow-x-auto overflow-y-hidden overscroll-x-contain">
               <div className="h-full" style={{ width: chartMinWidth, minWidth: "100%" }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 28, right: 8, left: 4, bottom: 24 }}>
+                  <LineChart data={chartDataWithLeadingGap} margin={{ top: 28, right: 8, left: 4, bottom: 24 }}>
                   <title>Monthly energy comparison</title>
                   <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                   <XAxis dataKey="label" tick={{ fill: "#9CA3AF", fontSize: 11 }} interval="preserveStartEnd" />
@@ -412,7 +425,7 @@ export default function FacilityComparison({ facilities, provider, lang, display
             <div className="h-72 overflow-x-auto overflow-y-hidden overscroll-x-contain">
               <div className="h-full" style={{ width: chartMinWidth, minWidth: "100%" }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={chartData} margin={{ top: 28, right: 8, left: 4, bottom: 24 }}>
+                  <LineChart data={chartDataWithLeadingGap} margin={{ top: 28, right: 8, left: 4, bottom: 24 }}>
                   <title>Floor 4 electricity cost comparison</title>
                   <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                   <XAxis dataKey="label" tick={{ fill: "#9CA3AF", fontSize: 11 }} interval="preserveStartEnd" />

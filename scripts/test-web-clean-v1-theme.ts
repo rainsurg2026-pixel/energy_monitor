@@ -16,6 +16,9 @@ assert.match(css, /input::placeholder,[\s\S]*?color: var\(--color-input-placehol
 assert.match(css, /html\.theme-light\s*\{[\s\S]*?--color-bg: #f6f1e8;[\s\S]*?--color-text: #333333;[\s\S]*?--color-border: #e3ded5;/);
 assert.match(css, /--color-input-bg: #071a30;[\s\S]*?--color-input-text: #f4f7fb;[\s\S]*?--color-input-placeholder: #b9c9da;/);
 assert.match(app, /function Login[\s\S]*?bg-slate-950 px-4 text-slate-100/);
+assert.match(app, /เข้าระบบเพื่อดำเนินการต่อ/);
+assert.doesNotMatch(app, /เข้าสู่พื้นที่ปฏิบัติการ v2\.3\.1 เพื่อดำเนินการต่อ/);
+assert.match(app, /function Login[\s\S]*?text-center/);
 assert.match(app, /PASSWORD_MIN_LENGTH = 6/);
 assert.match(app, /passwordHelp/);
 

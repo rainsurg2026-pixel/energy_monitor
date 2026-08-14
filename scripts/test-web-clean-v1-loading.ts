@@ -19,5 +19,8 @@ assert.match(app, /initialHistoryLoading/);
 assert.match(app, /setInitialHistoryLoading\(false\)/);
 assert.match(app, /setFacilityLoading\(false\)/);
 assert.match(app, /setHistory\(\{ months: \[\], logs: \[\] \}\)/);
+assert.match(app, /availableMonths=\{history\.months\}/);
+assert.match(app, /onYearChange=\{loadHistoricalYear\}/);
+assert.match(app, /loadHistory\(siteId, \{ scope: "full" \}\)/);
 
 console.log("web-clean-v1 loading: six-month initial window and non-destructive recovery contract passed");

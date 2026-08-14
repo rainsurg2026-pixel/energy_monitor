@@ -23,6 +23,16 @@ const formatMonthLabel = (month: string) => {
 };
 const metric = (value: number | null | undefined, suffix = "") => value === null || value === undefined || !Number.isFinite(value) ? "—" : `${formatNumber2(value)}${suffix}`;
 
+/** Keep the first real month one category cell away from the Y-axis. The
+ * leading empty category is intentional: it gives every comparison chart the
+ * same visual breathing room without changing the reported month window. */
+function withLeadingChartGap(data: Array<Record<string, string | number | null>>, seriesKeys: readonly string[]) {
+  if (data.length === 0) return data;
+  const gap: Record<string, string | number | null> = { ...data[0], month: "" };
+  for (const key of seriesKeys) gap[key] = null;
+  return [gap, ...data];
+}
+
 function rackCounts(snapshot: RackSnapshot | null) {
   const records = snapshot?.records ?? [];
   return {
@@ -41,10 +51,11 @@ function TrendCard({ title, icon, data, sites, suffix, unit }: {
   suffix: "energy" | "cost" | "rack-usage";
   unit: string;
 }) {
+  const chartData = withLeadingChartGap(data, sites.map(site => `${site.site.code}-${suffix}`));
   return <section className="h-[26rem] rounded-xl border border-slate-800 bg-slate-900 p-4">
     <h3 className="mb-3 flex items-center gap-2 font-semibold">{icon}{title}</h3>
     <ResponsiveContainer width="100%" height="90%">
-      <LineChart data={data}>
+      <LineChart data={chartData}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
         <XAxis dataKey="month" tickFormatter={formatMonthLabel} />
         <YAxis tickFormatter={value => formatCompact(Number(value), unit)} />
