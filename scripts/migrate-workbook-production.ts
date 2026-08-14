@@ -25,11 +25,13 @@ import { importMigrationPlan } from "../server/migration/postgresImporter";
 import { readWorkbookSource } from "../server/migration/workbookSource";
 import { verifyProductionEnvironment, verifyProductionTarget } from "./lib/productionTargetGuard";
 import { SupabaseRackUnitImageStorage } from "../server/storage/rackUnitImageStorage";
+import { filterMigrationSourceToMonthWindow } from "../server/migration/monthWindow";
 
 loadDotEnvFile();
 
 const [sourcePath] = process.argv.slice(2);
 const siteCode = process.env.MIGRATION_SITE_CODE?.trim();
+
 
 if (!sourcePath) throw new Error("Usage: npm run migration:workbook:production -- <workbook-path>");
 if (!siteCode) throw new Error("MIGRATION_SITE_CODE is required.");
@@ -48,10 +50,16 @@ const targetVerification = verifyProductionTarget(connectionString);
 if (!targetVerification.ok) throw new Error(`Refusing to run: ${targetVerification.reason}`);
 console.log(`Target verification: PASS - ${targetVerification.reason}`);
 
-const source = await readWorkbookSource(sourcePath, undefined, {
+const rawSource = await readWorkbookSource(sourcePath, undefined, {
   imagesRootDir: process.env.MIGRATION_IMAGES_ROOT?.trim() || undefined,
   siteCode
 });
+const startMonth = process.env.MIGRATION_START_MONTH?.trim() || undefined;
+const endMonth = process.env.MIGRATION_END_MONTH?.trim() || undefined;
+const source = filterMigrationSourceToMonthWindow(rawSource, startMonth, endMonth);
+if (startMonth || endMonth) {
+  console.log(`Import month window: ${startMonth ?? "minimum"}..${endMonth ?? "maximum"}`);
+}
 const plan = createMigrationPlan(source, {
   siteCode,
   expectedSiteName: process.env.MIGRATION_EXPECTED_SITE_NAME?.trim() || undefined,
