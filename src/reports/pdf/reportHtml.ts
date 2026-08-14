@@ -97,10 +97,10 @@ function trendSeriesDetails(unit: string, values: Array<number | null>, rows: Re
 export function trendChartXPosition(index: number, rowCount: number, width = 1600, left = 140, right = 80): number {
   const plotWidth = width - left - right;
   if (rowCount < 2) return left + plotWidth / 2;
-  // Reserve one complete category slot before the first point. This keeps
-  // every trend line visually detached from the Y axis while still ending the
-  // final point on the right side of the plot area.
-  return left + ((index + 1) * plotWidth) / rowCount;
+  // Reserve one complete category slot before the first point and one after
+  // the final point. This keeps labels detached from both chart edges.
+  const categorySlot = plotWidth / (rowCount + 1);
+  return left + (index + 1) * categorySlot;
 }
 
 function trendPage(title: string, unit: string, series: TrendSeries[], rows: ReportMonthlyRow[], explanation: string, sectionLabel?: string): string {
@@ -110,7 +110,7 @@ function trendPage(title: string, unit: string, series: TrendSeries[], rows: Rep
   if (!defined.length) return `<section class="page trend-page">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)}</p><p>No valid values are available for this selected reporting window.</p></section>`;
   const width = 1600, height = 810, left = 140, right = 80, top = 82, bottom = 110;
   const actualMin = Math.min(...defined), actualMax = Math.max(...defined), rawRange = actualMax - actualMin || Math.max(Math.abs(actualMax) * 0.2, 1);
-  const domainMin = Math.min(0, actualMin - rawRange * 0.16), domainMax = actualMax + rawRange * 0.18;
+  const domainMin = Math.min(0, actualMin - rawRange * 0.16), domainMax = actualMax + Math.max(rawRange * 0.28, Math.abs(actualMax) * 0.04);
   const range = domainMax - domainMin || 1;
   const x = (index: number) => trendChartXPosition(index, rows.length, width, left, right);
   const y = (value: number) => top + (domainMax - value) / range * (height - top - bottom);

@@ -183,8 +183,11 @@ const tallPlacement = fitPdfImageToPage(800, 1200);
 check("Tall PDF content is contained without cropping or distortion", tallPlacement.widthMm <= 277 && tallPlacement.heightMm <= 190 && Math.abs(tallPlacement.widthMm / tallPlacement.heightMm - 800 / 1200) < 0.000001);
 const firstTrendX = trendChartXPosition(0, 7);
 const secondTrendX = trendChartXPosition(1, 7);
-check("Trend charts reserve one category slot before the first point", firstTrendX > 140 && Math.abs(firstTrendX - 140 - (1600 - 140 - 80) / 7) < 0.000001);
-check("Trend chart category spacing remains uniform after the left offset", Math.abs((secondTrendX - firstTrendX) - (1600 - 140 - 80) / 7) < 0.000001);
+const lastTrendX = trendChartXPosition(6, 7);
+const categorySlot = (1600 - 140 - 80) / 8;
+check("Trend charts reserve one category slot before the first point", firstTrendX > 140 && Math.abs(firstTrendX - 140 - categorySlot) < 0.000001);
+check("Trend charts reserve one category slot after the final point", Math.abs(1600 - 80 - lastTrendX - categorySlot) < 0.000001);
+check("Trend chart category spacing remains uniform after the edge offsets", Math.abs((secondTrendX - firstTrendX) - categorySlot) < 0.000001);
 
 // Filename actually reaches every format, with the correct extension and
 // no duplicate/missing extension, and the displayed preview matches what
