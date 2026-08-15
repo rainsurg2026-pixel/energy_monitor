@@ -8,6 +8,7 @@ import type { UpsGroupHistoryReport } from "../reports/reportTypes";
 import type { ReportSectionId } from "../reporting/reportingTypes";
 import { api } from "./api";
 import { facilityReportData, rackReportFromSnapshot, type RackSnapshotApiResponse } from "./exports";
+import { loadWebRackUnitCapacityImage, type WebRackUnitCapacityImage } from "./rackUnitImage";
 
 /** Browser counterpart of Desktop's report preview. It deliberately uses the
  * same ReportData builder and HTML renderer as PDF export, so preview cannot
@@ -31,19 +32,25 @@ export default function WebReportPreview({ lang, siteId, siteName, logs, month, 
 }) {
   const th = lang === "th";
   const [rack, setRack] = useState<ReturnType<typeof rackReportFromSnapshot>>(null);
+  const [rackUnitImage, setRackUnitImage] = useState<WebRackUnitCapacityImage | null>(null);
   const [rackNotice, setRackNotice] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [zoom, setZoom] = useState(85);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadRack = useCallback(async () => {
-    if (siteId === null) { setRack(null); return; }
+    if (siteId === null) { setRack(null); setRackUnitImage(null); return; }
     try {
-      const response = await api<RackSnapshotApiResponse>(`/racks?siteId=${siteId}&month=${month}`);
+      const [response, image] = await Promise.all([
+        api<RackSnapshotApiResponse>(`/racks?siteId=${siteId}&month=${month}`),
+        loadWebRackUnitCapacityImage(siteId, month).catch(() => null)
+      ]);
       setRack(rackReportFromSnapshot(response));
+      setRackUnitImage(image);
       setRackNotice(null);
     } catch {
       setRack(null);
+      setRackUnitImage(null);
       setRackNotice(th ? "ไม่สามารถโหลดความจุแร็คสำหรับตัวอย่างนี้ได้ รายงานจะแสดงเฉพาะข้อมูลที่มี" : "Rack Capacity is unavailable for this preview; the report remains limited to available data.");
     }
   }, [month, siteId, th]);
@@ -65,8 +72,12 @@ export default function WebReportPreview({ lang, siteId, siteName, logs, month, 
   useEffect(() => { void loadRack(); }, [loadRack]);
 
   const html = useMemo(
-    () => buildReportHtml(facilityReportData(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs ?? logs, { upsGroupHistory }), sections),
-    [calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, refreshKey, sections, siteName, upsGroupHistory]
+    () => buildReportHtml(facilityReportData(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs ?? logs, {
+      upsGroupHistory,
+      rackUnitCapacityImageDataUri: rackUnitImage?.dataUri ?? null,
+      rackUnitCapacityImageMeta: rackUnitImage?.meta ?? null
+    }), sections),
+    [calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, rackUnitImage, refreshKey, sections, siteName, upsGroupHistory]
   );
   const pageCount = (html.match(/page-break-(before|after)/g)?.length ?? 0) + 1;
 

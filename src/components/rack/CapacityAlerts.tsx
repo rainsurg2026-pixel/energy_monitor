@@ -70,8 +70,16 @@ export const CapacityAlerts: React.FC = () => {
       }
     }
 
-    // Critical first, then Warning; stable within each band.
-    return items.sort((a, b) => (a.level === b.level ? 0 : a.level === "Critical" ? -1 : 1));
+    // Keep alert severity visible in each row, but keep facilities in the
+    // operator's physical order: Zone A, Zone B, Zone C, then the
+    // facility-wide notification. Severity must not reorder the zones.
+    const isZoneAlert = (item: AlertItem) => item.key.startsWith("zone-");
+    return items.sort((a, b) => {
+      const aZone = isZoneAlert(a);
+      const bZone = isZoneAlert(b);
+      if (aZone !== bZone) return aZone ? -1 : 1;
+      return a.scopeLabel.localeCompare(b.scopeLabel, "en", { numeric: true, sensitivity: "base" });
+    });
   }, [facilityName, lang, metrics]);
 
   if (alerts.length === 0) {

@@ -200,6 +200,23 @@ check("PDF engineering analysis receives the persisted UPS status", reportWithDa
 check("PDF includes the executive dashboard card page", reportWithDashboardHtml.includes("Executive Dashboard") && reportWithDashboardHtml.includes("Total Building Energy"));
 check("Executive report selection includes the dashboard trend charts", buildReportHtml(reportWithDashboardData, ["executive"]).includes("Monthly Energy Consumption Trend"));
 
+const reportWithRackUnitImage = facilityReportData(
+  [log("2026-07")],
+  "Srinakarin",
+  "2026-07",
+  null,
+  [],
+  [{ month: "2026-07", totalU: 9963, usedU: 7445, availableU: 2518, availabilityPct: 25.27 }],
+  [log("2026-07")],
+  {
+    rackUnitCapacityImageDataUri: "data:image/png;base64,TEST_RACK_UNIT_IMAGE",
+    rackUnitCapacityImageMeta: { savedAt: "2026-08-14T16:57:50.000Z", savedBy: "admin", width: 2048, height: 1536 }
+  }
+);
+const reportWithRackUnitImageHtml = buildReportHtml(reportWithRackUnitImage);
+check("Rack Unit Capacity PDF embeds the loaded image data URI", reportWithRackUnitImageHtml.includes("data:image/png;base64,TEST_RACK_UNIT_IMAGE"));
+check("Rack Unit Capacity PDF includes image metadata when an image is available", reportWithRackUnitImageHtml.includes("2048×1536px") && reportWithRackUnitImageHtml.includes("Captured By: admin"));
+
 const landscapePlacement = fitPdfImageToPage(1123, 794);
 check("PDF page fit leaves a 10mm minimum outer margin", landscapePlacement.xMm >= 10 && landscapePlacement.yMm >= 10);
 check("PDF page fit preserves the rendered page aspect ratio", Math.abs(landscapePlacement.widthMm / landscapePlacement.heightMm - 1123 / 794) < 0.000001);

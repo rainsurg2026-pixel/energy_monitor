@@ -8,7 +8,6 @@ import { selectedDashboardMonth } from "../utils/reportPeriodSelection";
 import { computeCompletion } from "../utils/completion";
 import type { MonthlyLog } from "../types";
 import type { IDataProvider } from "../data/IDataProvider";
-import type { StoredImageMeta } from "../storage/ImageStorageProvider";
 import type { DashboardUpsMappingReport, UpsGroupHistoryReport, RackCapacitySummary } from "../reports/reportTypes";
 import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
 import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
@@ -25,6 +24,7 @@ import { applyTheme, languageStorageKey, normalizeLanguage, normalizeTheme, them
 import { HistoryProvider } from "../reporting/HistoryProvider";
 import { ReportRegistry } from "../reporting/ReportRegistry";
 import type { ReportHistoryItem, ReportSectionId } from "../reporting/reportingTypes";
+import { loadWebRackUnitCapacityImage, type WebRackUnitCapacityImage } from "./rackUnitImage";
 
 const DashboardSummary = lazy(() => import("../components/DashboardSummary"));
 const ExecutiveDashboard = lazy(() => import("../components/ExecutiveDashboard"));
@@ -46,7 +46,6 @@ const CapacityAlerts = lazy(() => import("../components/rack/CapacityAlerts").th
 const CapacityGauge = lazy(() => import("../components/rack/CapacityGauge").then(module => ({ default: module.CapacityGauge })));
 const RackCapacityTimeline = lazy(() => import("../components/rack/Timeline").then(module => ({ default: module.Timeline })));
 const WebRackCapacityEditor = lazy(() => import("./WebRackCapacityEditors").then(module => ({ default: module.WebRackCapacityEditor })));
-const WebRackUnitCapacityEditor = lazy(() => import("./WebRackCapacityEditors").then(module => ({ default: module.WebRackUnitCapacityEditor })));
 
 type View = "dashboard" | "entry" | "racks" | "history" | "comparison" | "reports" | "settings" | "admin";
 const HISTORY_DATA_VIEWS: ReadonlySet<View> = new Set(["dashboard", "entry", "racks", "history", "reports"]);
@@ -70,57 +69,24 @@ const readStoredFacility = (userId: string) => { try { return sessionStorage.get
 const storeFacility = (userId: string, siteId: number) => { try { sessionStorage.setItem(facilityStorageKey(userId), String(siteId)); } catch { /* facility remains selected in memory when storage is unavailable */ } };
 const readRecentReports = (): ReportHistoryItem[] => { try { return HistoryProvider.list(); } catch { return []; } };
 
-interface WebRackUnitImageSnapshot {
-  snapshot: {
-    image: {
-      available: boolean;
-      contentType: "image/png" | "image/jpeg";
-      byteSize: number | null;
-      sha256: string;
-      width: number;
-      height: number;
-      savedAt: string;
-      savedBy: string;
-    } | null;
-  } | null;
-}
-
-function blobToDataUri(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error("The Rack Unit Capacity image could not be read."));
-    reader.readAsDataURL(blob);
-  });
-}
-
 function createWebRackUnitImageProvider(siteId: number): Pick<IDataProvider, "getRackUnitCapacityImage"> {
   return {
     getRackUnitCapacityImage: async (facility, reportingMonth) => {
-      const snapshotResult = await api<WebRackUnitImageSnapshot>(`/rack-unit-capacity?siteId=${siteId}&month=${encodeURIComponent(reportingMonth)}`);
-      const image = snapshotResult.snapshot?.image;
-      // The metadata endpoint is fail-closed when storage has a transient
-      // transport issue. The image endpoint is authoritative for the actual
-      // read, so do not suppress a valid image request solely because the
-      // availability probe was false for that response.
-      if (!image || image.width === null || image.height === null || !image.sha256) return null;
-      const response = await fetch(`/api/v1/sites/${siteId}/rack-unit-capacity/${encodeURIComponent(reportingMonth)}/image`, { credentials: "include" });
-      if (!response.ok) return null;
-      const blob = await response.blob();
+      const image = await loadWebRackUnitCapacityImage(siteId, reportingMonth);
+      if (!image) return null;
       const extension = image.contentType === "image/jpeg" ? "jpg" : "png";
-      const meta: StoredImageMeta = {
+      return { dataUri: image.dataUri, meta: {
         facility,
         reportingMonth,
         fileName: `RUC-${monthLabelShort(reportingMonth, "en")}.${extension}`,
         mimeType: image.contentType,
-        width: image.width,
-        height: image.height,
-        sizeBytes: image.byteSize ?? blob.size,
-        savedAt: image.savedAt,
-        savedBy: image.savedBy,
+        width: image.meta.width,
+        height: image.meta.height,
+        sizeBytes: image.byteSize,
+        savedAt: image.meta.savedAt,
+        savedBy: image.meta.savedBy,
         checksum: image.sha256
-      };
-      return { dataUri: await blobToDataUri(blob), meta };
+      } };
     }
   };
 }
@@ -516,8 +482,6 @@ function DashboardView({ logs, month, siteName = "Facility", siteCode = "", dash
 }
 
 interface RackApiSnapshot { rowVersion: number; records: Array<{ rowNumber: number | null; rackZone: string | null; rackId: string | null; status: string | null; cabinetSize: string | null; detail: string | null; deviceType: string | null; remarks: string | null }> }
-interface RackUnitApiSnapshot { rowVersion: number; totalU: number; usedU: number; availableU: number; usagePercent: number | null; availabilityPercent: number | null }
-
 /** Syncs RackCapacityContext's own reportingMonth (used only for the
  *  Summary Card's header label; defaults to today's real date, since
  *  Desktop's Rack Capacity page treats it as page-local state independent
@@ -536,7 +500,6 @@ function RackCapacityMonthSync({ month, children }: { month: string; children: R
 function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, rackUnitCapacity, allowedStartMonth, allowedEndMonth, onHistorySaved, onSelectMonth }: { siteId: number; siteName: string | null; month: string; lang: "th" | "en"; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; allowedStartMonth: string; allowedEndMonth: string; onHistorySaved?: () => void; onSelectMonth: (month: string) => void }) {
   const th = lang === "th";
   const [rack, setRack] = useState<RackApiSnapshot | null>(null);
-  const [rackUnit, setRackUnit] = useState<RackUnitApiSnapshot | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const rackUnitImageProvider = useMemo(() => createWebRackUnitImageProvider(siteId), [siteId]);
@@ -544,12 +507,9 @@ function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, 
   useEffect(() => {
     let cancelled = false;
     setStatus("loading"); setError(null);
-    Promise.all([
-      api<{ snapshot: RackApiSnapshot | null }>(`/racks?siteId=${siteId}&month=${month}`),
-      api<{ snapshot: RackUnitApiSnapshot | null }>(`/rack-unit-capacity?siteId=${siteId}&month=${month}`)
-    ]).then(([racks, unit]) => {
+    api<{ snapshot: RackApiSnapshot | null }>(`/racks?siteId=${siteId}&month=${month}`).then(racks => {
       if (cancelled) return;
-      setRack(racks.snapshot); setRackUnit(unit.snapshot); setStatus("ready");
+      setRack(racks.snapshot); setStatus("ready");
     }).catch(reason => { if (!cancelled) { setError(readError(reason)); setStatus("error"); } });
     return () => { cancelled = true; };
   }, [siteId, month]);
@@ -586,7 +546,6 @@ function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, 
         <RackCapacityHistoryPanel />
         <WebRackCapacityEditor siteId={siteId} month={month} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} />
       </RackCapacityProvider>
-      <WebRackUnitCapacityEditor lang={lang} siteId={siteId} month={month} initialSnapshot={rackUnit} onSaved={(next) => { setRackUnit(next); onHistorySaved?.(); }} />
     </div>
   );
 }
@@ -637,10 +596,11 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
     try { return await api<RackSnapshotApiResponse>(`/racks?siteId=${targetSiteId}&month=${targetMonth}`); }
     catch { return null; }
   }, []);
+  const loadReportImage = useCallback((targetSiteId: number | null, targetMonth: string) => loadWebRackUnitCapacityImage(targetSiteId, targetMonth).catch(() => null), []);
   const loadAll = useCallback(async () => Promise.all(sites.map(async site => {
-    const [siteHistory, rackResponse] = await Promise.all([api<HistoryData>(`/sites/${site.id}/history`), loadRack(site.id, month)]);
-    return { siteName: site.name, logs: siteHistory.logs, calculationLogs: siteHistory.logs, rack: rackReportFromSnapshot(rackResponse), rackHistory: siteHistory.rackCapacityHistory ?? [], rackUnitCapacity: siteHistory.rackUnitCapacity ?? [], upsGroupHistory: siteHistory.upsGroupHistory ?? null, dashboardMapping: { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping(site.name) } };
-  })), [sites, month, loadRack]);
+    const [siteHistory, rackResponse, rackUnitImage] = await Promise.all([api<HistoryData>(`/sites/${site.id}/history`), loadRack(site.id, month), loadReportImage(site.id, month)]);
+    return { siteName: site.name, logs: siteHistory.logs, calculationLogs: siteHistory.logs, rack: rackReportFromSnapshot(rackResponse), rackHistory: siteHistory.rackCapacityHistory ?? [], rackUnitCapacity: siteHistory.rackUnitCapacity ?? [], upsGroupHistory: siteHistory.upsGroupHistory ?? null, dashboardMapping: { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping(site.name) }, rackUnitCapacityImageDataUri: rackUnitImage?.dataUri ?? null, rackUnitCapacityImageMeta: rackUnitImage?.meta ?? null };
+  })), [loadReportImage, loadRack, month, sites]);
   const loadComparison = useCallback(async () => api<SiteComparisonExport>("/site-comparison"), []);
   const rememberReport = (filename: string) => {
     const id = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `web-report-${Date.now()}`;
@@ -661,6 +621,7 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
   };
 
   const contextMonth = effectiveMonth(period, month);
+  const [reportImage, setReportImage] = useState<WebRackUnitCapacityImage | null>(null);
   const reportContextKey = `${siteName}\u0000${contextMonth}`;
   const previousReportContext = useRef(reportContextKey);
   useEffect(() => {
@@ -680,11 +641,35 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
       return { ...current, singleMonth, rangeStart, rangeEnd };
     });
   }, [logs, month, siteName]);
+  useEffect(() => {
+    let cancelled = false;
+    setReportImage(null);
+    void loadReportImage(siteId, contextMonth).then(image => { if (!cancelled) setReportImage(image); });
+    return () => { cancelled = true; };
+  }, [contextMonth, loadReportImage, siteId]);
   const resolvedFileName = resolveFilename(fileNameInput, siteName, contextMonth);
   const scopedLogs = useMemo(() => filterLogsByPeriod(logs, period, month), [logs, period, month]);
   const availableMonths = useMemo(() => [...new Set(logs.map(log => log.month))].sort(), [logs]);
-  const exportHtml = (...args: Parameters<typeof exportHtmlFile>) => exportHtmlFile(...(args.concat([selectedReportSections]) as Parameters<typeof exportHtmlFile>));
-  const exportDesktopPdf = (...args: Parameters<typeof exportDesktopPdfFile>) => exportDesktopPdfFile(...(args.concat([selectedReportSections]) as Parameters<typeof exportDesktopPdfFile>));
+  const exportHtml = (...args: Parameters<typeof exportHtmlFile>) => {
+    const nextArgs = [...args] as unknown as Parameters<typeof exportHtmlFile>;
+    const extras = nextArgs[9] ?? {};
+    nextArgs[9] = {
+      ...extras,
+      rackUnitCapacityImageDataUri: reportImage?.dataUri ?? null,
+      rackUnitCapacityImageMeta: reportImage?.meta ?? null
+    };
+    return exportHtmlFile(...nextArgs);
+  };
+  const exportDesktopPdf = (...args: Parameters<typeof exportDesktopPdfFile>) => {
+    const nextArgs = [...args] as unknown as Parameters<typeof exportDesktopPdfFile>;
+    const extras = nextArgs[9] ?? {};
+    nextArgs[9] = {
+      ...extras,
+      rackUnitCapacityImageDataUri: reportImage?.dataUri ?? null,
+      rackUnitCapacityImageMeta: reportImage?.meta ?? null
+    };
+    return exportDesktopPdfFile(...nextArgs);
+  };
   const exportAllFacilitiesHtml = (facilities: Parameters<typeof exportAllFacilitiesHtmlFile>[0], selectedMonth: string) => exportAllFacilitiesHtmlFile(facilities, selectedMonth, undefined, selectedReportSections);
   const exportAllFacilitiesPdf = (facilities: Parameters<typeof exportAllFacilitiesPdfFile>[0], selectedMonth: string) => exportAllFacilitiesPdfFile(facilities, selectedMonth, undefined, selectedReportSections);
   const exportSiteComparisonPdf = (...args: Parameters<typeof exportSiteComparisonPdfFile>) => exportSiteComparisonPdfFile(...(args.concat([selectedReportSections]) as Parameters<typeof exportSiteComparisonPdfFile>));

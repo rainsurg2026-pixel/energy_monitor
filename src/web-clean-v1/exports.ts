@@ -29,6 +29,9 @@ export interface ExportFacility {
   rackUnitCapacity?: ExportRackUnitCapacityRow[];
   upsGroupHistory?: UpsGroupHistoryReport | null;
   dashboardMapping?: DashboardUpsMappingReport | null;
+  /** The selected month's image loaded from the authenticated Storage API. */
+  rackUnitCapacityImageDataUri?: string | null;
+  rackUnitCapacityImageMeta?: ReportData["rackUnitCapacityImageMeta"];
   /** Explicit report scope for secondary tables when the selected month has
    * no MonthlyLog (for example a Rack Unit-only historical month). */
   reportingMonths?: string[];
@@ -39,6 +42,9 @@ export interface ReportDataExtras {
   upsGroupHistory?: UpsGroupHistoryReport | null;
   /** Desktop Dashboard-FAC hardware mapping, when available. */
   dashboardMapping?: DashboardUpsMappingReport | null;
+  /** Authenticated web image bytes, already converted to a data URI. */
+  rackUnitCapacityImageDataUri?: string | null;
+  rackUnitCapacityImageMeta?: ReportData["rackUnitCapacityImageMeta"];
 }
 
 /** The GET /racks API response shape (server/services/apiService.ts's
@@ -364,11 +370,8 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
     rack,
     rackHistory,
     rackUnitCapacity,
-    // Binary Rack Unit Capacity images remain in server-side object storage;
-    // the export keeps the numeric/history tables authoritative and does not
-    // fabricate a browser-visible data URI for an image that was not loaded.
-    rackUnitCapacityImageDataUri: null,
-    rackUnitCapacityImageMeta: null,
+    rackUnitCapacityImageDataUri: extras.rackUnitCapacityImageDataUri ?? null,
+    rackUnitCapacityImageMeta: extras.rackUnitCapacityImageMeta ?? null,
     comparison: null,
     rackComparison: null
   };
@@ -383,7 +386,12 @@ function reportDataFromFacility(facility: ExportFacility, selectedMonth: string)
     facility.rackHistory ?? [],
     facility.rackUnitCapacity ?? [],
     facility.calculationLogs ?? facility.logs,
-    { upsGroupHistory: facility.upsGroupHistory ?? null, dashboardMapping: facility.dashboardMapping ?? null }
+    {
+      upsGroupHistory: facility.upsGroupHistory ?? null,
+      dashboardMapping: facility.dashboardMapping ?? null,
+      rackUnitCapacityImageDataUri: facility.rackUnitCapacityImageDataUri ?? null,
+      rackUnitCapacityImageMeta: facility.rackUnitCapacityImageMeta ?? null
+    }
   );
 }
 

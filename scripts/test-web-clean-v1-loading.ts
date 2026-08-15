@@ -17,6 +17,8 @@ const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.m
 const reportPreview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
 const historicalCharts = readFileSync(new URL("../src/components/HistoricalCharts.tsx", import.meta.url), "utf8");
 const historicalExplorer = readFileSync(new URL("../src/components/HistoricalExplorer.tsx", import.meta.url), "utf8");
+const rackUnitSummary = readFileSync(new URL("../src/components/rack/RackUnitCapacitySummary.tsx", import.meta.url), "utf8");
+const capacityAlerts = readFileSync(new URL("../src/components/rack/CapacityAlerts.tsx", import.meta.url), "utf8");
 assert.match(apiService, /historyMonthsForScope/);
 assert.match(app, /Unable to load facilities/);
 assert.match(app, /setFacilityError\(`Unable to load facilities/);
@@ -40,5 +42,12 @@ assert.match(historicalCharts, /selectedMonth: string/);
 assert.match(historicalCharts, /useState<TrendPeriod>\(6\)/);
 assert.match(historicalExplorer, /selectedMonth: string/);
 assert.match(historicalExplorer, /useState<HistoryRange>\("6"\)/);
+assert.match(rackUnitSummary, /const TREND_MONTHS = 6/);
+assert.match(rackUnitSummary, /<LabelList/);
+assert.match(rackUnitSummary, /chartMax/);
+assert.match(reportPreview, /loadWebRackUnitCapacityImage/);
+assert.match(app, /rackUnitCapacityImageDataUri: reportImage\?\.dataUri/);
+assert.match(capacityAlerts, /Zone A, Zone B, Zone C/);
+assert.match(capacityAlerts, /scopeLabel\.localeCompare/);
 
 console.log("web-clean-v1 loading: six-month initial window and non-destructive recovery contract passed");
