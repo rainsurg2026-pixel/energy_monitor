@@ -11,6 +11,9 @@ import type { DashboardUpsMappingReport } from "../reports/reportTypes";
 import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
 import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
 import type { ReportSectionId } from "../reporting/reportingTypes";
+import { addInteractiveDashboard, injectInteractiveDashboardCharts, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
+
+const workbookDashboardPlans = new WeakMap<object, ExcelDashboardPlan[]>();
 
 export interface ExportRackUnitCapacityRow extends RackUnitCapacityRow {
   /** Metadata only; image bytes remain in server-side storage. */
@@ -161,6 +164,82 @@ function fallbackDashboardMapping(siteName: string): DashboardUpsMappingReport |
   return { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping(siteCode) };
 }
 
+interface ExcelDashboardModel {
+  metrics: ExcelDashboardMetric[];
+  dashboardRows: unknown[][];
+  dashboardUpsRows: unknown[][];
+  dashboardDetailRows: unknown[][];
+  dashboardAirRows: unknown[][];
+  dashboardDcRows: unknown[][];
+}
+
+function buildExcelDashboardModel(logs: MonthlyLog[], calculationLogs: MonthlyLog[], facility: ExportFacility): ExcelDashboardModel {
+  const metrics: ExcelDashboardMetric[] = [];
+  const dashboardRows: unknown[][] = [];
+  const dashboardUpsRows: unknown[][] = [];
+  const dashboardDetailRows: unknown[][] = [];
+  const dashboardAirRows: unknown[][] = [];
+  const dashboardDcRows: unknown[][] = [];
+  for (const log of logs) {
+    const mapping = buildDashboardUpsMapping(facility.upsGroupHistory ?? null, log.month, facility.dashboardMapping?.mapping ?? fallbackDashboardMapping(facility.siteName)?.mapping ?? []);
+    const dashboard = buildEngineeringDashboardSnapshot(calculationLogs, log.month, mapping);
+    const calculated = calculateEnergyCostForMonth(calculationLogs, log.month);
+    const rackUnit = facility.rackUnitCapacity?.find(row => row.month === log.month) ?? null;
+    const upsGroups = dashboard?.upsGroups ?? [];
+    const upsCapacity = upsGroups.reduce((sum, row) => sum + (row.capacity ?? 0), 0);
+    const upsLoadKva = upsGroups.reduce((sum, row) => sum + row.totalKva, 0);
+    const upsLoadPercent = upsCapacity > 0 ? (upsLoadKva / upsCapacity) * 100 : null;
+    const buildingEnergyKwh = dashboard?.buildingEnergyKwh ?? calculated.buildingEnergyKwh;
+    const buildingCostThb = dashboard?.buildingCostThb ?? calculated.buildingElectricityCostThb;
+    const floorEnergyKwh = dashboard?.floorEnergyKwh ?? calculated.floorEnergyKwh;
+    const floorCostThb = dashboard?.floorCostThb ?? calculated.floorElectricityCostThb;
+    const floorSharePercent = dashboard?.floorSharePercent ?? calculated.energySharePercent;
+    metrics.push({
+      month: log.month,
+      buildingEnergyKwh,
+      buildingCostThb,
+      floorEnergyKwh,
+      floorCostThb,
+      floorSharePercent,
+      upsEnergyKwh: dashboard?.totalUpsEnergyKwh ?? calculated.upsEnergyKwh,
+      airEnergyKwh: dashboard?.airEnergyKwh ?? calculated.airEnergyKwh,
+      dcEnergyKwh: dashboard?.totalDcEnergyKwh ?? calculated.dcEnergyKwh,
+      upsLoadKw: dashboard?.totalUpsKw ?? null,
+      upsLoadPercent,
+      rackTotalU: rackUnit?.totalU ?? null,
+      rackUsedU: rackUnit?.usedU ?? null,
+      rackAvailableU: rackUnit?.availableU ?? null,
+      rackUsagePercent: rackUnit && rackUnit.totalU > 0 ? (rackUnit.usedU / rackUnit.totalU) * 100 : null
+    });
+    dashboardRows.push([
+      log.month,
+      dashboard?.daysInMonth ?? null,
+      dashboard?.previousMonth ?? null,
+      dashboard?.totalUpsKw ?? null,
+      dashboard?.totalUpsKva ?? null,
+      dashboard?.totalUpsEnergyKwh ?? null,
+      dashboard?.airEnergyKwh ?? null,
+      dashboard?.totalDcEnergyKwh ?? null,
+      buildingEnergyKwh,
+      buildingCostThb,
+      floorEnergyKwh,
+      floorCostThb,
+      dashboard?.averageRateThbPerKwh ?? calculated.averageElectricityRateThbPerKwh,
+      floorSharePercent,
+      floorEnergyKwh === null || !dashboard ? "Partial" : "Complete",
+      rackUnit?.totalU ?? null,
+      rackUnit?.usedU ?? null,
+      rackUnit?.availableU ?? null,
+      rackUnit?.availabilityPct ?? null
+    ]);
+    for (const row of [...(dashboard?.upsGroups ?? []), ...(dashboard?.upsOverallGroups ?? [])]) dashboardUpsRows.push([log.month, row.name, row.totalKw, row.totalKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh]);
+    for (const row of dashboard?.upsDetails ?? []) dashboardDetailRows.push([log.month, row.no, row.umdb, row.upsId, row.acPowerPanel, row.sts, row.oudb, row.voltage, row.current, row.loadKw, row.loadKva, row.capacity, row.loadPercent]);
+    for (const field of dashboard?.airFields ?? []) dashboardAirRows.push([log.month, field, dashboard.airPrevious[field], dashboard.airCurrent[field], dashboard.airDifference[field]]);
+    for (const row of dashboard?.dcPanels ?? []) dashboardDcRows.push([log.month, row.panelId, row.voltage, row.current, row.dcPowerW, row.acCurrentA, row.acPowerW, row.monthlyEnergyKwh]);
+  }
+  return { metrics, dashboardRows, dashboardUpsRows, dashboardDetailRows, dashboardAirRows, dashboardDcRows };
+}
+
 /**
  * Builds a workbook from the same DTOs used by the Web screens.  The old
  * implementation exported only four compact CSV-like sheets, which silently
@@ -173,6 +252,7 @@ function fallbackDashboardMapping(siteName: string): DashboardUpsMappingReport |
 export async function workbookForFacilities(facilities: ExportFacility[]) {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
+  const dashboardPlans: ExcelDashboardPlan[] = [];
   for (const facility of facilities) {
     const prefix = facility.siteName.replace(/[^a-z0-9]+/giu, "-").slice(0, 10) || "facility";
     const logs = [...facility.logs].sort((a, b) => a.month.localeCompare(b.month));
@@ -184,6 +264,9 @@ export async function workbookForFacilities(facilities: ExportFacility[]) {
       ...(facility.upsGroupHistory?.rows ?? []).map(row => row.month)
     ]);
     const airFields = [...new Set(logs.flatMap(log => Object.keys(log.air.meters ?? {}).concat(["eb41a", "eb41b", "eb42a", "eb42b"])))].sort();
+
+    const dashboardModel = buildExcelDashboardModel(logs, calculationLogs, facility);
+    dashboardPlans.push(addInteractiveDashboard(workbook, prefix, facility.siteName, dashboardModel.metrics));
 
     addTableSheet(workbook, prefix, "UPS_Loads", ["Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Raw phases JSON", "Last Saved"], logs.flatMap(log => log.ups.map(row => [log.month, row.upsId, row.voltage, row.current, row.loadKw, row.loadKva, JSON.stringify(row.phases ?? {}), log.lastSavedUps])));
     addTableSheet(workbook, prefix, "Air_Inputs", ["Month", ...airFields.map(field => `${field.toUpperCase()} (GWh)`), "Raw meters JSON", "Last Saved"], logs.map(log => [log.month, ...airFields.map(field => (log.air as unknown as Record<string, number | null | undefined>)[field] ?? log.air.meters?.[field] ?? null), JSON.stringify(log.air.meters ?? {}), log.lastSavedAir]));
@@ -208,41 +291,7 @@ export async function workbookForFacilities(facilities: ExportFacility[]) {
     });
     addTableSheet(workbook, prefix, "Calculated_Energy", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "Floor Energy (kWh)", "Floor Cost (THB)", "Average Rate (THB/kWh)", "Floor Share (%)", "Status"], calculated);
 
-    const dashboardRows: unknown[][] = [];
-    const dashboardUpsRows: unknown[][] = [];
-    const dashboardDetailRows: unknown[][] = [];
-    const dashboardAirRows: unknown[][] = [];
-    const dashboardDcRows: unknown[][] = [];
-    for (const log of logs) {
-      const mapping = buildDashboardUpsMapping(facility.upsGroupHistory ?? null, log.month, facility.dashboardMapping?.mapping ?? fallbackDashboardMapping(facility.siteName)?.mapping ?? []);
-      const dashboard = buildEngineeringDashboardSnapshot(calculationLogs, log.month, mapping);
-      const rackUnit = facility.rackUnitCapacity?.find(row => row.month === log.month) ?? null;
-      dashboardRows.push([
-        log.month,
-        dashboard?.daysInMonth ?? null,
-        dashboard?.previousMonth ?? null,
-        dashboard?.totalUpsKw ?? null,
-        dashboard?.totalUpsKva ?? null,
-        dashboard?.totalUpsEnergyKwh ?? null,
-        dashboard?.airEnergyKwh ?? null,
-        dashboard?.totalDcEnergyKwh ?? null,
-        dashboard?.buildingEnergyKwh ?? null,
-        dashboard?.buildingCostThb ?? null,
-        dashboard?.floorEnergyKwh ?? null,
-        dashboard?.floorCostThb ?? null,
-        dashboard?.averageRateThbPerKwh ?? null,
-        dashboard?.floorSharePercent ?? null,
-        dashboard?.floorEnergyKwh === null || !dashboard ? "Partial" : "Complete",
-        rackUnit?.totalU ?? null,
-        rackUnit?.usedU ?? null,
-        rackUnit?.availableU ?? null,
-        rackUnit?.availabilityPct ?? null
-      ]);
-      for (const row of [...(dashboard?.upsGroups ?? []), ...(dashboard?.upsOverallGroups ?? [])]) dashboardUpsRows.push([log.month, row.name, row.totalKw, row.totalKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh]);
-      for (const row of dashboard?.upsDetails ?? []) dashboardDetailRows.push([log.month, row.no, row.umdb, row.upsId, row.acPowerPanel, row.sts, row.oudb, row.voltage, row.current, row.loadKw, row.loadKva, row.capacity, row.loadPercent]);
-      for (const field of dashboard?.airFields ?? []) dashboardAirRows.push([log.month, field, dashboard.airPrevious[field], dashboard.airCurrent[field], dashboard.airDifference[field]]);
-      for (const row of dashboard?.dcPanels ?? []) dashboardDcRows.push([log.month, row.panelId, row.voltage, row.current, row.dcPowerW, row.acCurrentA, row.acPowerW, row.monthlyEnergyKwh]);
-    }
+    const { dashboardRows, dashboardUpsRows, dashboardDetailRows, dashboardAirRows, dashboardDcRows } = dashboardModel;
     addTableSheet(workbook, prefix, "Dashboard-FAC", ["Month", "Days", "Previous Month", "UPS Total kW", "UPS Total kVA", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "Building Energy (kWh)", "Building Cost (THB)", "Floor Energy (kWh)", "Floor Cost (THB)", "Average Rate (THB/kWh)", "Floor Share (%)", "Status", "Rack Total (U)", "Rack Used (U)", "Rack Available (U)", "Rack Availability (%)"], dashboardRows);
     addTableSheet(workbook, prefix, "Dashboard-FAC UPS", ["Month", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)"], dashboardUpsRows);
     addTableSheet(workbook, prefix, "Dashboard-FAC Details", ["Month", "No", "UMDB", "UPS ID", "AC Power Panel", "STS", "OUDB", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Capacity", "Load (%)"], dashboardDetailRows);
@@ -258,10 +307,21 @@ export async function workbookForFacilities(facilities: ExportFacility[]) {
     const rackRecords = facility.rack?.records ?? [];
     addTableSheet(workbook, prefix, "Rack Capacity Raw", ["Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], rackRecords.map(row => [facility.rack?.sourceSnapshot ?? null, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
   }
+  workbookDashboardPlans.set(workbook, dashboardPlans);
   return workbook;
 }
 
 type ExportAdditional = Omit<ExportFacility, "siteName" | "logs">;
+
+/** Serializes the workbook and adds native OOXML charts to each interactive
+ * Dashboard sheet. Formula cells are recalculated by Excel when the file is
+ * opened, while cached values keep the default/latest month immediately
+ * visible in viewers that do not calculate formulas themselves. */
+export async function writeInteractiveExcelWorkbook(workbook: any): Promise<Uint8Array> {
+  workbook.calcProperties.fullCalcOnLoad = true;
+  const buffer = await workbook.xlsx.writeBuffer();
+  return injectInteractiveDashboardCharts(buffer, workbookDashboardPlans.get(workbook) ?? []);
+}
 
 /** Supports both the object form used by CleanWeb v1 and the positional form
  * retained by the older Web report screen.  Both forms produce the same full
@@ -274,7 +334,7 @@ export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName
     ? { calculationLogs: additionalOrCalculationLogs, rack, rackHistory, rackUnitCapacity, upsGroupHistory, dashboardMapping }
     : additionalOrCalculationLogs;
   const workbook = await workbookForFacilities([{ siteName, logs, ...additional }]);
-  const data = await workbook.xlsx.writeBuffer();
+  const data = await writeInteractiveExcelWorkbook(workbook);
   download(data, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
@@ -288,7 +348,7 @@ export function exportAllFacilitiesCsv(facilities: ExportFacility[]): void {
 
 export async function exportAllFacilitiesExcel(facilities: ExportFacility[]): Promise<void> {
   const workbook = await workbookForFacilities(facilities);
-  const data = await workbook.xlsx.writeBuffer();
+  const data = await writeInteractiveExcelWorkbook(workbook);
   download(data, "all-facilities-energy-monitor.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
