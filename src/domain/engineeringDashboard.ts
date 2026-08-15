@@ -39,7 +39,14 @@ export function buildEngineeringDashboardSnapshot(
   const daysInMonth = getDaysInMonth(selectedMonth);
   const upsGroups = topology?.upsGroups?.length
     ? computeUpsGroupSummary(activeLog, topology.upsGroups).map(mapGroup)
-    : (upsMapping?.summary ?? []).map(row => {
+    : (upsMapping?.summary?.length ? upsMapping.summary : activeLog.ups.map(record => ({
+      no: 0,
+      name: record.upsId,
+      totalLoadKw: record.loadKw,
+      totalLoadKva: record.loadKva,
+      capacity: null,
+      loadPercent: null
+    }))).map(row => {
       const totalKw = row.totalLoadKw ?? 0;
       const totalKva = row.totalLoadKva ?? 0;
       const loadPercent = row.loadPercent;
@@ -47,7 +54,11 @@ export function buildEngineeringDashboardSnapshot(
     });
   const configuredRows = topology?.upsMapping ?? [];
   const workbookRows = upsMapping?.mapping ?? [];
-  const detailRows = workbookRows.length > 0 ? workbookRows : configuredRows.map(row => ({ ...row, acPowerPanel: "—", voltage: null, current: null, loadKw: null, loadKva: null, loadPercent: null }));
+  const detailRows = workbookRows.length > 0
+    ? workbookRows
+    : configuredRows.length > 0
+      ? configuredRows.map(row => ({ ...row, acPowerPanel: "—", voltage: null, current: null, loadKw: null, loadKva: null, loadPercent: null }))
+      : activeLog.ups.map((record, index) => ({ no: index + 1, umdb: "—", upsId: record.upsId, acPowerPanel: "—", sts: "—", oudb: "—", voltage: record.voltage, current: record.current, loadKw: record.loadKw, loadKva: record.loadKva, capacity: null, loadPercent: null }));
   const hasAcPowerPanel = detailRows.some(row => row.acPowerPanel !== "—" && row.acPowerPanel !== "-");
   const upsOverallGroups = hasAcPowerPanel
     ? computeUpsGroupSummary(activeLog, SRINAKARIN_OVERALL_GROUPS).map(mapGroup)

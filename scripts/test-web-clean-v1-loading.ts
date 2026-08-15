@@ -11,6 +11,7 @@ assert.deepEqual(historyMonthsForScope([], "dashboard"), []);
 
 const apiService = readFileSync(new URL("../server/services/apiService.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
+const reportPreview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
 assert.match(apiService, /historyMonthsForScope/);
 assert.match(app, /Unable to load facilities/);
 assert.match(app, /setFacilityError\(`Unable to load facilities/);
@@ -24,5 +25,9 @@ assert.match(app, /availableMonths=\{reportAvailableMonths\}/);
 assert.doesNotMatch(app, /availableMonths=\{history\.months\}/);
 assert.match(app, /onYearChange=\{loadHistoricalYear\}/);
 assert.match(app, /loadHistory\(siteId, \{ scope: "full" \}\)/);
+assert.match(app, /const refreshReports = useCallback/);
+assert.match(app, /onRefresh=\{refreshReports\}/);
+assert.match(reportPreview, /onRefresh\?: \(\) => Promise<void>/);
+assert.match(reportPreview, /Refreshing/);
 
 console.log("web-clean-v1 loading: six-month initial window and non-destructive recovery contract passed");

@@ -176,6 +176,30 @@ check("Month Range changes the actual PDF report scope, not only the UI label", 
 check("PDF cover omits the internal source workbook label", !rangeReportHtml.includes("Source workbook:"));
 check("PDF cover omits the application version label", !rangeReportHtml.includes("Application version:"));
 
+const upsReportLog: MonthlyLog = {
+  ...log("2026-07"),
+  ups: [{ upsId: "UPS 11A", voltage: 220, current: 10, loadKw: 2, loadKva: 2.5 }]
+};
+const reportWithDashboardData = facilityReportData(
+  [upsReportLog],
+  "Rangsit",
+  "2026-07",
+  null,
+  [],
+  [],
+  [upsReportLog],
+  {
+    upsGroupHistory: {
+      sourceSheet: "2. UPS Group History",
+      rows: [{ facility: "Rangsit", month: "2026-07", group: "UPS 11", totalLoadKw: 2, totalLoadKva: 2.5, capacity: 400, loadPercent: 0.625, availablePercent: 99.375, monthlyEnergyKwh: 1488, generatedAt: null, dataVersion: 1 }]
+    }
+  }
+);
+const reportWithDashboardHtml = buildReportHtml(reportWithDashboardData);
+check("PDF engineering analysis receives the persisted UPS status", reportWithDashboardData.engineeringDashboard?.upsGroups.some(group => group.name === "UPS 11") === true && reportWithDashboardHtml.includes("UPS Load Status"));
+check("PDF includes the executive dashboard card page", reportWithDashboardHtml.includes("Executive Dashboard") && reportWithDashboardHtml.includes("Total Building Energy"));
+check("Executive report selection includes the dashboard trend charts", buildReportHtml(reportWithDashboardData, ["executive"]).includes("Monthly Energy Consumption Trend"));
+
 const landscapePlacement = fitPdfImageToPage(1123, 794);
 check("PDF page fit leaves a 10mm minimum outer margin", landscapePlacement.xMm >= 10 && landscapePlacement.yMm >= 10);
 check("PDF page fit preserves the rendered page aspect ratio", Math.abs(landscapePlacement.widthMm / landscapePlacement.heightMm - 1123 / 794) < 0.000001);
