@@ -110,6 +110,8 @@ check("Interactive Dashboard cards use the selected month", dashboardSheetXml.in
 const chartFile = chartParts.length > 0 ? interactiveZip.file(chartParts[0]) : null;
 const chartXml = chartFile ? await chartFile.async("string") : "";
 check("Interactive Dashboard chart references the hidden dashboard data sheet", chartXml.includes("Dashboard_Data") && chartXml.includes("Monthly Energy Consumption Trend"));
+check("Interactive line charts suppress per-point series and category labels", chartXml.includes("showCatName val=\"0\"") && chartXml.includes("showSerName val=\"0\"") && chartXml.includes("showVal val=\"0\""));
+check("Interactive charts provide a bottom legend", chartXml.includes("legendPos val=\"b\"") && chartXml.includes("overlay val=\"0\""));
 check("Interactive Excel export contains a worksheet drawing relationship", interactiveParts.some(name => /xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(name)) && interactiveParts.some(name => /xl\/drawings\/drawing\d+\.xml$/.test(name)));
 const rackOnlyExport = await workbookForFacilities([{
   siteName: "Rangsit",
