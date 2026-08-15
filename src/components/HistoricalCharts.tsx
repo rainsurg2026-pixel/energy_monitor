@@ -4,6 +4,7 @@ import { formatNumber2 } from "../utils/numberFormatBridge";
 import { buildMonthlyChartData } from "../utils/chartData";
 import TrendLineChart from "./TrendLineChart";
 import { filterLogsForDisplay } from "../utils/displayPeriod";
+import { recentMonthsThroughSelected } from "../utils/historyWindow";
 import { TrendingUp, Activity } from "lucide-react";
 
 interface HistoricalChartsProps {
@@ -15,12 +16,13 @@ interface HistoricalChartsProps {
   dataSourceLabel?: string | null;
   lang?: "th" | "en";
   displayPeriod?: string;
+  selectedMonth: string;
 }
 
 type ChartMetric = "energy" | "cost" | "subsystems";
 type TrendPeriod = 3 | 6 | 12;
 
-export default function HistoricalCharts({ logs, isGoogleConnected = false, googleUserEmail = null, dataSourceLabel = null, lang = "th", displayPeriod = "2026" }: HistoricalChartsProps) {
+export default function HistoricalCharts({ logs, isGoogleConnected = false, googleUserEmail = null, dataSourceLabel = null, lang = "th", displayPeriod = "2026", selectedMonth }: HistoricalChartsProps) {
   const th = lang === "th";
   const copy = th ? {
     noData: "ยังไม่มีข้อมูลประวัติ",
@@ -52,13 +54,19 @@ export default function HistoricalCharts({ logs, isGoogleConnected = false, goog
     needTwo: "At least 2 saved months are needed to plot historical curves."
   };
   const [activeMetric, setActiveMetric] = useState<ChartMetric>("energy");
-  const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>(12);
+  const [trendPeriod, setTrendPeriod] = useState<TrendPeriod>(6);
   // Build each metric from the full retained history so January calculations
   // can still use a prior-year source row, then limit only the visible chart.
   const monthlyData = useMemo(() => buildMonthlyChartData(logs), [logs]);
   const visibleData = useMemo(
-    () => monthlyData.filter(point => filterLogsForDisplay([{ month: point.month }], displayPeriod).length > 0).slice(-trendPeriod),
-    [monthlyData, trendPeriod, displayPeriod]
+    () => {
+      const displayMonths = monthlyData
+        .filter(point => filterLogsForDisplay([{ month: point.month }], displayPeriod).length > 0)
+        .map(point => point.month);
+      const selectedMonths = new Set(recentMonthsThroughSelected(displayMonths, selectedMonth, trendPeriod));
+      return monthlyData.filter(point => selectedMonths.has(point.month)).sort((left, right) => left.month.localeCompare(right.month));
+    },
+    [monthlyData, trendPeriod, displayPeriod, selectedMonth]
   );
   const selectedValues = visibleData.map(point => activeMetric === "energy" ? point.buildingEnergy : activeMetric === "cost" ? point.buildingCost : point.upsEnergy);
   const total = selectedValues.reduce((sum, value) => value === null ? sum : sum + value, 0);

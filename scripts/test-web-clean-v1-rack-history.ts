@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const editors = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityEditors.tsx", import.meta.url), "utf8");
+const entryWorkspace = readFileSync(new URL("../src/web-clean-v1/WebEntryWorkspace.tsx", import.meta.url), "utf8");
 
 assert.match(app, /const RackCapacityHistoryPanel = lazy\(\(\) => import\("\.\.\/components\/rack\/RackCapacityHistoryPanel"\)\)/);
 assert.match(app, /const RackCapacityForecast = lazy\(\(\) => import\("\.\.\/components\/rack\/Forecast"/);
@@ -26,7 +27,9 @@ assert.match(app, /<RackCapacityTimeline canSelectMonth=\{selected => selected >
 assert.match(app, /onSelectMonth=\{selected => void selectMonth\(selected\)\}/);
 assert.match(app, /allowedStartMonth=\{bootstrap\?\.displayPeriod\.startMonth \?\? month\}/);
 assert.match(app, /allowedEndMonth=\{bootstrap \? \(bootstrap\.displayPeriod\.endMonth < todayMonth\(\) \? bootstrap\.displayPeriod\.endMonth : todayMonth\(\)\) : month\}/);
-assert.match(app, /<WebRackUnitCapacityEditor lang=\{lang\}/);
+const rackView = app.slice(app.indexOf("function RackCapacityView"), app.indexOf("function Login"));
+assert.doesNotMatch(rackView, /<WebRackUnitCapacityEditor/);
+assert.match(entryWorkspace, /<RackUnitCapacityEntry /);
 assert.match(editors, /lang\?: "th" \| "en"/);
 assert.match(editors, /ความจุหน่วยแร็ก/);
 assert.match(editors, /บันทึก snapshot ประจำเดือน/);

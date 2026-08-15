@@ -19,7 +19,7 @@ import { ImagePlus, Boxes } from "lucide-react";
 import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
 import type { IDataProvider } from "../../data/IDataProvider";
 import type { StoredImageMeta } from "../../desktop";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend } from "recharts";
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Legend, LabelList } from "recharts";
 import { useRackCapacity } from "./RackCapacityContext";
 import { formatRatioPercent } from "../../utils/rackCapacity";
 import { monthLabelLong, monthLabelShort, shiftMonth } from "../../utils/monthUtils";
@@ -27,9 +27,9 @@ import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../.
 import { utilizationColorHex } from "../../utils/capacityHealth";
 import { formatTimestamp } from "../../utils";
 import { findPreviousRackUnitCapacityRow } from "../../utils/rackUnitCapacity";
-import { formatFixedPercentage } from "../../utils/numberFormatBridge";
+import { formatCompactLabel, formatFixedPercentage } from "../../utils/numberFormatBridge";
 
-const TREND_MONTHS = 12;
+const TREND_MONTHS = 6;
 
 /** `refreshKey` bumps whenever an image is saved anywhere on the page
  *  (RackUnitCapacityPanel's onImageHistorySaved), forcing a re-fetch for
@@ -107,6 +107,13 @@ export const RackUnitCapacitySummary: React.FC<{ provider?: Pick<IDataProvider, 
       };
     });
   }, [sortedRows, reportingMonth, lang]);
+
+  const chartMax = React.useMemo(() => {
+    const maxValue = trendChartData.reduce((max, row) => Math.max(max, row.used ?? 0, row.available ?? 0, row.total ?? 0), 0);
+    return maxValue > 0 ? Math.ceil((maxValue * 1.15) / 100) * 100 : 100;
+  }, [trendChartData]);
+
+  const formatTrendLabel = (value: number | string | undefined) => typeof value === "number" ? formatCompactLabel(value) : "";
 
   const usageColor = utilizationColorHex(usagePctNow);
 
@@ -224,15 +231,21 @@ export const RackUnitCapacitySummary: React.FC<{ provider?: Pick<IDataProvider, 
             <p className="text-sm text-slate-300 mb-2">{lang === "th" ? `แนวโน้มความจุหน่วยแร็ค ${TREND_MONTHS} เดือน` : `${TREND_MONTHS}-Month Rack Unit Capacity Trend`}</p>
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={trendChartData}>
+                <LineChart data={trendChartData} margin={{ top: 18, right: 12, left: 4, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
                   <XAxis dataKey="month" stroke="#64748b" fontSize={11} />
-                  <YAxis stroke="#64748b" fontSize={11} />
+                  <YAxis stroke="#64748b" fontSize={11} domain={[0, chartMax]} />
                   <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Line type="monotone" dataKey="used" name={lang === "th" ? "ใช้แล้ว (U)" : "Used (U)"} stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
-                  <Line type="monotone" dataKey="available" name={lang === "th" ? "ว่าง (U)" : "Available (U)"} stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} connectNulls={false} />
-                  <Line type="monotone" dataKey="total" name={lang === "th" ? "ทั้งหมด (U)" : "Total (U)"} stroke="#64748b" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2 }} connectNulls={false} />
+                  <Line type="monotone" dataKey="used" name={lang === "th" ? "ใช้แล้ว (U)" : "Used (U)"} stroke="#f97316" strokeWidth={2} dot={{ r: 3 }} connectNulls={false}>
+                    <LabelList dataKey="used" position="top" offset={6} formatter={formatTrendLabel} />
+                  </Line>
+                  <Line type="monotone" dataKey="available" name={lang === "th" ? "ว่าง (U)" : "Available (U)"} stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} connectNulls={false}>
+                    <LabelList dataKey="available" position="top" offset={6} formatter={formatTrendLabel} />
+                  </Line>
+                  <Line type="monotone" dataKey="total" name={lang === "th" ? "ทั้งหมด (U)" : "Total (U)"} stroke="#64748b" strokeWidth={2} strokeDasharray="4 3" dot={{ r: 2 }} connectNulls={false}>
+                    <LabelList dataKey="total" position="top" offset={6} formatter={formatTrendLabel} />
+                  </Line>
                 </LineChart>
               </ResponsiveContainer>
             </div>

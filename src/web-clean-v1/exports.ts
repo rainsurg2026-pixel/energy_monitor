@@ -29,9 +29,22 @@ export interface ExportFacility {
   rackUnitCapacity?: ExportRackUnitCapacityRow[];
   upsGroupHistory?: UpsGroupHistoryReport | null;
   dashboardMapping?: DashboardUpsMappingReport | null;
+  /** The selected month's image loaded from the authenticated Storage API. */
+  rackUnitCapacityImageDataUri?: string | null;
+  rackUnitCapacityImageMeta?: ReportData["rackUnitCapacityImageMeta"];
   /** Explicit report scope for secondary tables when the selected month has
    * no MonthlyLog (for example a Rack Unit-only historical month). */
   reportingMonths?: string[];
+}
+
+export interface ReportDataExtras {
+  /** Persisted Dashboard-FAC group status for the selected month. */
+  upsGroupHistory?: UpsGroupHistoryReport | null;
+  /** Desktop Dashboard-FAC hardware mapping, when available. */
+  dashboardMapping?: DashboardUpsMappingReport | null;
+  /** Authenticated web image bytes, already converted to a data URI. */
+  rackUnitCapacityImageDataUri?: string | null;
+  rackUnitCapacityImageMeta?: ReportData["rackUnitCapacityImageMeta"];
 }
 
 /** The GET /racks API response shape (server/services/apiService.ts's
@@ -255,10 +268,10 @@ type ExportAdditional = Omit<ExportFacility, "siteName" | "logs">;
  * workbook, including raw, saved, calculated, Dashboard-FAC, rack, and image
  * metadata sheets. */
 export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, additional?: ExportAdditional): Promise<void>;
-export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, calculationLogs?: MonthlyLog[], rack?: RackCapacityReport | null, rackHistory?: RackCapacityHistoryRow[], rackUnitCapacity?: ExportRackUnitCapacityRow[]): Promise<void>;
-export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, additionalOrCalculationLogs: ExportAdditional | MonthlyLog[] = {}, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: ExportRackUnitCapacityRow[] = []): Promise<void> {
+export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, calculationLogs?: MonthlyLog[], rack?: RackCapacityReport | null, rackHistory?: RackCapacityHistoryRow[], rackUnitCapacity?: ExportRackUnitCapacityRow[], upsGroupHistory?: UpsGroupHistoryReport | null, dashboardMapping?: DashboardUpsMappingReport | null): Promise<void>;
+export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName?: string, additionalOrCalculationLogs: ExportAdditional | MonthlyLog[] = {}, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: ExportRackUnitCapacityRow[] = [], upsGroupHistory: UpsGroupHistoryReport | null = null, dashboardMapping: DashboardUpsMappingReport | null = null): Promise<void> {
   const additional: ExportAdditional = Array.isArray(additionalOrCalculationLogs)
-    ? { calculationLogs: additionalOrCalculationLogs, rack, rackHistory, rackUnitCapacity }
+    ? { calculationLogs: additionalOrCalculationLogs, rack, rackHistory, rackUnitCapacity, upsGroupHistory, dashboardMapping }
     : additionalOrCalculationLogs;
   const workbook = await workbookForFacilities([{ siteName, logs, ...additional }]);
   const data = await workbook.xlsx.writeBuffer();
@@ -328,13 +341,17 @@ function reportRows(logs: MonthlyLog[], calculationLogs: MonthlyLog[] = logs): R
   });
 }
 
-export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs): ReportData {
+export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, extras: ReportDataExtras = {}): ReportData {
   // `logs` is the visible/reporting-period scope. `calculationLogs` is the
   // complete history used only to resolve previous readings and derived
   // values. Keeping these separate makes a Month Range affect the actual
   // report pages instead of silently exporting the full calculation history.
   const rows = reportRows(logs, calculationLogs);
   const current = rows.find(row => row.month === selectedMonth) ?? null;
+  const dashboardMapping = extras.dashboardMapping?.mapping?.length
+    ? extras.dashboardMapping
+    : fallbackDashboardMapping(siteName);
+  const upsMapping = buildDashboardUpsMapping(extras.upsGroupHistory ?? null, selectedMonth, dashboardMapping?.mapping ?? []);
   return {
     title: "Data Center Energy & Facility Monitor Report",
     thaiSubtitle: "รายงานการใช้พลังงานและระบบวิศวกรรม",
@@ -349,18 +366,33 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
     validationWarnings: current?.status === "Partial" ? ["The selected month has incomplete source readings."] : [],
     monthlyRows: rows,
     currentRow: current,
-    engineeringDashboard: buildEngineeringDashboardSnapshot(calculationLogs, selectedMonth, null),
+    engineeringDashboard: buildEngineeringDashboardSnapshot(calculationLogs, selectedMonth, upsMapping),
     rack,
     rackHistory,
     rackUnitCapacity,
-    // Binary Rack Unit Capacity images remain in server-side object storage;
-    // the export keeps the numeric/history tables authoritative and does not
-    // fabricate a browser-visible data URI for an image that was not loaded.
-    rackUnitCapacityImageDataUri: null,
-    rackUnitCapacityImageMeta: null,
+    rackUnitCapacityImageDataUri: extras.rackUnitCapacityImageDataUri ?? null,
+    rackUnitCapacityImageMeta: extras.rackUnitCapacityImageMeta ?? null,
     comparison: null,
     rackComparison: null
   };
+}
+
+function reportDataFromFacility(facility: ExportFacility, selectedMonth: string): ReportData {
+  return facilityReportData(
+    facility.logs,
+    facility.siteName,
+    selectedMonth,
+    facility.rack ?? null,
+    facility.rackHistory ?? [],
+    facility.rackUnitCapacity ?? [],
+    facility.calculationLogs ?? facility.logs,
+    {
+      upsGroupHistory: facility.upsGroupHistory ?? null,
+      dashboardMapping: facility.dashboardMapping ?? null,
+      rackUnitCapacityImageDataUri: facility.rackUnitCapacityImageDataUri ?? null,
+      rackUnitCapacityImageMeta: facility.rackUnitCapacityImageMeta ?? null
+    }
+  );
 }
 
 function ensureExtension(fileName: string, extension: string): string {
@@ -374,6 +406,8 @@ export interface PdfImagePlacement {
   widthMm: number;
   heightMm: number;
 }
+
+const PDF_RENDER_SCALE = 2;
 
 /** Fit a rendered report page inside an A4 landscape content box without
  * changing its aspect ratio. This is deliberately pure so the geometry can
@@ -448,7 +482,10 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
     for (const [index, page] of pages.entries()) {
       const canvas = await html2canvas(page, {
         backgroundColor: "#ffffff",
-        scale: 1,
+        // Render every PDF page at 2x before fitting it into A4. The prior
+        // 1x JPEG pipeline visibly softened SVG text, chart labels, and
+        // attached Rack Unit Capacity images across the whole document.
+        scale: PDF_RENDER_SCALE,
         useCORS: true,
         logging: false,
         width: Math.max(page.scrollWidth, 1),
@@ -457,7 +494,7 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
       });
       if (index > 0) pdf.addPage("a4", "landscape");
       const placement = fitPdfImageToPage(canvas.width, canvas.height);
-      pdf.addImage(canvas.toDataURL("image/jpeg", 0.94), "JPEG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
+      pdf.addImage(canvas.toDataURL("image/png"), "PNG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
     }
     pdf.save(ensureExtension(fileName, "pdf"));
   } finally {
@@ -465,8 +502,8 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
   }
 }
 
-export async function exportDesktopPdf(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[]): Promise<void> {
-  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs);
+export async function exportDesktopPdf(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[], extras: ReportDataExtras = {}): Promise<void> {
+  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs, extras);
   await exportReportPdfFromHtml(buildReportHtml(data, sections), fileName ?? `Energy_Report_${siteName}_${selectedMonth}`);
 }
 
@@ -545,8 +582,8 @@ export function renderReportPopup(popup: Window, html: string, fileName?: string
  *  fileName (without extension) becomes the print dialog's suggested "Save
  *  as PDF" name, via document.title - the browser convention for print-to-PDF.
  *  `popup` must come from openReportPopup(), called synchronously on click. */
-export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly import("../reporting/reportingTypes").ReportSectionId[]): void {
-  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs);
+export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly import("../reporting/reportingTypes").ReportSectionId[], extras: ReportDataExtras = {}): void {
+  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs, extras);
   renderReportPopup(popup, buildReportHtml(data, sections), fileName);
 }
 
@@ -664,14 +701,14 @@ export async function exportSiteComparisonPdf(data: SiteComparisonExport, refere
   await exportReportPdfFromHtml(buildReportHtml(siteComparisonReportForDownload(data, referenceMonth, selfRack, otherRack), sections), fileName ?? `site-comparison-${referenceMonth}`);
 }
 
-export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[]): void {
-  const html = buildReportHtml(facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs), sections);
+export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[], extras: ReportDataExtras = {}): void {
+  const html = buildReportHtml(facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs, extras), sections);
   download(html, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.html`, "text/html;charset=utf-8");
 }
 
 export function exportAllFacilitiesHtml(facilities: ExportFacility[], selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): void {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs), sections));
+  const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth), sections));
   const html = reports.join("<div style=\"page-break-before:always\"></div>");
   download(html, fileName ?? "all-facilities-energy-monitor.html", "text/html;charset=utf-8");
 }
@@ -713,7 +750,7 @@ export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMo
 
 function allFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: string, sections?: readonly ReportSectionId[]): string {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs), sections));
+  const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth), sections));
   const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
   const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
   const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
@@ -729,7 +766,7 @@ export async function exportAllFacilitiesPdf(facilities: ExportFacility[], selec
  *  `popup` must come from openReportPopup(), called synchronously on click. */
 export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[], selectedMonth: string): void {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(facilityReportData(facility.logs, facility.siteName, selectedMonth, facility.rack ?? null, facility.rackHistory ?? [], facility.rackUnitCapacity ?? [], facility.calculationLogs ?? facility.logs)));
+  const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth)));
   const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
   const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
   const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");

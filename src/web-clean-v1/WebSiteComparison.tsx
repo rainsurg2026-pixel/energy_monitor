@@ -33,6 +33,12 @@ function withLeadingChartGap(data: Array<Record<string, string | number | null>>
   return [gap, ...data];
 }
 
+function comparisonChartYAxisDomain(data: Array<Record<string, string | number | null>>, sites: SiteComparisonExport["sites"], suffix: string): [number, number] {
+  const values = data.flatMap(row => sites.map(site => row[`${site.site.code}-${suffix}`])).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const maximum = Math.max(0, ...values);
+  return [0, maximum > 0 ? maximum * 1.12 : 1];
+}
+
 function rackCounts(snapshot: RackSnapshot | null) {
   const records = snapshot?.records ?? [];
   return {
@@ -52,13 +58,14 @@ function TrendCard({ title, icon, data, sites, suffix, unit }: {
   unit: string;
 }) {
   const chartData = withLeadingChartGap(data, sites.map(site => `${site.site.code}-${suffix}`));
+  const yDomain = comparisonChartYAxisDomain(data, sites, suffix);
   return <section className="h-[26rem] rounded-xl border border-slate-800 bg-slate-900 p-4">
     <h3 className="mb-3 flex items-center gap-2 font-semibold">{icon}{title}</h3>
     <ResponsiveContainer width="100%" height="90%">
-      <LineChart data={chartData}>
+      <LineChart data={chartData} margin={{ top: 24, right: 28, left: 12, bottom: 24 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
         <XAxis dataKey="month" tickFormatter={formatMonthLabel} />
-        <YAxis tickFormatter={value => formatCompact(Number(value), unit)} />
+        <YAxis domain={yDomain} tickFormatter={value => formatCompact(Number(value), unit)} />
         <Tooltip labelFormatter={label => formatMonthLabel(String(label))} formatter={(value: number | string | undefined) => value === null || value === undefined ? "—" : `${formatNumber2(Number(value))} ${unit}`} />
         <Legend />
         {sites.map((site, index) => <Line key={`${site.site.id}-${suffix}`} type="monotone" dataKey={`${site.site.code}-${suffix}`} name={site.site.name} stroke={siteColour(index)} connectNulls={false} dot={{ r: 3 }} isAnimationActive={false}>
