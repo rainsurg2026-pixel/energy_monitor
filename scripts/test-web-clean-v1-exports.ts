@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
-import { buildAllFacilitiesCsv, buildSiteComparisonCsv, facilityReportData, fitPdfImageToPage, workbookForFacilities, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
+import JSZip from "jszip";
+import { buildAllFacilitiesCsv, buildSiteComparisonCsv, facilityReportData, fitPdfImageToPage, workbookForFacilities, writeInteractiveExcelWorkbook, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
 import type { ReportData } from "../src/reports/reportTypes";
 import { buildCombinedCsv } from "../src/utils/exportData";
 import { buildReportHtml } from "../src/reports/pdf/reportHtml";
@@ -15,6 +16,7 @@ import { readUpsGroupHistoryFromBuffer } from "../src/reports/upsGroupHistoryRea
 import { readUpsMappingFromBuffer } from "../src/reports/upsMappingReader";
 import { readRackCapacityFromBuffer } from "../src/reports/rackCapacityReader";
 import { readRackCapacityHistoryFromBuffer } from "../src/excel/RackCapacityHistoryWriter";
+
 
 const log = (month: string): MonthlyLog => ({
   month,
@@ -92,6 +94,25 @@ check("Rack Unit Capacity export contains persisted Total (U)", (rackUnitSheet?.
 check("Rack Unit Capacity export exposes image attachment status without exposing storage keys", (rackUnitSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("Image Attached") && (rackUnitSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("Yes") && !(rackUnitSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("objectKey"));
 const savedValuesSheet = completeExportWorkbook.worksheets.find(sheet => sheet.name.includes("Saved_Values"));
 check("Saved Values export contains Rack Unit image metadata column", (savedValuesSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("Rack Unit Image JSON"));
+const interactiveXlsx = await writeInteractiveExcelWorkbook(completeExportWorkbook);
+const interactiveZip = await JSZip.loadAsync(interactiveXlsx);
+const interactiveParts = Object.keys(interactiveZip.files);
+const chartParts = interactiveParts.filter(name => /^xl\/charts\/chart\d+\.xml$/.test(name));
+check("Interactive Excel export contains native editable charts", chartParts.length >= 4);
+const dashboardXmlParts: string[] = [];
+for (const name of interactiveParts.filter(item => /^xl\/worksheets\/sheet\d+\.xml$/.test(item))) {
+  const file = interactiveZip.file(name);
+  if (file) dashboardXmlParts.push(await file.async("string"));
+}
+const dashboardSheetXml = dashboardXmlParts.find(xml => xml.includes("MATCH($B$3")) ?? "";
+check("Interactive Dashboard has a reporting-month dropdown", dashboardSheetXml.includes("dataValidations") && dashboardSheetXml.includes("$Z$2:$Z$2"));
+check("Interactive Dashboard cards use the selected month", dashboardSheetXml.includes("MATCH($B$3"));
+const chartFile = chartParts.length > 0 ? interactiveZip.file(chartParts[0]) : null;
+const chartXml = chartFile ? await chartFile.async("string") : "";
+check("Interactive Dashboard chart references the hidden dashboard data sheet", chartXml.includes("Dashboard_Data") && chartXml.includes("Monthly Energy Consumption Trend"));
+check("Interactive line charts suppress per-point series and category labels", chartXml.includes("showCatName val=\"0\"") && chartXml.includes("showSerName val=\"0\"") && chartXml.includes("showVal val=\"0\""));
+check("Interactive charts provide a bottom legend", chartXml.includes("legendPos val=\"b\"") && chartXml.includes("overlay val=\"0\""));
+check("Interactive Excel export contains a worksheet drawing relationship", interactiveParts.some(name => /xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(name)) && interactiveParts.some(name => /xl\/drawings\/drawing\d+\.xml$/.test(name)));
 const rackOnlyExport = await workbookForFacilities([{
   siteName: "Rangsit",
   logs: [],
