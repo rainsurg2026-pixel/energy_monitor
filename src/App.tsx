@@ -2565,6 +2565,7 @@ export default function App() {
             <div className="space-y-8 animate-fadeIn">
               <HistoricalCharts
                 logs={syncedLogs}
+                selectedMonth={selectedMonth}
                 isGoogleConnected={isGoogleConnected}
                 googleUserEmail={googleUserEmail}
                 lang={lang}
@@ -2572,6 +2573,7 @@ export default function App() {
               />
               <HistoricalExplorer
                 logs={syncedLogs}
+                selectedMonth={selectedMonth}
                 lang={lang}
                 isGoogleConnected={isGoogleConnected}
                 googleUserEmail={googleUserEmail}

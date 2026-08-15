@@ -12,6 +12,8 @@ export function isAllAvailableDisplayPeriod(period: string | null | undefined): 
 export function isMonthInDisplayPeriod(month: string, period: string | null | undefined): boolean {
   if (isAllAvailableDisplayPeriod(period)) return true;
   const year = String(period ?? "").trim();
+  const range = /^(\d{4}-\d{2})\.\.(\d{4}-\d{2})$/u.exec(year);
+  if (range) return month >= range[1] && month <= range[2];
   return /^\d{4}$/.test(year) && month.startsWith(`${year}-`);
 }
 

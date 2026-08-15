@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { INITIAL_HISTORY_MONTHS, historyMonthsForScope } from "../server/services/historyScope";
 import { readFileSync } from "node:fs";
+import { recentMonthsThroughSelected } from "../src/utils/historyWindow";
 
 const months = ["2025-01", "2025-02", "2025-03", "2025-04", "2025-05", "2025-06", "2025-07", "2025-08"];
 assert.equal(INITIAL_HISTORY_MONTHS, 6);
@@ -8,10 +9,14 @@ assert.deepEqual(historyMonthsForScope(months, "dashboard"), ["2025-03", "2025-0
 assert.deepEqual(historyMonthsForScope(months, "full"), months);
 assert.deepEqual(historyMonthsForScope(months, "rack"), months);
 assert.deepEqual(historyMonthsForScope([], "dashboard"), []);
+assert.deepEqual(recentMonthsThroughSelected(months, "2025-06", 6), ["2025-06", "2025-05", "2025-04", "2025-03", "2025-02", "2025-01"]);
+assert.deepEqual(recentMonthsThroughSelected([...months, "2026-01", "2026-02"], "2026-02", 6), ["2026-02", "2026-01", "2025-08", "2025-07", "2025-06", "2025-05"]);
 
 const apiService = readFileSync(new URL("../server/services/apiService.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const reportPreview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
+const historicalCharts = readFileSync(new URL("../src/components/HistoricalCharts.tsx", import.meta.url), "utf8");
+const historicalExplorer = readFileSync(new URL("../src/components/HistoricalExplorer.tsx", import.meta.url), "utf8");
 assert.match(apiService, /historyMonthsForScope/);
 assert.match(app, /Unable to load facilities/);
 assert.match(app, /setFacilityError\(`Unable to load facilities/);
@@ -29,5 +34,11 @@ assert.match(app, /const refreshReports = useCallback/);
 assert.match(app, /onRefresh=\{refreshReports\}/);
 assert.match(reportPreview, /onRefresh\?: \(\) => Promise<void>/);
 assert.match(reportPreview, /Refreshing/);
+assert.match(app, /selectedMonth=\{month\}/);
+assert.match(app, /displayPeriod=\{`\$\{bootstrap\?\.displayPeriod\.startMonth \?\? ""\}\.\.\$\{bootstrap\?\.displayPeriod\.endMonth \?\? ""\}`\}/);
+assert.match(historicalCharts, /selectedMonth: string/);
+assert.match(historicalCharts, /useState<TrendPeriod>\(6\)/);
+assert.match(historicalExplorer, /selectedMonth: string/);
+assert.match(historicalExplorer, /useState<HistoryRange>\("6"\)/);
 
 console.log("web-clean-v1 loading: six-month initial window and non-destructive recovery contract passed");

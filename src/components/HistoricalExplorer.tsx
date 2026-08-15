@@ -10,6 +10,7 @@ import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import RackCapacityHistoryPanel from "./rack/RackCapacityHistoryPanel";
 import { RackCapacityProvider } from "./rack/RackCapacityContext";
 import { filterLogsForDisplay } from "../utils/displayPeriod";
+import { recentMonthsThroughSelected } from "../utils/historyWindow";
 import {
   Zap,
   Thermometer,
@@ -44,6 +45,7 @@ interface HistoricalExplorerProps {
   rackCapacityHistory?: RackCapacityHistoryRow[];
   rackUnitCapacity?: RackUnitCapacityRow[];
   displayPeriod?: string;
+  selectedMonth: string;
 }
 
 type ExplorerTab = "ups" | "air" | "dc" | "energy" | "rack";
@@ -59,14 +61,14 @@ function getDaysInMonth(monthStr: string): number {
   return new Date(year, month, 0).getDate();
 }
 
-export default function HistoricalExplorer({ logs, lang, isGoogleConnected = false, googleUserEmail = null, onEditMonth, upsGroupHistory = null, activeFacilityId = null, rackCapacityHistory = [], rackUnitCapacity = [], displayPeriod = "2026" }: HistoricalExplorerProps) {
+export default function HistoricalExplorer({ logs, lang, isGoogleConnected = false, googleUserEmail = null, onEditMonth, upsGroupHistory = null, activeFacilityId = null, rackCapacityHistory = [], rackUnitCapacity = [], displayPeriod = "2026", selectedMonth }: HistoricalExplorerProps) {
   const displayLogs = useMemo(() => filterLogsForDisplay(logs, displayPeriod), [logs, displayPeriod]);
   const [activeTab, setActiveTab] = useState<ExplorerTab>("ups");
   const [searchQuery, setSearchQuery] = useState("");
   const [yearFilter, setYearFilter] = useState("All");
   const [monthFilter, setMonthFilter] = useState("All");
   const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
-  const [historyRange, setHistoryRange] = useState<HistoryRange>("all");
+  const [historyRange, setHistoryRange] = useState<HistoryRange>("6");
 
   const dict = {
     th: {
@@ -215,9 +217,8 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
     const months: string[] = displayLogs
       .map(log => normalizedMonth(log.month))
       .filter((month): month is string => month !== null);
-    return Array.from(new Set<string>(months))
-      .sort((a, b) => b.localeCompare(a));
-  }, [displayLogs]);
+    return recentMonthsThroughSelected(months, selectedMonth, months.length);
+  }, [displayLogs, selectedMonth]);
 
   // Quick Jump: only real, chronological months that actually exist in this
   // (already facility-scoped, via the `logs` prop) workbook, restricted to
@@ -230,13 +231,13 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       const normalized = normalizedMonth(log.month);
       if (normalized && !monthToLog.has(normalized)) monthToLog.set(normalized, log);
     }
-    const activeReportingYear = latestReportingMonths[0]?.slice(0, 4);
+    const activeReportingYear = selectedMonth.slice(0, 4) || latestReportingMonths[0]?.slice(0, 4);
     if (!activeReportingYear) return [];
     return latestReportingMonths
       .filter(month => month.startsWith(activeReportingYear))
       .map(month => monthToLog.get(month))
       .filter((log): log is MonthlyLog => log !== undefined);
-  }, [displayLogs, latestReportingMonths]);
+  }, [displayLogs, latestReportingMonths, selectedMonth]);
 
   // Core processing & filtering
   const filteredAndSortedLogs = useMemo(() => {
