@@ -45,20 +45,20 @@ export default function EnergyCostTable({
     lastSaved: "บันทึกล่าสุด",
     noSaved: "ยังไม่มีการบันทึกค่าไฟฟ้าเดือนนี้"
   } : {
-    title: "Building Energy Consumption & Electricity Cost",
-    description: "Input overall facility utility grid consumption metrics in Kilowatt-Hours (kWh) and billing amount in Thai Baht (THB).",
-    formula: "Formula: Average Electricity Rate (THB/kWh) = Building Electricity Cost (THB) / Building Energy Consumption (kWh)",
+    title: "Electricity Billing Record",
+    description: "Enter monthly building electricity consumption and billing cost.",
+    formula: "Formula: Average Unit Rate (THB/kWh) = Electricity Cost (THB) ÷ Energy Consumption (kWh)",
     reset: "Reset",
-    save: "Save Energy Cost",
-    saved: "Energy Cost Saved!",
+    save: "Save Billing Data",
+    saved: "Billing Saved!",
     month: "Month",
     buildingEnergy: "Building Energy Consumption (kWh)",
     buildingCost: "Building Electricity Cost (THB)",
-    rate: "Calculated Unit Rate",
+    rate: "AVERAGE UNIT RATE (THB/kWh)",
     enterBoth: "Enter both fields...",
-    records: "Electricity Utility Billing Records",
+    records: "Electricity Billing Record",
     lastSaved: "Last Saved",
-    noSaved: "No cost log saved for this month yet"
+    noSaved: "Unsaved changes"
   };
   const [record, setRecord] = useState<EnergyCostRecord>({
     buildingEnergyKwh: null,

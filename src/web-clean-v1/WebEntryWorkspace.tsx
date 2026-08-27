@@ -13,6 +13,7 @@ import WebEntryWorkflowHeader, { WebHistoricalEditNotice } from "./WebEntryWorkf
 import { formatWebSavedTimestamp } from "./formatting";
 import RackUnitCapacityEntry from "./RackUnitCapacityEntry";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
+import { monthLabelLong } from "../utils/monthUtils";
 
 type Section = "ups" | "air" | "dc" | "energy";
 export type LiveDrafts = { ups?: UpsRecord[]; srinakarinInputs?: SrinakarinInputSnapshot; air?: AirRecord; dc?: DcRecord[]; energy?: EnergyCostRecord };
@@ -53,6 +54,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
   onRegisterActions?: (actions: EntryWorkspaceActions | null) => void;
 }) {
   const th = lang === "th";
+  const monthLabel = monthLabelLong(month, lang);
   const sectionApisRef = useRef<Partial<Record<Section, EntrySectionApi>>>({});
   const draftsRef = useRef<LiveDrafts>({});
   const [draftTick, setDraftTick] = useState(0);
@@ -117,7 +119,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
     <WebEntryWorkflowHeader lang={lang} facilityName={siteName} months={months} selectedMonth={month} draft={liveDraft} allowedStartMonth={allowedStartMonth} allowedEndMonth={allowedEndMonth} onSelectMonth={onSelectMonth} />
     <WebHistoricalEditNotice lang={lang} selectedMonth={month} latestMonth={latestMonth} onReturnToLatest={() => { if (latestMonth) onSelectMonth(latestMonth, true); }} />
     <DashboardStats lang={lang} log={liveDraft} />
-    <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">{th ? "กรอกข้อมูลรายเดือน" : "Monthly Data Entry"}</h2><p className="mt-1 text-sm text-slate-400">{th ? `กรอกค่าการทำงานที่ตรวจสอบแล้วสำหรับ ${month}; ปุ่มบันทึกทั้งหมดจะส่งข้อมูลไปยัง Production API ในคำขอเดียว` : `Enter validated operating readings for ${month}; Save All sends one concurrency-protected Production API update.`}</p></div>
+    <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">{th ? "กรอกข้อมูลรายเดือน" : "Monthly Data Entry"}</h2><p className="mt-1 text-sm text-slate-400">{th ? `กรอกและตรวจสอบค่าการทำงานรายเดือนของ UPS สำหรับ ${monthLabel} แล้วบันทึกข้อมูลทั้งหมด` : `Enter and verify the monthly UPS operating readings for ${monthLabel}, then save all records.`}</p></div>
       <div id="entry-section-ups">{siteCode === "srinakarin" ? <SrinakarinPowerPhaseTable lang={lang} monthStr={month} initialLog={draft} lastSaved={formatWebSavedTimestamp(draft.lastSavedUps)} onSave={(ups, srinakarinInputs) => requestSectionSave("ups", { ups, srinakarinInputs })} registerApi={register("ups")} onDraftChange={(ups, srinakarinInputs) => { reportDraft("ups", ups); reportDraft("srinakarinInputs", srinakarinInputs); }} /> : <UpsTable lang={lang} monthStr={month} initialRecords={draft.ups} lastSaved={formatWebSavedTimestamp(draft.lastSavedUps)} onSave={ups => requestSectionSave("ups", { ups })} registerApi={register("ups")} onDraftChange={ups => reportDraft("ups", ups)} />}</div>
       <div id="entry-section-air"><AirTable lang={lang} monthStr={month} initialRecord={draft.air} lastSaved={formatWebSavedTimestamp(draft.lastSavedAir)} meterFields={draft.energyCalculation?.airFields} onSave={air => requestSectionSave("air", { air })} registerApi={register("air")} onDraftChange={air => reportDraft("air", air)} /></div>
       <div id="entry-section-dc"><DcTable lang={lang} monthStr={month} initialRecords={draft.dc} lastSaved={formatWebSavedTimestamp(draft.lastSavedDc)} onSave={dc => requestSectionSave("dc", { dc })} registerApi={register("dc")} onDraftChange={dc => reportDraft("dc", dc)} /></div>

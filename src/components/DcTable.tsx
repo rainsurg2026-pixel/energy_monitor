@@ -45,19 +45,19 @@ export default function DcTable({
     noSaved: "ยังไม่มีการบันทึกข้อมูล DC เดือนนี้"
   } : {
     title: "DC Power Panel Records",
-    description: "Input direct-current voltage and load currents for critical telecommunications or hardware power distribution panels (PDBs).",
+    description: "Enter monthly DC voltage and current readings for each power distribution panel.",
     reset: "Reset",
-    save: "Save DC",
+    save: "Save DC Readings",
     saved: "DC Saved!",
     month: "Month",
     panel: "DC Power Panel",
     voltage: "DC Voltage (V)",
     current: "DC Current (A)",
-    calculated: "Calculated Power (kW)",
+    calculated: "CALCULATED DC POWER (kW)",
     waiting: "Waiting for V & A...",
-    panels: (count: number) => `DC Panel Logs: ${count} panels configured`,
+    panels: (count: number) => `DC Panels: ${count} configured`,
     lastSaved: "Last Saved",
-    noSaved: "No DC logs saved for this month yet"
+    noSaved: "Unsaved changes"
   };
   const [records, setRecords] = useState<DcRecord[]>([]);
   const [isSaved, setIsSaved] = useState(false);
@@ -182,7 +182,7 @@ export default function DcTable({
               <th className="py-3.5 px-4 font-normal">{copy.panel}</th>
               <th className="py-3.5 px-4 font-normal text-right">{copy.voltage}</th>
               <th className="py-3.5 px-4 font-normal text-right">{copy.current}</th>
-              <th className="py-3.5 px-4 font-normal text-right">{copy.calculated}</th>
+              <th className="py-3.5 px-4 font-normal normal-case text-right">{copy.calculated}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/50 font-mono text-sm text-slate-300">

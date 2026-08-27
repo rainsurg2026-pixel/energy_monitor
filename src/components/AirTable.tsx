@@ -42,14 +42,14 @@ export default function AirTable({
     noSaved: "ยังไม่มีการบันทึกข้อมูลเครื่องปรับอากาศเดือนนี้"
   } : {
     title: "Air Conditioning Energy Consumption",
-    description: "Input Giga-Watt Hour (GWh) readings of air conditioning modules for temperature and humidity control.",
+    description: "Enter cumulative energy meter readings for the air-conditioning system.",
     reset: "Reset",
-    save: "Save AIR",
-    saved: "AIR Saved!",
+    save: "Save AC Readings",
+    saved: "AC Saved!",
     month: "Month",
-    meters: (count: number) => `Combined Air-Con Consumption Units: ${count} meters`,
+    meters: (count: number) => `AC Energy Meters: ${count} configured`,
     lastSaved: "Last Saved",
-    noSaved: "No AC log saved for this month yet"
+    noSaved: "Unsaved changes"
   };
   const fields = meterFields?.length ? meterFields : ["eb41a", "eb41b", "eb42a", "eb42b"];
   const label = (field: string) => meterLabels?.[field] ?? `${field.toUpperCase()} (GWh)`;
@@ -196,8 +196,9 @@ export default function AirTable({
               {fields.map(field => (
                 <td key={field} className="py-5 px-2">
                   <NumericEntryInput
-                    step="0.0001"
-                    placeholder="0.0000"
+                    step="0.000001"
+                    precision={6}
+                    placeholder="0.000000"
                     value={valueForField(field)}
                     onChange={value => {
                       handleInputChange(field, value);

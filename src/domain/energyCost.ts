@@ -108,7 +108,9 @@ export function calculateAverageElectricityRate(
     || !Number.isFinite(buildingEnergyKwh) || !Number.isFinite(buildingElectricityCostThb)
     || buildingEnergyKwh === 0
     ? null
-    : buildingElectricityCostThb / buildingEnergyKwh;
+    : Number.isFinite(buildingElectricityCostThb / buildingEnergyKwh)
+      ? buildingElectricityCostThb / buildingEnergyKwh
+      : null;
 }
 
 export function calculateFloorElectricityCost(

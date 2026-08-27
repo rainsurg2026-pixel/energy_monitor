@@ -3,7 +3,7 @@ import { Check, RotateCcw, Save } from "lucide-react";
 import type { MonthlyLog, PhaseReading, SrinakarinInputSnapshot, UpsRecord } from "../types";
 import { formatMonthYear } from "../utils";
 import { EntrySectionApi } from "../utils/completion";
-import { formatNumber2 } from "../utils/numberFormatBridge";
+import { formatFixedNumber } from "../utils/numberFormatBridge";
 import NumericEntryInput from "./NumericEntryInput";
 import {
   calculateSrinakarinAggregate,
@@ -113,7 +113,7 @@ export default function SrinakarinPowerPhaseTable({
     preview: "6. ตัวอย่างผลรวมรายเดือน"
   } : {
     title: "Srinakarin UPS & PPC Phase Input",
-    description: "Enter R/S/T values in the same order as the Excel workflow; enter PPC44 voltage/current/load manually.",
+    description: "Enter monthly UPS voltage, current, active power, and apparent power readings.",
     month: "Month",
     ups: "UPS",
     acPanel: "AC Power Panel",
@@ -123,10 +123,10 @@ export default function SrinakarinPowerPhaseTable({
     loadKw: "Load (kW)",
     loadKva: "Load (kVA)",
     reset: "Reset",
-    save: "Save UPS/PPC",
-    saved: "Saved!",
+    save: "Save UPS Readings",
+    saved: "UPS Saved!",
     lastSaved: "Last Saved",
-    noSaved: "No entry saved for this month yet",
+    noSaved: "Unsaved changes",
     upsPhase: "1. UPS Phase Load",
     upsPhaseDescription: "Input source: 1.1 UPS Data Log By Phase. Monthly output is averaged into 1. UPS Data Log.",
     ppcPhase: "2. PPC Phase Voltage & Current",
@@ -282,7 +282,7 @@ export default function SrinakarinPowerPhaseTable({
       <section className="p-5 border-b border-slate-800">
         <h4 className="text-sm text-slate-100">{copy.upsPhase}</h4>
         <p className="text-xs text-slate-500 mt-1 mb-4">{copy.upsPhaseDescription}</p>
-        <div className="overflow-x-auto"><table className="entry-data-table w-full min-w-[900px] text-left border-collapse"><thead><tr className="bg-indigo-950/30 text-[11px] font-normal uppercase tracking-wider text-indigo-300 border-b border-slate-800/80"><th className="py-2 px-3">{copy.month}</th><th className="py-2 px-3">{copy.ups}</th><th className="py-2 px-3 text-right">{copy.voltage}</th><th className="py-2 px-3 text-right">{copy.current}</th><th className="py-2 px-3 text-right">{copy.loadKw}</th><th className="py-2 px-3 text-right">{copy.loadKva}</th></tr></thead><tbody className="divide-y divide-slate-800/70">{upsRows.map(([id, row]) => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td>{(["voltage", "current", "loadKw", "loadKva"] as const).map(field => <td key={field} className="py-2 px-2"><NumericEntryInput step={field === "voltage" || field === "current" ? "0.1" : "0.01"} value={row[field]} onChange={value => updateUpsPhase(id, field, value)} className={inputClass()} /></td>)}</tr>)}</tbody></table></div>
+        <div className="overflow-x-auto"><table className="entry-data-table w-full min-w-[900px] text-left border-collapse"><thead><tr className="bg-indigo-950/30 text-[11px] font-normal uppercase tracking-wider text-indigo-300 border-b border-slate-800/80"><th className="py-2 px-3">{copy.month}</th><th className="py-2 px-3">{copy.ups}</th><th className="py-2 px-3 text-right">{copy.voltage}</th><th className="py-2 px-3 text-right">{copy.current}</th><th className="py-2 px-3 text-right">{copy.loadKw}</th><th className="py-2 px-3 text-right">{copy.loadKva}</th></tr></thead><tbody className="divide-y divide-slate-800/70">{upsRows.map(([id, row]) => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td>{(["voltage", "current", "loadKw", "loadKva"] as const).map(field => <td key={field} className="py-2 px-2"><NumericEntryInput step="0.1" precision={1} value={row[field]} onChange={value => updateUpsPhase(id, field, value)} className={inputClass()} /></td>)}</tr>)}</tbody></table></div>
       </section>
 
       <section className="p-5 border-b border-slate-800">
@@ -294,7 +294,7 @@ export default function SrinakarinPowerPhaseTable({
       <section className="p-5 border-b border-slate-800">
         <h4 className="text-sm text-slate-100">{copy.manualLoad}</h4>
         <p className="text-xs text-slate-500 mt-1 mb-4">{th ? "PPC41, PPC42 และ PPC44: โหลดรวม kW/kVA" : "PPC41, PPC42 and PPC44 Load kW/kVA"}</p>
-        <div className="overflow-x-auto"><table className="entry-data-table w-full min-w-[620px] text-left border-collapse"><thead><tr className="bg-amber-950/20 text-[11px] font-normal uppercase tracking-wider text-amber-300 border-b border-slate-800/80"><th className="py-2 px-3">{copy.month}</th><th className="py-2 px-3">{copy.acPanel}</th><th className="py-2 px-3 text-right">{copy.loadKw}</th><th className="py-2 px-3 text-right">{copy.loadKva}</th></tr></thead><tbody className="divide-y divide-slate-800/70">{PPC_MANUAL_LOAD_IDS.map(id => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td><td className="py-2 px-2"><NumericEntryInput step="0.01" value={manualLoads[id]?.loadKw} onChange={value => updateManualLoad(id, "loadKw", value)} className={inputClass()} /></td><td className="py-2 px-2"><NumericEntryInput step="0.01" value={manualLoads[id]?.loadKva} onChange={value => updateManualLoad(id, "loadKva", value)} className={inputClass()} /></td></tr>)}</tbody></table></div>
+        <div className="overflow-x-auto"><table className="entry-data-table w-full min-w-[620px] text-left border-collapse"><thead><tr className="bg-amber-950/20 text-[11px] font-normal uppercase tracking-wider text-amber-300 border-b border-slate-800/80"><th className="py-2 px-3">{copy.month}</th><th className="py-2 px-3">{copy.acPanel}</th><th className="py-2 px-3 text-right">{copy.loadKw}</th><th className="py-2 px-3 text-right">{copy.loadKva}</th></tr></thead><tbody className="divide-y divide-slate-800/70">{PPC_MANUAL_LOAD_IDS.map(id => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td><td className="py-2 px-2"><NumericEntryInput step="0.1" precision={1} value={manualLoads[id]?.loadKw} onChange={value => updateManualLoad(id, "loadKw", value)} className={inputClass()} /></td><td className="py-2 px-2"><NumericEntryInput step="0.1" precision={1} value={manualLoads[id]?.loadKva} onChange={value => updateManualLoad(id, "loadKva", value)} className={inputClass()} /></td></tr>)}</tbody></table></div>
       </section>
 
       <section className="p-5 border-b border-slate-800">
@@ -306,16 +306,16 @@ export default function SrinakarinPowerPhaseTable({
       <section className="p-5 border-b border-slate-800">
         <h4 className="text-sm text-slate-100">{copy.ppcLoad}</h4>
         <p className="text-xs text-slate-500 mt-1 mb-4">{th ? "แหล่งข้อมูล: 1.7 AC PPC43 Panel (A)" : "Input source: 1.7 AC PPC43 Panel (A)"}</p>
-        <div className="overflow-x-auto"><table className="entry-data-table w-full min-w-[720px] text-left border-collapse"><thead><tr className="bg-violet-950/20 text-[11px] font-normal uppercase tracking-wider text-violet-300 border-b border-slate-800/80"><th className="py-2 px-3">{copy.month}</th><th className="py-2 px-3">{copy.acPanel}</th><th className="py-2 px-3 text-right">{copy.loadKw}</th><th className="py-2 px-3 text-right">{copy.loadKva}</th></tr></thead><tbody className="divide-y divide-slate-800/70">{ppc43PanelRows.map(([id, row]) => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td>{(["loadKw", "loadKva"] as const).map(field => <td key={field} className="py-2 px-2"><NumericEntryInput step="0.01" value={row[field]} onChange={value => updatePpc43Panel(id, field, value)} className={inputClass()} /></td>)}</tr>)}</tbody></table></div>
+        <div className="overflow-x-auto"><table className="entry-data-table w-full min-w-[720px] text-left border-collapse"><thead><tr className="bg-violet-950/20 text-[11px] font-normal uppercase tracking-wider text-violet-300 border-b border-slate-800/80"><th className="py-2 px-3">{copy.month}</th><th className="py-2 px-3">{copy.acPanel}</th><th className="py-2 px-3 text-right">{copy.loadKw}</th><th className="py-2 px-3 text-right">{copy.loadKva}</th></tr></thead><tbody className="divide-y divide-slate-800/70">{ppc43PanelRows.map(([id, row]) => <tr key={id} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{id}</td>{(["loadKw", "loadKva"] as const).map(field => <td key={field} className="py-2 px-2"><NumericEntryInput step="0.1" precision={1} value={row[field]} onChange={value => updatePpc43Panel(id, field, value)} className={inputClass()} /></td>)}</tr>)}</tbody></table></div>
       </section>
 
       <section className="p-5">
         <h4 className="text-sm text-slate-100">{copy.preview}</h4>
         <p className="text-xs text-slate-500 mt-1 mb-4">{th ? "ผลลัพธ์จะถูกบันทึกลง `1. UPS Data Log` โดยใช้เดือนและรหัสอุปกรณ์เป็นตัวจับคู่" : "Results are stored in `1. UPS Data Log` using Month + Device ID as the matching key."}</p>
-        <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left border-collapse"><thead><tr className="bg-slate-950/60 text-[11px] font-normal uppercase tracking-wider text-slate-400 border-b border-slate-800/80"><th className="py-2 px-3">{copy.month}</th><th className="py-2 px-3">{copy.upsPpc}</th><th className="py-2 px-3 text-right">{copy.voltage}</th><th className="py-2 px-3 text-right">{copy.current}</th><th className="py-2 px-3 text-right">{copy.loadKw}</th><th className="py-2 px-3 text-right">{copy.loadKva}</th></tr></thead><tbody className="divide-y divide-slate-800/70">{draftRecords.map(row => <tr key={row.upsId} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{row.upsId}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.voltage !== null ? formatNumber2(row.voltage) : "—"}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.current !== null ? formatNumber2(row.current) : "—"}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.loadKw !== null ? formatNumber2(row.loadKw) : "—"}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.loadKva !== null ? formatNumber2(row.loadKva) : "—"}</td></tr>)}</tbody></table></div>
+        <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left border-collapse"><thead><tr className="bg-slate-950/60 text-[11px] font-normal uppercase tracking-wider text-slate-400 border-b border-slate-800/80"><th className="py-2 px-3">{copy.month}</th><th className="py-2 px-3">{copy.upsPpc}</th><th className="py-2 px-3 text-right">{copy.voltage}</th><th className="py-2 px-3 text-right">{copy.current}</th><th className="py-2 px-3 text-right">{copy.loadKw}</th><th className="py-2 px-3 text-right">{copy.loadKva}</th></tr></thead><tbody className="divide-y divide-slate-800/70">{draftRecords.map(row => <tr key={row.upsId} className="hover:bg-slate-850/40 transition-colors"><td className="py-2 px-3 text-xs text-slate-500">{formatMonthYear(monthStr)}</td><td className="py-2 px-3 text-sm text-slate-200">{row.upsId}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.voltage !== null ? formatFixedNumber(row.voltage, 1) : "—"}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.current !== null ? formatFixedNumber(row.current, 1) : "—"}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.loadKw !== null ? formatFixedNumber(row.loadKw, 1) : "—"}</td><td className="py-2 px-3 text-right font-mono text-sm text-slate-300">{row.loadKva !== null ? formatFixedNumber(row.loadKva, 1) : "—"}</td></tr>)}</tbody></table></div>
       </section>
 
-      <div className="px-5 py-3 border-t border-slate-800 bg-slate-900/30 flex justify-between items-center gap-2 text-xs text-slate-500 font-mono"><span>{th ? `${draftRecords.length} แถวสรุปรายเดือน` : `${draftRecords.length} monthly aggregate rows`}</span>{lastSaved ? <span className="text-slate-400">{copy.lastSaved}: {lastSaved}</span> : <span className="italic">{copy.noSaved}</span>}</div>
+      <div className="px-5 py-3 border-t border-slate-800 bg-slate-900/30 flex justify-between items-center gap-2 text-xs text-slate-500 font-mono"><span>{th ? `${draftRecords.length} แถวสรุปรายเดือน` : `UPS Units: ${draftRecords.length} configured`}</span>{lastSaved ? <span className="text-slate-400">{copy.lastSaved}: {lastSaved}</span> : <span className="italic">{copy.noSaved}</span>}</div>
     </div>
   );
 }

@@ -45,9 +45,9 @@ export default function UpsTable({
     noSaved: "ยังไม่มีการบันทึกข้อมูลเดือนนี้"
   } : {
     title: "UPS Loading Records",
-    description: "Input facility Uninterruptible Power Supply (UPS) voltage, current, and active/apparent loads.",
+    description: "Enter monthly UPS voltage, current, active power, and apparent power readings.",
     reset: "Reset",
-    save: "Save UPS",
+    save: "Save UPS Readings",
     saved: "UPS Saved!",
     month: "Month",
     id: "UPS ID",
@@ -55,9 +55,9 @@ export default function UpsTable({
     current: "Current (A)",
     loadKw: "Load (kW)",
     loadKva: "Load (kVA)",
-    units: (count: number) => `UPS Unit Logs: ${count} units configured`,
+    units: (count: number) => `UPS Units: ${count} configured`,
     lastSaved: "Last Saved",
-    noSaved: "No entry saved for this month yet"
+    noSaved: "Unsaved changes"
   };
   const [records, setRecords] = useState<UpsRecord[]>([]);
   const [isSaved, setIsSaved] = useState(false);
@@ -236,7 +236,8 @@ export default function UpsTable({
                     <div className="relative max-w-[120px] ml-auto">
                       <NumericEntryInput
                         step="0.1"
-                        placeholder="220"
+                        precision={1}
+                        placeholder="220.0"
                         value={row.voltage}
                         onChange={value => handleInputChange(idx, "voltage", value)}
                         disabled={phases.length > 0}
@@ -246,12 +247,6 @@ export default function UpsTable({
                             : "border-slate-800 focus:border-indigo-500"
                         }`}
                       />
-                      {isVoltageAbnormal && (
-                        <span className="absolute -left-1 top-2.5 flex h-2 w-2">
-                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                          <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                        </span>
-                      )}
                     </div>
                   </td>
 
@@ -260,6 +255,7 @@ export default function UpsTable({
                     <div className="relative max-w-[120px] ml-auto">
                       <NumericEntryInput
                         step="0.1"
+                        precision={1}
                         placeholder="15.0"
                         value={row.current}
                         onChange={value => handleInputChange(idx, "current", value)}
@@ -276,8 +272,9 @@ export default function UpsTable({
                   {/* Load kW Input */}
                   <td className="py-3.5 px-2">
                     <NumericEntryInput
-                      step="0.01"
-                      placeholder="3.20"
+                      step="0.1"
+                      precision={1}
+                      placeholder="3.2"
                       value={row.loadKw}
                       onChange={value => handleInputChange(idx, "loadKw", value)}
                       disabled={phases.length > 0}
@@ -288,8 +285,9 @@ export default function UpsTable({
                   {/* Load kVA Input */}
                   <td className="py-3.5 px-4">
                     <NumericEntryInput
-                      step="0.01"
-                      placeholder="3.50"
+                      step="0.1"
+                      precision={1}
+                      placeholder="3.5"
                       value={row.loadKva}
                       onChange={value => handleInputChange(idx, "loadKva", value)}
                       disabled={phases.length > 0}
@@ -304,7 +302,8 @@ export default function UpsTable({
                     {(["voltage", "current", "loadKw", "loadKva"] as const).map(field => (
                       <td key={field} className="py-2 px-2">
                         <NumericEntryInput
-                          step={field === "voltage" || field === "current" ? "0.1" : "0.01"}
+                          step="0.1"
+                          precision={1}
                           value={reading[field]}
                           onChange={value => handlePhaseInputChange(idx, phase, field, value)}
                           className="w-full max-w-[120px] ml-auto bg-indigo-950/20 border border-indigo-700/50 focus:border-indigo-400 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none"

@@ -36,7 +36,7 @@ assert.match(header, /Return to latest/);
 assert.match(desktopHeader, /showHealth\?: boolean/);
 assert.match(app, /<WebEntryWorkspace lang=\{lang\} siteName=\{site\.name\}/);
 assert.match(workspace, /<StickyEntryToolbar/);
-assert.match(workspace, /Save All sends one concurrency-protected Production API update/);
+assert.match(workspace, /Enter and verify the monthly UPS operating readings for \$\{monthLabel\}, then save all records\./);
 assert.match(workspace, /listMissingFields\(liveDraft\)/);
 assert.match(workspace, /onSave\(\{ ups: liveDraft\.ups/);
 assert.match(workspace, /onDraftChange=\{\(ups, srinakarinInputs\)/);

@@ -108,7 +108,7 @@ export default function CleanWebApp() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [siteId, setSiteId] = useState<number | null>(null);
-  const [view, setViewState] = useState<View>("dashboard");
+  const [view, setViewState] = useState<View>("entry");
   const [history, setHistory] = useState<HistoryData>({ months: [], logs: [] });
   const [month, setMonth] = useState(todayMonth());
   const [draft, setDraft] = useState<MonthlyLog | null>(null);
@@ -311,7 +311,7 @@ export default function CleanWebApp() {
   }, [initialize, undoLastEdit, view]);
 
   const deferNavigation = (action: PendingNavigation) => { if (entryDirty) setPendingNavigation(() => action); else void action(); };
-  const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setViewState(next); }); };
+  const setView = (next: View) => { const target = next === "dashboard" ? "entry" : next; if (target === view) return; deferNavigation(() => { setEntryDirty(false); setViewState(target); }); };
   const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setBusy(true); setInitialHistoryLoading(true); setFacilityError(null); setHistory({ months: [], logs: [] }); setDraft(null); setRowVersion(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id, { force: true, scope: "dashboard" }); const candidate = nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()); await loadMonth(id, latestEnergyMonth(records.logs, candidate), records); loadedPageKeyRef.current = `${id}:dashboard`; } catch (error) { setNotice(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setInitialHistoryLoading(false); setBusy(false); } }; deferNavigation(action); };
   const selectMonth = async (selected: string, exists = true) => {
     if (!siteId || selected === month) return;
@@ -390,7 +390,7 @@ export default function CleanWebApp() {
     reportingMonth: "Reporting month", displayPeriod: "Display period", completion: "Completion", working: "Working…"
   };
   const nav: Array<{ id: View; label: string; icon: typeof BarChart3; admin?: boolean }> = [
-    { id: "dashboard", label: lang === "th" ? "แดชบอร์ด" : "Dashboard", icon: BarChart3 }, { id: "entry", label: lang === "th" ? "กรอกข้อมูล" : "Data Entry", icon: ClipboardPenLine }, { id: "racks", label: lang === "th" ? "ความจุแร็ค" : "Rack Capacity", icon: Server }, { id: "history", label: lang === "th" ? "ประวัติ" : "History", icon: History }, { id: "comparison", label: lang === "th" ? "เปรียบเทียบไซต์" : "Site Comparison", icon: ChartNoAxesCombined }, { id: "reports", label: lang === "th" ? "ส่งออกและรายงาน" : "Exports & Report", icon: FileSpreadsheet }, { id: "settings", label: lang === "th" ? "ตั้งค่า" : "Settings", icon: Settings }, { id: "admin", label: lang === "th" ? "จัดการผู้ใช้" : "User Management", icon: UsersRound, admin: true }
+    { id: "entry", label: lang === "th" ? "กรอกข้อมูล" : "Data Entry", icon: ClipboardPenLine }, { id: "racks", label: lang === "th" ? "ความจุแร็ค" : "Rack Capacity", icon: Server }, { id: "history", label: lang === "th" ? "ประวัติ" : "History", icon: History }, { id: "comparison", label: lang === "th" ? "เปรียบเทียบไซต์" : "Site Comparison", icon: ChartNoAxesCombined }, { id: "reports", label: lang === "th" ? "ส่งออกและรายงาน" : "Exports & Report", icon: FileSpreadsheet }, { id: "settings", label: lang === "th" ? "ตั้งค่า" : "Settings", icon: Settings }, { id: "admin", label: lang === "th" ? "จัดการผู้ใช้" : "User Management", icon: UsersRound, admin: true }
   ];
   const reportAvailableMonths = [...new Set((bootstrap?.sites ?? []).flatMap(item => item.availableMonths ?? []))].sort();
   return <ReportProvider syncedLogs={history.logs} availableMonths={reportAvailableMonths} onYearChange={loadHistoricalYear} displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)}>
