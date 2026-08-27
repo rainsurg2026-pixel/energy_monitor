@@ -307,8 +307,10 @@ export default function CleanWebApp() {
       } else if (command && !event.shiftKey && !event.altKey && (event.key === "z" || event.key === "Z") && view === "entry") {
         if (undoLastEdit()) event.preventDefault();
       } else if (event.key === "F5" && !event.ctrlKey && !event.metaKey && !event.shiftKey && !editingText) {
-        event.preventDefault();
-        void initialize().catch(error => setNotice(readError(error)));
+        if (!unsavedChangesRef.current) {
+          event.preventDefault();
+          void initialize().catch(error => setNotice(readError(error)));
+        }
       } else if (event.key === "Enter" && !command && !event.altKey && target?.tagName === "INPUT" && target.closest("[id^='entry-section-']")) {
         event.preventDefault();
         const inputs = Array.from(document.querySelectorAll<HTMLInputElement>("[id^='entry-section-'] input:not(:disabled)"));

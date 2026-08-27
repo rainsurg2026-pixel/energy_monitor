@@ -351,9 +351,13 @@ export class ApiService {
       : body as Record<string, unknown>;
     const changes = parseRackChanges(source.changes);
     const expectedRowVersion = parseExpectedRowVersion(source.expected_row_version);
-    const saved = await this.repository.withTransaction(repository => repository.saveRackCapacity({ siteId, facility: site.code, month: selected, changes, expectedRowVersion, actorUserId, correlationId, generatedAt: this.now().toISOString() }));
-    const history = (await this.repository.listRackCapacityHistory(siteId)).filter(row => period.startMonth <= row.month && row.month <= period.endMonth && row.month <= monthOfDate(this.now()));
-    return { siteId, month: selected, snapshot: saved.snapshot, outcomes: saved.outcomes, changedCount: saved.changedCount, rackCapacityHistory: history };
+    const now = this.now();
+    const result = await this.repository.withTransaction(async repository => {
+      const saved = await repository.saveRackCapacity({ siteId, facility: site.code, month: selected, changes, expectedRowVersion, actorUserId, correlationId, generatedAt: now.toISOString() });
+      const history = (await repository.listRackCapacityHistory(siteId)).filter(row => period.startMonth <= row.month && row.month <= period.endMonth && row.month <= monthOfDate(now));
+      return { saved, history };
+    });
+    return { siteId, month: selected, snapshot: result.saved.snapshot, outcomes: result.saved.outcomes, changedCount: result.saved.changedCount, rackCapacityHistory: result.history };
   }
 
   async getRackUnit(siteId: number, month: unknown): Promise<unknown> {
