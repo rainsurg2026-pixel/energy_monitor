@@ -133,7 +133,7 @@ export function WebRackUnitCapacityEditor({ siteId, month, initialSnapshot, onSa
     used: "Used (U)",
     available: "Available (U)",
     usage: "Usage %",
-    invalid: "Total (U) and Used (U) must be non-negative numbers.",
+    invalid: "Total (U) and Used (U) must be non-negative numbers, with Used no greater than Total.",
     loadingError: "Unable to load Rack Unit Capacity.",
     save: "Save Rack Unit Capacity",
     saving: "Saving…",
@@ -163,7 +163,7 @@ export function WebRackUnitCapacityEditor({ siteId, month, initialSnapshot, onSa
 
   const save = async (forceSnapshot: boolean) => {
     const total = Number(totalU); const used = Number(usedU);
-    if (!Number.isFinite(total) || !Number.isFinite(used) || total < 0 || used < 0) { setError(copy.invalid); return; }
+    if (!Number.isFinite(total) || !Number.isFinite(used) || total < 0 || used < 0 || used > total) { setError(copy.invalid); return; }
     setSaving(true); setError(null);
     try {
       const result = await api<{ snapshot: RackUnitApiSnapshot }>(`/rack-unit-capacity?siteId=${siteId}&month=${month}`, { method: "PUT", body: JSON.stringify({ month, total_u: total, used_u: used, expected_row_version: snapshot?.rowVersion ?? null, force_snapshot: forceSnapshot }) });

@@ -118,6 +118,19 @@ html.theme-light .recharts-wrapper text {
   font-weight: 400 !important;
 }
 
+/* CleanWebApp exposes nine desktop navigation items after the Production
+ * Rack comparison split. Keep the existing utility as a fallback while
+ * ensuring the full nav stays on one row at xl width. */
+@media (min-width: 1280px) {
+  .em-shell > div > nav:first-child {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+
+  .em-shell > div > nav:first-child:has(> button:nth-child(9)) {
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+  }
+}
+
 html:not(.theme-light) .recharts-default-tooltip {
   background: #0b1f3a !important;
   border-color: #55708f !important;

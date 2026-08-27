@@ -102,7 +102,7 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
     if (busy) return false;
     const total = Number(totalU);
     const used = Number(usedU);
-    if (!Number.isFinite(total) || total < 0 || !Number.isFinite(used) || used < 0) { onMessage("Enter valid non-negative Total (U) and Used (U) values."); return false; }
+    if (!Number.isFinite(total) || total < 0 || !Number.isFinite(used) || used < 0 || used > total) { onMessage("Enter valid non-negative Total (U) and Used (U) values with Used no greater than Total."); return false; }
     setBusy(true);
     try {
       const saved = await api<{ rowVersion: number }>(`/sites/${siteId}/rack-unit-capacity/${month}`, {

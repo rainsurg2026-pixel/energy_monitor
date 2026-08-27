@@ -310,7 +310,12 @@ export class ApiService {
       const availableMonths = visibleMonths(period, available);
       const monthlyMonths = new Set(periods.filter(record => record.hasData).map(record => record.month));
       const comparisonMonths = availableMonths.filter(month => monthlyMonths.has(month));
-      const logs = await this.repository.getMonthlyLogs(site.id, comparisonMonths);
+      // Keep the previous calendar month as an internal calculation input so
+      // the first visible month can still calculate Air deltas correctly. It
+      // is not added to the visible comparison response.
+      const calculationMonths = [...new Set(comparisonMonths.flatMap(month => [month, previousCalculationMonth(month)]))]
+        .filter((month): month is string => month !== null);
+      const logs = await this.repository.getMonthlyLogs(site.id, calculationMonths);
       const metrics = buildFacilityComparisonMetrics(logs, period.endMonth);
       return {
         site,
@@ -393,7 +398,7 @@ export class ApiService {
     const source = body as Record<string, unknown>;
     const totalU = source.total_u;
     const usedU = source.used_u;
-    if (typeof totalU !== "number" || !Number.isFinite(totalU) || totalU < 0 || typeof usedU !== "number" || !Number.isFinite(usedU) || usedU < 0) throw new HttpError(400, "INVALID_RACK_UNIT_VALUES", "total_u and used_u must be finite non-negative numbers.");
+    if (typeof totalU !== "number" || !Number.isFinite(totalU) || totalU < 0 || typeof usedU !== "number" || !Number.isFinite(usedU) || usedU < 0 || usedU > totalU) throw new HttpError(400, "INVALID_RACK_UNIT_VALUES", "total_u and used_u must be finite non-negative numbers, with used_u less than or equal to total_u.");
     const saved = await this.repository.withTransaction(repository => repository.saveRackUnitSnapshot({ siteId, month: selected, totalU, usedU, expectedRowVersion: parseExpectedRowVersion(source.expected_row_version), actorUserId, correlationId }));
     const refreshed = await this.repository.getRackUnitSnapshot(siteId, selected);
     const snapshot = refreshed ?? saved;

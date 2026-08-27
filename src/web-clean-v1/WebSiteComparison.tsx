@@ -1,13 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { BarChart3, Coins, Gauge, RefreshCw, Server, TrendingUp } from "lucide-react";
+import { Calculator, Coins, RefreshCw, TrendingUp, Zap } from "lucide-react";
 import { CartesianGrid, LabelList, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { getComparisonDisplayMonths } from "../domain/facilityComparison";
 import { formatNumber2 } from "../utils/numberFormatBridge";
+import { monthLabelLong } from "../utils/monthUtils";
 import { api } from "./api";
-import type { ComparisonMetric, RackSnapshotApiResponse, SiteComparisonExport } from "./exports";
+import type { ComparisonMetric, SiteComparisonExport } from "./exports";
 
-type RackUnitSnapshot = { totalU: number; usedU: number; availableU: number; usagePercent: number | null };
-type RackSnapshot = NonNullable<RackSnapshotApiResponse["snapshot"]>;
-type RackState = { rack: RackSnapshot | null; unit: RackUnitSnapshot | null; unavailable: boolean };
+type ComparisonChartSuffix = "building-energy" | "floor-energy" | "building-cost" | "floor-cost";
 
 const siteColour = (index: number) => index % 2 === 0 ? "var(--chart-series-a)" : "var(--chart-series-b)";
 const formatCompact = (value: number, unit: string) => {
@@ -23,9 +23,7 @@ const formatMonthLabel = (month: string) => {
 };
 const metric = (value: number | null | undefined, suffix = "") => value === null || value === undefined || !Number.isFinite(value) ? "—" : `${formatNumber2(value)}${suffix}`;
 
-/** Keep the first real month one category cell away from the Y-axis. The
- * leading empty category is intentional: it gives every comparison chart the
- * same visual breathing room without changing the reported month window. */
+/** Keep missing calendar months as explicit null chart positions. */
 function withLeadingChartGap(data: Array<Record<string, string | number | null>>, seriesKeys: readonly string[]) {
   if (data.length === 0) return data;
   const gap: Record<string, string | number | null> = { ...data[0], month: "" };
@@ -33,120 +31,65 @@ function withLeadingChartGap(data: Array<Record<string, string | number | null>>
   return [gap, ...data];
 }
 
-function comparisonChartYAxisDomain(data: Array<Record<string, string | number | null>>, sites: SiteComparisonExport["sites"], suffix: string): [number, number] {
+function comparisonChartYAxisDomain(data: Array<Record<string, string | number | null>>, sites: SiteComparisonExport["sites"], suffix: ComparisonChartSuffix): [number, number] {
   const values = data.flatMap(row => sites.map(site => row[`${site.site.code}-${suffix}`])).filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   const maximum = Math.max(0, ...values);
   return [0, maximum > 0 ? maximum * 1.12 : 1];
 }
 
-function rackCounts(snapshot: RackSnapshot | null) {
-  const records = snapshot?.records ?? [];
-  return {
-    total: records.length,
-    inUse: records.filter(record => /^in\s*use$/i.test(record.status ?? "")).length,
-    available: records.filter(record => /^available$/i.test(record.status ?? "")).length,
-    reserved: records.filter(record => /^reserved$/i.test(record.status ?? "")).length
-  };
+function chartLabel(value: unknown, unit: string): string {
+  return typeof value === "number" && Number.isFinite(value) ? formatCompact(value, unit) : "";
 }
 
-function TrendCard({ title, icon, data, sites, suffix, unit }: {
+function TrendCard({ title, icon, data, sites, suffix, unit, axisLabel }: {
   title: string;
   icon: React.ReactNode;
   data: Array<Record<string, string | number | null>>;
   sites: SiteComparisonExport["sites"];
-  suffix: "energy" | "cost" | "rack-usage";
+  suffix: ComparisonChartSuffix;
   unit: string;
+  axisLabel: string;
 }) {
-  const chartData = withLeadingChartGap(data, sites.map(site => `${site.site.code}-${suffix}`));
+  const seriesKeys = sites.map(site => `${site.site.code}-${suffix}`);
+  const chartData = withLeadingChartGap(data, seriesKeys);
   const yDomain = comparisonChartYAxisDomain(data, sites, suffix);
-  return <section className="h-[26rem] rounded-xl border border-slate-800 bg-slate-900 p-4">
+  return <section className="h-[26rem] rounded-xl border border-slate-800 bg-slate-900 p-4" aria-label={title}>
     <h3 className="mb-3 flex items-center gap-2 font-semibold">{icon}{title}</h3>
     <ResponsiveContainer width="100%" height="90%">
-      <LineChart data={chartData} margin={{ top: 24, right: 28, left: 12, bottom: 24 }}>
+      <LineChart data={chartData} margin={{ top: 24, right: 28, left: 24, bottom: 28 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
         <XAxis dataKey="month" tickFormatter={formatMonthLabel} />
-        <YAxis domain={yDomain} tickFormatter={value => formatCompact(Number(value), unit)} />
-        <Tooltip labelFormatter={label => formatMonthLabel(String(label))} formatter={(value: number | string | undefined) => value === null || value === undefined ? "—" : `${formatNumber2(Number(value))} ${unit}`} />
+        <YAxis domain={yDomain} tickFormatter={value => formatCompact(Number(value), unit)} label={{ value: axisLabel, angle: -90, position: "insideLeft", fill: "var(--chart-axis)", fontSize: 12 }} />
+        <Tooltip labelFormatter={label => formatMonthLabel(String(label))} formatter={(value: number | string | undefined) => typeof value === "number" && Number.isFinite(value) ? `${formatNumber2(value)} ${unit}` : "—"} />
         <Legend />
         {sites.map((site, index) => <Line key={`${site.site.id}-${suffix}`} type="monotone" dataKey={`${site.site.code}-${suffix}`} name={site.site.name} stroke={siteColour(index)} connectNulls={false} dot={{ r: 3 }} isAnimationActive={false}>
-          <LabelList dataKey={`${site.site.code}-${suffix}`} position="top" offset={8} fill={siteColour(index)} fontSize={10} formatter={value => formatCompact(Number(value), unit)} />
+          <LabelList dataKey={`${site.site.code}-${suffix}`} position="top" offset={8} fill={siteColour(index)} fontSize={10} formatter={value => chartLabel(value, unit)} />
         </Line>)}
       </LineChart>
     </ResponsiveContainer>
   </section>;
 }
 
-/** Web counterpart of Desktop FacilityComparison.
- *
- * Comparison metrics come from the server's shared calculation. Rack and U
- * capacity are fetched per selected facility/month, never copied from the
- * currently selected facility. Missing snapshots remain visibly missing.
- */
+/** Production-web Energy and Cost comparison.  All values come from the
+ * server's site-scoped monthly calculation DTO; this page intentionally has
+ * no capacity or infrastructure sections. */
 export default function WebSiteComparison({ lang = "th" }: { lang?: "th" | "en" }) {
   const th = lang === "th";
-  const copy = th ? {
-    loading: "กำลังโหลดการเปรียบเทียบไซต์…",
-    facility: "ไซต์",
-    buildingEnergy: "พลังงานอาคาร",
-    buildingCost: "ค่าไฟฟ้าอาคาร",
-    floorEnergy: "พลังงานชั้น 4",
-    floorCost: "ค่าไฟฟ้าชั้น 4",
-    averageRate: "อัตราเฉลี่ย",
-    floorShare: "สัดส่วนชั้น 4",
-    rackTrend: "แนวโน้มการใช้งาน Rack Unit",
-    rackTitle: "ความจุแร็คและการใช้งาน",
-    rackDescription: "ข้อมูล snapshot ของเดือนที่เลือก แยกข้อมูลตามไซต์",
-    loadingRack: "กำลังโหลด snapshot แร็ค…",
-    rackUnavailable: "ไม่สามารถโหลด snapshot แร็คได้",
-    noRack: "ไม่มี snapshot แร็คสำหรับเดือนนี้",
-    inUse: "ใช้งาน",
-    available: "ว่าง",
-    reserved: "สำรอง",
-    other: "อื่น ๆ",
-    unitTitle: "ความจุหน่วยแร็คและการใช้งาน",
-    unitDescription: "แสดงเฉพาะข้อมูล U ที่บันทึกไว้ ไม่ใช้จำนวนแร็คแทนข้อมูล U",
-    loadingUnit: "กำลังโหลด snapshot หน่วยแร็ค…",
-    unitUnavailable: "ไม่สามารถโหลด snapshot หน่วยแร็คได้",
-    noUnit: "ไม่มี snapshot หน่วยแร็คสำหรับเดือนนี้",
-    totalU: "ทั้งหมด U",
-    usedU: "ใช้งาน U",
-    availableU: "คงเหลือ U",
-    utilization: "การใช้งาน"
-  } : {
-    loading: "Loading Site Comparison…",
-    facility: "Facility",
-    buildingEnergy: "Building energy",
-    buildingCost: "Building cost",
-    floorEnergy: "Floor energy",
-    floorCost: "Floor cost",
-    averageRate: "Average rate",
-    floorShare: "Floor share",
-    rackTrend: "Rack Unit Utilization Trend",
-    rackTitle: "Rack Capacity and Utilization",
-    rackDescription: "Snapshots for the selected month; data stays isolated by facility.",
-    loadingRack: "Loading rack snapshot…",
-    rackUnavailable: "Rack snapshot unavailable.",
-    noRack: "No rack snapshot for this month.",
-    inUse: "In use",
-    available: "Available",
-    reserved: "Reserved",
-    other: "Other",
-    unitTitle: "Rack Unit Capacity and Utilization",
-    unitDescription: "Saved U-capacity rows only; rack counts are never used as a substitute.",
-    loadingUnit: "Loading rack-unit snapshot…",
-    unitUnavailable: "Rack-unit snapshot unavailable.",
-    noUnit: "No rack-unit snapshot for this month.",
-    totalU: "Total U",
-    usedU: "Used U",
-    availableU: "Available U",
-    utilization: "Utilization"
+  const copy = {
+    loading: th ? "กำลังโหลดการเปรียบเทียบไซต์…" : "Loading Site Energy & Cost Comparison…",
+    facility: th ? "ไซต์" : "Facility",
+    buildingEnergy: "Building Energy (kWh)",
+    buildingCost: "Building Cost (THB)",
+    floorEnergy: "4th Floor Energy (kWh)",
+    floorCost: "Estimated 4th Floor Cost (THB)",
+    averageRate: "Average Unit Rate (THB/kWh)",
+    floorShare: "4th Floor Share (%)",
+    noRecords: th ? "ไม่มีข้อมูลสำหรับช่วงเวลาที่เลือก" : "No records are available for this comparison period."
   };
   const [data, setData] = useState<SiteComparisonExport | null>(null);
   const [referenceMonth, setReferenceMonth] = useState("");
   const [range, setRange] = useState<3 | 6 | 12>(12);
   const [error, setError] = useState<string | null>(null);
-  const [rackState, setRackState] = useState<Record<number, RackState>>({});
-  const [rackLoading, setRackLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -156,73 +99,50 @@ export default function WebSiteComparison({ lang = "th" }: { lang?: "th" | "en" 
       setReferenceMonth(current => current && result.months.includes(current) ? current : (common.at(-1) ?? result.months.at(-1) ?? ""));
       setError(null);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Site Comparison could not be loaded.");
+      setError(reason instanceof Error ? reason.message : "Site Energy & Cost Comparison could not be loaded.");
     }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
 
-  useEffect(() => {
-    if (!data || !referenceMonth) { setRackState({}); return; }
-    let cancelled = false;
-    setRackLoading(true);
-    void Promise.all(data.sites.map(async site => {
-      try {
-        const [racks, unit] = await Promise.all([
-          api<RackSnapshotApiResponse>(`/racks?siteId=${site.site.id}&month=${referenceMonth}`),
-          api<{ snapshot: RackUnitSnapshot | null }>(`/rack-unit-capacity?siteId=${site.site.id}&month=${referenceMonth}`)
-        ]);
-        return [site.site.id, { rack: racks.snapshot, unit: unit.snapshot, unavailable: false }] as const;
-      } catch {
-        return [site.site.id, { rack: null, unit: null, unavailable: true }] as const;
-      }
-    })).then(rows => {
-      if (!cancelled) setRackState(Object.fromEntries(rows));
-    }).finally(() => { if (!cancelled) setRackLoading(false); });
-    return () => { cancelled = true; };
-  }, [data, referenceMonth]);
-
-  const windowMonths = useMemo(() => data?.months.filter(month => month <= referenceMonth).slice(-range) ?? [], [data, referenceMonth, range]);
+  const sites = useMemo(() => [...(data?.sites ?? [])].sort((left, right) => left.site.name.localeCompare(right.site.name) || left.site.id - right.site.id), [data]);
+  const windowMonths = useMemo(() => getComparisonDisplayMonths(data?.months ?? [], referenceMonth, range), [data, referenceMonth, range]);
   const chartData = useMemo(() => windowMonths.map(month => {
     const row: Record<string, string | number | null> = { month };
-    for (const site of data?.sites ?? []) {
+    for (const site of sites) {
       const values = site.months.find(entry => entry.month === month)?.metrics;
-      row[`${site.site.code}-energy`] = values?.buildingEnergy ?? null;
-      row[`${site.site.code}-cost`] = values?.floorCost ?? null;
+      row[`${site.site.code}-building-energy`] = values?.buildingEnergy ?? null;
+      row[`${site.site.code}-floor-energy`] = values?.floorEnergy ?? null;
+      row[`${site.site.code}-building-cost`] = values?.buildingCost ?? null;
+      row[`${site.site.code}-floor-cost`] = values?.floorCost ?? null;
     }
     return row;
-  }), [data, windowMonths]);
-  const rackChartData = useMemo(() => windowMonths.map(month => {
-    const row: Record<string, string | number | null> = { month };
-    for (const site of data?.sites ?? []) {
-      row[`${site.site.code}-rack-usage`] = site.rackUnitCapacity?.find(entry => entry.month === month)?.usagePercent ?? null;
-    }
-    return row;
-  }), [data, windowMonths]);
-  const hasRackTrend = rackChartData.some(row => Object.entries(row).some(([key, value]) => key.endsWith("-rack-usage") && typeof value === "number"));
+  }), [sites, windowMonths]);
+  const hasChartData = chartData.some(row => Object.entries(row).some(([key, value]) => key !== "month" && typeof value === "number" && Number.isFinite(value)));
 
   if (error) return <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-rose-200">{error}</section>;
   if (!data) return <p className="text-sm text-slate-400">{copy.loading}</p>;
 
-  return <section className="space-y-5" data-testid="web-site-comparison">
+  return <section className="space-y-5" data-testid="web-site-comparison" data-page="site-energy-cost-comparison">
     <div className="flex flex-wrap items-end justify-between gap-3">
-      <div><h2 className="font-display text-2xl font-bold">{th ? "เปรียบเทียบไซต์" : "Site Comparison"}</h2><p className="mt-1 text-sm text-slate-400">{th ? "ช่วงเวลาเดียวกัน ใช้สูตรเดียวกับ Desktop และแยกข้อมูลแต่ละไซต์" : "Same period, shared Desktop formulas, and separate facility records."}</p></div>
+      <div><h2 className="font-display text-2xl font-bold">{th ? "เปรียบเทียบพลังงานและค่าใช้จ่ายของไซต์" : "Site Energy & Cost Comparison"}</h2><p className="mt-1 text-sm text-slate-400">Compare facilities using the same reporting period and calculation method.</p><p className="mt-2 text-xs uppercase tracking-wide text-slate-500">Reporting period: <span className="font-mono text-slate-300" data-testid="comparison-reporting-period">{referenceMonth ? monthLabelLong(referenceMonth, "en") : "—"}</span></p></div>
       <button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:border-teal-500"><RefreshCw className="h-4 w-4" />{th ? "โหลดใหม่" : "Refresh"}</button>
     </div>
 
     <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4">
-      <label className="text-sm">{th ? "เดือนอ้างอิง" : "Reference month"}<select value={referenceMonth} onChange={event => setReferenceMonth(event.target.value)} className="ml-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{data.months.map(month => <option key={month} value={month}>{month}</option>)}</select></label>
+      <label className="text-sm">{th ? "เดือนอ้างอิง" : "Reference month"}<select value={referenceMonth} onChange={event => setReferenceMonth(event.target.value)} className="ml-2 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{data.months.map(month => <option key={month} value={month}>{monthLabelLong(month, "en")}</option>)}</select></label>
       <div className="flex rounded-lg border border-slate-700 p-1" aria-label={th ? "ช่วงข้อมูลที่แสดง" : "Comparison display range"}>{([3, 6, 12] as const).map(value => <button type="button" key={value} onClick={() => setRange(value)} aria-pressed={range === value} className={`rounded px-2 py-1 text-xs ${range === value ? "bg-teal-500 text-slate-950" : "text-slate-300"}`}>{th ? `ล่าสุด ${value}` : `Last ${value}`}</button>)}</div>
     </div>
 
     <div className="overflow-x-auto rounded-xl border border-slate-800">
-      <table className="min-w-[960px] w-full text-sm"><thead className="bg-slate-900 text-left text-slate-400"><tr><th className="p-3">{copy.facility}</th><th className="p-3 text-right">{copy.buildingEnergy}</th><th className="p-3 text-right">{copy.buildingCost}</th><th className="p-3 text-right">{copy.floorEnergy}</th><th className="p-3 text-right">{copy.floorCost}</th><th className="p-3 text-right">{copy.averageRate}</th><th className="p-3 text-right">{copy.floorShare}</th></tr></thead><tbody>{data.sites.map(site => { const values: ComparisonMetric | null = site.months.find(entry => entry.month === referenceMonth)?.metrics ?? null; return <tr key={site.site.id} className="border-t border-slate-800"><td className="p-3"><b>{site.site.name}</b><br /><span className="text-xs text-slate-500">{referenceMonth}</span></td><td className="p-3 text-right font-mono">{metric(values?.buildingEnergy)} kWh</td><td className="p-3 text-right font-mono">{metric(values?.buildingCost)} THB</td><td className="p-3 text-right font-mono">{metric(values?.floorEnergy)} kWh</td><td className="p-3 text-right font-mono">{metric(values?.floorCost)} THB</td><td className="p-3 text-right font-mono">{metric(values?.avgRate)} THB/kWh</td><td className="p-3 text-right font-mono">{metric(values?.floorShare, "%")}</td></tr>; })}</tbody></table>
+      <table className="min-w-[1180px] w-full text-sm"><thead className="bg-slate-900 text-left text-slate-400"><tr><th scope="col" className="p-3">{copy.facility}</th><th scope="col" className="p-3 text-right">{copy.buildingEnergy}</th><th scope="col" className="p-3 text-right">{copy.buildingCost}</th><th scope="col" className="p-3 text-right">{copy.floorEnergy}</th><th scope="col" className="p-3 text-right">{copy.floorCost}</th><th scope="col" className="p-3 text-right">{copy.averageRate}</th><th scope="col" className="p-3 text-right">{copy.floorShare}</th></tr></thead><tbody>{sites.map(site => { const values: ComparisonMetric | null = site.months.find(entry => entry.month === referenceMonth)?.metrics ?? null; return <tr key={site.site.id} className="border-t border-slate-800"><th scope="row" className="p-3 text-left"><b>{site.site.name}</b></th><td className="p-3 text-right font-mono">{metric(values?.buildingEnergy)}</td><td className="p-3 text-right font-mono">{metric(values?.buildingCost)}</td><td className="p-3 text-right font-mono">{metric(values?.floorEnergy)}</td><td className="p-3 text-right font-mono">{metric(values?.floorCost)}</td><td className="p-3 text-right font-mono">{metric(values?.avgRate)}</td><td className="p-3 text-right font-mono">{metric(values?.floorShare)}</td></tr>; })}</tbody></table>
     </div>
 
-    {chartData.length === 0 ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-400">{th ? "ไม่มีข้อมูลสำหรับช่วงเปรียบเทียบนี้" : "No records are available for this comparison period."}</section> : <div className="grid grid-cols-1 gap-5"><TrendCard title={th ? "แนวโน้มการใช้พลังงานรายเดือน" : "Monthly Energy Consumption Trend"} icon={<TrendingUp className="h-4 w-4 text-indigo-300" />} data={chartData} sites={data.sites} suffix="energy" unit="kWh" /><TrendCard title={th ? "แนวโน้มค่าไฟฟ้าชั้น 4" : "Floor 4 Electricity Cost Trend"} icon={<Coins className="h-4 w-4 text-emerald-300" />} data={chartData} sites={data.sites} suffix="cost" unit="THB" />{hasRackTrend && <TrendCard title={copy.rackTrend} icon={<Gauge className="h-4 w-4 text-teal-300" />} data={rackChartData} sites={data.sites} suffix="rack-usage" unit="%" />}</div>}
-
-    <section className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="mb-4 flex items-center gap-2"><Server className="h-4 w-4 text-indigo-300" /><div><h3 className="font-semibold">{copy.rackTitle}</h3><p className="text-xs text-slate-400">{copy.rackDescription}</p></div></div><div className="grid gap-4 lg:grid-cols-2">{data.sites.map(site => { const state = rackState[site.site.id]; const counts = rackCounts(state?.rack ?? null); return <article key={site.site.id} className="rounded-lg border border-slate-800 bg-slate-950/50 p-4"><div className="mb-3 flex items-center justify-between"><b>{site.site.name}</b><span className="text-xs text-slate-500">{referenceMonth}</span></div>{rackLoading && !state ? <p className="text-sm text-slate-400">{copy.loadingRack}</p> : state?.unavailable ? <p className="text-sm text-amber-300">{copy.rackUnavailable}</p> : !state?.rack ? <p className="text-sm text-slate-400">{copy.noRack}</p> : <><div className="flex justify-between text-sm"><span>{copy.inUse}</span><b className="font-mono text-indigo-300">{counts.inUse} / {counts.total}</b></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full bg-indigo-500" style={{ width: `${counts.total === 0 ? 0 : (counts.inUse / counts.total) * 100}%` }} /></div><div className="mt-3 grid grid-cols-3 gap-3 text-xs"><span>{copy.available} <b className="block font-mono text-emerald-300">{counts.available}</b></span><span>{copy.reserved} <b className="block font-mono text-amber-300">{counts.reserved}</b></span><span>{copy.other} <b className="block font-mono text-slate-300">{counts.total - counts.inUse - counts.available - counts.reserved}</b></span></div></>}</article>; })}</div></section>
-
-    <section className="rounded-xl border border-slate-800 bg-slate-900 p-4"><div className="mb-4 flex items-center gap-2"><Gauge className="h-4 w-4 text-teal-300" /><div><h3 className="font-semibold">{copy.unitTitle}</h3><p className="text-xs text-slate-400">{copy.unitDescription}</p></div></div><div className="grid gap-4 lg:grid-cols-2">{data.sites.map(site => { const state = rackState[site.site.id]; const unit = state?.unit; return <article key={site.site.id} className="rounded-lg border border-slate-800 bg-slate-950/50 p-4"><div className="mb-3 flex items-center justify-between"><b>{site.site.name}</b><span className="text-xs text-slate-500">{referenceMonth}</span></div>{rackLoading && !state ? <p className="text-sm text-slate-400">{copy.loadingUnit}</p> : state?.unavailable ? <p className="text-sm text-amber-300">{copy.unitUnavailable}</p> : !unit ? <p className="text-sm text-slate-400">{copy.noUnit}</p> : <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4"><span>{copy.totalU} <b className="block font-mono">{metric(unit.totalU)}</b></span><span>{copy.usedU} <b className="block font-mono text-indigo-300">{metric(unit.usedU)}</b></span><span>{copy.availableU} <b className="block font-mono text-emerald-300">{metric(unit.availableU)}</b></span><span>{copy.utilization} <b className="block font-mono text-teal-300">{metric(unit.usagePercent, "%")}</b></span></div>}</article>; })}</div></section>
+    {!hasChartData ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-400">{copy.noRecords}</section> : <div className="grid grid-cols-1 gap-5">
+      <TrendCard title="Total Building Energy Consumption Trend" icon={<TrendingUp className="h-4 w-4 text-indigo-300" />} data={chartData} sites={sites} suffix="building-energy" unit="kWh" axisLabel="Energy (kWh)" />
+      <TrendCard title="4th Floor Energy Consumption Trend" icon={<Zap className="h-4 w-4 text-emerald-300" />} data={chartData} sites={sites} suffix="floor-energy" unit="kWh" axisLabel="Energy (kWh)" />
+      <TrendCard title="Total Building Electricity Cost Trend" icon={<Coins className="h-4 w-4 text-amber-300" />} data={chartData} sites={sites} suffix="building-cost" unit="THB" axisLabel="Cost (THB)" />
+      <TrendCard title="Estimated 4th Floor Electricity Cost Trend" icon={<Calculator className="h-4 w-4 text-teal-300" />} data={chartData} sites={sites} suffix="floor-cost" unit="THB" axisLabel="Estimated Cost (THB)" />
+    </div>}
   </section>;
 }
