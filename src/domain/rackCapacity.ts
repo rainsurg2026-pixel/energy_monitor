@@ -3,6 +3,32 @@ import type { DomainRackRecord } from "./types";
 export const RACK_CANONICAL_STATUSES = ["In Use", "Available", "Reserved", "Pending Dismantle"] as const;
 export type RackCanonicalStatus = (typeof RACK_CANONICAL_STATUSES)[number];
 
+/** Production Rack Capacity uses these explicit utilization bands for both
+ * zone badges and the operator-facing tooltip. Keep the boundary semantics
+ * here so the dashboard and focused tests cannot drift apart. */
+export const RACK_UTILIZATION_THRESHOLDS = Object.freeze({ attention: 80, high: 85 });
+export type RackUtilizationLevel = "Normal" | "Attention" | "High";
+
+export type RackEditableField = "status" | "cabinetSize" | "detail" | "deviceType" | "remarks";
+
+/** Keep UI typography (the multiplication sign) separate from the stored
+ * Rack Capacity value. This makes a display-only edit a true no-op. */
+export function normalizeRackEditableValue(field: RackEditableField, value: string | null | undefined): string | null {
+  if (value === null || value === undefined || value.trim() === "") return null;
+  const trimmed = value.trim();
+  return field === "cabinetSize" ? trimmed.replace(/\s*[×x*]\s*/giu, "*") : trimmed;
+}
+
+export function formatRackCabinetSize(value: string | null | undefined): string {
+  const normalized = normalizeRackEditableValue("cabinetSize", value);
+  return normalized?.replace(/(\d+(?:\.\d+)?)\s*\*\s*(\d+(?:\.\d+)?)/, "$1 × $2") ?? "—";
+}
+
+export function rackUtilizationLevel(percent: number | null): RackUtilizationLevel {
+  if (percent === null || !Number.isFinite(percent) || percent < RACK_UTILIZATION_THRESHOLDS.attention) return "Normal";
+  return percent < RACK_UTILIZATION_THRESHOLDS.high ? "Attention" : "High";
+}
+
 export interface RackStatusRatio { count: number; ratio: number | null; }
 export interface RackZoneMetrics {
   zone: string;

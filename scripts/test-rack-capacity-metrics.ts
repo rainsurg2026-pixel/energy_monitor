@@ -1,4 +1,4 @@
-import { calculateRackCapacityMetrics, formatRatioPercent } from "../src/utils/rackCapacity";
+import { calculateRackCapacityMetrics, formatRatioPercent, rackUtilizationLevel } from "../src/utils/rackCapacity";
 import type { RackRecord } from "../src/reports/reportTypes";
 
 let failures = 0;
@@ -63,6 +63,13 @@ check("Zone A In Use ratio is NOT 9/11 (facility denominator)", Math.abs((zoneA.
 check("Zone B Reserved ratio is 1/1 = 100%", zoneB.reserved.ratio === 1);
 check("Facility-level In Use ratio still uses facility total (9/11)", Math.abs((zoned.inUse.ratio ?? 0) - 9 / 11) < 1e-9);
 check("Zones sorted alphabetically", zoned.zoneMetrics.map(z => z.zone).join(",") === "A,B");
+
+// Production-web status bands: exact boundary behavior is part of the UI
+// contract and must not drift between the dashboard, tooltip, and tests.
+check("79.99% is Normal", rackUtilizationLevel(79.99) === "Normal");
+check("80.0% is Attention", rackUtilizationLevel(80.0) === "Attention");
+check("84.9% is Attention", rackUtilizationLevel(84.9) === "Attention");
+check("85.0% is High", rackUtilizationLevel(85.0) === "High");
 
 console.log(failures === 0 ? "\nALL RACK CAPACITY METRICS TESTS PASSED" : `\n${failures} TEST(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

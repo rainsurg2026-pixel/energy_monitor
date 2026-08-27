@@ -1,8 +1,9 @@
 import type { MonthlyLog } from "../../src/types";
 import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
 import { HttpError } from "../errors";
-import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitImageRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SaveRackUnitImageInput, SaveRackUnitSnapshotInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "./contracts";
+import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackCapacitySaveResult, RackFieldChangeOutcome, RackSnapshotRecord, RackUnitImageRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SaveRackCapacityInput, SaveRackUnitImageInput, SaveRackUnitSnapshotInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "./contracts";
 import type { DisplayPeriod } from "../policies/displayPeriod";
+import { calculateRackCapacityMetrics, normalizeRackEditableValue, type RackCapacityMetrics } from "../../src/domain/rackCapacity";
 
 export interface InMemoryRepositoryOptions {
   sites?: SiteRecord[];
@@ -26,6 +27,29 @@ export interface InMemoryAuditEvent {
   correlationId: string;
   occurredAt: string;
 }
+
+function rackHistoryRows(facility: string, month: string, metrics: RackCapacityMetrics, generatedAt: string): RackCapacityHistoryRecord[] {
+  const row = (rackZone: string, value: RackCapacityMetrics | RackCapacityMetrics["zoneMetrics"][number]): RackCapacityHistoryRecord => ({
+    month,
+    facility,
+    rackZone,
+    totalRacks: value.total,
+    inUse: value.inUse.count,
+    available: value.available.count,
+    reserved: value.reserved.count,
+    pendingDismantle: value.pendingDismantle.count,
+    other: value.other.count,
+    usagePct: value.inUse.ratio,
+    availabilityPct: value.available.ratio,
+    reservedPct: value.reserved.ratio,
+    pendingDismantlePct: value.pendingDismantle.ratio,
+    otherPct: value.other.ratio,
+    generatedAt,
+    dataVersion: 1
+  });
+  return [row("(Total)", metrics), ...metrics.zoneMetrics.map(zone => row(zone.zone, zone))];
+}
+
 export class InMemoryRepository implements BackendRepository {
   private readonly sites: SiteRecord[];
   private logs: Record<number, MonthlyLog[]>;
@@ -132,7 +156,83 @@ export class InMemoryRepository implements BackendRepository {
     }
   }
 
-  async getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null> { return this.rackSnapshots[`${siteId}:${month}`] ?? null; }
+  async getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null> { const snapshot = this.rackSnapshots[`${siteId}:${month}`]; return snapshot ? structuredClone(snapshot) : null; }
+  async saveRackCapacity(input: SaveRackCapacityInput): Promise<RackCapacitySaveResult> {
+    const key = `${input.siteId}:${input.month}`;
+    const current = this.rackSnapshots[key];
+    if (!current) throw new HttpError(404, "RACK_CAPACITY_NOT_FOUND", "Rack Capacity is not initialized for the requested month.");
+    if (input.expectedRowVersion !== current.rowVersion) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
+
+    const previous = structuredClone(current);
+    const previousHistory = structuredClone(this.rackCapacityHistory[input.siteId] ?? []);
+    const auditLength = this.auditEvents.length;
+    const fields = ["status", "cabinetSize", "detail", "deviceType", "remarks"] as const;
+    try {
+      const records = structuredClone(current.records);
+      const outcomes: RackFieldChangeOutcome[] = [];
+      let changedCount = 0;
+      for (const change of input.changes) {
+        const index = records.findIndex(record => record.rowNumber === change.rowNumber);
+        if (index < 0) {
+          outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "row_not_found" });
+          continue;
+        }
+        const record = records[index];
+        if (record.rackId !== change.rackId) {
+          outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "rack_id_mismatch" });
+          continue;
+        }
+        let conflict: RackFieldChangeOutcome | null = null;
+        for (const field of fields) {
+          const edit = change[field];
+          if (!edit) continue;
+          const actual = record[field];
+          if (normalizeRackEditableValue(field, actual) !== normalizeRackEditableValue(field, edit.expected)) {
+            conflict = { rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictField: field, conflictActualValue: actual, conflictReason: "field_mismatch" };
+            break;
+          }
+        }
+        if (conflict) { outcomes.push(conflict); continue; }
+        for (const field of fields) {
+          const edit = change[field];
+          if (!edit) continue;
+          const next = normalizeRackEditableValue(field, edit.next);
+          const actual = normalizeRackEditableValue(field, record[field]);
+          if (actual !== next) changedCount++;
+          record[field] = next;
+        }
+        outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: true });
+      }
+
+      const rowVersion = changedCount > 0 ? current.rowVersion + 1 : current.rowVersion;
+      const snapshot: RackSnapshotRecord = { month: current.month, rowVersion, records };
+      if (changedCount > 0) {
+        this.rackSnapshots[key] = snapshot;
+        const metrics = calculateRackCapacityMetrics(records);
+        const generatedAt = input.generatedAt ?? new Date().toISOString();
+        const history = this.rackCapacityHistory[input.siteId] ?? (this.rackCapacityHistory[input.siteId] = []);
+        this.rackCapacityHistory[input.siteId] = [
+          ...history.filter(row => row.month !== input.month),
+          ...rackHistoryRows(input.facility, input.month, metrics, generatedAt)
+        ];
+        this.recordAudit({
+          actorUserId: input.actorUserId ?? null,
+          action: "update",
+          entityType: "rack_capacity_snapshot",
+          entityId: key,
+          previousValue: { siteId: input.siteId, month: input.month, rowVersion: current.rowVersion },
+          newValue: { siteId: input.siteId, month: input.month, rowVersion, changedCount },
+          correlationId: input.correlationId
+        });
+      }
+      return { snapshot: structuredClone(snapshot), outcomes, changedCount };
+    } catch (error) {
+      this.rackSnapshots[key] = previous;
+      this.rackCapacityHistory[input.siteId] = previousHistory;
+      this.auditEvents.length = auditLength;
+      throw error;
+    }
+  }
   async getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null> { return this.rackUnitSnapshots[`${siteId}:${month}`] ?? null; }
   async saveRackUnitSnapshot(input: SaveRackUnitSnapshotInput): Promise<RackUnitSnapshotRecord> {
     const key = `${input.siteId}:${input.month}`;

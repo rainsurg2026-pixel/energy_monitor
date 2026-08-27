@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { calculateEnergyCostForMonth } from "../../src/domain/energyCost";
 import { buildFacilityComparisonMetrics } from "../../src/domain/facilityComparison";
-import { calculateRackCapacityMetrics } from "../../src/domain/rackCapacity";
+import { calculateRackCapacityMetrics, normalizeRackEditableValue, RACK_CANONICAL_STATUSES, type RackEditableField } from "../../src/domain/rackCapacity";
 import { usagePercent } from "../../src/domain/rackUnitCapacity";
 import { DESKTOP_FORMULA_VERSION } from "../../src/domain/formulaVersion";
 import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
 import type { MonthlyLog } from "../../src/types";
 import { HttpError } from "../errors";
 import { assertDisplayPeriod, assertStrictMonth, allowedMonths, isAllowedMonth, latestAvailableMonth, previousCalculationMonth, visibleMonths, type DisplayPeriod } from "../policies/displayPeriod";
-import type { BackendRepository, RackUnitImageRecord, SiteRecord, UpsGroupHistoryRecord } from "../repositories/contracts";
+import type { BackendRepository, RackFieldChange, RackUnitImageRecord, SiteRecord, UpsGroupHistoryRecord } from "../repositories/contracts";
 import { validateImageBytes } from "../../src/utils/imageValidation";
 import { imageObjectKey, type RackUnitImageStorage } from "../storage/rackUnitImageStorage";
 import { parseExpectedRowVersion, parseMonthlyLog, parseProvenance } from "./rawInputValidation";
@@ -20,6 +20,45 @@ export interface ApiServiceOptions { repository: BackendRepository; now?: () => 
 export type HistoryScope = "dashboard" | "rack" | "full";
 
 function monthOfDate(date: Date): string { return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`; }
+
+const RACK_EDITABLE_FIELDS: readonly RackEditableField[] = ["status", "cabinetSize", "detail", "deviceType", "remarks"];
+function rackObject(value: unknown, field: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "INVALID_RACK_CHANGES", `${field} must be an object.`);
+  return value as Record<string, unknown>;
+}
+function rackEditValue(value: unknown, field: RackEditableField, path: string): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "string") throw new HttpError(400, "INVALID_RACK_CHANGES", `${path} must be a string or null.`);
+  return normalizeRackEditableValue(field, value);
+}
+function parseRackChanges(value: unknown): RackFieldChange[] {
+  if (!Array.isArray(value) || value.length === 0) throw new HttpError(400, "INVALID_RACK_CHANGES", "changes must be a non-empty array.");
+  const seenRows = new Set<number>();
+  return value.map((entry, index) => {
+    const source = rackObject(entry, `changes[${index}]`);
+    const rowNumber = source.row_number ?? source.rowNumber;
+    if (typeof rowNumber !== "number" || !Number.isSafeInteger(rowNumber) || rowNumber < 1) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes[${index}].row_number must be a positive integer.`);
+    if (seenRows.has(rowNumber)) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes contains duplicate row ${rowNumber}.`);
+    seenRows.add(rowNumber);
+    if (typeof source.rack_id !== "string" && typeof source.rackId !== "string") throw new HttpError(400, "INVALID_RACK_CHANGES", `changes[${index}].rack_id must be a non-empty string.`);
+    const rackId = String(source.rack_id ?? source.rackId).trim();
+    if (!rackId) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes[${index}].rack_id must be a non-empty string.`);
+    const result: RackFieldChange = { rowNumber, rackId };
+    let fieldCount = 0;
+    for (const field of RACK_EDITABLE_FIELDS) {
+      if (!(field in source)) continue;
+      const edit = rackObject(source[field], `changes[${index}].${field}`);
+      if (!("expected" in edit) || !("next" in edit)) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes[${index}].${field} requires expected and next.`);
+      const expected = rackEditValue(edit.expected, field, `changes[${index}].${field}.expected`);
+      const next = rackEditValue(edit.next, field, `changes[${index}].${field}.next`);
+      if (field === "status" && (next === null || !RACK_CANONICAL_STATUSES.includes(next as (typeof RACK_CANONICAL_STATUSES)[number]))) throw new HttpError(400, "INVALID_RACK_STATUS", "Rack status must be one of the canonical Rack Capacity statuses.");
+      result[field] = { expected, next };
+      fieldCount++;
+    }
+    if (fieldCount === 0) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes[${index}] must contain at least one editable field.`);
+    return result;
+  });
+}
 
 export class ApiService {
   constructor(private readonly repository: BackendRepository, private readonly now: () => Date = () => new Date(), private readonly imageStorage?: RackUnitImageStorage) {}
@@ -302,6 +341,19 @@ export class ApiService {
     const { month: selected } = await this.requireVisibleMonth(month);
     const snapshot = await this.repository.getRackSnapshot(siteId, selected);
     return { siteId, month: selected, snapshot: snapshot ? { ...snapshot, metrics: calculateRackCapacityMetrics(snapshot.records) } : null };
+  }
+
+  async saveRacks(siteId: number, month: unknown, body: unknown, correlationId: string, actorUserId?: number | null): Promise<unknown> {
+    const site = await this.requireSite(siteId);
+    const { month: selected, period } = await this.requireVisibleMonth(month);
+    const source = body === null || typeof body !== "object" || Array.isArray(body)
+      ? (() => { throw new HttpError(400, "INVALID_BODY", "Request body must be a JSON object."); })()
+      : body as Record<string, unknown>;
+    const changes = parseRackChanges(source.changes);
+    const expectedRowVersion = parseExpectedRowVersion(source.expected_row_version);
+    const saved = await this.repository.withTransaction(repository => repository.saveRackCapacity({ siteId, facility: site.code, month: selected, changes, expectedRowVersion, actorUserId, correlationId, generatedAt: this.now().toISOString() }));
+    const history = (await this.repository.listRackCapacityHistory(siteId)).filter(row => period.startMonth <= row.month && row.month <= period.endMonth && row.month <= monthOfDate(this.now()));
+    return { siteId, month: selected, snapshot: saved.snapshot, outcomes: saved.outcomes, changedCount: saved.changedCount, rackCapacityHistory: history };
   }
 
   async getRackUnit(siteId: number, month: unknown): Promise<unknown> {

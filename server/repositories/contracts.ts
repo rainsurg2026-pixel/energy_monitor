@@ -1,6 +1,7 @@
 import type { MonthlyLog } from "../../src/types";
 import type { DashboardUpsMappingReport } from "../../src/reports/reportTypes";
 import type { DisplayPeriod } from "../policies/displayPeriod";
+import type { RackEditableField } from "../../src/domain/rackCapacity";
 
 export interface SiteRecord {
   id: number;
@@ -15,6 +16,39 @@ export interface RackSnapshotRecord {
   month: string;
   rowVersion: number;
   records: Array<{ rowNumber: number | null; rackZone: string | null; rackId: string | null; status: string | null; cabinetSize: string | null; detail: string | null; deviceType: string | null; remarks: string | null }>;
+}
+export interface RackFieldEdit { expected: string | null; next: string | null; }
+export interface RackFieldChange {
+  rowNumber: number;
+  rackId: string;
+  status?: RackFieldEdit;
+  cabinetSize?: RackFieldEdit;
+  detail?: RackFieldEdit;
+  deviceType?: RackFieldEdit;
+  remarks?: RackFieldEdit;
+}
+export interface RackFieldChangeOutcome {
+  rowNumber: number;
+  rackId: string;
+  applied: boolean;
+  conflictField?: RackEditableField;
+  conflictActualValue?: string | null;
+  conflictReason?: "row_not_found" | "rack_id_mismatch" | "field_mismatch";
+}
+export interface SaveRackCapacityInput {
+  siteId: number;
+  facility: string;
+  month: string;
+  changes: RackFieldChange[];
+  expectedRowVersion: number | null;
+  actorUserId?: number | null;
+  correlationId: string;
+  generatedAt?: string;
+}
+export interface RackCapacitySaveResult {
+  snapshot: RackSnapshotRecord;
+  outcomes: RackFieldChangeOutcome[];
+  changedCount: number;
 }
 export interface RackUnitImageRecord {
   objectKey: string;
@@ -86,6 +120,7 @@ export interface BackendRepository {
   getMonthlyLogs(siteId: number, months: readonly string[]): Promise<MonthlyLog[]>;
   saveMonthlyLog(input: SaveMonthlyLogInput): Promise<PeriodRecord>;
   getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null>;
+  saveRackCapacity(input: SaveRackCapacityInput): Promise<RackCapacitySaveResult>;
   getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null>;
   saveRackUnitSnapshot(input: SaveRackUnitSnapshotInput): Promise<RackUnitSnapshotRecord>;
   replaceRackUnitImage(input: SaveRackUnitImageInput): Promise<{ image: RackUnitImageRecord; replacedObjectKeys: string[] }>;

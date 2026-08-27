@@ -142,6 +142,7 @@ export function createApp(dependencies: AppDependencies) {
   app.get("/api/v1/sites/:siteId/periods/:month", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.operationalDataRead); sendOk(res, await service.getMonthlyLog(parseSiteId(req.params.siteId), req.params.month)); }));
   app.get("/api/v1/site-comparison", asyncRoute(async (_req, res) => { withPermission(res, PERMISSIONS.siteComparisonRead); sendOk(res, await service.getSiteComparison()); }));
   app.get("/api/v1/racks", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.rackRead); sendOk(res, await service.getRacks(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
+  app.put("/api/v1/racks", asyncRoute(async (req, res) => { const actor = withPermission(res, PERMISSIONS.operationalDataWrite); sendOk(res, await service.saveRacks(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month), parseObjectBody(req.body), res.locals.requestId, actorNumber(actor.userId))); }));
   app.get("/api/v1/rack-unit-capacity", asyncRoute(async (req, res) => { withPermission(res, PERMISSIONS.rackRead); sendOk(res, await service.getRackUnit(parseSiteId(req.query.siteId), parseRequiredMonth(req.query.month))); }));
   app.get("/api/v1/sites/:siteId/rack-unit-capacity/:month/image", asyncRoute(async (req, res) => {
     withPermission(res, PERMISSIONS.rackRead);

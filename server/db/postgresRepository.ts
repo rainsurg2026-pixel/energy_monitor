@@ -1,9 +1,10 @@
 import type { Pool, PoolClient } from "pg";
 import type { MonthlyLog, UpsRecord } from "../../src/types";
 import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
+import { calculateRackCapacityMetrics, normalizeRackEditableValue, type RackCapacityMetrics } from "../../src/domain/rackCapacity";
 import { withTransaction, type DbExecutor, query } from "./pool";
 import { HttpError } from "../errors";
-import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackSnapshotRecord, RackUnitImageRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SaveRackUnitImageInput, SaveRackUnitSnapshotInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "../repositories/contracts";
+import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackCapacitySaveResult, RackFieldChangeOutcome, RackSnapshotRecord, RackUnitImageRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SaveRackCapacityInput, SaveRackUnitImageInput, SaveRackUnitSnapshotInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "../repositories/contracts";
 import { dashboardMappingFromPolicy } from "../repositories/dashboardMapping";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
@@ -30,6 +31,28 @@ async function upsertUpsGroupHistoryRowsSql(executor: DbExecutor, siteId: number
       [siteId, facility, `${row.month}-01`, row.group, row.totalLoadKw, row.totalLoadKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh]
     );
   }
+}
+
+function rackHistoryRows(facility: string, month: string, metrics: RackCapacityMetrics, generatedAt: string): RackCapacityHistoryRecord[] {
+  const row = (rackZone: string, value: RackCapacityMetrics | RackCapacityMetrics["zoneMetrics"][number]): RackCapacityHistoryRecord => ({
+    month,
+    facility,
+    rackZone,
+    totalRacks: value.total,
+    inUse: value.inUse.count,
+    available: value.available.count,
+    reserved: value.reserved.count,
+    pendingDismantle: value.pendingDismantle.count,
+    other: value.other.count,
+    usagePct: value.inUse.ratio,
+    availabilityPct: value.available.ratio,
+    reservedPct: value.reserved.ratio,
+    pendingDismantlePct: value.pendingDismantle.ratio,
+    otherPct: value.other.ratio,
+    generatedAt,
+    dataVersion: 1
+  });
+  return [row("(Total)", metrics), ...metrics.zoneMetrics.map(zone => row(zone.zone, zone))];
 }
 
 export class PostgresRepository implements BackendRepository {
@@ -289,6 +312,100 @@ export class PostgresRepository implements BackendRepository {
     const row = snapshot.rows[0]; if (!row) return null;
     const records = await query<{ source_row_number: number | null; rack_zone: string | null; rack_id: string | null; status: string | null; cabinet_size: string | null; detail: string | null; device_type: string | null; remarks: string | null }>(this.executor, "SELECT source_row_number, rack_zone, rack_id, status, cabinet_size, detail, device_type, remarks FROM rack_capacity_records WHERE snapshot_id = $1 ORDER BY source_row_number NULLS LAST, id", [row.id]);
     return { month: monthString(row.snapshot_month), rowVersion: row.row_version, records: records.rows.map(item => ({ rowNumber: item.source_row_number, rackZone: item.rack_zone, rackId: item.rack_id, status: item.status, cabinetSize: item.cabinet_size, detail: item.detail, deviceType: item.device_type, remarks: item.remarks })) };
+  }
+
+  async saveRackCapacity(input: SaveRackCapacityInput): Promise<RackCapacitySaveResult> {
+    const snapshotResult = await query<{ id: string; snapshot_month: string; row_version: number }>(this.executor,
+      "SELECT id, snapshot_month, row_version FROM rack_capacity_snapshots WHERE site_id = $1 AND snapshot_month = $2::date FOR UPDATE",
+      [input.siteId, `${input.month}-01`]);
+    const snapshotRow = snapshotResult.rows[0];
+    if (!snapshotRow) throw new HttpError(404, "RACK_CAPACITY_NOT_FOUND", "Rack Capacity is not initialized for the requested month.");
+    if (input.expectedRowVersion !== snapshotRow.row_version) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
+
+    type DbRackRow = { id: string; source_row_number: number | null; rack_zone: string | null; rack_id: string | null; status: string | null; cabinet_size: string | null; detail: string | null; device_type: string | null; remarks: string | null };
+    const rowsResult = await query<DbRackRow>(this.executor,
+      "SELECT id, source_row_number, rack_zone, rack_id, status, cabinet_size, detail, device_type, remarks FROM rack_capacity_records WHERE snapshot_id = $1 ORDER BY source_row_number NULLS LAST, id FOR UPDATE",
+      [snapshotRow.id]);
+    const rows = rowsResult.rows;
+    const fields = ["status", "cabinetSize", "detail", "deviceType", "remarks"] as const;
+    const columns: Record<(typeof fields)[number], keyof DbRackRow> = { status: "status", cabinetSize: "cabinet_size", detail: "detail", deviceType: "device_type", remarks: "remarks" };
+    const outcomes: RackFieldChangeOutcome[] = [];
+    let changedCount = 0;
+
+    for (const change of input.changes) {
+      const row = rows.find(candidate => candidate.source_row_number === change.rowNumber);
+      if (!row) {
+        outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "row_not_found" });
+        continue;
+      }
+      if (row.rack_id !== change.rackId) {
+        outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictReason: "rack_id_mismatch" });
+        continue;
+      }
+
+      let conflict: RackFieldChangeOutcome | null = null;
+      for (const field of fields) {
+        const edit = change[field];
+        if (!edit) continue;
+        const actual = row[columns[field]] as string | null;
+        if (normalizeRackEditableValue(field, actual) !== normalizeRackEditableValue(field, edit.expected)) {
+          conflict = { rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictField: field, conflictActualValue: actual, conflictReason: "field_mismatch" };
+          break;
+        }
+      }
+      if (conflict) { outcomes.push(conflict); continue; }
+
+      const updates: Array<{ field: (typeof fields)[number]; next: string | null }> = [];
+      for (const field of fields) {
+        const edit = change[field];
+        if (!edit) continue;
+        const actual = row[columns[field]] as string | null;
+        const next = normalizeRackEditableValue(field, edit.next);
+        if (normalizeRackEditableValue(field, actual) !== next) changedCount++;
+        updates.push({ field, next });
+      }
+      if (updates.length > 0) {
+        const values: unknown[] = [];
+        const assignments = updates.map(({ field, next }) => { values.push(next); return `${String(columns[field])} = $${values.length}`; });
+        values.push(row.id);
+        await query(this.executor, `UPDATE rack_capacity_records SET ${assignments.join(", ")} WHERE id = $${values.length}`, values);
+        for (const { field, next } of updates) (row as unknown as Record<string, string | null>)[columns[field]] = next;
+      }
+      outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: true });
+    }
+
+    const rowVersion = changedCount > 0 ? snapshotRow.row_version + 1 : snapshotRow.row_version;
+    if (changedCount > 0) {
+      const versionResult = await query<{ row_version: number }>(this.executor,
+        "UPDATE rack_capacity_snapshots SET row_version = row_version + 1, updated_at = now() WHERE id = $1 AND row_version = $2 RETURNING row_version",
+        [snapshotRow.id, snapshotRow.row_version]);
+      if (!versionResult.rows[0]) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
+      const generatedAt = input.generatedAt ?? new Date().toISOString();
+      const metrics = calculateRackCapacityMetrics(rows.map(record => ({ rowNumber: record.source_row_number, rackZone: record.rack_zone, rackId: record.rack_id, status: record.status, cabinetSize: record.cabinet_size, detail: record.detail, deviceType: record.device_type, remarks: record.remarks })));
+      for (const historyRow of rackHistoryRows(input.facility, input.month, metrics, generatedAt)) {
+        await query(this.executor,
+          `INSERT INTO public.rack_capacity_history
+             (site_id, snapshot_month, facility, rack_zone, total_racks, in_use, available, reserved, pending_dismantle, other, usage_pct, availability_pct, reserved_pct, pending_dismantle_pct, other_pct, generated_at, data_version)
+           VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 1)
+           ON CONFLICT (site_id, snapshot_month, rack_zone) DO UPDATE SET
+             facility = EXCLUDED.facility, total_racks = EXCLUDED.total_racks, in_use = EXCLUDED.in_use,
+             available = EXCLUDED.available, reserved = EXCLUDED.reserved, pending_dismantle = EXCLUDED.pending_dismantle,
+             other = EXCLUDED.other, usage_pct = EXCLUDED.usage_pct, availability_pct = EXCLUDED.availability_pct,
+             reserved_pct = EXCLUDED.reserved_pct, pending_dismantle_pct = EXCLUDED.pending_dismantle_pct,
+             other_pct = EXCLUDED.other_pct, generated_at = EXCLUDED.generated_at, data_version = EXCLUDED.data_version`,
+          [input.siteId, `${input.month}-01`, input.facility, historyRow.rackZone, historyRow.totalRacks, historyRow.inUse, historyRow.available, historyRow.reserved, historyRow.pendingDismantle, historyRow.other, historyRow.usagePct, historyRow.availabilityPct, historyRow.reservedPct, historyRow.pendingDismantlePct, historyRow.otherPct, historyRow.generatedAt]);
+      }
+      await query(this.executor,
+        "INSERT INTO audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [input.actorUserId === null || input.actorUserId === undefined ? "system" : "user", input.actorUserId ?? null, "update", "rack_capacity_snapshot", `${input.siteId}:${input.month}`, JSON.stringify({ site_id: input.siteId, snapshot_month: input.month, row_version: snapshotRow.row_version }), JSON.stringify({ site_id: input.siteId, snapshot_month: input.month, row_version: rowVersion, changed_count: changedCount }), input.correlationId]);
+    }
+
+    const snapshot: RackSnapshotRecord = {
+      month: monthString(snapshotRow.snapshot_month),
+      rowVersion,
+      records: rows.map(record => ({ rowNumber: record.source_row_number, rackZone: record.rack_zone, rackId: record.rack_id, status: record.status, cabinetSize: record.cabinet_size, detail: record.detail, deviceType: record.device_type, remarks: record.remarks }))
+    };
+    return { snapshot, outcomes, changedCount };
   }
 
   async getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null> {
