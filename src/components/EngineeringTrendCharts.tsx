@@ -79,7 +79,7 @@ export default function EngineeringTrendCharts({ logs, lang }: EngineeringTrendC
         <section key={chart.id} className="trend-chart-card w-full bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4 min-w-0 shadow-sm" data-testid={`executive-trend-${chart.id}`}>
           <div className="flex justify-between items-center gap-3">
             <div>
-              <h3 className="text-sm uppercase tracking-wide text-slate-100">{chart.title}</h3>
+              <h3 className="text-sm tracking-wide text-slate-100">{chart.title}</h3>
               <p className="text-xs mt-1 text-slate-400">{chart.description}</p>
             </div>
             <span className="text-sm text-slate-400 whitespace-nowrap">{trendData.length} months</span>
