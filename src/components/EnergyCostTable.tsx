@@ -134,7 +134,7 @@ export default function EnergyCostTable({
   );
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-clip shadow-sm">
       {/* Table Header Section */}
       <div className="p-4 sm:p-5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/50">
         <div>
@@ -178,8 +178,9 @@ export default function EnergyCostTable({
         </div>
       </div>
 
-      {/* Inputs Layout */}
-      <div className="overflow-x-auto">
+      {/* Inputs Layout. Scrollable on mobile; clips (not scrolls) from md up so
+          the sticky thead resolves against the viewport, not this wrapper. */}
+      <div className="overflow-x-auto md:overflow-x-clip">
         <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-emerald-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-emerald-300 border-b border-slate-800/80">

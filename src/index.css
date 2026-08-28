@@ -243,12 +243,18 @@ html.theme-light .recharts-default-tooltip {
   text-align: center !important;
 }
 
-/* Production Data Entry density and long-table behavior. The shell header is
- * 4.25rem at the desktop layout; keep the entry header below it without
- * introducing another scroll container. */
+/* Production Data Entry density and long-table behavior. The sticky offset is
+ * the CleanWebApp shell header height (py-3 + text-lg + text-xs line boxes =
+ * 4.25rem / 68px); the nav row and Reporting Month bar scroll away, so no
+ * sub-header height is added. For sticky to resolve against the viewport, the
+ * UPS/Air/DC/Energy cards use overflow-clip and their table wrappers switch to
+ * overflow-x-clip from md up (both clip without becoming scroll containers).
+ * The Srinakarin phase tables keep width-based horizontal scrolling, so their
+ * headers stay non-sticky by design; the md- fallback below also covers them. */
 .entry-data-table thead th {
   position: sticky;
-  top: 4.25rem;
+  /* 4.25rem shell content box + its 1px border-b. */
+  top: calc(4.25rem + 1px);
   z-index: 10;
   background-color: var(--color-surface);
   box-shadow: 0 1px 0 var(--color-border);
