@@ -45,19 +45,19 @@ export default function DcTable({
     noSaved: "ยังไม่มีการบันทึกข้อมูล DC เดือนนี้"
   } : {
     title: "DC Power Panel Records",
-    description: "Input direct-current voltage and load currents for critical telecommunications or hardware power distribution panels (PDBs).",
+    description: "Enter monthly DC voltage and current readings for each power distribution panel.",
     reset: "Reset",
-    save: "Save DC",
+    save: "Save DC Readings",
     saved: "DC Saved!",
     month: "Month",
     panel: "DC Power Panel",
     voltage: "DC Voltage (V)",
     current: "DC Current (A)",
-    calculated: "Calculated Power (kW)",
+    calculated: "CALCULATED DC POWER (kW)",
     waiting: "Waiting for V & A...",
-    panels: (count: number) => `DC Panel Logs: ${count} panels configured`,
+    panels: (count: number) => `DC Panels: ${count} configured`,
     lastSaved: "Last Saved",
-    noSaved: "No DC logs saved for this month yet"
+    noSaved: "Unsaved changes"
   };
   const [records, setRecords] = useState<DcRecord[]>([]);
   const [isSaved, setIsSaved] = useState(false);
@@ -132,7 +132,7 @@ export default function DcTable({
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-clip shadow-sm">
       {/* Table Header Section */}
       <div className="p-4 sm:p-5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/50">
         <div>
@@ -173,8 +173,9 @@ export default function DcTable({
         </div>
       </div>
 
-      {/* Table Container */}
-      <div className="overflow-x-auto">
+      {/* Table Container. Scrollable on mobile; clips (not scrolls) from md up so
+          the sticky thead resolves against the viewport, not this wrapper. */}
+      <div className="overflow-x-auto md:overflow-x-clip">
         <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-amber-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-amber-300 border-b border-slate-800/80">
@@ -182,7 +183,7 @@ export default function DcTable({
               <th className="py-3.5 px-4 font-normal">{copy.panel}</th>
               <th className="py-3.5 px-4 font-normal text-right">{copy.voltage}</th>
               <th className="py-3.5 px-4 font-normal text-right">{copy.current}</th>
-              <th className="py-3.5 px-4 font-normal text-right">{copy.calculated}</th>
+              <th className="py-3.5 px-4 font-normal normal-case text-right">{copy.calculated}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800/50 font-mono text-sm text-slate-300">
@@ -211,6 +212,7 @@ export default function DcTable({
                         placeholder="54.0"
                         value={row.voltage}
                         onChange={value => handleInputChange(idx, "voltage", value)}
+                        ariaLabel={`${row.panelId} voltage`}
                         className={`w-full bg-amber-950/5 hover:bg-amber-950/10 focus:bg-amber-950/15 border rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all ${
                           isVoltageAbnormal 
                             ? "border-amber-600/50 text-amber-300 bg-amber-950/5 focus:border-amber-500" 
@@ -233,6 +235,7 @@ export default function DcTable({
                       placeholder="85.0"
                       value={row.current}
                       onChange={value => handleInputChange(idx, "current", value)}
+                      ariaLabel={`${row.panelId} current`}
                       className="w-full max-w-[150px] ml-auto bg-amber-950/5 hover:bg-amber-950/10 focus:bg-amber-950/15 border border-slate-800 focus:border-amber-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                     />
                   </td>

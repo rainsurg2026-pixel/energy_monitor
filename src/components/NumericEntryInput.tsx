@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { formatNumber2 } from "../utils/numberFormatBridge";
+import { formatFixedNumber, formatNumber2 } from "../utils/numberFormatBridge";
 
 interface NumericEntryInputProps {
   value: number | null | undefined;
@@ -8,6 +8,10 @@ interface NumericEntryInputProps {
   placeholder?: string;
   disabled?: boolean;
   step?: string;
+  precision?: number;
+  /** Accessible name — the table cells around this input are plain <td>, so
+   *  without it a screen reader announces the field as "edit text, blank". */
+  ariaLabel?: string;
 }
 
 /** Keeps form state numeric while presenting grouped, two-decimal values at rest. */
@@ -17,28 +21,42 @@ export default function NumericEntryInput({
   className,
   placeholder,
   disabled = false,
-  step
+  step,
+  precision,
+  ariaLabel
 }: NumericEntryInputProps) {
   const [focused, setFocused] = useState(false);
   const [text, setText] = useState("");
 
   useEffect(() => {
-    if (!focused) setText(value === null || value === undefined ? "" : formatNumber2(value));
-  }, [focused, value]);
+    if (!focused) {
+      setText(value === null || value === undefined
+        ? ""
+        : precision === undefined
+          ? formatNumber2(value)
+          : formatFixedNumber(value, precision));
+    }
+  }, [focused, precision, value]);
 
   const rawValue = value === null || value === undefined ? "" : String(value);
+  const displayValue = value === null || value === undefined
+    ? ""
+    : precision === undefined
+      ? formatNumber2(value)
+      : formatFixedNumber(value, precision);
 
   return (
     <input
       type="text"
       inputMode="decimal"
       step={step}
+      aria-label={ariaLabel}
       placeholder={placeholder}
-      value={focused ? text : (value === null || value === undefined ? "" : formatNumber2(value))}
+      value={focused ? text : displayValue}
       disabled={disabled}
       onFocus={() => {
         setFocused(true);
-        setText(rawValue);
+        setText(precision === undefined ? rawValue : displayValue);
       }}
       onBlur={() => setFocused(false)}
       onChange={event => {

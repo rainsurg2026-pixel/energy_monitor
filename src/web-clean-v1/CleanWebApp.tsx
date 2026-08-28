@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { BarChart3, Calendar, ChartNoAxesCombined, ClipboardPenLine, Download, FileCode2, FileSpreadsheet, History, LogOut, Printer, Server, Settings, UsersRound } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { BarChart3, Boxes, Calendar, ChartNoAxesCombined, ClipboardPenLine, Download, FileCode2, FileSpreadsheet, History, LogOut, Printer, Server, Settings, UsersRound } from "lucide-react";
 import { ReportProvider, useReport } from "../ReportContext";
 import UniversalFilterBar from "../components/UniversalFilterBar";
 import { createEmptyLog } from "../utils";
@@ -8,23 +8,25 @@ import { selectedDashboardMonth } from "../utils/reportPeriodSelection";
 import { computeCompletion } from "../utils/completion";
 import type { MonthlyLog } from "../types";
 import type { IDataProvider } from "../data/IDataProvider";
-import type { DashboardUpsMappingReport, UpsGroupHistoryReport, RackCapacitySummary } from "../reports/reportTypes";
+import type { DashboardUpsMappingReport, UpsGroupHistoryReport } from "../reports/reportTypes";
 import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
 import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
-import { RackCapacityProvider, useRackCapacity } from "../components/rack/RackCapacityContext";
 import type { EntryWorkspaceActions } from "./WebEntryWorkspace";
-import { api, type SessionUser, type Role } from "./api";
+import { api, setUnauthorizedHandler, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportAllFacilitiesHtml as exportAllFacilitiesHtmlFile, exportAllFacilitiesPdf as exportAllFacilitiesPdfFile, exportCsv, exportDesktopPdf as exportDesktopPdfFile, exportExcel, exportHtml as exportHtmlFile, exportSiteComparisonCsv, exportSiteComparisonExcel, exportSiteComparisonHtml, exportSiteComparisonPdf as exportSiteComparisonPdfFile, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
 import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodSelection } from "./reportPeriod";
 import { facilityStorageKey, latestEnergyMonth, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
 import { applyTheme, languageStorageKey, normalizeLanguage, normalizeTheme, themeStorageKey, type AppLanguage, type Theme } from "./theme";
+import { formatWebSavedTimestamp } from "./formatting";
 import { HistoryProvider } from "../reporting/HistoryProvider";
 import { ReportRegistry } from "../reporting/ReportRegistry";
 import type { ReportHistoryItem, ReportSectionId } from "../reporting/reportingTypes";
 import { loadWebRackUnitCapacityImage, type WebRackUnitCapacityImage } from "./rackUnitImage";
+import { WebRackCapacityDashboard, WebRackUnitCapacityDashboard } from "./WebRackCapacityViews";
+import type { RackApiSnapshot } from "./WebRackCapacityEditors";
 
 const DashboardSummary = lazy(() => import("../components/DashboardSummary"));
 const ExecutiveDashboard = lazy(() => import("../components/ExecutiveDashboard"));
@@ -34,21 +36,12 @@ const SmartInsightPanel = lazy(() => import("../components/SmartInsightPanel"));
 const HistoricalExplorer = lazy(() => import("../components/HistoricalExplorer"));
 const HistoricalCharts = lazy(() => import("../components/HistoricalCharts"));
 const WebSiteComparison = lazy(() => import("./WebSiteComparison"));
+const WebSiteRackCapacityComparison = lazy(() => import("./WebSiteRackCapacityComparison"));
 const WebEntryWorkspace = lazy(() => import("./WebEntryWorkspace"));
 const WebReportPreview = lazy(() => import("./WebReportPreview"));
-const RackCapacitySummaryCard = lazy(() => import("../components/rack/RackCapacitySummaryCard"));
-const RackCapacityHistoryPanel = lazy(() => import("../components/rack/RackCapacityHistoryPanel"));
-const RackCapacityForecast = lazy(() => import("../components/rack/Forecast").then(module => ({ default: module.Forecast })));
-const RackUnitCapacitySummary = lazy(() => import("../components/rack/RackUnitCapacitySummary").then(module => ({ default: module.RackUnitCapacitySummary })));
-const RackCapacityStickyHeader = lazy(() => import("../components/rack/StickyHeader").then(module => ({ default: module.StickyHeader })));
-const RackCapacityExecutiveKpiCards = lazy(() => import("../components/rack/ExecutiveKpiCards").then(module => ({ default: module.ExecutiveKpiCards })));
-const CapacityAlerts = lazy(() => import("../components/rack/CapacityAlerts").then(module => ({ default: module.CapacityAlerts })));
-const CapacityGauge = lazy(() => import("../components/rack/CapacityGauge").then(module => ({ default: module.CapacityGauge })));
-const RackCapacityTimeline = lazy(() => import("../components/rack/Timeline").then(module => ({ default: module.Timeline })));
-const WebRackCapacityEditor = lazy(() => import("./WebRackCapacityEditors").then(module => ({ default: module.WebRackCapacityEditor })));
 
-type View = "dashboard" | "entry" | "racks" | "history" | "comparison" | "reports" | "settings" | "admin";
-const HISTORY_DATA_VIEWS: ReadonlySet<View> = new Set(["dashboard", "entry", "racks", "history", "reports"]);
+type View = "dashboard" | "entry" | "racks" | "rack-units" | "history" | "comparison" | "rack-comparison" | "reports" | "settings" | "admin";
+const HISTORY_DATA_VIEWS: ReadonlySet<View> = new Set(["dashboard", "entry", "racks", "rack-units", "history", "reports"]);
 type HistoryScope = "dashboard" | "rack" | "full";
 type Site = FacilitySite;
 type Bootstrap = BootstrapState;
@@ -108,13 +101,15 @@ export default function CleanWebApp() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [siteId, setSiteId] = useState<number | null>(null);
-  const [view, setViewState] = useState<View>("dashboard");
+  const [view, setViewState] = useState<View>("entry");
   const [history, setHistory] = useState<HistoryData>({ months: [], logs: [] });
   const [month, setMonth] = useState(todayMonth());
   const [draft, setDraft] = useState<MonthlyLog | null>(null);
   const [rowVersion, setRowVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [entryDirty, setEntryDirty] = useState(false);
+  const [rackDirty, setRackDirty] = useState(false);
+  const [rackDiscardVersion, setRackDiscardVersion] = useState(0);
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation | null>(null);
   const [pendingCreateMonth, setPendingCreateMonth] = useState<string | null>(null);
   const entryActionsRef = useRef<EntryWorkspaceActions | null>(null);
@@ -127,11 +122,15 @@ export default function CleanWebApp() {
   const [theme, setTheme] = useState<Theme>("light");
   const [lang, setLang] = useState<AppLanguage>("th");
   const activeSiteIdRef = useRef<number | null>(null);
+  const allowBrowserBackRef = useRef(false);
   const historyCacheRef = useRef(new Map<string, HistoryData>());
   const historyRequestsRef = useRef(new Map<string, Promise<HistoryData>>());
   const loadedPageKeyRef = useRef<string | null>(null);
   const pageLoadGenerationRef = useRef(0);
   const site = useMemo(() => bootstrap?.sites.find(item => item.id === siteId) ?? null, [bootstrap, siteId]);
+  const unsavedChanges = entryDirty || rackDirty;
+  const unsavedChangesRef = useRef(false);
+  unsavedChangesRef.current = unsavedChanges;
 
   const loadHistory = useCallback(async (id: number, options: { force?: boolean; scope?: HistoryScope } = {}) => {
     const scope = options.scope ?? "full";
@@ -185,6 +184,9 @@ export default function CleanWebApp() {
     const user = session.authenticated ? session.user : null;
     setUser(user);
     if (!user) return;
+    // Returning authenticated user: the session cookie can outlive the
+    // independently-scoped CSRF cookie, so re-prime it before any mutation.
+    await api("/auth/csrf").catch(() => undefined);
     setFacilityLoading(true); setFacilityError(null);
     try {
       const result = normalizeBootstrap(await api<BootstrapApi>("/bootstrap"));
@@ -210,6 +212,7 @@ export default function CleanWebApp() {
   }, [loadHistory, loadMonth]);
   useEffect(() => { void initialize().catch(error => setNotice(readError(error))); }, [initialize]);
   useEffect(() => { if (notice) { const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); } }, [notice]);
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
   useEffect(() => { if (!user) return; let savedTheme: string | null = null; let savedLanguage: string | null = null; try { savedTheme = localStorage.getItem(themeStorageKey(user.id)); savedLanguage = localStorage.getItem(languageStorageKey(user.id)); } catch { /* browser storage is optional; defaults remain available */ } const nextTheme = normalizeTheme(savedTheme); setTheme(nextTheme); applyTheme(nextTheme); if (savedLanguage !== null) setLang(normalizeLanguage(savedLanguage)); }, [user]);
   useEffect(() => {
     if (!user || !siteId || facilityLoading || !HISTORY_DATA_VIEWS.has(view)) return;
@@ -217,13 +220,28 @@ export default function CleanWebApp() {
     if (loadedPageKeyRef.current === pageKey) return;
     const generation = ++pageLoadGenerationRef.current;
     setBusy(true);
-    const scope: HistoryScope = view === "racks" ? "rack" : view === "history" || view === "reports" ? "full" : "dashboard";
+    const scope: HistoryScope = view === "racks" || view === "rack-units" ? "rack" : view === "history" || view === "reports" ? "full" : "dashboard";
     void loadHistory(siteId, { scope })
       .then(() => { if (pageLoadGenerationRef.current === generation) loadedPageKeyRef.current = pageKey; })
       .catch(error => { if (pageLoadGenerationRef.current === generation) setNotice(`Unable to load ${view} data: ${readError(error)}`); })
       .finally(() => { if (pageLoadGenerationRef.current === generation) setBusy(false); });
   }, [facilityLoading, loadHistory, siteId, user, view]);
-  useEffect(() => { if (!entryDirty) return; const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [entryDirty]);
+  useEffect(() => {
+    if (!unsavedChanges) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [unsavedChanges]);
+  useEffect(() => {
+    const onPopState = () => {
+      if (allowBrowserBackRef.current) { allowBrowserBackRef.current = false; return; }
+      if (!unsavedChangesRef.current) return;
+      window.history.pushState({ ...(window.history.state ?? {}), __emUnsavedGuard: true }, "", window.location.href);
+      setPendingNavigation(previous => previous ?? (() => { allowBrowserBackRef.current = true; window.history.back(); }));
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
   type WebUndoEntry = { el: HTMLInputElement | HTMLSelectElement; kind: "input" | "select" | "checkbox"; value: string; checked?: boolean };
   const undoStackRef = useRef<WebUndoEntry[]>([]);
   const undoBaselineRef = useRef<WeakMap<Element, string>>(new WeakMap());
@@ -295,8 +313,10 @@ export default function CleanWebApp() {
       } else if (command && !event.shiftKey && !event.altKey && (event.key === "z" || event.key === "Z") && view === "entry") {
         if (undoLastEdit()) event.preventDefault();
       } else if (event.key === "F5" && !event.ctrlKey && !event.metaKey && !event.shiftKey && !editingText) {
-        event.preventDefault();
-        void initialize().catch(error => setNotice(readError(error)));
+        if (!unsavedChangesRef.current) {
+          event.preventDefault();
+          void initialize().catch(error => setNotice(readError(error)));
+        }
       } else if (event.key === "Enter" && !command && !event.altKey && target?.tagName === "INPUT" && target.closest("[id^='entry-section-']")) {
         event.preventDefault();
         const inputs = Array.from(document.querySelectorAll<HTMLInputElement>("[id^='entry-section-'] input:not(:disabled)"));
@@ -310,17 +330,17 @@ export default function CleanWebApp() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [initialize, undoLastEdit, view]);
 
-  const deferNavigation = (action: PendingNavigation) => { if (entryDirty) setPendingNavigation(() => action); else void action(); };
-  const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setViewState(next); }); };
-  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setBusy(true); setInitialHistoryLoading(true); setFacilityError(null); setHistory({ months: [], logs: [] }); setDraft(null); setRowVersion(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id, { force: true, scope: "dashboard" }); const candidate = nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()); await loadMonth(id, latestEnergyMonth(records.logs, candidate), records); loadedPageKeyRef.current = `${id}:dashboard`; } catch (error) { setNotice(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setInitialHistoryLoading(false); setBusy(false); } }; deferNavigation(action); };
+  const deferNavigation = (action: PendingNavigation) => { if (unsavedChanges) setPendingNavigation(previous => previous ?? action); else void action(); };
+  const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setRackDirty(false); setViewState(next); }); };
+  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setRackDirty(false); setBusy(true); setInitialHistoryLoading(true); setFacilityError(null); setHistory({ months: [], logs: [] }); setDraft(null); setRowVersion(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id, { force: true, scope: "dashboard" }); const candidate = nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()); await loadMonth(id, latestEnergyMonth(records.logs, candidate), records); loadedPageKeyRef.current = `${id}:dashboard`; } catch (error) { setNotice(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setInitialHistoryLoading(false); setBusy(false); } }; deferNavigation(action); };
   const selectMonth = async (selected: string, exists = true) => {
     if (!siteId || selected === month) return;
     const action = async () => {
-      if (!exists) {
+      if (!exists && view === "entry") {
         setPendingCreateMonth(selected);
         return;
       }
-      setEntryDirty(false); setBusy(true);
+      setEntryDirty(false); setRackDirty(false); setBusy(true);
       try { await loadMonth(siteId, selected, history); setFacilityError(null); }
       catch (error) { setNotice(readError(error)); }
       finally { setBusy(false); }
@@ -330,7 +350,7 @@ export default function CleanWebApp() {
   const confirmCreateMonth = async () => {
     const selected = pendingCreateMonth;
     if (!selected || !siteId) return;
-    setPendingCreateMonth(null); setEntryDirty(false); setBusy(true);
+    setPendingCreateMonth(null); setEntryDirty(false); setRackDirty(false); setBusy(true);
     try { await loadMonth(siteId, selected, history); setFacilityError(null); }
     catch (error) { setNotice(readError(error)); }
     finally { setBusy(false); }
@@ -343,14 +363,24 @@ export default function CleanWebApp() {
       const result = await api<{ rowVersion: number }>(`/sites/${siteId}/periods/${month}`, { method: "PUT", body: JSON.stringify({ log, expected_row_version: rowVersion, provenance: { sourceType: "web-clean-v1" } }) });
       setDraft(log); setRowVersion(result.rowVersion);
       const refreshed = await loadHistory(siteId, { force: true, scope: "dashboard" });
+      // The History and Reports views read the "full" scope and Rack views the
+      // "rack" scope; drop those so an edited historical month is not shown
+      // stale there until an unrelated forced refresh.
+      historyCacheRef.current.delete(`${siteId}:full`);
+      historyCacheRef.current.delete(`${siteId}:rack`);
+      loadedPageKeyRef.current = null;
       const refreshedDraft = refreshed.logs.find(item => item.month === month);
       if (refreshedDraft) setDraft(refreshedDraft);
       setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
     } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
-  const logout = async () => { const action = async () => { setEntryDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setUser(null); setBootstrap(null); setDraft(null); } }; deferNavigation(action); };
+  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setViewState("entry"); setUser(null); setBootstrap(null); setDraft(null); }, []);
+  useEffect(() => { setUnauthorizedHandler(() => { setEntryDirty(false); setRackDirty(false); clearSession(); }); return () => setUnauthorizedHandler(null); }, [clearSession]);
+  const logout = async () => { const action = async () => { setEntryDirty(false); setRackDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { clearSession(); } }; deferNavigation(action); };
   const registerEntryActions = useCallback((actions: EntryWorkspaceActions | null) => { entryActionsRef.current = actions; }, []);
-  const discardPendingNavigation = () => { const action = pendingNavigation; setPendingNavigation(null); setEntryDirty(false); if (action) void action(); };
+  const clearBrowserGuardMarker = () => { const currentState = window.history.state; if (!currentState?.__emUnsavedGuard) return; const nextState = { ...currentState }; delete nextState.__emUnsavedGuard; window.history.replaceState(nextState, "", window.location.href); };
+  const stayOnPage = () => { clearBrowserGuardMarker(); setPendingNavigation(null); };
+  const discardPendingNavigation = () => { const action = pendingNavigation; clearBrowserGuardMarker(); setPendingNavigation(null); setEntryDirty(false); if (rackDirty) setRackDiscardVersion(version => version + 1); setRackDirty(false); if (action) void action(); };
   const savePendingNavigation = async () => { const action = pendingNavigation; if (!action) return; const saved = await entryActionsRef.current?.saveAll(); if (!saved) return; setPendingNavigation(null); setEntryDirty(false); void action(); };
   const changeTheme = (next: Theme) => { setTheme(next); applyTheme(next); if (user) { try { localStorage.setItem(themeStorageKey(user.id), next); } catch { /* theme still applies for current page */ } } };
   const changeLanguage = (next: AppLanguage) => { setLang(next); if (user) { try { localStorage.setItem(languageStorageKey(user.id), next); } catch { /* language still applies for current page */ } } };
@@ -390,28 +420,31 @@ export default function CleanWebApp() {
     reportingMonth: "Reporting month", displayPeriod: "Display period", completion: "Completion", working: "Working…"
   };
   const nav: Array<{ id: View; label: string; icon: typeof BarChart3; admin?: boolean }> = [
-    { id: "dashboard", label: lang === "th" ? "แดชบอร์ด" : "Dashboard", icon: BarChart3 }, { id: "entry", label: lang === "th" ? "กรอกข้อมูล" : "Data Entry", icon: ClipboardPenLine }, { id: "racks", label: lang === "th" ? "ความจุแร็ค" : "Rack Capacity", icon: Server }, { id: "history", label: lang === "th" ? "ประวัติ" : "History", icon: History }, { id: "comparison", label: lang === "th" ? "เปรียบเทียบไซต์" : "Site Comparison", icon: ChartNoAxesCombined }, { id: "reports", label: lang === "th" ? "ส่งออกและรายงาน" : "Exports & Report", icon: FileSpreadsheet }, { id: "settings", label: lang === "th" ? "ตั้งค่า" : "Settings", icon: Settings }, { id: "admin", label: lang === "th" ? "จัดการผู้ใช้" : "User Management", icon: UsersRound, admin: true }
+    { id: "dashboard", label: lang === "th" ? "แดชบอร์ด" : "Dashboard", icon: BarChart3 }, { id: "entry", label: lang === "th" ? "กรอกข้อมูล" : "Data Entry", icon: ClipboardPenLine }, { id: "racks", label: lang === "th" ? "ความจุแร็ค" : "Rack Capacity", icon: Server }, { id: "rack-units", label: lang === "th" ? "ความจุ U" : "Rack Unit Capacity", icon: Boxes }, { id: "history", label: lang === "th" ? "ประวัติ" : "History", icon: History }, { id: "comparison", label: lang === "th" ? "เปรียบเทียบพลังงานและค่าใช้จ่าย" : "Site Energy & Cost Comparison", icon: ChartNoAxesCombined }, { id: "rack-comparison", label: lang === "th" ? "เปรียบเทียบความจุแร็คระหว่างไซต์" : "Site Rack Capacity Comparison", icon: Server }, { id: "reports", label: lang === "th" ? "ส่งออกและรายงาน" : "Exports & Report", icon: FileSpreadsheet }, { id: "settings", label: lang === "th" ? "ตั้งค่า" : "Settings", icon: Settings }, { id: "admin", label: lang === "th" ? "จัดการผู้ใช้" : "User Management", icon: UsersRound, admin: true }
   ];
   const reportAvailableMonths = [...new Set((bootstrap?.sites ?? []).flatMap(item => item.availableMonths ?? []))].sort();
   return <ReportProvider syncedLogs={history.logs} availableMonths={reportAvailableMonths} onYearChange={loadHistoricalYear} displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)}>
     <div className="em-shell min-h-screen bg-slate-950 text-slate-100">
       <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 backdrop-blur"><div className="mx-auto flex max-w-[1600px] items-center gap-4 px-4 py-3"><div className="min-w-0 flex-1"><h1 className="break-words font-display text-lg font-bold tracking-tight">Data Center Energy & Facility Monitor <span className="text-teal-400">v2.3.1</span></h1><p className="truncate text-xs text-slate-400">{facilityLoading ? shellCopy.loadingFacilities : site?.name ?? shellCopy.noFacility} · {user.displayName}</p></div><label className="sr-only" htmlFor="facility-selector">{shellCopy.facility}</label><select id="facility-selector" aria-label={shellCopy.facility} disabled={facilityLoading || !bootstrap || bootstrap.sites.length === 0} value={siteId ?? ""} onChange={event => void selectSite(Number(event.target.value))} className="min-w-44 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm disabled:opacity-60"><option value="">{facilityLoading ? shellCopy.loadingFacilities : bootstrap?.sites.length ? shellCopy.selectFacility : shellCopy.noFacility}</option>{bootstrap?.sites.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => changeLanguage(lang === "th" ? "en" : "th")} className="rounded-lg border border-slate-700 px-2.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800" aria-label={lang === "th" ? "เปลี่ยนภาษาเป็นภาษาอังกฤษ" : "Switch language to Thai"}>{lang === "th" ? "EN" : "ไทย"}</button><button type="button" onClick={() => void logout()} className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800" title={shellCopy.logout} aria-label={shellCopy.logout}><LogOut className="h-4 w-4" /></button></div></header>
       <div className="mx-auto max-w-[1600px] px-4 py-4 md:px-6 md:py-6"><nav aria-label={lang === "th" ? "à¸™à¸³à¸—à¸²à¸‡à¸«à¸¥à¸±à¸" : "Primary application navigation"} className="mb-5 hidden gap-2 rounded-2xl border border-slate-800 bg-slate-900 p-1.5 shadow-md sm:grid sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? "page" : undefined} className={`flex items-center justify-center gap-2.5 rounded-xl px-4 py-3.5 text-xs font-bold transition-all ${view === item.id ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/15" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
-        <main className="min-w-0 pb-20 md:pb-6"><div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">{shellCopy.reportingMonth}</span><div className="text-lg font-semibold">{month}</div></div><input aria-label={shellCopy.reportingMonth} type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value, history.months.includes(event.target.value))} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">{shellCopy.displayPeriod} {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />{shellCopy.completion} <b className="text-teal-300">{completion.overall.percent}%</b></div></div>
+        <main className="min-w-0 pb-20 md:pb-6">{view !== "dashboard" && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">{shellCopy.reportingMonth}</span><div className="text-lg font-semibold">{month}</div></div><input aria-label={shellCopy.reportingMonth} type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value, history.months.includes(event.target.value))} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">{shellCopy.displayPeriod} {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />{shellCopy.completion} <b className="text-teal-300">{completion.overall.percent}%</b></div></div>}
            <Suspense fallback={<ViewLoading lang={lang} />}>
            {(busy || initialHistoryLoading) && <div className="mb-4 text-sm text-teal-300">{shellCopy.working}</div>}
-          {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={month} lang={lang} upsGroupHistory={history.upsGroupHistory ?? null} />}
-          {view === "entry" && draft && <WebEntryWorkspace lang={lang} siteId={siteId!} siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} rackUnitInitialRow={history.rackUnitCapacity?.find(row => row.month === month) ?? null} busy={busy} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={(selected, exists) => void selectMonth(selected, exists)} onRackUnitSaved={async () => { if (!siteId) return; const records = await loadHistory(siteId, { force: true, scope: "dashboard" }); await loadMonth(siteId, month, records); }} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
-          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} lang={lang} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onHistorySaved={() => { void loadHistory(siteId, { force: true, scope: "rack" }); }} onSelectMonth={selected => void selectMonth(selected)} />}
+          {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={month} siteName={site.name} siteCode={site.code} lang={lang} upsGroupHistory={history.upsGroupHistory ?? null} onNotice={setNotice} />}
+          {view === "entry" && draft && <WebEntryWorkspace lang={lang} siteId={siteId!} siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} rackUnitInitialRow={history.rackUnitCapacity?.find(row => row.month === month) ?? null} busy={busy} readOnly={bootstrap?.readOnlyMode ?? false} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={(selected, exists) => void selectMonth(selected, exists)} onRackUnitSaved={async () => { if (!siteId) return; const records = await loadHistory(siteId, { force: true, scope: "dashboard" }); await loadMonth(siteId, month, records); }} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
+          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} discardVersion={rackDiscardVersion} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onHistorySaved={() => { void loadHistory(siteId, { force: true, scope: "rack" }); }} onDirtyChange={setRackDirty} />}
+          {view === "rack-units" && siteId && <RackUnitCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} />}
           {view === "history" && <section className="space-y-8"><HistoricalCharts logs={history.logs} lang={lang} selectedMonth={month} displayPeriod={`${bootstrap?.displayPeriod.startMonth ?? ""}..${bootstrap?.displayPeriod.endMonth ?? ""}`} dataSourceLabel={lang === "th" ? "แหล่งข้อมูล: Production API" : "Source: Production API"} /><HistoricalExplorer logs={history.logs} lang={lang} selectedMonth={month} displayPeriod={`${bootstrap?.displayPeriod.startMonth ?? ""}..${bootstrap?.displayPeriod.endMonth ?? ""}`} upsGroupHistory={history.upsGroupHistory ?? null} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onEditMonth={selected => { setView("entry"); void selectMonth(selected); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></section>}
           {view === "comparison" && <WebSiteComparison lang={lang} />}
+          {view === "rack-comparison" && <WebSiteRackCapacityComparison month={month} />}
           {view === "reports" && <Reports lang={lang} siteId={siteId} siteName={site?.name ?? "Data Center Energy & Facility Monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} upsGroupHistory={history.upsGroupHistory ?? null} onRefresh={refreshReports} />}
           </>}
            </Suspense>
          </main></div>
-      <nav aria-label={lang === "th" ? "เมนูนำทางบนมือถือ" : "Mobile application navigation"} className="fixed bottom-0 left-0 right-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-800 bg-slate-950 px-1 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} onClick={() => setView(item.id)} className={`min-w-[4.75rem] shrink-0 flex flex-col items-center gap-1 py-2 text-[10px] ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
+      <nav aria-label={lang === "th" ? "เมนูนำทางบนมือถือ" : "Mobile application navigation"} className="fixed bottom-0 left-0 right-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-800 bg-slate-950 px-1 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? "page" : undefined} className={`min-w-[4.75rem] shrink-0 flex flex-col items-center gap-1 py-2 text-[10px] ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}</nav>
       {pendingCreateMonth && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/85 px-4 backdrop-blur-sm"><section role="dialog" aria-modal="true" aria-labelledby="create-month-title" className="w-full max-w-sm overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl"><div className="space-y-4 p-6"><div className="flex items-center gap-3"><div className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-2.5 text-indigo-400"><Calendar className="h-5 w-5" /></div><div><h2 id="create-month-title" className="font-display text-base font-bold text-slate-100">{lang === "th" ? "สร้างบันทึกรายเดือน" : "Create Monthly Record"}</h2><p className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-400">{pendingCreateMonth}</p></div></div><p className="rounded-xl border border-slate-800 bg-slate-950/50 p-4 text-xs leading-relaxed text-slate-300">{lang === "th" ? "ยังไม่มีบันทึกของเดือนนี้ในฐานข้อมูล ต้องการสร้างบันทึกใหม่เพื่อเริ่มกรอกข้อมูลหรือไม่" : "No record exists for this month yet. Create a new monthly record to start entering data?"}</p><div className="flex gap-2.5"><button type="button" onClick={() => setPendingCreateMonth(null)} className="flex-1 rounded-xl border border-slate-700/50 bg-slate-800 px-3 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-700">{lang === "th" ? "ยกเลิก" : "Cancel"}</button><button type="button" onClick={() => void confirmCreateMonth()} className="flex-1 rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-600/15 hover:bg-indigo-500">{lang === "th" ? "สร้างบันทึก" : "Create"}</button></div></div></section></div>}
-      {pendingNavigation && <div role="dialog" aria-modal="true" aria-labelledby="unsaved-entry-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><h2 id="unsaved-entry-title" className="font-display text-lg font-bold text-slate-100">{lang === "th" ? "มีข้อมูลที่ยังไม่ได้บันทึก" : "Unsaved Data Entry changes"}</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">{lang === "th" ? "ต้องการบันทึกข้อมูลก่อนออกจากหน้านี้ หรือละทิ้งการแก้ไข?" : "Save your current entries before continuing, discard them, or stay on this page."}</p><div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={() => setPendingNavigation(null)} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">{lang === "th" ? "ยกเลิก" : "Cancel"}</button><button type="button" onClick={discardPendingNavigation} className="rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-300">{lang === "th" ? "ละทิ้ง" : "Discard"}</button><button type="button" onClick={() => void savePendingNavigation()} className="rounded-lg bg-teal-500 px-3 py-2 text-sm font-semibold text-slate-950">{lang === "th" ? "บันทึกและดำเนินการต่อ" : "Save & Continue"}</button></div></section></div>}
+      {pendingNavigation && !rackDirty && <div role="dialog" aria-modal="true" aria-labelledby="unsaved-entry-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><h2 id="unsaved-entry-title" className="font-display text-lg font-bold text-slate-100">{lang === "th" ? "มีข้อมูลที่ยังไม่ได้บันทึก" : "Unsaved Data Entry changes"}</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">{lang === "th" ? "ต้องการบันทึกข้อมูลก่อนออกจากหน้านี้ หรือละทิ้งการแก้ไข?" : "Save your current entries before continuing, discard them, or stay on this page."}</p><div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={stayOnPage} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">{lang === "th" ? "ยกเลิก" : "Cancel"}</button><button type="button" onClick={discardPendingNavigation} className="rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-300">{lang === "th" ? "ละทิ้ง" : "Discard"}</button><button type="button" onClick={() => void savePendingNavigation()} className="rounded-lg bg-teal-500 px-3 py-2 text-sm font-semibold text-slate-950">{lang === "th" ? "บันทึกและดำเนินการต่อ" : "Save & Continue"}</button></div></section></div>}
+      {pendingNavigation && rackDirty && <div role="dialog" aria-modal="true" aria-labelledby="unsaved-rack-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><h2 id="unsaved-rack-title" className="font-display text-lg font-bold text-slate-100">Unsaved changes</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">You have unsaved changes. Leave without saving?</p><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={stayOnPage} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">Stay and Review</button><button type="button" onClick={discardPendingNavigation} className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white">Leave Without Saving</button></div></section></div>}
       <AppNotice message={notice} />
     </div>
   </ReportProvider>;
@@ -481,28 +514,13 @@ function DashboardView({ logs, month, siteName = "Facility", siteCode = "", dash
   );
 }
 
-interface RackApiSnapshot { rowVersion: number; records: Array<{ rowNumber: number | null; rackZone: string | null; rackId: string | null; status: string | null; cabinetSize: string | null; detail: string | null; deviceType: string | null; remarks: string | null }> }
-/** Syncs RackCapacityContext's own reportingMonth (used only for the
- *  Summary Card's header label; defaults to today's real date, since
- *  Desktop's Rack Capacity page treats it as page-local state independent
- *  of the app's global Reporting month) to the actually-fetched month, so
- *  the header never shows a different month than the data it's labeling. */
-function RackCapacityMonthSync({ month, children }: { month: string; children: ReactNode }) {
-  const { setReportingMonth } = useRackCapacity();
-  useEffect(() => { setReportingMonth(month); }, [month, setReportingMonth]);
-  return <>{children}</>;
-}
-
-/** Rack Capacity view: shared Desktop summary/heatmap plus Web-specific
- *  editors. Field edits retain Desktop's per-field expected-value conflict
- *  checks; Rack Unit Capacity retains a snapshot row-version and loads the
- *  selected month's image through the Production Storage API. */
-function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, rackUnitCapacity, allowedStartMonth, allowedEndMonth, onHistorySaved, onSelectMonth }: { siteId: number; siteName: string | null; month: string; lang: "th" | "en"; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; allowedStartMonth: string; allowedEndMonth: string; onHistorySaved?: () => void; onSelectMonth: (month: string) => void }) {
-  const th = lang === "th";
+/** Production Rack view. The raw monthly snapshot is fetched from the
+ * facility/month endpoint; presentation and editing stay in the dedicated
+ * Production components so Desktop's Rack UI remains unchanged. */
+function RackCapacityView({ siteId, siteName, month, discardVersion, rackCapacityHistory, rackUnitCapacity, onHistorySaved, onDirtyChange }: { siteId: number; siteName: string | null; month: string; discardVersion: number; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; onHistorySaved?: () => void; onDirtyChange?: (dirty: boolean) => void }) {
   const [rack, setRack] = useState<RackApiSnapshot | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
-  const rackUnitImageProvider = useMemo(() => createWebRackUnitImageProvider(siteId), [siteId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -514,40 +532,14 @@ function RackCapacityView({ siteId, siteName, month, lang, rackCapacityHistory, 
     return () => { cancelled = true; };
   }, [siteId, month]);
 
-  if (status === "loading") return <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{th ? "กำลังโหลดความจุแร็ค…" : "Loading Rack Capacity…"}</section>;
-  if (status === "error") return <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{th ? "ไม่สามารถโหลดความจุแร็คได้" : "Rack Capacity unavailable"}</h2><p className="mt-2 text-sm">{error}</p></section>;
+  if (status === "loading") return <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">Loading Rack Capacity…</section>;
+  if (status === "error") return <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">Rack Capacity unavailable</h2><p className="mt-2 text-sm">{error}</p></section>;
+  return <WebRackCapacityDashboard resetVersion={discardVersion} siteId={siteId} siteName={siteName} month={month} snapshot={rack} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} onDirtyChange={onDirtyChange} />;
+}
 
-  const countBy = (records: RackApiSnapshot["records"], key: (record: RackApiSnapshot["records"][number]) => string | null): Array<{ key: string; count: number }> => {
-    const counts = new Map<string, number>();
-    for (const record of records) { const value = key(record) ?? "(blank)"; counts.set(value, (counts.get(value) ?? 0) + 1); }
-    return Array.from(counts, ([value, count]) => ({ key: value, count }));
-  };
-  const rackCapacity: RackCapacitySummary | null = rack && rack.records.length > 0 ? {
-    totalRacks: rack.records.length,
-    records: rack.records.map(r => ({ rowNumber: r.rowNumber ?? 0, rackZone: r.rackZone, rackId: r.rackId, status: r.status, cabinetSize: r.cabinetSize, detail: r.detail, deviceType: r.deviceType, remarks: r.remarks })),
-    byStatus: countBy(rack.records, r => r.status).map(({ key, count }) => ({ status: key, count })),
-    byZone: countBy(rack.records, r => r.rackZone).map(({ key, count }) => ({ zone: key, count }))
-  } : null;
-
-  return (
-    <div className="space-y-5">
-      <div><h2 className="font-display text-2xl font-bold">{th ? "ความจุแร็คและการใช้งาน" : "Rack Capacity and Utilization"}</h2><p className="mt-1 text-sm text-slate-400">{th ? `แก้ไขข้อมูลตาม Desktop ประวัติ snapshot และความจุหน่วยแร็คสำหรับ ${month}` : `Desktop-compatible field editing, snapshot history, and rack-unit capacity for ${month}.`}</p></div>
-        <RackCapacityProvider lang={lang} facilityName={siteName} initialReportingMonth={month} rackCapacity={rackCapacity} rackUnitCapacity={rackUnitCapacity} rackCapacityHistory={rackCapacityHistory}>
-        <RackCapacityStickyHeader />
-        <RackCapacityTimeline canSelectMonth={selected => selected >= allowedStartMonth && selected <= allowedEndMonth} onMonthSelect={onSelectMonth} />
-        <CapacityAlerts />
-        <RackCapacityExecutiveKpiCards />
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <CapacityGauge />
-          <RackCapacityForecast />
-        </div>
-        <RackCapacityMonthSync month={month}><RackCapacitySummaryCard /></RackCapacityMonthSync>
-        <RackUnitCapacitySummary provider={rackUnitImageProvider} />
-        <RackCapacityHistoryPanel />
-        <WebRackCapacityEditor siteId={siteId} month={month} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} />
-      </RackCapacityProvider>
-    </div>
-  );
+function RackUnitCapacityView({ siteId, siteName, month, rackCapacityHistory, rackUnitCapacity }: { siteId: number; siteName: string | null; month: string; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[] }) {
+  const imageProvider = useMemo(() => createWebRackUnitImageProvider(siteId), [siteId]);
+  return <WebRackUnitCapacityDashboard siteName={siteName} month={month} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} imageProvider={imageProvider} />;
 }
 
 function Login({ lang, onLanguageChange, onLogin, notice }: { lang: AppLanguage; onLanguageChange: (lang: AppLanguage) => void; onLogin: () => Promise<void>; notice: string | null }) {
@@ -574,10 +566,10 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
   const th = lang === "th";
   const reportCopy = th ? {
     title: "รายงานและการส่งออก", intro: "Excel เก็บค่าที่กรอก ค่าวันที่บันทึก และค่าคำนวณของ Desktop v2.3.1 เป็นเซลล์ชนิดข้อมูล ตัวเลขมีทศนิยม 2 ตำแหน่ง และวันที่ใช้รูปแบบ dd-Mmm-yy",
-    context: "บริบทการรายงาน", applies: "ใช้กับการส่งออกของไซต์ปัจจุบัน", period: "ช่วงเวลารายงาน", month: "เดือนรายงาน", from: "ตั้งแต่", to: "ถึง", fileName: "ชื่อไฟล์", reset: "คืนค่าเริ่มต้น", scope: "ขอบเขต", current: "ไซต์ปัจจุบัน", all: "ทุกไซต์", comparison: "เปรียบเทียบไซต์", currentDesc: "ส่งออกข้อมูลของไซต์ปัจจุบันตามช่วงที่เลือก", allDesc: "แยกข้อมูลแต่ละไซต์ใน CSV, ชีต Excel และส่วนรายงาน PDF", comparisonDesc: "สรุป KPI ของทุกไซต์ตามเดือนที่เลือก โดยไม่สร้างค่าทดแทนข้อมูลที่หายไป", csvStarted: "เริ่มดาวน์โหลด CSV แล้ว", excelStarted: "เริ่มดาวน์โหลด Excel แล้ว", pdfStarted: "เปิดหน้าต่างพิมพ์ PDF แล้ว"
+    context: "บริบทการรายงาน", applies: "ใช้กับการส่งออกของไซต์ปัจจุบัน", period: "ช่วงเวลารายงาน", month: "เดือนรายงาน", from: "ตั้งแต่", to: "ถึง", fileName: "ชื่อไฟล์", reset: "คืนค่าเริ่มต้น", scope: "ขอบเขต", current: "ไซต์ปัจจุบัน", all: "ทุกไซต์", comparison: "เปรียบเทียบพลังงานและค่าใช้จ่ายของไซต์", currentDesc: "ส่งออกข้อมูลของไซต์ปัจจุบันตามช่วงที่เลือก", allDesc: "แยกข้อมูลแต่ละไซต์ใน CSV, ชีต Excel และส่วนรายงาน PDF", comparisonDesc: "เปรียบเทียบพลังงานและค่าใช้จ่ายของทุกไซต์ตามเดือนที่เลือก โดยไม่สร้างค่าทดแทนข้อมูลที่หายไป", csvStarted: "เริ่มดาวน์โหลด CSV แล้ว", excelStarted: "เริ่มดาวน์โหลด Excel แล้ว", pdfStarted: "เปิดหน้าต่างพิมพ์ PDF แล้ว"
   } : {
     title: "Exports & PDF Report", intro: "Excel keeps stored entry values, saved dates, and Desktop v2.3.1 calculations as typed cells: numbers use two decimals and dates use dd-Mmm-yy",
-    context: "Report Context", applies: "Applies to the Current Facility export below", period: "Reporting Period", month: "Reporting Month", from: "From", to: "To", fileName: "File name", reset: "Reset", scope: "Scope", current: "Current Facility", all: "All Facilities", comparison: "Site Comparison", currentDesc: "Export the selected facility for the chosen reporting period", allDesc: "Each facility stays isolated in its own CSV block, Excel sheets, HTML, and full PDF section", comparisonDesc: "Comparison KPI snapshot for the selected month; no values are fabricated for missing records", csvStarted: "CSV download started.", excelStarted: "Excel download started.", pdfStarted: "PDF download started."
+    context: "Report Context", applies: "Applies to the Current Facility export below", period: "Reporting Period", month: "Reporting Month", from: "From", to: "To", fileName: "File name", reset: "Reset", scope: "Scope", current: "Current Facility", all: "All Facilities", comparison: "Site Energy & Cost Comparison", currentDesc: "Export the selected facility for the chosen reporting period", allDesc: "Each facility stays isolated in its own CSV block, Excel sheets, HTML, and full PDF section", comparisonDesc: "Energy and cost comparison for the selected month; no values are fabricated for missing records", csvStarted: "CSV download started.", excelStarted: "Excel download started.", pdfStarted: "PDF download started."
   };
   const [message, setMessage] = useState<string | null>(null);
   const [period, setPeriod] = useState<ReportingPeriodSelection>(() => defaultReportingPeriod(month));
@@ -692,7 +684,7 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
     </div>
 
     <div className="mt-4 grid gap-4 xl:grid-cols-3">{cards(reportCopy.current, `${siteName}, ${reportingPeriodLabel(period, lang)}.`, () => exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv")), () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx"), logs, rack, rackCapacityHistory, rackUnitCapacity, upsGroupHistory); })(), () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; exportHtml(scopedLogs, siteName, contextMonth, withExtension(resolvedFileName, "html"), rack, rackCapacityHistory, rackUnitCapacity, logs, selectedReportSections, { upsGroupHistory }); })(), () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportDesktopPdf(scopedLogs, siteName, contextMonth, resolvedFileName, rack, rackCapacityHistory, rackUnitCapacity, logs, selectedReportSections, { upsGroupHistory }); })(), { csv: withExtension(resolvedFileName, "csv"), excel: withExtension(resolvedFileName, "xlsx"), html: withExtension(resolvedFileName, "html"), pdf: withExtension(resolvedFileName, "pdf") })}{cards(reportCopy.all, reportCopy.allDesc, async () => exportAllFacilitiesCsv(await loadAll()), async () => exportAllFacilitiesExcel(await loadAll()), async () => exportAllFacilitiesHtml(await loadAll(), month), async () => exportAllFacilitiesPdf(await loadAll(), month), { csv: "all-facilities-energy-monitor.csv", excel: "all-facilities-energy-monitor.xlsx", html: "all-facilities-energy-monitor.html", pdf: "all-facilities-energy-monitor.pdf" })}{cards(reportCopy.comparison, reportCopy.comparisonDesc, async () => exportSiteComparisonCsv(await loadComparison(), month), async () => exportSiteComparisonExcel(await loadComparison(), month), async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, month) : null, secondary ? loadRack(secondary.site.id, month) : null]); exportSiteComparisonHtml(comparison, month, `site-comparison-${month}.html`, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack)); }, async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, month) : null, secondary ? loadRack(secondary.site.id, month) : null]); await exportSiteComparisonPdf(comparison, month, `site-comparison-${month}`, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack)); }, { csv: `site-comparison-${month}.csv`, excel: `site-comparison-${month}.xlsx`, html: `site-comparison-${month}.html`, pdf: `site-comparison-${month}.pdf` })}</div>
-    {recentReports.length > 0 && <section className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-5"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{th ? "รายงานล่าสุด" : "Recent Reports"}</h3><span className="text-xs text-slate-500">{th ? "บันทึกในเบราว์เซอร์นี้" : "Saved on this browser"}</span></div><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[640px] text-left text-xs"><thead className="text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="pb-2">{th ? "ไฟล์" : "Filename"}</th><th>{th ? "ไซต์" : "Facility"}</th><th>{th ? "ช่วงเวลา" : "Period"}</th><th>{th ? "สร้างเมื่อ" : "Created"}</th><th /></tr></thead><tbody>{recentReports.slice(0, 20).map(item => <tr key={item.id} className="border-t border-slate-800 text-slate-300"><td className="py-2 font-medium">{item.filename}</td><td>{item.facility}</td><td>{item.month}</td><td>{new Date(item.createdAt).toLocaleString(lang === "th" ? "th-TH" : "en-US")}</td><td className="text-right"><button type="button" onClick={() => { try { setRecentReports(HistoryProvider.remove(item.id)); } catch { setRecentReports(current => current.filter(entry => entry.id !== item.id)); } }} className="text-slate-500 hover:text-rose-300">{th ? "ลบ" : "Remove"}</button></td></tr>)}</tbody></table></div></section>}
+    {recentReports.length > 0 && <section className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-5"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{th ? "รายงานล่าสุด" : "Recent Reports"}</h3><span className="text-xs text-slate-500">{th ? "บันทึกในเบราว์เซอร์นี้" : "Saved on this browser"}</span></div><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[640px] text-left text-xs"><thead className="text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="pb-2">{th ? "ไฟล์" : "Filename"}</th><th>{th ? "ไซต์" : "Facility"}</th><th>{th ? "ช่วงเวลา" : "Period"}</th><th>{th ? "สร้างเมื่อ" : "Created"}</th><th /></tr></thead><tbody>{recentReports.slice(0, 20).map(item => <tr key={item.id} className="border-t border-slate-800 text-slate-300"><td className="py-2 font-medium">{item.filename}</td><td>{item.facility}</td><td>{item.month}</td><td>{formatWebSavedTimestamp(item.createdAt) ?? item.createdAt}</td><td className="text-right"><button type="button" onClick={() => { try { setRecentReports(HistoryProvider.remove(item.id)); } catch { setRecentReports(current => current.filter(entry => entry.id !== item.id)); } }} className="text-slate-500 hover:text-rose-300">{th ? "ลบ" : "Remove"}</button></td></tr>)}</tbody></table></div></section>}
     <WebReportPreview lang={lang} siteId={siteId} siteName={siteName} logs={scopedLogs} calculationLogs={logs} month={contextMonth} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} upsGroupHistory={upsGroupHistory} onRefresh={onRefresh} sections={selectedReportSections} />
     {message && <p className="mt-4 text-sm text-teal-300">{message}</p>}</section>;
 }
@@ -704,7 +696,7 @@ function SettingsPage({ lang, displayPeriod, isAdmin, theme, onThemeChange, onSa
   const [busy, setBusy] = useState(false);
   useEffect(() => { setStartMonth(displayPeriod.startMonth); setEndMonth(displayPeriod.endMonth); }, [displayPeriod]);
   const submit = async (event: FormEvent) => { event.preventDefault(); if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(startMonth) || !/^\d{4}-(0[1-9]|1[0-2])$/.test(endMonth) || startMonth > endMonth) { onMessage(th ? "เดือนเริ่มต้นต้องไม่เกินเดือนสิ้นสุด" : "Start month must be on or before end month."); return; } setBusy(true); try { await api<DisplayPeriod>("/settings/display-period", { method: "PUT", body: JSON.stringify({ start_month: startMonth, end_month: endMonth, expected_row_version: displayPeriod.rowVersion }) }); await onSaved(); } catch (error) { onMessage(readError(error)); } finally { setBusy(false); } };
-  return <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">{th ? "ตั้งค่าแอปพลิเคชัน" : "Application Settings"}</h2><p className="mt-1 text-sm text-slate-400">{th ? "ตั้งค่ารูปแบบการแสดงผลและข้อมูลที่จำเป็นของ Data Center Energy & Facility Monitor" : "Personal appearance and required Data Center Energy & Facility Monitor settings."}</p></div><section className="max-w-2xl rounded-2xl border border-slate-800 bg-slate-900 p-5"><h3 className="font-semibold">{th ? "รูปแบบการแสดงผล" : "Appearance"}</h3><p className="mt-1 text-sm text-slate-400">{th ? "ธีมมีผลทันทีและบันทึกเฉพาะบัญชีในเบราว์เซอร์นี้" : "Theme applies immediately and is saved only for this browser account."}</p><div className="mt-4 flex flex-wrap gap-3" role="radiogroup" aria-label={th ? "ธีม" : "Theme"}><button type="button" role="radio" aria-checked={theme === "light"} onClick={() => onThemeChange("light")} className={`min-w-32 rounded-xl border px-4 py-3 text-left ${theme === "light" ? "border-indigo-500 bg-indigo-500/10 text-indigo-300" : "border-slate-700 text-slate-300"}`}><b>{th ? "สว่าง" : "Light"}</b><span className="mt-1 block text-xs opacity-75">{th ? "พื้นที่ทำงานโทนเบจ" : "Warm beige workspace"}</span></button><button type="button" role="radio" aria-checked={theme === "dark"} onClick={() => onThemeChange("dark")} className={`min-w-32 rounded-xl border px-4 py-3 text-left ${theme === "dark" ? "border-indigo-500 bg-indigo-500/10 text-indigo-300" : "border-slate-700 text-slate-300"}`}><b>{th ? "มืด" : "Dark"}</b><span className="mt-1 block text-xs opacity-75">{th ? "พื้นที่ทำงานโทนน้ำเงินเข้ม" : "Deep navy workspace"}</span></button></div></section>{isAdmin && <form onSubmit={submit} className="max-w-2xl rounded-xl border border-slate-800 bg-slate-900 p-5"><h3 className="font-semibold">{th ? "ช่วงข้อมูลส่วนกลาง" : "Global Display Period"}</h3><p className="mt-1 text-sm text-slate-400">{th ? "กำหนดเดือนที่แสดงใน Dashboard, Data Entry, History, Site Comparison และการส่งออก โดยไม่แก้ไขข้อมูลย้อนหลัง" : "Controls visible months in Dashboard, Data Entry, History, Site Comparison, and exports. Saving never changes historical records."}</p><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm">{th ? "เดือนเริ่มต้น" : "Start month"}<input required type="month" value={startMonth} onChange={event => setStartMonth(event.target.value)} className="mt-1 block w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2" /></label><label className="text-sm">{th ? "เดือนสิ้นสุด" : "End month"}<input required type="month" value={endMonth} onChange={event => setEndMonth(event.target.value)} className="mt-1 block w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2" /></label></div><button disabled={busy} className="mt-5 rounded-xl bg-indigo-500 px-4 py-2 font-semibold text-slate-950 disabled:opacity-60">{busy ? (th ? "กำลังบันทึก…" : "Saving…") : (th ? "บันทึกช่วงข้อมูล" : "Save Display Period")}</button></form>}</section>;
+  return <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">{th ? "ตั้งค่าแอปพลิเคชัน" : "Application Settings"}</h2><p className="mt-1 text-sm text-slate-400">{th ? "ตั้งค่ารูปแบบการแสดงผลและข้อมูลที่จำเป็นของ Data Center Energy & Facility Monitor" : "Personal appearance and required Data Center Energy & Facility Monitor settings."}</p></div><section className="max-w-2xl rounded-2xl border border-slate-800 bg-slate-900 p-5"><h3 className="font-semibold">{th ? "รูปแบบการแสดงผล" : "Appearance"}</h3><p className="mt-1 text-sm text-slate-400">{th ? "ธีมมีผลทันทีและบันทึกเฉพาะบัญชีในเบราว์เซอร์นี้" : "Theme applies immediately and is saved only for this browser account."}</p><div className="mt-4 flex flex-wrap gap-3" role="radiogroup" aria-label={th ? "ธีม" : "Theme"}><button type="button" role="radio" aria-checked={theme === "light"} onClick={() => onThemeChange("light")} className={`min-w-32 rounded-xl border px-4 py-3 text-left ${theme === "light" ? "border-indigo-500 bg-indigo-500/10 text-indigo-300" : "border-slate-700 text-slate-300"}`}><b>{th ? "สว่าง" : "Light"}</b><span className="mt-1 block text-xs opacity-75">{th ? "พื้นที่ทำงานโทนเบจ" : "Warm beige workspace"}</span></button><button type="button" role="radio" aria-checked={theme === "dark"} onClick={() => onThemeChange("dark")} className={`min-w-32 rounded-xl border px-4 py-3 text-left ${theme === "dark" ? "border-indigo-500 bg-indigo-500/10 text-indigo-300" : "border-slate-700 text-slate-300"}`}><b>{th ? "มืด" : "Dark"}</b><span className="mt-1 block text-xs opacity-75">{th ? "พื้นที่ทำงานโทนน้ำเงินเข้ม" : "Deep navy workspace"}</span></button></div></section>{isAdmin && <form onSubmit={submit} className="max-w-2xl rounded-xl border border-slate-800 bg-slate-900 p-5"><h3 className="font-semibold">{th ? "ช่วงข้อมูลส่วนกลาง" : "Global Display Period"}</h3><p className="mt-1 text-sm text-slate-400">{th ? "กำหนดเดือนที่แสดงใน Dashboard, Data Entry, History, Site Energy & Cost Comparison และการส่งออก โดยไม่แก้ไขข้อมูลย้อนหลัง" : "Controls visible months in Dashboard, Data Entry, History, Site Energy & Cost Comparison, and exports. Saving never changes historical records."}</p><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-sm">{th ? "เดือนเริ่มต้น" : "Start month"}<input required type="month" value={startMonth} onChange={event => setStartMonth(event.target.value)} className="mt-1 block w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2" /></label><label className="text-sm">{th ? "เดือนสิ้นสุด" : "End month"}<input required type="month" value={endMonth} onChange={event => setEndMonth(event.target.value)} className="mt-1 block w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2" /></label></div><button disabled={busy} className="mt-5 rounded-xl bg-indigo-500 px-4 py-2 font-semibold text-slate-950 disabled:opacity-60">{busy ? (th ? "กำลังบันทึก…" : "Saving…") : (th ? "บันทึกช่วงข้อมูล" : "Save Display Period")}</button></form>}</section>;
 }
 
 // function Admin()

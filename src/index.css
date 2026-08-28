@@ -101,21 +101,39 @@ button:disabled {
 
 /* Data-heavy surfaces use one predictable text colour per theme. This keeps
  * table cells and chart labels readable regardless of their legacy utility
- * colour classes. */
-html:not(.theme-light) table,
-html:not(.theme-light) table *,
+ * colour classes. `.dashboard-table` (the engineering DashboardSummary) is
+ * excluded — it depends on semantic cell colours and bold totals. */
+html:not(.theme-light) table:not(.dashboard-table),
+html:not(.theme-light) table:not(.dashboard-table) *,
 html:not(.theme-light) .recharts-wrapper text {
   color: var(--color-text) !important;
   fill: var(--color-text) !important;
   font-weight: 400 !important;
 }
 
-html.theme-light table,
-html.theme-light table *,
+html.theme-light table:not(.dashboard-table),
+html.theme-light table:not(.dashboard-table) *,
 html.theme-light .recharts-wrapper text {
   color: var(--ui-text) !important;
   fill: var(--ui-text) !important;
   font-weight: 400 !important;
+}
+
+/* CleanWebApp exposes ten desktop navigation items (Dashboard plus the nine
+ * after the Production Rack comparison split). Keep the existing utility as a
+ * fallback while ensuring the full nav stays on one row at xl width. */
+@media (min-width: 1280px) {
+  .em-shell > div > nav:first-child {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+
+  .em-shell > div > nav:first-child:has(> button:nth-child(9)) {
+    grid-template-columns: repeat(9, minmax(0, 1fr));
+  }
+
+  .em-shell > div > nav:first-child:has(> button:nth-child(10)) {
+    grid-template-columns: repeat(10, minmax(0, 1fr));
+  }
 }
 
 html:not(.theme-light) .recharts-default-tooltip {
@@ -228,6 +246,47 @@ html.theme-light .recharts-default-tooltip {
   display: block;
   margin-inline: auto !important;
   text-align: center !important;
+}
+
+/* Production Data Entry density and long-table behavior. The sticky offset is
+ * the CleanWebApp shell header height (py-3 + text-lg + text-xs line boxes =
+ * 4.25rem / 68px); the nav row and Reporting Month bar scroll away, so no
+ * sub-header height is added. For sticky to resolve against the viewport, the
+ * UPS/Air/DC/Energy cards use overflow-clip and their table wrappers switch to
+ * overflow-x-clip from md up (both clip without becoming scroll containers).
+ * The Srinakarin phase tables keep width-based horizontal scrolling, so their
+ * headers stay non-sticky by design; the md- fallback below also covers them. */
+.entry-data-table thead th {
+  position: sticky;
+  /* 4.25rem shell content box + its 1px border-b. */
+  top: calc(4.25rem + 1px);
+  z-index: 10;
+  background-color: var(--color-surface);
+  box-shadow: 0 1px 0 var(--color-border);
+  text-transform: none !important;
+}
+
+.entry-data-table :is(th, td)[class~="py-3.5"] {
+  padding-block: 0.75rem !important;
+}
+
+.entry-data-table :is(th, td)[class~="py-5"] {
+  padding-block: 1.0625rem !important;
+}
+
+.entry-data-table :is(th, td)[class~="py-2"] {
+  padding-block: 0.4375rem !important;
+}
+
+.entry-data-table input {
+  height: 1.875rem;
+  padding-block: 0.25rem !important;
+}
+
+@media (max-width: 767px) {
+  .entry-data-table thead th {
+    position: static;
+  }
 }
 
 html.theme-light {

@@ -1,6 +1,6 @@
 import { MonthlyLog } from "../types";
 import { calculateEnergyCostForMonth, getAirFields, getAirValue } from "../utils/energyCost";
-import { formatNumber2 } from "../utils/numberFormatBridge";
+import { formatFixedNumber, formatNumber2 } from "../utils/numberFormatBridge";
 import { Zap, Thermometer, Database, Cpu } from "lucide-react";
 
 interface DashboardStatsProps {
@@ -13,11 +13,11 @@ export default function DashboardStats({ log, lang = "en" }: DashboardStatsProps
   const copy = th ? {
     ups: "โหลด UPS รวม", apparent: "กำลังปรากฏ", pf: "PF", ac: "พลังงานระบบปรับอากาศรวม",
     noAc: "ยังไม่มีการบันทึกค่าแอร์", equivalent: "เทียบเท่า", dc: "กำลังไฟ DC รวม", panels: "แผงที่บันทึกแล้ว",
-    rate: "อัตราค่าไฟฟ้า", cost: "ค่าใช้จ่าย", noCost: "ยังไม่มีการบันทึกค่าไฟฟ้า", formula: "อัตรา = ค่าใช้จ่าย / ปริมาณการใช้ (kWh)"
+    rate: "อัตราค่าไฟฟ้า", cost: "ค่าใช้จ่าย", noCost: "ยังไม่มีการบันทึกค่าไฟฟ้า", noEnergy: "ยังไม่มีการบันทึกพลังงาน", formula: "อัตรา = ค่าใช้จ่าย / ปริมาณการใช้ (kWh)"
   } : {
     ups: "Total UPS Load", apparent: "Apparent", pf: "PF", ac: "Total AC Energy",
     noAc: "No AC logs saved", equivalent: "Equivalent", dc: "Total DC Power", panels: "panels logged",
-    rate: "Electricity Rate", cost: "Cost", noCost: "No energy cost logged", formula: "Rate = Cost / Consumption (kWh)"
+    rate: "AVERAGE UNIT RATE", cost: "Cost", noCost: "No energy cost logged", noEnergy: "No energy consumption logged", formula: "Average rate = Cost ÷ Energy"
   };
   // 1. UPS calculations
   let totalUpsKw = 0;
@@ -49,6 +49,10 @@ export default function DashboardStats({ log, lang = "en" }: DashboardStatsProps
 
   // 4. Energy Cost calculations
   const costPerKwh = calculateEnergyCostForMonth([log], log.month).averageElectricityRateThbPerKwh;
+  const buildingCost = log.energyCost.buildingElectricityCostThb;
+  const buildingEnergy = log.energyCost.buildingEnergyKwh;
+  const hasBuildingCost = typeof buildingCost === "number" && Number.isFinite(buildingCost);
+  const hasBuildingEnergy = typeof buildingEnergy === "number" && Number.isFinite(buildingEnergy);
 
   return (
     <div className="space-y-6">
@@ -111,9 +115,14 @@ export default function DashboardStats({ log, lang = "en" }: DashboardStatsProps
               {costPerKwh !== null ? `${formatNumber2(costPerKwh)} ฿/kWh` : "—"}
             </h3>
             <p className="text-[10px] text-slate-500 leading-normal">
-              {log.energyCost.buildingElectricityCostThb !== null
-                ? `${copy.cost}: ฿${formatNumber2(log.energyCost.buildingElectricityCostThb)}`
+              {hasBuildingCost
+                ? `${copy.cost}: ฿${formatNumber2(buildingCost)}`
                 : copy.noCost}
+            </p>
+            <p className="text-[10px] text-slate-500 leading-normal">
+              {hasBuildingEnergy
+                ? `Energy: ${formatFixedNumber(buildingEnergy, 0)} kWh`
+                : copy.noEnergy}
             </p>
             <p className="text-[9px] text-slate-500/80 font-mono leading-none">
               {copy.formula}

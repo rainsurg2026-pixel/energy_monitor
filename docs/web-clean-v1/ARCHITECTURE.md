@@ -175,11 +175,21 @@ least-privilege Supabase runtime credentials:
 This is a Preview-only action. It must not alter Production values, RLS, or
 the `postgres` identity.
 
-The target project reference for this clean deployment is
+The project reference this **Preview-only** setup targets is
 `tofdgndrrpnnyhbuurbx` (`energy_monitor`, `ap-southeast-1`). The former
 `dnnufamiwxapqibdhwyj` reference is stale and must not be used. See
 `SUPABASE_PROJECT_AUDIT.md` for the evidence and the current schema-access
 limitation.
+
+> **Correction (2026-08-28):** when this section was written (2026-08-10) no
+> separate Production project existed, so `tofdgndrrpnnyhbuurbx` was the only
+> project. A dedicated **Production** Supabase project
+> `ajidkjzufpgyibagvvco` was provisioned on 2026-08-13 and is the
+> authoritative Production target — see the hardcoded, non-overridable
+> `PRODUCTION_PROJECT_REF` / `PREVIEW_PROJECT_REF` constants in
+> `scripts/lib/productionTargetGuard.ts`. `tofdgndrrpnnyhbuurbx` is now the
+> Preview / dev-test project only; never apply Production migrations or
+> Production data changes to it.
 
 ## Risks
 

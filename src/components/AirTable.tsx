@@ -42,14 +42,14 @@ export default function AirTable({
     noSaved: "ยังไม่มีการบันทึกข้อมูลเครื่องปรับอากาศเดือนนี้"
   } : {
     title: "Air Conditioning Energy Consumption",
-    description: "Input Giga-Watt Hour (GWh) readings of air conditioning modules for temperature and humidity control.",
+    description: "Enter cumulative energy meter readings for the air-conditioning system.",
     reset: "Reset",
-    save: "Save AIR",
-    saved: "AIR Saved!",
+    save: "Save AC Readings",
+    saved: "AC Saved!",
     month: "Month",
-    meters: (count: number) => `Combined Air-Con Consumption Units: ${count} meters`,
+    meters: (count: number) => `AC Energy Meters: ${count} configured`,
     lastSaved: "Last Saved",
-    noSaved: "No AC log saved for this month yet"
+    noSaved: "Unsaved changes"
   };
   const fields = meterFields?.length ? meterFields : ["eb41a", "eb41b", "eb42a", "eb42b"];
   const label = (field: string) => meterLabels?.[field] ?? `${field.toUpperCase()} (GWh)`;
@@ -137,7 +137,7 @@ export default function AirTable({
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-clip shadow-sm">
       {/* Table Header Section */}
       <div className="p-4 sm:p-5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/50">
         <div>
@@ -178,8 +178,9 @@ export default function AirTable({
         </div>
       </div>
 
-      {/* Inputs Layout */}
-      <div className="overflow-x-auto">
+      {/* Inputs Layout. Scrollable on mobile; clips (not scrolls) from md up so
+          the sticky thead resolves against the viewport, not this wrapper. */}
+      <div className="overflow-x-auto md:overflow-x-clip">
         <table className="entry-data-table w-full text-left border-collapse">
           <thead>
             <tr className="bg-teal-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-teal-300 border-b border-slate-800/80">
@@ -196,8 +197,10 @@ export default function AirTable({
               {fields.map(field => (
                 <td key={field} className="py-5 px-2">
                   <NumericEntryInput
-                    step="0.0001"
-                    placeholder="0.0000"
+                    ariaLabel={label(field)}
+                    step="0.000001"
+                    precision={6}
+                    placeholder="0.000000"
                     value={valueForField(field)}
                     onChange={value => {
                       handleInputChange(field, value);

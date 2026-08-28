@@ -5,7 +5,7 @@ const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx",
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 
 assert.match(preview, /buildReportHtml\(facilityReportData\(/);
-assert.match(preview, /calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, refreshKey, sections, siteName/);
+assert.match(preview, /calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, rackUnitImage, refreshKey, sections, siteName/);
 assert.match(preview, /\/racks\?siteId=\$\{siteId\}&month=\$\{month\}/);
 assert.match(preview, /sandbox=""/);
 assert.match(preview, /Uses the same renderer as the PDF report/);

@@ -38,6 +38,8 @@
     "test:rack-unit-image-migration": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-unit-image-migration.ts",
     "test:rack-status-config": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-status-config.ts",
     "test:rack-unit-capacity": "node node_modules/tsx/dist/cli.mjs scripts/test-rack-unit-capacity.ts",
+    "test:web-rack-editor-state": "node node_modules/tsx/dist/cli.mjs scripts/test-web-rack-editor-state.ts",
+    "test:web-rack-capacity-save": "node node_modules/tsx/dist/cli.mjs scripts/test-web-rack-capacity-save.ts",
     "test:excel": "node node_modules/tsx/dist/cli.mjs scripts/test-excel-roundtrip.ts",
     "test:save-formatting": "node node_modules/tsx/dist/cli.mjs scripts/test-save-formatting-regression.ts",
     "test:energy-cost-dashboard": "node node_modules/tsx/dist/cli.mjs scripts/test-energy-cost-dashboard-fac.ts",
