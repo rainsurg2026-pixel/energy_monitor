@@ -102,8 +102,10 @@ assert.ok(spaRewrite);
 assert.match(spaRewrite.source ?? "", /api\//);
 assert.match(spaRewrite.source ?? "", /api\$/);
 
-const writablePreviewConfig = loadServerConfig({ ...testEnvironment, READ_ONLY_MODE: "false" }, { requireDatabase: false, requireRuntimeDatabase: false });
-assert.equal(writablePreviewConfig.readOnlyMode, false);
+assert.throws(
+  () => loadServerConfig({ ...testEnvironment, READ_ONLY_MODE: "false" }, { requireDatabase: false, requireRuntimeDatabase: false }),
+  /READ_ONLY_MODE=true/
+);
 assert.throws(() => loadServerConfig({ ...testEnvironment, DATABASE_URL: "runtime-dsn-placeholder", DB_POOL_MAX: "11" }), /DB_POOL_MAX/);
 assert.throws(() => loadServerConfig({ ...testEnvironment, DATABASE_URL: "postgresql://pooler.example.test:6543/postgres", SUPABASE_DB_CA_CERT: "" }), /SUPABASE_DB_CA_CERT/);
 assert.throws(() => loadServerConfig({ DATABASE_URL: "postgresql://pooler.example.test:6543/postgres" }, { requireDatabase: true, requireRuntimeDatabase: false, requireMigrationDatabase: true }), /SUPABASE_DB_CA_CERT/);

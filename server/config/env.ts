@@ -102,10 +102,14 @@ export function loadServerConfig(
   const requireDatabase = options.requireDatabase ?? true;
   const requireRuntimeDatabase = options.requireRuntimeDatabase ?? requireDatabase;
   const requireMigrationDatabase = options.requireMigrationDatabase ?? false;
+  const hostedPreview = environment.VERCEL_ENV === "preview";
+  const readOnlyMode = parseBoolean(environment.READ_ONLY_MODE, "READ_ONLY_MODE");
   if (requireDatabase && !databaseUrl && !directDatabaseUrl) throw new ConfigurationError("DATABASE_URL or DIRECT_DATABASE_URL is required.");
   if (requireRuntimeDatabase && !databaseUrl) throw new ConfigurationError("DATABASE_URL is required for the API server.");
   if (requireMigrationDatabase && !directDatabaseUrl && !databaseUrl) throw new ConfigurationError("DIRECT_DATABASE_URL or DATABASE_URL is required for the migration/admin path.");
   if (hosted && nodeEnv !== "production") throw new ConfigurationError("NODE_ENV=production is required for a hosted server.");
+  if (hostedPreview && !readOnlyMode) throw new ConfigurationError("READ_ONLY_MODE=true is required for a Preview deployment.");
+  if (hostedPreview && directDatabaseUrl) throw new ConfigurationError("DIRECT_DATABASE_URL must not be configured for a Preview deployment.");
   const managedMigrationFallback = requireMigrationDatabase && !directDatabaseUrl && Boolean(databaseUrl);
   const caCertificate = databaseCaCertificate(environment, (hosted && requireRuntimeDatabase) || managedMigrationFallback);
   const appOrigin = environment.APP_ORIGIN?.trim() || "";
@@ -130,7 +134,7 @@ export function loadServerConfig(
     csrfSecret: secretValue(environment, "CSRF_SECRET", nodeEnv),
     sessionLifetimeMs: parsePositiveInteger(environment.SESSION_LIFETIME_MS, "SESSION_LIFETIME_MS", 8 * 60 * 60 * 1000),
     poolMax,
-    readOnlyMode: parseBoolean(environment.READ_ONLY_MODE, "READ_ONLY_MODE"),
+    readOnlyMode,
     supabaseUrl: environment.SUPABASE_URL?.trim() || null,
     supabaseServiceRoleKey: environment.SUPABASE_SERVICE_ROLE_KEY?.trim() || null,
     rackUnitImageBucket: environment.RACK_UNIT_IMAGE_BUCKET?.trim() || "rack-unit-capacity"
@@ -152,18 +156,22 @@ export interface MigrationDatabaseConfig {
  * Config for one-shot database CLIs (migrations, bootstrap/seed scripts) -
  * deliberately does not call the hosted-web-server validation branches in
  * loadServerConfig (APP_ORIGIN, TRUST_PROXY, SESSION_SECRET, CSRF_SECRET,
- * PORT, SESSION_LIFETIME_MS, READ_ONLY_MODE). Those secrets protect the
+ * PORT, SESSION_LIFETIME_MS). Those secrets protect the
  * running API server; a script that only opens a Postgres pool and exits
  * has no use for them, and requiring them here would only create a way
  * for an unrelated, unset secret to block a database operation that
- * doesn't touch it. loadServerConfig() itself is untouched by this -
- * the hosted server keeps exactly the validation it already had.
+ * doesn't touch it. Hosted Preview safety is the exception: the shared
+ * Production database must be read-only and must not expose a direct URL.
  */
 export function loadMigrationDatabaseConfig(environment: NodeJS.ProcessEnv = process.env): MigrationDatabaseConfig {
   const nodeEnv = environment.NODE_ENV === "test" || environment.NODE_ENV === "production" ? environment.NODE_ENV : "development";
   const databaseUrl = environment.DATABASE_URL?.trim() || null;
   const directDatabaseUrl = environment.DIRECT_DATABASE_URL?.trim() || null;
+  const hostedPreview = environment.VERCEL_ENV === "preview";
+  const readOnlyMode = parseBoolean(environment.READ_ONLY_MODE, "READ_ONLY_MODE");
   if (!directDatabaseUrl && !databaseUrl) throw new ConfigurationError("DIRECT_DATABASE_URL or DATABASE_URL is required for the migration/admin path.");
+  if (hostedPreview && !readOnlyMode) throw new ConfigurationError("READ_ONLY_MODE=true is required for a Preview deployment.");
+  if (hostedPreview && directDatabaseUrl) throw new ConfigurationError("DIRECT_DATABASE_URL must not be configured for a Preview deployment.");
   // Same nuance as loadServerConfig: falling back to the pooled DATABASE_URL
   // (no DIRECT_DATABASE_URL) for a migration-mode operation requires a
   // verified CA certificate, matching the existing stricter posture for

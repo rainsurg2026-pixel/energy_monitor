@@ -25,6 +25,10 @@ import { Pool } from "pg";
 
 const DRY_RUN = !process.argv.includes("--execute");
 
+if (!DRY_RUN) {
+  throw new Error("Preview-to-Production migration is retired: Preview now shares the Production database and must never be used as a write source.");
+}
+
 interface SiteRow { id: string; code: string; name: string }
 interface PeriodRow { id: string; site_id: string; period_month: string; row_version: number }
 

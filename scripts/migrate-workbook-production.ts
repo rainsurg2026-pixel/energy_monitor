@@ -36,7 +36,7 @@ const siteCode = process.env.MIGRATION_SITE_CODE?.trim();
 if (!sourcePath) throw new Error("Usage: npm run migration:workbook:production -- <workbook-path>");
 if (!siteCode) throw new Error("MIGRATION_SITE_CODE is required.");
 
-const environmentCheck = verifyProductionEnvironment(process.env.NODE_ENV);
+const environmentCheck = verifyProductionEnvironment(process.env.NODE_ENV, { vercelEnv: process.env.VERCEL_ENV, readOnlyMode: process.env.READ_ONLY_MODE === "true" });
 if (!environmentCheck.ok) throw new Error(`Refusing to run: ${environmentCheck.reason}`);
 if (process.env.MIGRATION_ALLOW_WRITE !== "true") throw new Error("MIGRATION_ALLOW_WRITE=true is required.");
 if (process.env.MIGRATION_CONFIRM_PRODUCTION_IMPORT !== "YES") {
