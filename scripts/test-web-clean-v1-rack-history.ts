@@ -34,8 +34,9 @@ assert.match(editors, /Your edits will be lost/);
 
 assert.match(views, /Rack Capacity (?:&|&amp;) Utilization/);
 assert.match(views, /Rack Unit Capacity (?:&|&amp;) Utilization/);
-assert.match(views, /Executive summary of rack unit \(U\) capacity and utilization\./);
-assert.match(views, /Available U represents physical rack space only/);
+assert.match(views, /Read-only Rack Unit Capacity \(U\) executive summary/);
+assert.match(views, /1U = 1\.75 inches\./);
+assert.match(views, /You are using .* of total capacity\. Available capacity is/);
 assert.match(views, /Normal: < 80%/);
 assert.match(views, /Zones \$\{labels\.slice\(0, -1\)\.join\("[, ]*"\)\}, and \$\{labels\.at\(-1\)\} are over 85% utilized/);
 assert.match(views, /85% utilized/);
