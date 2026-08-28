@@ -28,6 +28,7 @@ interface DashboardSummaryProps {
   lang: "th" | "en";
   isGoogleConnected?: boolean;
   googleUserEmail?: string | null;
+  dataSourceLabel?: string | null;
   rackCapacity?: RackCapacitySummary | null;
   /** UPS Summary / UPS Mapping, read directly from the workbook's Dashboard-FAC sheet. */
   upsMapping?: DashboardUpsMappingReport | null;
@@ -118,7 +119,7 @@ function buildDashboardComparisonReference(
   return { ...worst, label: `Best / Worst · ${best.label} / ${worst.label}` };
 }
 
-export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleConnected = false, googleUserEmail = null, rackCapacity = null, upsMapping = null, facility = null }: DashboardSummaryProps) {
+export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleConnected = false, googleUserEmail = null, dataSourceLabel = null, rackCapacity = null, upsMapping = null, facility = null }: DashboardSummaryProps) {
   const {
     selectedTrend,
     selectedCategory,
@@ -360,7 +361,12 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
             <span className="px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-bold uppercase rounded-full tracking-wider">
               {formatMonthYear(selectedMonth)} Summary View
             </span>
-            {isGoogleConnected ? (
+            {dataSourceLabel ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-sky-500/10 border border-sky-500/20 text-[10px] font-semibold text-sky-300 rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+                {dataSourceLabel}
+              </span>
+            ) : isGoogleConnected ? (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/10 border border-emerald-500/20 text-[10px] font-semibold text-emerald-400 rounded-full">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 {lang === "th" ? `ข้อมูลหลัก: Google Sheets (${googleUserEmail})` : `Primary Source: Google Sheets (${googleUserEmail})`}
