@@ -170,6 +170,42 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
 
   const t = dict[lang];
 
+  // Declared before the early return below so the hook count stays stable when
+  // a facility switch removes the data (React "rendered fewer hooks" crash).
+  const smartInsights = useMemo(() => {
+    if (!currentMonthMetric || currentMonthMetric.pue === null) return [];
+    const list: string[] = [];
+    if (currentMonthMetric.pue > 1.6) {
+      list.push(
+        lang === "th"
+          ? "ค่า PUE สูงเกินเกณฑ์มาตรฐาน 1.5: ควรตรวจสอบประสิทธิภาพระบายความร้อนของระบบปรับอากาศ ชั้น 4 (EB41A-B, EB42A-B) ว่ามีปริมาณความต้องการลมเย็นเกินสภาวะปกติหรือไม่"
+          : "PUE exceeds standard threshold (>1.5): Audit 4th floor cooling subsystems (EB41A-B, EB42A-B) to verify if air-flow velocity or ambient setpoints are misaligned with IT heat loads."
+      );
+      list.push(
+        lang === "th"
+          ? "แนะนำระบบปิดกั้นช่องทางลมร้อน/ลมเย็น (Hot/Cold Aisle Containment) เพื่อป้องกันการผสมกันของอากาศและเพิ่มประสิทธิภาพพัดลมคอยล์เย็น"
+          : "Implement Hot/Cold Aisle Containment protocols to prevent bypass cold air mixing and optimize chillers coil return temperature."
+      );
+    } else {
+      list.push(
+        lang === "th"
+          ? "ค่าประสิทธิภาพ PUE อยู่ในเกณฑ์ดีเยี่ยม: แนะนำให้รักษาระดับอุณหภูมิห้องเครื่องไว้ที่ 22-24°C และรักษามาตรฐานพฤติกรรมการบันทึกข้อมูลอย่างสมบูรณ์แบบ"
+          : "PUE meets high-efficiency targets: Maintain current temperature setpoints (22-24°C) and secure consistent historical log data accuracy."
+      );
+    }
+
+    const ups11 = currentMonthMetric.alerts.some(a => a.includes("UPS 11"));
+    const ups15 = currentMonthMetric.alerts.some(a => a.includes("UPS 15"));
+    if (ups11 || ups15) {
+      list.push(
+        lang === "th"
+          ? "ตรวจพบโหลดไม่สมมาตรในกลุ่ม UPS: ตรวจสอบการกระจายโหลดแผงจ่ายไฟฟ้ากระแสสลับ (A/B lines) เพื่อยืดอายุการทำงานของแบตเตอรี่และคาปาซิเตอร์"
+          : "Unbalanced UPS load distribution detected: Verify branch circuits across dual-corded servers (A/B feeds) to protect long-term battery lifespan."
+      );
+    }
+    return list;
+  }, [currentMonthMetric, lang]);
+
   if (!currentMonthMetric || !benchmarks) {
     return (
       <div className="bg-slate-900 border border-slate-800 p-12 rounded-3xl text-center space-y-4">
@@ -245,41 +281,6 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
     { name: "Company ESG Target", PUE: b.company.pue },
     { name: "Worst Month", PUE: b.worst.pue },
   ];
-
-  // Compute smart actionable insights based on PUE score
-  const smartInsights = useMemo(() => {
-    const list: string[] = [];
-    if (cur.pue > 1.6) {
-      list.push(
-        lang === "th"
-          ? "ค่า PUE สูงเกินเกณฑ์มาตรฐาน 1.5: ควรตรวจสอบประสิทธิภาพระบายความร้อนของระบบปรับอากาศ ชั้น 4 (EB41A-B, EB42A-B) ว่ามีปริมาณความต้องการลมเย็นเกินสภาวะปกติหรือไม่"
-          : "PUE exceeds standard threshold (>1.5): Audit 4th floor cooling subsystems (EB41A-B, EB42A-B) to verify if air-flow velocity or ambient setpoints are misaligned with IT heat loads."
-      );
-      list.push(
-        lang === "th"
-          ? "แนะนำระบบปิดกั้นช่องทางลมร้อน/ลมเย็น (Hot/Cold Aisle Containment) เพื่อป้องกันการผสมกันของอากาศและเพิ่มประสิทธิภาพพัดลมคอยล์เย็น"
-          : "Implement Hot/Cold Aisle Containment protocols to prevent bypass cold air mixing and optimize chillers coil return temperature."
-      );
-    } else {
-      list.push(
-        lang === "th"
-          ? "ค่าประสิทธิภาพ PUE อยู่ในเกณฑ์ดีเยี่ยม: แนะนำให้รักษาระดับอุณหภูมิห้องเครื่องไว้ที่ 22-24°C และรักษามาตรฐานพฤติกรรมการบันทึกข้อมูลอย่างสมบูรณ์แบบ"
-          : "PUE meets high-efficiency targets: Maintain current temperature setpoints (22-24°C) and secure consistent historical log data accuracy."
-      );
-    }
-
-    // Load imbalance warning
-    const ups11 = cur.alerts.some(a => a.includes("UPS 11"));
-    const ups15 = cur.alerts.some(a => a.includes("UPS 15"));
-    if (ups11 || ups15) {
-      list.push(
-        lang === "th"
-          ? "ตรวจพบโหลดไม่สมมาตรในกลุ่ม UPS: ตรวจสอบการกระจายโหลดแผงจ่ายไฟฟ้ากระแสสลับ (A/B lines) เพื่อยืดอายุการทำงานของแบตเตอรี่และคาปาซิเตอร์"
-          : "Unbalanced UPS load distribution detected: Verify branch circuits across dual-corded servers (A/B feeds) to protect long-term battery lifespan."
-      );
-    }
-    return list;
-  }, [cur, lang]);
 
   return (
     <div className="space-y-6 animate-fadeIn">
