@@ -14,7 +14,7 @@ import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import type { EntryWorkspaceActions } from "./WebEntryWorkspace";
-import { api, type SessionUser, type Role } from "./api";
+import { api, setUnauthorizedHandler, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportAllFacilitiesHtml as exportAllFacilitiesHtmlFile, exportAllFacilitiesPdf as exportAllFacilitiesPdfFile, exportCsv, exportDesktopPdf as exportDesktopPdfFile, exportExcel, exportHtml as exportHtmlFile, exportSiteComparisonCsv, exportSiteComparisonExcel, exportSiteComparisonHtml, exportSiteComparisonPdf as exportSiteComparisonPdfFile, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
 import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodSelection } from "./reportPeriod";
@@ -184,6 +184,9 @@ export default function CleanWebApp() {
     const user = session.authenticated ? session.user : null;
     setUser(user);
     if (!user) return;
+    // Returning authenticated user: the session cookie can outlive the
+    // independently-scoped CSRF cookie, so re-prime it before any mutation.
+    await api("/auth/csrf").catch(() => undefined);
     setFacilityLoading(true); setFacilityError(null);
     try {
       const result = normalizeBootstrap(await api<BootstrapApi>("/bootstrap"));
@@ -364,7 +367,9 @@ export default function CleanWebApp() {
       setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
     } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
-  const logout = async () => { const action = async () => { setEntryDirty(false); setRackDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setUser(null); setBootstrap(null); setDraft(null); } }; deferNavigation(action); };
+  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setUser(null); setBootstrap(null); setDraft(null); }, []);
+  useEffect(() => { setUnauthorizedHandler(() => { setEntryDirty(false); setRackDirty(false); clearSession(); }); return () => setUnauthorizedHandler(null); }, [clearSession]);
+  const logout = async () => { const action = async () => { setEntryDirty(false); setRackDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { clearSession(); } }; deferNavigation(action); };
   const registerEntryActions = useCallback((actions: EntryWorkspaceActions | null) => { entryActionsRef.current = actions; }, []);
   const clearBrowserGuardMarker = () => { const currentState = window.history.state; if (!currentState?.__emUnsavedGuard) return; const nextState = { ...currentState }; delete nextState.__emUnsavedGuard; window.history.replaceState(nextState, "", window.location.href); };
   const stayOnPage = () => { clearBrowserGuardMarker(); setPendingNavigation(null); };
