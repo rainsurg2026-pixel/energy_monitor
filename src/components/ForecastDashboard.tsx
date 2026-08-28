@@ -251,7 +251,7 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
           <div className="h-[380px] mt-4 w-full min-w-0 overflow-hidden">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData} margin={{ left: -15, right: 10, top: 10, bottom: 5 }}>
-                <CartesianGrid stroke="#1e293b" strokeDasharray="3 3" />
+                <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 3" />
                 <XAxis 
                   dataKey="monthStr" 
                   tickFormatter={formatMonthYear} 
@@ -268,9 +268,9 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
                 <Line 
                   type="monotone" 
                   dataKey="Historical Actual" 
-                  stroke="#ffffff" 
+                  stroke="var(--color-text)" 
                   strokeWidth={2.5} 
-                  dot={{ r: 3, fill: "#ffffff" }} 
+                  dot={{ r: 3, fill: "var(--color-text)" }} 
                   name="Historical Actual"
                 ><LabelList dataKey="Historical Actual" position="top" formatter={(value: unknown) => typeof value === "number" ? formatForecastValue(value) : "—"} /></Line>
 

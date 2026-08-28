@@ -416,7 +416,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
           <div className="h-72 min-w-0">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={pueTrendData} margin={{ top: 12, right: 12, left: 0, bottom: 8 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" />
                 <XAxis dataKey="month" stroke="#94a3b8" tick={{ fontSize: 10 }} />
                 <YAxis domain={[1, "auto"]} tickFormatter={value => formatNumber2(value)} stroke="#94a3b8" tick={{ fontSize: 10 }} />
                 <Tooltip
