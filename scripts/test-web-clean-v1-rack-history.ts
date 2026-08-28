@@ -11,7 +11,10 @@ assert.match(app, /WebRackUnitCapacityDashboard/);
 assert.match(app, /"rack-units"/);
 assert.match(app, /onDirtyChange=\{setRackDirty\}/);
 assert.match(app, /view === "rack-units"/);
-assert.match(app, /const target = next === "dashboard" \? "entry" : next/);
+// Dashboard navigation is restored: the sidebar item exists and setView no
+// longer redirects "dashboard" to "entry".
+assert.match(app, /\{ id: "dashboard", label: lang === "th" \? "แดชบอร์ด" : "Dashboard", icon: BarChart3 \}/);
+assert.doesNotMatch(app, /next === "dashboard" \? "entry"/);
 assert.match(app, /window\.addEventListener\("beforeunload"/);
 assert.match(app, /window\.addEventListener\("popstate"/);
 assert.match(app, /You have unsaved changes\. Leave without saving\?/);
