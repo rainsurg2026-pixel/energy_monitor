@@ -35,7 +35,9 @@ assert.match(app, /id: "comparison"[^\n]*Site Energy & Cost Comparison/);
 assert.match(app, /id: "rack-comparison"[^\n]*Site Rack Capacity Comparison/);
 assert.match(app, /view === "comparison" && <WebSiteComparison lang=\{lang\} \/>/);
 assert.match(app, /view === "rack-comparison" && <WebSiteRackCapacityComparison month=\{month\} \/>/);
-assert.match(app, /view !== "rack-comparison"/);
+// The "Create Monthly Record" prompt is entry-only, so rack-comparison (and
+// every other read view) never triggers it.
+assert.match(app, /if \(!exists && view === "entry"\)/);
 
 assert.match(rackComparison, /api<SiteRef\[]>\("\/sites"\)/);
 assert.match(rackComparison, /\/racks\?siteId=\$\{site\.id\}&month=/);
