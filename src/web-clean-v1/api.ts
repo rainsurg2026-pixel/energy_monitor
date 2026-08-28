@@ -7,6 +7,14 @@ export class ApiError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
 }
 
+let unauthorizedHandler: (() => void) | null = null;
+/** Registered by the app shell once authenticated. Invoked when any API call
+ *  comes back 401 so an expired session returns the user to the login screen
+ *  instead of leaving a shell that silently fails every fetch. */
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
 function csrfToken(): string | undefined {
   const value = document.cookie.split(";").map(item => item.trim()).find(item => item.startsWith("em_csrf="));
   return value ? decodeURIComponent(value.slice("em_csrf=".length)) : undefined;
@@ -25,6 +33,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const body = await response.json().catch(() => null) as ApiResponse<T> | { error?: { code?: string; message?: string } } | null;
   if (!response.ok || !body || !("ok" in body) || body.ok !== true) {
     const error = body && "error" in body ? body.error : undefined;
+    if (response.status === 401) unauthorizedHandler?.();
     throw new ApiError(response.status, error?.code ?? "REQUEST_FAILED", error?.message ?? "The request could not be completed.");
   }
   return body.data;

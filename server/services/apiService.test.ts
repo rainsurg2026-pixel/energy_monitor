@@ -3,6 +3,7 @@ import { ApiService } from "./apiService";
 import { HttpError } from "../errors";
 import { InMemoryRepository } from "../repositories/inMemoryRepository";
 import type { RackUnitImageStorage } from "../storage/rackUnitImageStorage";
+import { fixtureLog } from "../testFixtures";
 
 const image = {
   objectKey: "rack-unit-capacity/srinakarin/2026-07/example.jpg",
@@ -46,6 +47,20 @@ const storageFailure = new ApiService(repository(), now, storage({ getObject: as
 await assert.rejects(
   () => storageFailure.getRackUnitImage(2, "2026-07"),
   (error: unknown) => error instanceof HttpError && error.status === 503 && error.code === "IMAGE_STORAGE_UNAVAILABLE"
+);
+
+const comparisonRepository = new InMemoryRepository({
+  sites: [{ id: 2, code: "srinakarin", name: "Srinakarin", active: true }],
+  settings: { startMonth: "2026-01", endMonth: "2026-12", rowVersion: 1 },
+  logs: { 2: [fixtureLog("2025-12", 10, 90000, 450000), fixtureLog("2026-01", 14, 100000, 500000)] }
+});
+const comparison = await new ApiService(comparisonRepository, now).getSiteComparison() as { sites: Array<{ months: Array<{ month: string; metrics: { floorEnergy: number | null } | null }> }> };
+assert.notEqual(comparison.sites[0]?.months.find(entry => entry.month === "2026-01")?.metrics?.floorEnergy, null, "site comparison keeps the prior calendar month as Air calculation context");
+
+const invalidRackUnit = new ApiService(repository(), now);
+await assert.rejects(
+  () => invalidRackUnit.saveRackUnit(2, "2026-07", { total_u: 10, used_u: 11, expected_row_version: 1 }, "test-correlation"),
+  (error: unknown) => error instanceof HttpError && error.status === 400 && error.code === "INVALID_RACK_UNIT_VALUES"
 );
 
 console.log("api service: Rack Unit image availability is fail-closed and storage failures are sanitized");

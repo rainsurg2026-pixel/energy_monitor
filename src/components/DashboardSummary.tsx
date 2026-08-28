@@ -481,7 +481,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                   <div className="overflow-x-auto">
                   <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">{lang === "th" ? "1.1 สถานะโหลด UPS - รวม" : "1.1 UPS Load Status - Overall"}</h4>
                   <table className="dashboard-table w-full text-left text-xs font-sans">
-                    <thead><tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+                    <thead><tr className="border-b border-slate-800 text-slate-400 tracking-wider text-[10px] font-bold">
                       <th className="py-2.5 px-3">{t.no}</th><th className="py-2.5 px-3">UPS</th><th className="py-2.5 px-3">{t.totalKw}</th><th className="py-2.5 px-3">{t.totalKva}</th><th className="py-2.5 px-3">{t.capacity}</th><th className="py-2.5 px-3">{t.loadPercent}</th><th className="py-2.5 px-3">{t.availablePercent}</th>
                     </tr></thead>
                     <tbody className="divide-y divide-slate-850">
@@ -511,7 +511,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                 <div className="lg:col-span-8 overflow-x-auto">
                   <table className="dashboard-table w-full text-left text-xs font-sans">
                     <thead>
-                      <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+                      <tr className="border-b border-slate-800 text-slate-400 tracking-wider text-[10px] font-bold">
                         <th className="py-2.5 px-3">{t.no}</th>
                         <th className="py-2.5 px-3">{t.upsGroup}</th>
                         <th className="py-2.5 px-3 text-right">{t.totalKw}</th>
@@ -582,7 +582,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                 <div className="overflow-x-auto">
                   <table className="dashboard-table w-full text-left text-[11px] font-sans">
                     <thead>
-                      <tr className="border-b border-slate-800 text-slate-500 uppercase tracking-wider text-[9px] font-bold">
+                      <tr className="border-b border-slate-800 text-slate-500 tracking-wider text-[9px] font-bold">
                         <th className="py-2 px-2.5">{t.no}</th>
                         <th className="py-2 px-2.5">{t.umdb}</th>
                         <th className="py-2 px-2.5">{t.upsId}</th>
@@ -652,7 +652,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
               <div className="overflow-x-auto">
                 <table className="dashboard-table w-full text-left text-xs font-sans">
                   <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+                    <tr className="border-b border-slate-800 text-slate-400 tracking-wider text-[10px] font-bold">
                       <th className="py-2.5 px-3">{t.repMonth}</th>
                       {calcs.airFields.map(field => <th key={field} className="py-2.5 px-3 text-right">{field.toUpperCase()} (GWh)</th>)}
                       <th className="py-2.5 px-3 text-right">{t.monthlyEnergy}</th>
@@ -716,7 +716,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
               <div className="overflow-x-auto">
                 <table className="dashboard-table w-full text-left text-xs font-sans">
                   <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+                    <tr className="border-b border-slate-800 text-slate-400 tracking-wider text-[10px] font-bold">
                       <th className="py-2.5 px-3">{t.no}</th>
                       <th className="py-2.5 px-3">{t.dcPanel}</th>
                       <th className="py-2.5 px-3 text-right">{t.voltage}</th>
@@ -777,7 +777,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
               <div className="overflow-x-auto">
                 <table className="dashboard-table w-full text-left text-xs font-sans">
                   <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+                    <tr className="border-b border-slate-800 text-slate-400 tracking-wider text-[10px] font-bold">
                       <th className="py-2.5 px-3">{t.repMonth}</th>
                       <th className="py-2.5 px-3 text-right">{t.buildingEnergy}</th>
                       <th className="py-2.5 px-3 text-right">{t.buildingCost}</th>

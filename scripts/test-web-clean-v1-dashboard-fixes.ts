@@ -57,6 +57,7 @@ else (globalThis as { window?: unknown }).window = previousWindow;
 
 const appSource = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const rackUnitSummarySource = readFileSync(new URL("../src/components/rack/RackUnitCapacitySummary.tsx", import.meta.url), "utf8");
+const rackViewsSource = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityViews.tsx", import.meta.url), "utf8");
 const exportSource = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
 const browserE2eSource = readFileSync(new URL("./e2e-web-cdp.mjs", import.meta.url), "utf8");
 assert.match(appSource, /HISTORY_DATA_VIEWS/);
@@ -68,7 +69,9 @@ assert.match(appSource, /historyRequestsRef\.current\.set\(cacheKey, request\)/)
 assert.match(appSource, /scope: HistoryScope/);
 assert.doesNotMatch(appSource, /RackUnitCapacitySummary imageUploadAvailable=/);
 assert.match(appSource, /createWebRackUnitImageProvider/);
-assert.match(appSource, /<RackUnitCapacitySummary provider=\{rackUnitImageProvider\}/);
+assert.match(appSource, /view === "rack-units"/);
+assert.match(appSource, /<WebRackUnitCapacityDashboard siteName=\{siteName\}/);
+assert.match(rackViewsSource, /Monthly Rack Unit Capacity Image/);
 assert.match(rackUnitSummarySource, /provider\?: Pick<IDataProvider, "getRackUnitCapacityImage">/);
 assert.match(rackUnitSummarySource, /!provider\?\.getRackUnitCapacityImage/);
 assert.match(rackUnitSummarySource, /facilityName \?\? ""/);

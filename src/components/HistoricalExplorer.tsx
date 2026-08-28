@@ -375,7 +375,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs font-sans">
           <thead>
-            <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+            <tr className="border-b border-slate-800 text-slate-400 tracking-wider text-[10px] font-bold">
               <th className="py-3.5 px-4">{t.month}</th>
               <th className="py-3.5 px-4">{t.upsGroup}</th>
               <th className="py-3.5 px-4 text-right">{t.loadKw}</th>
@@ -427,7 +427,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs font-sans">
           <thead>
-            <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+            <tr className="border-b border-slate-800 text-slate-400 tracking-wider text-[10px] font-bold">
               <th className="py-3.5 px-4">{t.month}</th>
               {airFields.map(field => <th key={field} className="py-3.5 px-4 text-right">{field.toUpperCase()} (GWh)</th>)}
               <th className="py-3.5 px-4 text-right">{t.monthlyEnergy}</th>
@@ -502,7 +502,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs font-sans">
           <thead>
-            <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+            <tr className="border-b border-slate-800 text-slate-400 tracking-wider text-[10px] font-bold">
               <th className="py-3.5 px-4">{t.month}</th>
               <th className="py-3.5 px-4">{t.panelId}</th>
               <th className="py-3.5 px-4 text-right">{t.voltage}</th>
@@ -548,7 +548,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs font-sans">
           <thead>
-            <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+            <tr className="border-b border-slate-800 text-slate-400 tracking-wider text-[10px] font-bold">
               <th className="py-3.5 px-4">{t.month}</th>
               <th className="py-3.5 px-4 text-right">{t.buildingEnergy}</th>
               <th className="py-3.5 px-4 text-right">{t.buildingCost}</th>
@@ -615,7 +615,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs font-sans">
                 <thead>
-                  <tr className="border-b border-slate-800 text-slate-400 uppercase tracking-wider text-[10px] font-bold">
+                  <tr className="border-b border-slate-800 text-slate-400 tracking-wider text-[10px] font-bold">
                     <th className="py-3 px-4">{t.month}</th>
                     <th className="py-3 px-4 text-right">{lang === "th" ? "ทั้งหมด (U)" : "Total (U)"}</th>
                     <th className="py-3 px-4 text-right">{lang === "th" ? "ใช้งาน (U)" : "Used (U)"}</th>

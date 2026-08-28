@@ -1,14 +1,14 @@
 import { createHash } from "node:crypto";
 import { calculateEnergyCostForMonth } from "../../src/domain/energyCost";
 import { buildFacilityComparisonMetrics } from "../../src/domain/facilityComparison";
-import { calculateRackCapacityMetrics } from "../../src/domain/rackCapacity";
+import { calculateRackCapacityMetrics, normalizeRackEditableValue, RACK_CANONICAL_STATUSES, type RackEditableField } from "../../src/domain/rackCapacity";
 import { usagePercent } from "../../src/domain/rackUnitCapacity";
 import { DESKTOP_FORMULA_VERSION } from "../../src/domain/formulaVersion";
 import { computeUpsGroupHistorySnapshot } from "../../src/domain/upsGroupHistorySnapshot";
 import type { MonthlyLog } from "../../src/types";
 import { HttpError } from "../errors";
 import { assertDisplayPeriod, assertStrictMonth, allowedMonths, isAllowedMonth, latestAvailableMonth, previousCalculationMonth, visibleMonths, type DisplayPeriod } from "../policies/displayPeriod";
-import type { BackendRepository, RackUnitImageRecord, SiteRecord, UpsGroupHistoryRecord } from "../repositories/contracts";
+import type { BackendRepository, RackFieldChange, RackUnitImageRecord, SiteRecord, UpsGroupHistoryRecord } from "../repositories/contracts";
 import { validateImageBytes } from "../../src/utils/imageValidation";
 import { imageObjectKey, type RackUnitImageStorage } from "../storage/rackUnitImageStorage";
 import { parseExpectedRowVersion, parseMonthlyLog, parseProvenance } from "./rawInputValidation";
@@ -20,6 +20,45 @@ export interface ApiServiceOptions { repository: BackendRepository; now?: () => 
 export type HistoryScope = "dashboard" | "rack" | "full";
 
 function monthOfDate(date: Date): string { return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`; }
+
+const RACK_EDITABLE_FIELDS: readonly RackEditableField[] = ["status", "cabinetSize", "detail", "deviceType", "remarks"];
+function rackObject(value: unknown, field: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "INVALID_RACK_CHANGES", `${field} must be an object.`);
+  return value as Record<string, unknown>;
+}
+function rackEditValue(value: unknown, field: RackEditableField, path: string): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "string") throw new HttpError(400, "INVALID_RACK_CHANGES", `${path} must be a string or null.`);
+  return normalizeRackEditableValue(field, value);
+}
+function parseRackChanges(value: unknown): RackFieldChange[] {
+  if (!Array.isArray(value) || value.length === 0) throw new HttpError(400, "INVALID_RACK_CHANGES", "changes must be a non-empty array.");
+  const seenRows = new Set<number>();
+  return value.map((entry, index) => {
+    const source = rackObject(entry, `changes[${index}]`);
+    const rowNumber = source.row_number ?? source.rowNumber;
+    if (typeof rowNumber !== "number" || !Number.isSafeInteger(rowNumber) || rowNumber < 1) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes[${index}].row_number must be a positive integer.`);
+    if (seenRows.has(rowNumber)) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes contains duplicate row ${rowNumber}.`);
+    seenRows.add(rowNumber);
+    if (typeof source.rack_id !== "string" && typeof source.rackId !== "string") throw new HttpError(400, "INVALID_RACK_CHANGES", `changes[${index}].rack_id must be a non-empty string.`);
+    const rackId = String(source.rack_id ?? source.rackId).trim();
+    if (!rackId) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes[${index}].rack_id must be a non-empty string.`);
+    const result: RackFieldChange = { rowNumber, rackId };
+    let fieldCount = 0;
+    for (const field of RACK_EDITABLE_FIELDS) {
+      if (!(field in source)) continue;
+      const edit = rackObject(source[field], `changes[${index}].${field}`);
+      if (!("expected" in edit) || !("next" in edit)) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes[${index}].${field} requires expected and next.`);
+      const expected = rackEditValue(edit.expected, field, `changes[${index}].${field}.expected`);
+      const next = rackEditValue(edit.next, field, `changes[${index}].${field}.next`);
+      if (field === "status" && (next === null || !RACK_CANONICAL_STATUSES.includes(next as (typeof RACK_CANONICAL_STATUSES)[number]))) throw new HttpError(400, "INVALID_RACK_STATUS", "Rack status must be one of the canonical Rack Capacity statuses.");
+      result[field] = { expected, next };
+      fieldCount++;
+    }
+    if (fieldCount === 0) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes[${index}] must contain at least one editable field.`);
+    return result;
+  });
+}
 
 export class ApiService {
   constructor(private readonly repository: BackendRepository, private readonly now: () => Date = () => new Date(), private readonly imageStorage?: RackUnitImageStorage) {}
@@ -271,7 +310,12 @@ export class ApiService {
       const availableMonths = visibleMonths(period, available);
       const monthlyMonths = new Set(periods.filter(record => record.hasData).map(record => record.month));
       const comparisonMonths = availableMonths.filter(month => monthlyMonths.has(month));
-      const logs = await this.repository.getMonthlyLogs(site.id, comparisonMonths);
+      // Keep the previous calendar month as an internal calculation input so
+      // the first visible month can still calculate Air deltas correctly. It
+      // is not added to the visible comparison response.
+      const calculationMonths = [...new Set(comparisonMonths.flatMap(month => [month, previousCalculationMonth(month)]))]
+        .filter((month): month is string => month !== null);
+      const logs = await this.repository.getMonthlyLogs(site.id, calculationMonths);
       const metrics = buildFacilityComparisonMetrics(logs, period.endMonth);
       return {
         site,
@@ -302,6 +346,23 @@ export class ApiService {
     const { month: selected } = await this.requireVisibleMonth(month);
     const snapshot = await this.repository.getRackSnapshot(siteId, selected);
     return { siteId, month: selected, snapshot: snapshot ? { ...snapshot, metrics: calculateRackCapacityMetrics(snapshot.records) } : null };
+  }
+
+  async saveRacks(siteId: number, month: unknown, body: unknown, correlationId: string, actorUserId?: number | null): Promise<unknown> {
+    const site = await this.requireSite(siteId);
+    const { month: selected, period } = await this.requireVisibleMonth(month);
+    const source = body === null || typeof body !== "object" || Array.isArray(body)
+      ? (() => { throw new HttpError(400, "INVALID_BODY", "Request body must be a JSON object."); })()
+      : body as Record<string, unknown>;
+    const changes = parseRackChanges(source.changes);
+    const expectedRowVersion = parseExpectedRowVersion(source.expected_row_version);
+    const now = this.now();
+    const result = await this.repository.withTransaction(async repository => {
+      const saved = await repository.saveRackCapacity({ siteId, facility: site.code, month: selected, changes, expectedRowVersion, actorUserId, correlationId, generatedAt: now.toISOString() });
+      const history = (await repository.listRackCapacityHistory(siteId)).filter(row => period.startMonth <= row.month && row.month <= period.endMonth && row.month <= monthOfDate(now));
+      return { saved, history };
+    });
+    return { siteId, month: selected, snapshot: result.saved.snapshot, outcomes: result.saved.outcomes, changedCount: result.saved.changedCount, rackCapacityHistory: result.history };
   }
 
   async getRackUnit(siteId: number, month: unknown): Promise<unknown> {
@@ -337,7 +398,7 @@ export class ApiService {
     const source = body as Record<string, unknown>;
     const totalU = source.total_u;
     const usedU = source.used_u;
-    if (typeof totalU !== "number" || !Number.isFinite(totalU) || totalU < 0 || typeof usedU !== "number" || !Number.isFinite(usedU) || usedU < 0) throw new HttpError(400, "INVALID_RACK_UNIT_VALUES", "total_u and used_u must be finite non-negative numbers.");
+    if (typeof totalU !== "number" || !Number.isFinite(totalU) || totalU < 0 || typeof usedU !== "number" || !Number.isFinite(usedU) || usedU < 0 || usedU > totalU) throw new HttpError(400, "INVALID_RACK_UNIT_VALUES", "total_u and used_u must be finite non-negative numbers, with used_u less than or equal to total_u.");
     const saved = await this.repository.withTransaction(repository => repository.saveRackUnitSnapshot({ siteId, month: selected, totalU, usedU, expectedRowVersion: parseExpectedRowVersion(source.expected_row_version), actorUserId, correlationId }));
     const refreshed = await this.repository.getRackUnitSnapshot(siteId, selected);
     const snapshot = refreshed ?? saved;
