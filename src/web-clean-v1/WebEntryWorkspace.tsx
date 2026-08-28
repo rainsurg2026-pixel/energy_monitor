@@ -34,7 +34,7 @@ export function mergeEntryDraft(draft: MonthlyLog, updates: LiveDrafts): Monthly
 /** Full browser implementation of Desktop's entry workspace.
  * Save All first combines every in-page draft into one MonthlyLog and calls
  * the Web API once, preserving its row-version concurrency contract. */
-export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, months, month, draft, rackUnitInitialRow, busy, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onRackUnitSaved, onNotice, onDirtyChange, onRegisterActions }: {
+export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, months, month, draft, rackUnitInitialRow, busy, readOnly = false, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onRackUnitSaved, onNotice, onDirtyChange, onRegisterActions }: {
   lang: "th" | "en";
   siteId: number;
   siteName: string;
@@ -44,6 +44,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
   draft: MonthlyLog;
   rackUnitInitialRow: RackUnitCapacityRow | null;
   busy: boolean;
+  readOnly?: boolean;
   allowedStartMonth: string;
   allowedEndMonth: string;
   onSave: (patch: Partial<MonthlyLog>) => Promise<boolean>;
@@ -138,6 +139,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
   return <div className="space-y-5 pb-40 md:pb-24">
     <WebEntryWorkflowHeader lang={lang} facilityName={siteName} months={months} selectedMonth={month} draft={liveDraft} allowedStartMonth={allowedStartMonth} allowedEndMonth={allowedEndMonth} onSelectMonth={onSelectMonth} />
     <WebHistoricalEditNotice lang={lang} selectedMonth={month} latestMonth={latestMonth} onReturnToLatest={() => { if (latestMonth) onSelectMonth(latestMonth, true); }} />
+    {readOnly && <p role="status" className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-200">{th ? "ระบบอยู่ในโหมดอ่านอย่างเดียว — กรอกและตรวจสอบข้อมูลได้ แต่ยังบันทึกไม่ได้" : "The system is in read-only mode — you can enter and review data, but saving is disabled."}</p>}
     <DashboardStats lang={lang} log={liveDraft} />
     <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">{th ? "กรอกข้อมูลรายเดือน" : "Monthly Data Entry"}</h2><p className="mt-1 text-sm text-slate-400">{th ? `กรอกและตรวจสอบค่าการทำงานรายเดือนของ UPS สำหรับ ${monthLabel} แล้วบันทึกข้อมูลทั้งหมด` : `Enter and verify the monthly UPS operating readings for ${monthLabel}, then save all records.`}</p></div>
       <div id="entry-section-ups">{siteCode === "srinakarin" ? <SrinakarinPowerPhaseTable lang={lang} monthStr={month} initialLog={draft} lastSaved={formatWebSavedTimestamp(draft.lastSavedUps)} onSave={(ups, srinakarinInputs) => requestSectionSave("ups", { ups, srinakarinInputs })} registerApi={register("ups")} onDraftChange={(ups, srinakarinInputs) => { reportDraft("ups", ups); reportDraft("srinakarinInputs", srinakarinInputs); }} /> : <UpsTable lang={lang} monthStr={month} initialRecords={draft.ups} lastSaved={formatWebSavedTimestamp(draft.lastSavedUps)} onSave={ups => requestSectionSave("ups", { ups })} registerApi={register("ups")} onDraftChange={ups => reportDraft("ups", ups)} />}</div>
@@ -146,7 +148,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
       <div id="entry-section-energy"><EnergyCostTable lang={lang} monthStr={month} initialRecord={draft.energyCost} lastSaved={formatWebSavedTimestamp(draft.lastSavedEnergyCost)} onSave={energyCost => requestSectionSave("energy", { energyCost })} registerApi={register("energy")} onDraftChange={energy => reportDraft("energy", energy)} /></div>
       <div id="entry-section-rack-unit"><RackUnitCapacityEntry siteId={siteId} month={month} initialRow={rackUnitInitialRow} onSaved={onRackUnitSaved} onMessage={onNotice} onCompletionChange={setRackUnitCompletion} onDirtyChange={setRackUnitDirty} onRegisterActions={registerRackUnitActions} /></div>
     </section>
-    <StickyEntryToolbar lang={lang} completion={completion} rackUnitCompletion={rackUnitCompletion} lastSaved={lastSaved} workbookStatus={savingAll || busy ? "busy" : hasDraftChanges ? "dirty" : "saved"} hasDraftChanges={hasDraftChanges} aboveMobileNav facilityName={siteName} monthLabel={month} provider="Production API" onSaveAll={() => void requestSaveAll()} onResetAll={resetAll} onJumpToSection={jumpToSection} />
+    <StickyEntryToolbar lang={lang} completion={completion} rackUnitCompletion={rackUnitCompletion} lastSaved={lastSaved} readOnly={readOnly} workbookStatus={readOnly ? "readonly" : savingAll || busy ? "busy" : hasDraftChanges ? "dirty" : "saved"} hasDraftChanges={hasDraftChanges} aboveMobileNav facilityName={siteName} monthLabel={month} provider="Production API" onSaveAll={() => void requestSaveAll()} onResetAll={resetAll} onJumpToSection={jumpToSection} />
     {pendingHistoricalSave && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-sm"><section role="dialog" aria-modal="true" aria-labelledby="historical-save-title" className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl"><div className="space-y-4 p-6"><div className="flex items-center gap-3"><div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-2.5 text-amber-400"><AlertTriangle className="h-5 w-5" /></div><div><h3 id="historical-save-title" className="font-display text-base font-bold text-slate-100">{th ? "ยืนยันการบันทึกข้อมูลย้อนหลัง" : "Confirm Saving Historical Data"}</h3><p className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-400">{th ? `เดือน: ${month}` : `Log month: ${month}`}</p></div></div><div className="space-y-2 rounded-xl border border-slate-800 bg-slate-950/50 p-4 text-xs leading-relaxed text-slate-300"><p>{th ? "คุณกำลังแก้ไขข้อมูลย้อนหลังนอกเหนือจากเดือนล่าสุด โปรดตรวจสอบตัวเลขก่อนบันทึก" : "You are saving edits to a historical record outside the latest available month. Review all figures before saving."}</p><p className="font-medium text-amber-400">{th ? "การแก้ไขนี้จะมีผลต่อการคำนวณและรายงานย้อนหลัง" : "This change affects historical calculations and reports."}</p></div><div className="flex gap-2.5 pt-2"><button type="button" onClick={cancelHistoricalSave} className="flex-1 rounded-xl border border-slate-700/50 bg-slate-800 px-3 py-2.5 text-xs font-semibold text-slate-300">{th ? "ยกเลิก / ตรวจสอบอีกครั้ง" : "Cancel / Verify Again"}</button><button type="button" onClick={() => void confirmHistoricalSave()} className="flex-1 rounded-xl bg-emerald-600 px-3 py-2.5 text-xs font-bold text-white">{th ? "ยืนยันและบันทึก" : "Confirm & Save"}</button></div></div></section></div>}
   </div>;
 }

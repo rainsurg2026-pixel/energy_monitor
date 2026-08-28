@@ -17,6 +17,8 @@ export interface DisplayPeriodState { startMonth: string; endMonth: string; rowV
 export interface BootstrapState {
   displayPeriod: DisplayPeriodState;
   sites: FacilitySite[];
+  /** Server-side READ_ONLY_MODE gate: when true every mutation returns 423. */
+  readOnlyMode: boolean;
 }
 
 interface ApiSiteState {
@@ -26,9 +28,10 @@ interface ApiSiteState {
 }
 
 /** Adapter for the server's authoritative `{ site, availability }` bootstrap DTO. */
-export function normalizeBootstrap(payload: Omit<BootstrapState, "sites"> & { sites: ApiSiteState[] }): BootstrapState {
+export function normalizeBootstrap(payload: Omit<BootstrapState, "sites" | "readOnlyMode"> & { sites: ApiSiteState[]; readOnlyMode?: boolean }): BootstrapState {
   return {
     ...payload,
+    readOnlyMode: payload.readOnlyMode ?? false,
     sites: payload.sites.map(item => {
       registerDesktopDashboardMapping(item.site.code, item.site.dashboardMapping);
       return { ...item.site, availableMonths: item.availableMonths, latestAvailableMonth: item.latestAvailableMonth };
