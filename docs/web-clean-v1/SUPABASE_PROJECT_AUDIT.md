@@ -5,7 +5,19 @@ Scope: `feat/web-clean-v1` only; no Production change
 
 ## Authoritative project identity
 
-The intended Supabase project is:
+> **Correction (2026-08-28):** this audit predates the Production project.
+> As of 2026-08-13 there are **two** projects, both named `energy_monitor`,
+> region `ap-southeast-1`:
+> - **Production** — `ajidkjzufpgyibagvvco` (authoritative; hardcoded as
+>   `PRODUCTION_PROJECT_REF` in `scripts/lib/productionTargetGuard.ts`).
+> - **Preview / dev-test** — `tofdgndrrpnnyhbuurbx` (the project this
+>   2026-08-10 audit describes; `PREVIEW_PROJECT_REF` in the same guard).
+>
+> The guard fails closed and refuses any production-only script whose
+> connection string carries the Preview ref. Treat everything below as the
+> historical Preview/dev-test record.
+
+The intended Supabase project (for Preview / dev-test) is:
 
 - Name: `energy_monitor`
 - Region: `ap-southeast-1`
