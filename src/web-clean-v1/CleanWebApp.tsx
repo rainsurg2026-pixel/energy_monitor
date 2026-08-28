@@ -335,7 +335,7 @@ export default function CleanWebApp() {
   const selectMonth = async (selected: string, exists = true) => {
     if (!siteId || selected === month) return;
     const action = async () => {
-      if (!exists && view !== "racks" && view !== "rack-units" && view !== "rack-comparison") {
+      if (!exists && view === "entry") {
         setPendingCreateMonth(selected);
         return;
       }
@@ -362,12 +362,18 @@ export default function CleanWebApp() {
       const result = await api<{ rowVersion: number }>(`/sites/${siteId}/periods/${month}`, { method: "PUT", body: JSON.stringify({ log, expected_row_version: rowVersion, provenance: { sourceType: "web-clean-v1" } }) });
       setDraft(log); setRowVersion(result.rowVersion);
       const refreshed = await loadHistory(siteId, { force: true, scope: "dashboard" });
+      // The History and Reports views read the "full" scope and Rack views the
+      // "rack" scope; drop those so an edited historical month is not shown
+      // stale there until an unrelated forced refresh.
+      historyCacheRef.current.delete(`${siteId}:full`);
+      historyCacheRef.current.delete(`${siteId}:rack`);
+      loadedPageKeyRef.current = null;
       const refreshedDraft = refreshed.logs.find(item => item.month === month);
       if (refreshedDraft) setDraft(refreshedDraft);
       setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
     } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
-  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setUser(null); setBootstrap(null); setDraft(null); }, []);
+  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setViewState("entry"); setUser(null); setBootstrap(null); setDraft(null); }, []);
   useEffect(() => { setUnauthorizedHandler(() => { setEntryDirty(false); setRackDirty(false); clearSession(); }); return () => setUnauthorizedHandler(null); }, [clearSession]);
   const logout = async () => { const action = async () => { setEntryDirty(false); setRackDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { clearSession(); } }; deferNavigation(action); };
   const registerEntryActions = useCallback((actions: EntryWorkspaceActions | null) => { entryActionsRef.current = actions; }, []);
