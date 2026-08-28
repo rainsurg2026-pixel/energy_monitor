@@ -109,9 +109,11 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
         method: "PUT",
         body: JSON.stringify({ total_u: total, used_u: used, expected_row_version: rowVersion })
       });
+      // Track the server row version immediately so a retry after a failed
+      // image upload sends the fresh version, but only advance the "saved"
+      // baseline once the image write (if any) has also succeeded — otherwise
+      // hasChanges goes false and the stranded image can't be retried.
       setRowVersion(saved.rowVersion);
-      setBaselineTotalU(String(total));
-      setBaselineUsedU(String(used));
       if (stagedImage) {
         await api(`/sites/${siteId}/rack-unit-capacity/${month}/image`, {
           method: "PUT",
@@ -123,6 +125,8 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
         setStagedImage(null);
         setImageError(null);
       }
+      setBaselineTotalU(String(total));
+      setBaselineUsedU(String(used));
       await onSaved();
       onMessage("Rack Unit Capacity and its monthly image were saved.");
       return true;

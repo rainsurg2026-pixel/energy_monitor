@@ -78,7 +78,8 @@ export default function UpsTable({
     setHasChanges(true);
     setIsSaved(false);
     const updated = [...records];
-    
+    updated[index] = { ...updated[index] }; // clone the row before mutating (state must not be mutated in place)
+
     if (value === "") {
       updated[index][field] = null;
     } else {
