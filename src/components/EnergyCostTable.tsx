@@ -202,6 +202,7 @@ export default function EnergyCostTable({
                   placeholder="45000"
                   value={record.buildingEnergyKwh}
                   onChange={value => handleInputChange("buildingEnergyKwh", value)}
+                  ariaLabel="Building energy consumption (kWh)"
                   className="w-full max-w-[220px] ml-auto bg-emerald-950/5 hover:bg-emerald-950/10 focus:bg-emerald-950/15 border border-slate-800 focus:border-emerald-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                 />
               </td>
@@ -212,6 +213,7 @@ export default function EnergyCostTable({
                   placeholder="180000"
                   value={record.buildingElectricityCostThb}
                   onChange={value => handleInputChange("buildingElectricityCostThb", value)}
+                  ariaLabel="Building electricity cost (THB)"
                   className="w-full max-w-[220px] ml-auto bg-emerald-950/5 hover:bg-emerald-950/10 focus:bg-emerald-950/15 border border-slate-800 focus:border-emerald-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                 />
               </td>

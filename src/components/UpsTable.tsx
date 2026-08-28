@@ -242,6 +242,7 @@ export default function UpsTable({
                         placeholder="220.0"
                         value={row.voltage}
                         onChange={value => handleInputChange(idx, "voltage", value)}
+                        ariaLabel={`${row.upsId} voltage`}
                         disabled={phases.length > 0}
                         className={`w-full bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all ${
                           isVoltageAbnormal 
@@ -261,6 +262,7 @@ export default function UpsTable({
                         placeholder="15.0"
                         value={row.current}
                         onChange={value => handleInputChange(idx, "current", value)}
+                        ariaLabel={`${row.upsId} current`}
                         disabled={phases.length > 0}
                         className={`w-full bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all ${
                           isCurrentHigh
@@ -279,6 +281,7 @@ export default function UpsTable({
                       placeholder="3.2"
                       value={row.loadKw}
                       onChange={value => handleInputChange(idx, "loadKw", value)}
+                      ariaLabel={`${row.upsId} load kW`}
                       disabled={phases.length > 0}
                       className="w-full max-w-[120px] ml-auto bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                     />
@@ -292,6 +295,7 @@ export default function UpsTable({
                       placeholder="3.5"
                       value={row.loadKva}
                       onChange={value => handleInputChange(idx, "loadKva", value)}
+                      ariaLabel={`${row.upsId} load kVA`}
                       disabled={phases.length > 0}
                       className="w-full max-w-[120px] ml-auto bg-indigo-950/5 hover:bg-indigo-950/10 focus:bg-indigo-950/15 border border-slate-800 focus:border-indigo-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                     />
@@ -308,6 +312,7 @@ export default function UpsTable({
                           precision={1}
                           value={reading[field]}
                           onChange={value => handlePhaseInputChange(idx, phase, field, value)}
+                          ariaLabel={`${row.upsId} ${phase} ${field}`}
                           className="w-full max-w-[120px] ml-auto bg-indigo-950/20 border border-indigo-700/50 focus:border-indigo-400 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none"
                         />
                       </td>

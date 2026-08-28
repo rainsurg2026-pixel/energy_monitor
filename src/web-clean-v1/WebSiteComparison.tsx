@@ -121,7 +121,7 @@ export default function WebSiteComparison({ lang = "th" }: { lang?: "th" | "en" 
   const hasChartData = chartData.some(row => Object.entries(row).some(([key, value]) => key !== "month" && typeof value === "number" && Number.isFinite(value)));
 
   if (error) return <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-rose-200">{error}</section>;
-  if (!data) return <p className="text-sm text-slate-400">{copy.loading}</p>;
+  if (!data) return <p role="status" className="text-sm text-slate-400">{copy.loading}</p>;
 
   return <section className="space-y-5" data-testid="web-site-comparison" data-page="site-energy-cost-comparison">
     <div className="flex flex-wrap items-end justify-between gap-3">

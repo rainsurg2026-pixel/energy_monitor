@@ -197,6 +197,7 @@ export default function AirTable({
               {fields.map(field => (
                 <td key={field} className="py-5 px-2">
                   <NumericEntryInput
+                    ariaLabel={label(field)}
                     step="0.000001"
                     precision={6}
                     placeholder="0.000000"

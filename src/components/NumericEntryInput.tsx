@@ -9,6 +9,9 @@ interface NumericEntryInputProps {
   disabled?: boolean;
   step?: string;
   precision?: number;
+  /** Accessible name — the table cells around this input are plain <td>, so
+   *  without it a screen reader announces the field as "edit text, blank". */
+  ariaLabel?: string;
 }
 
 /** Keeps form state numeric while presenting grouped, two-decimal values at rest. */
@@ -19,7 +22,8 @@ export default function NumericEntryInput({
   placeholder,
   disabled = false,
   step,
-  precision
+  precision,
+  ariaLabel
 }: NumericEntryInputProps) {
   const [focused, setFocused] = useState(false);
   const [text, setText] = useState("");
@@ -46,6 +50,7 @@ export default function NumericEntryInput({
       type="text"
       inputMode="decimal"
       step={step}
+      aria-label={ariaLabel}
       placeholder={placeholder}
       value={focused ? text : displayValue}
       disabled={disabled}

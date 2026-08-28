@@ -212,6 +212,7 @@ export default function DcTable({
                         placeholder="54.0"
                         value={row.voltage}
                         onChange={value => handleInputChange(idx, "voltage", value)}
+                        ariaLabel={`${row.panelId} voltage`}
                         className={`w-full bg-amber-950/5 hover:bg-amber-950/10 focus:bg-amber-950/15 border rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all ${
                           isVoltageAbnormal 
                             ? "border-amber-600/50 text-amber-300 bg-amber-950/5 focus:border-amber-500" 
@@ -234,6 +235,7 @@ export default function DcTable({
                       placeholder="85.0"
                       value={row.current}
                       onChange={value => handleInputChange(idx, "current", value)}
+                      ariaLabel={`${row.panelId} current`}
                       className="w-full max-w-[150px] ml-auto bg-amber-950/5 hover:bg-amber-950/10 focus:bg-amber-950/15 border border-slate-800 focus:border-amber-500 rounded-lg px-3 py-1.5 text-right font-mono text-sm focus:outline-none transition-all"
                     />
                   </td>
