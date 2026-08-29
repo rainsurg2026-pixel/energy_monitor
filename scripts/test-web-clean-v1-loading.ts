@@ -36,7 +36,7 @@ assert.match(app, /const refreshReports = useCallback/);
 assert.match(app, /onRefresh=\{refreshReports\}/);
 assert.match(reportPreview, /onRefresh\?: \(\) => Promise<void>/);
 assert.match(reportPreview, /Refreshing/);
-assert.ok(app.includes("selectedMonth={activeReportingMonth}"), "period-based views use the active report month");
+assert.ok(app.includes("selectedMonth={displayMonth}"), "non-Reports views use the global Selected Reporting Month, clamped to the Global Display Period");
 assert.match(app, /exportSiteComparisonHtml\([\s\S]*selectedReportSections\)/);
 assert.match(app, /dataSourceLabel=\{lang === "th" \? "Production API" : "Source: Production API"\}/);
 assert.ok(app.includes("const allFacilitiesCacheRef = useRef(new Map<string, Promise<ExportFacility[]>>());"), "All Facilities exports cache their request payload");
@@ -47,7 +47,7 @@ assert.ok(app.includes("exportAllFacilitiesExcel(await loadAll({ includeRack: tr
 assert.ok(app.includes("exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true }), contextMonth)"), "HTML export requests report assets");
 assert.ok(app.includes("exportAllFacilitiesPdf(await loadAll({ includeRack: true, includeImage: true }), contextMonth)"), "PDF export requests report assets");
 assert.ok(app.includes("Site Rack Capacity Comparison\", icon: Building2"), "site rack comparison has a distinct navigation icon");
-assert.ok(app.includes("displayPeriod={activeReportingDisplayPeriod}"), "history views use the active reporting period");
+assert.ok(app.includes("displayPeriod={globalDisplayPeriodRange}"), "history views are bounded by the Global Display Period, not the Reports Quick Range");
 assert.match(historicalCharts, /selectedMonth: string/);
 assert.match(historicalCharts, /useState<TrendPeriod>\(6\)/);
 assert.match(historicalExplorer, /selectedMonth: string/);

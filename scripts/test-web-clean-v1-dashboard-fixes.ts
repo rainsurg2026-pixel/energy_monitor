@@ -96,7 +96,9 @@ assert.match(browserE2eSource, /Network\.responseReceived/);
 // selectSite() and the page-load effect through one scopeForView() helper and
 // keys the loaded page by the live view.
 assert.match(appSource, /const scopeForView = \(target: View\): HistoryScope =>/);
-assert.match(appSource, /target === "racks" \|\| target === "rack-units" \? "rack" : target === "history" \|\| target === "reports" \? "full" : "dashboard"/);
+// Dashboard/History/Reports/Comparisons -> "full" (charts must be able to show
+// the whole Global Display Period); only Data Entry keeps the light scope.
+assert.match(appSource, /target === "racks" \|\| target === "rack-units" \? "rack" : target === "entry" \? "dashboard" : "full"/);
 assert.match(appSource, /const scope: HistoryScope = scopeForView\(view\);/);
 assert.match(appSource, /const scope = scopeForView\(view\); const records = await loadHistory\(id, \{ force: true, scope \}\);/);
 assert.match(appSource, /loadedPageKeyRef\.current = `\$\{id\}:\$\{view\}`;/);
@@ -121,15 +123,19 @@ assert.match(appSource, /loadedPageKeyRef\.current = `\$\{id\}:\$\{view\}`; pref
 assert.match(appSource, /const scope = scopeForView\(view\); const records = await loadHistory\(id, \{ force: true, scope \}\);[^;]*await loadMonth\(id, month, records\);/);
 assert.doesNotMatch(appSource, /await loadMonth\(id, latestEnergyMonth\(/);
 assert.doesNotMatch(appSource, /const candidate = nextSite\.latestAvailableMonth/);
-// Initial load still resolves the default month (not a site switch), and the
-// Settings refresh path is unchanged.
+// Initial load still resolves the default month (not a site switch).
 assert.match(appSource, /const energyMonth = latestEnergyMonth\(initialHistory\.logs, initialMonth\);/);
-assert.match(appSource, /await loadMonth\(current\.id, latestEnergyMonth\(records\.logs, candidate\), records\);/);
-// The Reporting Period reconcile effect reacts to a site change but only ever
-// re-derives the period, never the month, so presets stay independent of the
-// facility switch.
-assert.match(appSource, /\}, \[reportingPeriodAvailableMonths, reportingPeriodEndMonth, reportingPeriodPreset, siteId\]\);/);
-const reconcileEffect = appSource.slice(appSource.indexOf("if (reportingPeriodAvailableMonths.length === 0) return;"), appSource.indexOf("}, [reportingPeriodAvailableMonths, reportingPeriodEndMonth, reportingPeriodPreset, siteId]);"));
+// After a Global Display Period change the Settings refresh path RECONCILES the
+// selected month: it is kept when still in range, otherwise snapped to the
+// nearest valid boundary - never "jump to the site's latest month".
+assert.match(appSource, /const reconciledMonth = clampMonthToDisplayPeriod\(month, result\.displayPeriod\.startMonth, windowEnd, current\.availableMonths\);/);
+assert.match(appSource, /await loadMonth\(current\.id, reconciledMonth, records\);/);
+assert.doesNotMatch(appSource, /await loadMonth\(current\.id, latestEnergyMonth\(records\.logs, candidate\), records\);/);
+// The Reporting Period reconcile effect now lives INSIDE the Reports component
+// (Reports-local state). It reacts to a site change but only ever re-derives
+// the local period, never the global month, so the Quick Range stays isolated.
+assert.match(appSource, /\}, \[monthsAvailable, periodEndMonth, reportPreset, siteId\]\);/);
+const reconcileEffect = appSource.slice(appSource.indexOf("if (monthsAvailable.length === 0) return;"), appSource.indexOf("}, [monthsAvailable, periodEndMonth, reportPreset, siteId]);"));
 assert.ok(!reconcileEffect.includes("setMonth("), "the reporting-period reconcile effect never resets the reporting month");
 
 console.log("web-clean-v1 dashboard fixes: browser PDF/download E2E contract assertions passed");
