@@ -73,7 +73,7 @@ function TrendCard({ title, icon, data, sites, suffix, unit, axisLabel }: {
 /** Production-web Energy and Cost comparison.  All values come from the
  * server's site-scoped monthly calculation DTO; this page intentionally has
  * no capacity or infrastructure sections. */
-export default function WebSiteComparison({ lang = "th" }: { lang?: "th" | "en" }) {
+export default function WebSiteComparison({ lang = "th", reportMonths = [], activePeriodLabel }: { lang?: "th" | "en"; reportMonths?: readonly string[]; activePeriodLabel?: string }) {
   const th = lang === "th";
   const copy = {
     loading: th ? "กำลังโหลดการเปรียบเทียบไซต์…" : "Loading Site Energy & Cost Comparison…",
@@ -94,15 +94,20 @@ export default function WebSiteComparison({ lang = "th" }: { lang?: "th" | "en" 
   const load = useCallback(async () => {
     try {
       const result = await api<SiteComparisonExport>("/site-comparison");
-      const common = result.months.filter(month => result.sites.every(site => site.months.some(entry => entry.month === month && entry.metrics)));
-      setData(result);
-      setReferenceMonth(current => current && result.months.includes(current) ? current : (common.at(-1) ?? result.months.at(-1) ?? ""));
+      const requestedMonths = new Set(reportMonths);
+      const scoped = reportMonths.length === 0 ? result : {
+        ...result,
+        months: result.months.filter(month => requestedMonths.has(month)),
+        sites: result.sites.map(site => ({ ...site, months: site.months.filter(entry => requestedMonths.has(entry.month)) }))
+      };
+      const common = scoped.months.filter(month => scoped.sites.every(site => site.months.some(entry => entry.month === month && entry.metrics)));
+      setData(scoped);
+      setReferenceMonth(current => current && scoped.months.includes(current) ? current : (common.at(-1) ?? scoped.months.at(-1) ?? ""));
       setError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Site Energy & Cost Comparison could not be loaded.");
     }
-  }, []);
-
+  }, [reportMonths]);
   useEffect(() => { void load(); }, [load]);
 
   const sites = useMemo(() => [...(data?.sites ?? [])].sort((left, right) => left.site.name.localeCompare(right.site.name) || left.site.id - right.site.id), [data]);
@@ -125,7 +130,7 @@ export default function WebSiteComparison({ lang = "th" }: { lang?: "th" | "en" 
 
   return <section className="space-y-5" data-testid="web-site-comparison" data-page="site-energy-cost-comparison">
     <div className="flex flex-wrap items-end justify-between gap-3">
-      <div><h2 className="font-display text-2xl font-bold">{th ? "เปรียบเทียบพลังงานและค่าใช้จ่ายของไซต์" : "Site Energy & Cost Comparison"}</h2><p className="mt-1 text-sm text-slate-400">Compare facilities using the same reporting period and calculation method.</p><p className="mt-2 text-xs uppercase tracking-wide text-slate-500">Reporting period: <span className="font-mono text-slate-300" data-testid="comparison-reporting-period">{referenceMonth ? monthLabelLong(referenceMonth, "en") : "—"}</span></p></div>
+      <div><h2 className="font-display text-2xl font-bold">{th ? "เปรียบเทียบพลังงานและค่าใช้จ่ายของไซต์" : "Site Energy & Cost Comparison"}</h2><p className="mt-1 text-sm text-slate-400">Compare facilities using the same reporting period and calculation method.</p><p className="mt-2 text-xs uppercase tracking-wide text-slate-500">Reporting period: <span className="font-mono text-slate-300" data-testid="comparison-reporting-period">{activePeriodLabel ?? (referenceMonth ? monthLabelLong(referenceMonth, "en") : "—")}</span></p></div>
       <button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:border-teal-500"><RefreshCw className="h-4 w-4" />{th ? "โหลดใหม่" : "Refresh"}</button>
     </div>
 

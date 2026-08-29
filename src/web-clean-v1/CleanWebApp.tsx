@@ -17,7 +17,7 @@ import type { EntryWorkspaceActions } from "./WebEntryWorkspace";
 import { api, setUnauthorizedHandler, type SessionUser, type Role } from "./api";
 import { exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportAllFacilitiesHtml as exportAllFacilitiesHtmlFile, exportAllFacilitiesPdf as exportAllFacilitiesPdfFile, exportCsv, exportDesktopPdf as exportDesktopPdfFile, exportExcel, exportHtml as exportHtmlFile, exportSiteComparisonCsv, exportSiteComparisonExcel, exportSiteComparisonHtml, exportSiteComparisonPdf as exportSiteComparisonPdfFile, rackReportFromSnapshot, type ExportFacility, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
 import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
-import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodSelection } from "./reportPeriod";
+import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, matchingReportingPeriodPreset, monthsForReportingPeriod, reportingPeriodForPreset, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodPreset, type ReportingPeriodSelection } from "./reportPeriod";
 import { facilityStorageKey, latestEnergyMonth, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
 import { applyTheme, languageStorageKey, normalizeLanguage, normalizeTheme, themeStorageKey, type AppLanguage, type Theme } from "./theme";
 import { formatWebSavedTimestamp } from "./formatting";
@@ -43,6 +43,14 @@ const WebReportPreview = lazy(() => import("./WebReportPreview"));
 type View = "dashboard" | "entry" | "racks" | "rack-units" | "history" | "comparison" | "rack-comparison" | "reports" | "settings" | "admin";
 const HISTORY_DATA_VIEWS: ReadonlySet<View> = new Set(["dashboard", "entry", "racks", "rack-units", "history", "reports"]);
 type HistoryScope = "dashboard" | "rack" | "full";
+/** The history payload a given view needs. The "rack" and "dashboard" scopes
+ *  are disjoint on the server (rack scope omits logs/UPS history; dashboard
+ *  scope omits rack capacity), so every code path that primes history on a
+ *  site switch must request the scope the *current* view renders from -
+ *  otherwise a background dashboard fetch overwrites the rack payload and the
+ *  Rack Unit KPIs/trend render empty until the view is remounted. */
+const scopeForView = (target: View): HistoryScope =>
+  target === "racks" || target === "rack-units" ? "rack" : target === "history" || target === "reports" ? "full" : "dashboard";
 type Site = FacilitySite;
 type Bootstrap = BootstrapState;
 type BootstrapApi = Omit<Bootstrap, "sites"> & { sites: Array<{ site: Omit<Site, "availableMonths" | "latestAvailableMonth">; availableMonths: string[]; latestAvailableMonth: string | null }> };
@@ -104,6 +112,8 @@ export default function CleanWebApp() {
   const [view, setViewState] = useState<View>("entry");
   const [history, setHistory] = useState<HistoryData>({ months: [], logs: [] });
   const [month, setMonth] = useState(todayMonth());
+  const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriodSelection>(() => defaultReportingPeriod(todayMonth()));
+  const [reportingPeriodCustomized, setReportingPeriodCustomized] = useState(false);
   const [draft, setDraft] = useState<MonthlyLog | null>(null);
   const [rowVersion, setRowVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -128,34 +138,67 @@ export default function CleanWebApp() {
   const loadedPageKeyRef = useRef<string | null>(null);
   const pageLoadGenerationRef = useRef(0);
   const site = useMemo(() => bootstrap?.sites.find(item => item.id === siteId) ?? null, [bootstrap, siteId]);
+  const reportingPeriodAvailableMonths = useMemo(() => [...new Set([...(site?.availableMonths ?? []), ...history.months])].sort(), [history.months, site?.availableMonths]);
+  const reportingPeriodEndMonth = useMemo(() => {
+    const available = reportingPeriodAvailableMonths.filter(value => value <= month);
+    return available.at(-1) ?? month;
+  }, [month, reportingPeriodAvailableMonths]);
+  const activeReportingMonth = effectiveMonth(reportingPeriod, reportingPeriodEndMonth);
+  const selectedReportingMonths = useMemo(() => monthsForReportingPeriod(reportingPeriodAvailableMonths.length > 0 ? reportingPeriodAvailableMonths : history.logs.map(log => log.month), reportingPeriod, reportingPeriodEndMonth), [history.logs, reportingPeriod, reportingPeriodAvailableMonths, reportingPeriodEndMonth]);
+  const selectedReportingMonthSet = useMemo(() => new Set(selectedReportingMonths), [selectedReportingMonths]);
+  const reportingPeriodLogs = useMemo(() => filterLogsByPeriod(history.logs, reportingPeriod, reportingPeriodEndMonth), [history.logs, reportingPeriod, reportingPeriodEndMonth]);
+  const reportingRackCapacityHistory = useMemo(() => (history.rackCapacityHistory ?? []).filter(row => selectedReportingMonthSet.has(row.snapshotMonth)), [history.rackCapacityHistory, selectedReportingMonthSet]);
+  const reportingRackUnitCapacity = useMemo(() => (history.rackUnitCapacity ?? []).filter(row => selectedReportingMonthSet.has(row.month)), [history.rackUnitCapacity, selectedReportingMonthSet]);
+  const reportingUpsGroupHistory = useMemo(() => history.upsGroupHistory ? { ...history.upsGroupHistory, rows: history.upsGroupHistory.rows.filter(row => selectedReportingMonthSet.has(row.month)) } : null, [history.upsGroupHistory, selectedReportingMonthSet]);
+  const activeReportingDisplayPeriod = selectedReportingMonths.length > 0 ? selectedReportingMonths[0] + ".." + selectedReportingMonths.at(-1) : reportingPeriodEndMonth + ".." + reportingPeriodEndMonth;
   const unsavedChanges = entryDirty || rackDirty;
   const unsavedChangesRef = useRef(false);
   unsavedChangesRef.current = unsavedChanges;
 
-  const loadHistory = useCallback(async (id: number, options: { force?: boolean; scope?: HistoryScope } = {}) => {
+  const loadHistory = useCallback(async (id: number, options: { force?: boolean; scope?: HistoryScope; prefetch?: boolean } = {}) => {
     const scope = options.scope ?? "full";
     const cacheKey = `${id}:${scope}`;
+    // A prefetch only warms historyCacheRef; it must never call setHistory,
+    // because the "rack" and "dashboard" payloads are disjoint and would blank
+    // whichever view is currently mounted. Real callers re-apply the result to
+    // the view through their own continuation, so a real request that dedupes
+    // onto an in-flight prefetch still renders.
+    const showResult = (result: HistoryData) => { if (!options.prefetch && activeSiteIdRef.current === id) setHistory(result); };
     if (!options.force) {
       const cached = historyCacheRef.current.get(cacheKey);
       if (cached) {
-        if (activeSiteIdRef.current === id) setHistory(cached);
+        showResult(cached);
         return cached;
       }
     }
-    const existing = historyRequestsRef.current.get(cacheKey);
-    if (existing) return existing;
-    const request = api<HistoryData>(`/sites/${id}/history?scope=${scope}`).then(result => {
-      historyCacheRef.current.set(cacheKey, result);
-      if (activeSiteIdRef.current === id) setHistory(result);
-      return result;
-    });
-    historyRequestsRef.current.set(cacheKey, request);
-    void request.then(
-      () => { if (historyRequestsRef.current.get(cacheKey) === request) historyRequestsRef.current.delete(cacheKey); },
-      () => { if (historyRequestsRef.current.get(cacheKey) === request) historyRequestsRef.current.delete(cacheKey); }
-    );
+    let request = historyRequestsRef.current.get(cacheKey);
+    if (!request) {
+      request = api<HistoryData>(`/sites/${id}/history?scope=${scope}`).then(result => {
+        historyCacheRef.current.set(cacheKey, result);
+        return result;
+      });
+      historyRequestsRef.current.set(cacheKey, request);
+      void request.then(
+        () => { if (historyRequestsRef.current.get(cacheKey) === request) historyRequestsRef.current.delete(cacheKey); },
+        () => { if (historyRequestsRef.current.get(cacheKey) === request) historyRequestsRef.current.delete(cacheKey); }
+      );
+    }
+    if (!options.prefetch) void request.then(showResult, () => undefined);
     return request;
   }, []);
+  const prefetchHistoryScopes = useCallback((id: number) => {
+    const run = () => {
+      if (activeSiteIdRef.current !== id) return;
+      for (const scope of ["full", "rack"] as const) void loadHistory(id, { scope, prefetch: true }).catch(() => undefined);
+    };
+    const idle = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback;
+    if (idle) idle(run, { timeout: 3000 }); else window.setTimeout(run, 1200);
+  }, [loadHistory]);
+  const updateReportingPeriod = useCallback((next: ReportingPeriodSelection) => {
+    setReportingPeriodCustomized(true);
+    setReportingPeriod(next);
+    if (siteId) void loadHistory(siteId, { scope: "full" }).catch(error => setNotice(readError(error)));
+  }, [loadHistory, siteId]);
   const loadMonth = useCallback(async (id: number, selectedMonth: string, previous?: HistoryData) => {
     const result = await api<MonthData>(`/sites/${id}/periods/${selectedMonth}`);
     const seed = result.log ?? previous?.logs.at(-1);
@@ -203,13 +246,33 @@ export default function CleanWebApp() {
       const energyMonth = latestEnergyMonth(initialHistory.logs, initialMonth);
       if (energyMonth !== initialMonth) await loadMonth(first.id, energyMonth, initialHistory);
       loadedPageKeyRef.current = `${first.id}:dashboard`;
+      prefetchHistoryScopes(first.id);
     } catch (error) {
       if (activeSiteIdRef.current === null) setFacilityError(`Unable to load facilities: ${readError(error)}`);
       else setNotice(`Unable to load initial site data: ${readError(error)}`);
       throw error;
     }
     finally { setInitialHistoryLoading(false); setBusy(false); setFacilityLoading(false); }
-  }, [loadHistory, loadMonth]);
+  }, [loadHistory, loadMonth, prefetchHistoryScopes]);
+  useEffect(() => {
+    if (reportingPeriodAvailableMonths.length === 0) return;
+    setReportingPeriod(current => {
+      if (!reportingPeriodCustomized) {
+        const next = defaultReportingPeriod(reportingPeriodEndMonth, reportingPeriodAvailableMonths);
+        return current.mode === next.mode && current.singleMonth === next.singleMonth && current.rangeStart === next.rangeStart && current.rangeEnd === next.rangeEnd ? current : next;
+      }
+      if (current.mode === "current" || current.mode === "full") return current;
+      if (current.mode === "single") {
+        const singleMonth = reportingPeriodAvailableMonths.includes(current.singleMonth) ? current.singleMonth : reportingPeriodAvailableMonths.at(-1)!;
+        return singleMonth === current.singleMonth ? current : { ...current, singleMonth };
+      }
+      const rangeStart = reportingPeriodAvailableMonths.find(value => value >= current.rangeStart) ?? reportingPeriodAvailableMonths[0]!;
+      const rangeEnd = [...reportingPeriodAvailableMonths].reverse().find(value => value <= current.rangeEnd) ?? reportingPeriodAvailableMonths.at(-1)!;
+      const nextStart = rangeStart <= rangeEnd ? rangeStart : reportingPeriodAvailableMonths[0]!;
+      const nextEnd = rangeStart <= rangeEnd ? rangeEnd : reportingPeriodAvailableMonths.at(-1)!;
+      return nextStart === current.rangeStart && nextEnd === current.rangeEnd ? current : { ...current, rangeStart: nextStart, rangeEnd: nextEnd };
+    });
+  }, [reportingPeriodAvailableMonths, reportingPeriodCustomized, reportingPeriodEndMonth, siteId]);
   useEffect(() => { void initialize().catch(error => setNotice(readError(error))); }, [initialize]);
   useEffect(() => { if (notice) { const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); } }, [notice]);
   useEffect(() => { document.documentElement.lang = lang; }, [lang]);
@@ -220,7 +283,7 @@ export default function CleanWebApp() {
     if (loadedPageKeyRef.current === pageKey) return;
     const generation = ++pageLoadGenerationRef.current;
     setBusy(true);
-    const scope: HistoryScope = view === "racks" || view === "rack-units" ? "rack" : view === "history" || view === "reports" ? "full" : "dashboard";
+    const scope: HistoryScope = scopeForView(view);
     void loadHistory(siteId, { scope })
       .then(() => { if (pageLoadGenerationRef.current === generation) loadedPageKeyRef.current = pageKey; })
       .catch(error => { if (pageLoadGenerationRef.current === generation) setNotice(`Unable to load ${view} data: ${readError(error)}`); })
@@ -332,7 +395,7 @@ export default function CleanWebApp() {
 
   const deferNavigation = (action: PendingNavigation) => { if (unsavedChanges) setPendingNavigation(previous => previous ?? action); else void action(); };
   const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setRackDirty(false); setViewState(next); }); };
-  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setRackDirty(false); setBusy(true); setInitialHistoryLoading(true); setFacilityError(null); setHistory({ months: [], logs: [] }); setDraft(null); setRowVersion(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const records = await loadHistory(id, { force: true, scope: "dashboard" }); const candidate = nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()); await loadMonth(id, latestEnergyMonth(records.logs, candidate), records); loadedPageKeyRef.current = `${id}:dashboard`; } catch (error) { setNotice(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setInitialHistoryLoading(false); setBusy(false); } }; deferNavigation(action); };
+  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setRackDirty(false); setBusy(true); setInitialHistoryLoading(true); setFacilityError(null); setHistory({ months: [], logs: [] }); setDraft(null); setRowVersion(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const scope = scopeForView(view); const records = await loadHistory(id, { force: true, scope }); const candidate = nextSite.latestAvailableMonth ?? (bootstrap && bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()); await loadMonth(id, latestEnergyMonth(records.logs, candidate), records); loadedPageKeyRef.current = `${id}:${view}`; prefetchHistoryScopes(id); } catch (error) { setNotice(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setInitialHistoryLoading(false); setBusy(false); } }; deferNavigation(action); };
   const selectMonth = async (selected: string, exists = true) => {
     if (!siteId || selected === month) return;
     const action = async () => {
@@ -374,7 +437,7 @@ export default function CleanWebApp() {
       setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
     } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
-  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setViewState("entry"); setUser(null); setBootstrap(null); setDraft(null); }, []);
+  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setViewState("entry"); setUser(null); setBootstrap(null); setDraft(null); setReportingPeriodCustomized(false); setReportingPeriod(defaultReportingPeriod(todayMonth())); }, []);
   useEffect(() => { setUnauthorizedHandler(() => { setEntryDirty(false); setRackDirty(false); clearSession(); }); return () => setUnauthorizedHandler(null); }, [clearSession]);
   const logout = async () => { const action = async () => { setEntryDirty(false); setRackDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { clearSession(); } }; deferNavigation(action); };
   const registerEntryActions = useCallback((actions: EntryWorkspaceActions | null) => { entryActionsRef.current = actions; }, []);
@@ -432,14 +495,14 @@ export default function CleanWebApp() {
         <main className="min-w-0 pb-20 md:pb-6">{view !== "dashboard" && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">{shellCopy.reportingMonth}</span><div className="text-lg font-semibold">{month}</div></div><input aria-label={shellCopy.reportingMonth} type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value, history.months.includes(event.target.value))} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">{shellCopy.displayPeriod} {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />{shellCopy.completion} <b className="text-teal-300">{completion.overall.percent}%</b></div></div>}
            <Suspense fallback={<ViewLoading lang={lang} />}>
            {(busy || initialHistoryLoading) && <div className="mb-4 text-sm text-teal-300">{shellCopy.working}</div>}
-          {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={month} siteName={site.name} siteCode={site.code} lang={lang} upsGroupHistory={history.upsGroupHistory ?? null} onNotice={setNotice} />}
+          {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={reportingPeriodLogs} month={activeReportingMonth} siteName={site.name} siteCode={site.code} lang={lang} upsGroupHistory={reportingUpsGroupHistory} onNotice={setNotice} />}
           {view === "entry" && draft && <WebEntryWorkspace lang={lang} siteId={siteId!} siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} rackUnitInitialRow={history.rackUnitCapacity?.find(row => row.month === month) ?? null} busy={busy} readOnly={bootstrap?.readOnlyMode ?? false} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={(selected, exists) => void selectMonth(selected, exists)} onRackUnitSaved={async () => { if (!siteId) return; const records = await loadHistory(siteId, { force: true, scope: "dashboard" }); await loadMonth(siteId, month, records); }} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
-          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} discardVersion={rackDiscardVersion} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onHistorySaved={() => { void loadHistory(siteId, { force: true, scope: "rack" }); }} onDirtyChange={setRackDirty} />}
-          {view === "rack-units" && siteId && <RackUnitCapacityView siteId={siteId} siteName={site?.name ?? null} month={month} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} />}
-          {view === "history" && <section className="space-y-8"><HistoricalCharts logs={history.logs} lang={lang} selectedMonth={month} displayPeriod={`${bootstrap?.displayPeriod.startMonth ?? ""}..${bootstrap?.displayPeriod.endMonth ?? ""}`} dataSourceLabel={lang === "th" ? "แหล่งข้อมูล: Production API" : "Source: Production API"} /><HistoricalExplorer logs={history.logs} lang={lang} selectedMonth={month} displayPeriod={`${bootstrap?.displayPeriod.startMonth ?? ""}..${bootstrap?.displayPeriod.endMonth ?? ""}`} upsGroupHistory={history.upsGroupHistory ?? null} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} onEditMonth={selected => { setView("entry"); void selectMonth(selected); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></section>}
-          {view === "comparison" && <WebSiteComparison lang={lang} />}
-          {view === "rack-comparison" && <WebSiteRackCapacityComparison month={month} />}
-          {view === "reports" && <Reports lang={lang} siteId={siteId} siteName={site?.name ?? "Data Center Energy & Facility Monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} upsGroupHistory={history.upsGroupHistory ?? null} onRefresh={refreshReports} />}
+          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={activeReportingMonth} discardVersion={rackDiscardVersion} rackCapacityHistory={reportingRackCapacityHistory} rackUnitCapacity={reportingRackUnitCapacity} onHistorySaved={() => { void loadHistory(siteId, { force: true, scope: "rack" }); }} onDirtyChange={setRackDirty} />}
+          {view === "rack-units" && siteId && <RackUnitCapacityView siteId={siteId} siteName={site?.name ?? null} month={activeReportingMonth} rackCapacityHistory={reportingRackCapacityHistory} rackUnitCapacity={reportingRackUnitCapacity} />}
+          {view === "history" && <section className="space-y-8"><HistoricalCharts logs={reportingPeriodLogs} lang={lang} selectedMonth={activeReportingMonth} displayPeriod={activeReportingDisplayPeriod} dataSourceLabel={lang === "th" ? "แหล่งข้อมูล: Production API" : "Source: Production API"} /><HistoricalExplorer logs={reportingPeriodLogs} lang={lang} selectedMonth={activeReportingMonth} displayPeriod={activeReportingDisplayPeriod} upsGroupHistory={reportingUpsGroupHistory} rackCapacityHistory={reportingRackCapacityHistory} rackUnitCapacity={reportingRackUnitCapacity} onEditMonth={selected => { setView("entry"); void selectMonth(selected); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></section>}
+          {view === "comparison" && <WebSiteComparison lang={lang} reportMonths={selectedReportingMonths} activePeriodLabel={reportingPeriodLabel(reportingPeriod, lang)} />}
+          {view === "rack-comparison" && <WebSiteRackCapacityComparison month={activeReportingMonth} activePeriodLabel={reportingPeriodLabel(reportingPeriod, lang)} />}
+          {view === "reports" && <Reports lang={lang} siteId={siteId} siteName={site?.name ?? "Data Center Energy & Facility Monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} period={reportingPeriod} periodEndMonth={reportingPeriodEndMonth} periodMonthsAvailable={reportingPeriodAvailableMonths} onPeriodChange={updateReportingPeriod} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} upsGroupHistory={history.upsGroupHistory ?? null} onRefresh={refreshReports} />}
           </>}
            </Suspense>
          </main></div>
@@ -564,7 +627,7 @@ const PERIOD_MODE_OPTIONS: Array<{ value: ReportingPeriodMode; label: string }> 
  *  CSV/Excel/PDF builders (see reportPeriod.ts), so Excel/CSV/PDF always
  *  reflect the current selection, never a stale earlier one. Matches
  *  Desktop's four Reporting Period modes, confirmed by direct inspection. */
-function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHistory, rackUnitCapacity, upsGroupHistory, onRefresh }: { lang: AppLanguage; siteId: number | null; siteName: string; logs: MonthlyLog[]; month: string; sites: Site[]; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; upsGroupHistory: UpsGroupHistoryReport | null; onRefresh: () => Promise<void> }) {
+function Reports({ lang, siteId, siteName, logs, month, sites, period, periodEndMonth, periodMonthsAvailable, rackCapacityHistory, rackUnitCapacity, upsGroupHistory, onPeriodChange, onRefresh }: { lang: AppLanguage; siteId: number | null; siteName: string; logs: MonthlyLog[]; month: string; sites: Site[]; period: ReportingPeriodSelection; periodEndMonth: string; periodMonthsAvailable: readonly string[]; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; upsGroupHistory: UpsGroupHistoryReport | null; onPeriodChange: (next: ReportingPeriodSelection) => void; onRefresh: () => Promise<void> }) {
   const th = lang === "th";
   const reportCopy = th ? {
     title: "รายงานและการส่งออก", intro: "Excel เก็บค่าที่กรอก ค่าวันที่บันทึก และค่าคำนวณของ Desktop v2.3.1 เป็นเซลล์ชนิดข้อมูล ตัวเลขมีทศนิยม 2 ตำแหน่ง และวันที่ใช้รูปแบบ dd-Mmm-yy",
@@ -574,7 +637,15 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
     context: "Report Context", applies: "Applies to the Current Facility export below", period: "Reporting Period", month: "Reporting Month", from: "From", to: "To", fileName: "File name", reset: "Reset", scope: "Scope", current: "Current Facility", all: "All Facilities", comparison: "Site Energy & Cost Comparison", currentDesc: "Export the selected facility for the chosen reporting period", allDesc: "Each facility stays isolated in its own CSV block, Excel sheets, HTML, and full PDF section", comparisonDesc: "Energy and cost comparison for the selected month; no values are fabricated for missing records", csvStarted: "CSV download started.", excelStarted: "Excel download started.", pdfStarted: "PDF download started."
   };
   const [message, setMessage] = useState<string | null>(null);
-  const [period, setPeriod] = useState<ReportingPeriodSelection>(() => defaultReportingPeriod(month));
+  const selectedPreset = matchingReportingPeriodPreset(period, periodEndMonth, periodMonthsAvailable);
+  const choosePreset = (count: ReportingPeriodPreset) => onPeriodChange(reportingPeriodForPreset(periodEndMonth, count, periodMonthsAvailable));
+  const availableReportMonths = useMemo(() => [...new Set(periodMonthsAvailable)].sort(), [periodMonthsAvailable]);
+  const selectedReportMonths = useMemo(() => monthsForReportingPeriod(availableReportMonths.length > 0 ? availableReportMonths : logs.map(log => log.month), period, periodEndMonth), [availableReportMonths, logs, period, periodEndMonth]);
+  const selectedReportMonthSet = useMemo(() => new Set(selectedReportMonths), [selectedReportMonths]);
+  const periodIdentity = [period.mode, period.singleMonth, period.rangeStart, period.rangeEnd, selectedReportMonths.join(",")].join(":");
+  const scopedRackCapacityHistory = useMemo(() => rackCapacityHistory.filter(row => selectedReportMonthSet.has(row.snapshotMonth)), [rackCapacityHistory, selectedReportMonthSet]);
+  const scopedRackUnitCapacity = useMemo(() => rackUnitCapacity.filter(row => selectedReportMonthSet.has(row.month)), [rackUnitCapacity, selectedReportMonthSet]);
+  const scopedUpsGroupHistory = useMemo(() => upsGroupHistory ? { ...upsGroupHistory, rows: upsGroupHistory.rows.filter(row => selectedReportMonthSet.has(row.month)) } : null, [selectedReportMonthSet, upsGroupHistory]);
   const [fileNameInput, setFileNameInput] = useState(() => defaultReportFilename(siteName, month));
   const [fileNameCustomized, setFileNameCustomized] = useState(false);
   const [recentReports, setRecentReports] = useState<ReportHistoryItem[]>(readRecentReports);
@@ -594,22 +665,39 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
   const allFacilitiesCacheRef = useRef(new Map<string, Promise<ExportFacility[]>>());
   useEffect(() => { allFacilitiesCacheRef.current.clear(); }, [month, sites]);
   const loadAll = useCallback(async ({ includeRack, includeImage }: { includeRack: boolean; includeImage: boolean }) => {
-    const cacheKey = `${month}:${includeRack ? "rack" : "logs"}:${includeImage ? "image" : "no-image"}`;
+    const cacheKey = periodIdentity + ":" + (includeRack ? "rack" : "logs") + ":" + (includeImage ? "image" : "no-image");
     const cached = allFacilitiesCacheRef.current.get(cacheKey);
     if (cached) return cached;
     const request = Promise.all(sites.map(async site => {
       const [siteHistory, rackResponse, rackUnitImage] = await Promise.all([
         api<HistoryData>(`/sites/${site.id}/history`),
-        includeRack ? loadRack(site.id, month) : Promise.resolve(null),
-        includeImage ? loadReportImage(site.id, month) : Promise.resolve(null)
+        includeRack ? loadRack(site.id, periodEndMonth) : Promise.resolve(null),
+        includeImage ? loadReportImage(site.id, periodEndMonth) : Promise.resolve(null)
       ]);
-      return { siteName: site.name, logs: siteHistory.logs, calculationLogs: siteHistory.logs, rack: rackReportFromSnapshot(rackResponse), rackHistory: siteHistory.rackCapacityHistory ?? [], rackUnitCapacity: siteHistory.rackUnitCapacity ?? [], upsGroupHistory: siteHistory.upsGroupHistory ?? null, dashboardMapping: { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping(site.name) }, rackUnitCapacityImageDataUri: rackUnitImage?.dataUri ?? null, rackUnitCapacityImageMeta: rackUnitImage?.meta ?? null };
+      const scopedLogs = filterLogsByPeriod(siteHistory.logs, period, periodEndMonth);
+      const scopedRackHistory = (siteHistory.rackCapacityHistory ?? []).filter(row => selectedReportMonthSet.has(row.snapshotMonth));
+      const scopedRackUnitCapacity = (siteHistory.rackUnitCapacity ?? []).filter(row => selectedReportMonthSet.has(row.month));
+      const scopedUpsGroupHistory = siteHistory.upsGroupHistory ? { ...siteHistory.upsGroupHistory, rows: siteHistory.upsGroupHistory.rows.filter(row => selectedReportMonthSet.has(row.month)) } : null;
+      return { siteName: site.name, logs: scopedLogs, calculationLogs: siteHistory.logs, rack: rackReportFromSnapshot(rackResponse), rackHistory: scopedRackHistory, rackUnitCapacity: scopedRackUnitCapacity, upsGroupHistory: scopedUpsGroupHistory, dashboardMapping: { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping(site.name) }, rackUnitCapacityImageDataUri: rackUnitImage?.dataUri ?? null, rackUnitCapacityImageMeta: rackUnitImage?.meta ?? null, reportingMonths: selectedReportMonths };
     }));
     allFacilitiesCacheRef.current.set(cacheKey, request);
     void request.catch(() => { if (allFacilitiesCacheRef.current.get(cacheKey) === request) allFacilitiesCacheRef.current.delete(cacheKey); });
     return request;
-  }, [loadReportImage, loadRack, month, sites]);
-  const loadComparison = useCallback(async () => api<SiteComparisonExport>("/site-comparison"), []);
+  }, [loadReportImage, loadRack, period, periodEndMonth, periodIdentity, selectedReportMonthSet, selectedReportMonths, sites]);
+  const comparisonCacheRef = useRef(new Map<string, Promise<SiteComparisonExport>>());
+  const loadComparison = useCallback(async () => {
+    const cacheKey = periodIdentity + ":all-sites";
+    const cached = comparisonCacheRef.current.get(cacheKey);
+    if (cached) return cached;
+    const request = api<SiteComparisonExport>("/site-comparison").then(result => ({
+      ...result,
+      months: result.months.filter(value => selectedReportMonthSet.has(value)),
+      sites: result.sites.map(item => ({ ...item, months: item.months.filter(value => selectedReportMonthSet.has(value)) }))
+    }));
+    comparisonCacheRef.current.set(cacheKey, request);
+    void request.catch(() => { if (comparisonCacheRef.current.get(cacheKey) === request) comparisonCacheRef.current.delete(cacheKey); });
+    return request;
+  }, [periodIdentity, selectedReportMonthSet]);
   const handleRefresh = useCallback(async () => { allFacilitiesCacheRef.current.clear(); await onRefresh(); }, [onRefresh]);
   const rememberReport = (filename: string) => {
     const id = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `web-report-${Date.now()}`;
@@ -629,7 +717,7 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
       .catch(error => setMessage(readError(error)));
   };
 
-  const contextMonth = effectiveMonth(period, month);
+  const contextMonth = effectiveMonth(period, periodEndMonth);
   const [reportImage, setReportImage] = useState<WebRackUnitCapacityImage | null>(null);
   const reportContextKey = `${siteName}\u0000${contextMonth}`;
   const previousReportContext = useRef(reportContextKey);
@@ -640,25 +728,14 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
     setFileNameCustomized(false);
   }, [contextMonth, reportContextKey, siteName]);
   useEffect(() => {
-    const available = [...new Set(logs.map(log => log.month))].sort();
-    const fallback = available.includes(month) ? month : available.at(-1) ?? month;
-    setPeriod(current => {
-      const singleMonth = available.includes(current.singleMonth) ? current.singleMonth : fallback;
-      const rangeStart = available.includes(current.rangeStart) ? current.rangeStart : available[0] ?? fallback;
-      const rangeEnd = available.includes(current.rangeEnd) ? current.rangeEnd : available.at(-1) ?? fallback;
-      if (singleMonth === current.singleMonth && rangeStart === current.rangeStart && rangeEnd === current.rangeEnd) return current;
-      return { ...current, singleMonth, rangeStart, rangeEnd };
-    });
-  }, [logs, month, siteName]);
-  useEffect(() => {
     let cancelled = false;
     setReportImage(null);
     void loadReportImage(siteId, contextMonth).then(image => { if (!cancelled) setReportImage(image); });
     return () => { cancelled = true; };
   }, [contextMonth, loadReportImage, siteId]);
   const resolvedFileName = resolveFilename(fileNameInput, siteName, contextMonth);
-  const scopedLogs = useMemo(() => filterLogsByPeriod(logs, period, month), [logs, period, month]);
-  const availableMonths = useMemo(() => [...new Set(logs.map(log => log.month))].sort(), [logs]);
+  const scopedLogs = useMemo(() => filterLogsByPeriod(logs, period, periodEndMonth), [logs, period, periodEndMonth]);
+  const availableMonths = availableReportMonths.length > 0 ? availableReportMonths : [...new Set(logs.map(log => log.month))].sort();
   const exportHtml = (...args: Parameters<typeof exportHtmlFile>) => {
     const nextArgs = [...args] as unknown as Parameters<typeof exportHtmlFile>;
     const extras = nextArgs[9] ?? {};
@@ -692,17 +769,23 @@ function Reports({ lang, siteId, siteName, logs, month, sites, rackCapacityHisto
       <h3 className="font-semibold">{reportCopy.context}</h3>
       <p className="mt-1 text-sm text-slate-400">{reportCopy.applies}. {th ? "ไซต์" : "Facility"}: <b className="text-slate-200">{siteName}</b>.</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="text-sm">{reportCopy.period}<select value={period.mode} onChange={event => setPeriod({ ...period, mode: event.target.value as ReportingPeriodMode })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{PERIOD_MODE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{th ? ({ current: "เดือนปัจจุบัน", single: "เดือนเดียว", range: "ช่วงเดือน", full: "ประวัติทั้งหมด" } as Record<ReportingPeriodMode, string>)[opt.value] : opt.label}</option>)}</select></label>
-        {period.mode === "single" && <label className="text-sm">{reportCopy.month}<select value={period.singleMonth} onChange={event => setPeriod({ ...period, singleMonth: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label>}
-        {period.mode === "range" && <><label className="text-sm">{reportCopy.from}<select value={period.rangeStart} onChange={event => setPeriod({ ...period, rangeStart: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label><label className="text-sm">{reportCopy.to}<select value={period.rangeEnd} onChange={event => setPeriod({ ...period, rangeEnd: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label></>}
+        <div className="sm:col-span-2 lg:col-span-4">
+          <div className="flex flex-wrap items-center gap-2" aria-label={th ? "ช่วงรายงานด่วน" : "Quick reporting period"}>
+            <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-slate-400">{th ? "ช่วงด่วน" : "Quick range"}</span>
+            {[3, 6, 12].map(count => <button type="button" key={count} onClick={() => choosePreset(count as ReportingPeriodPreset)} aria-pressed={selectedPreset === count} className={"rounded-lg border px-3 py-2 text-xs font-semibold transition-colors " + (selectedPreset === count ? "border-teal-300 bg-teal-400 text-slate-950" : "border-slate-700 text-slate-300 hover:border-teal-500")}>{th ? "ย้อนหลัง " + count + " เดือน" : "Last " + count + " Months"}</button>)}
+          </div>
+        </div>
+        <label className="text-sm">{reportCopy.period}<select value={period.mode} onChange={event => onPeriodChange({ ...period, mode: event.target.value as ReportingPeriodMode })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{PERIOD_MODE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{th ? ({ current: "เดือนปัจจุบัน", single: "เดือนเดียว", range: "ช่วงเดือน", full: "ประวัติทั้งหมด" } as Record<ReportingPeriodMode, string>)[opt.value] : opt.label}</option>)}</select></label>
+        {period.mode === "single" && <label className="text-sm">{reportCopy.month}<select value={period.singleMonth} onChange={event => onPeriodChange({ ...period, singleMonth: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label>}
+        {period.mode === "range" && <><label className="text-sm">{reportCopy.from}<select value={period.rangeStart} onChange={event => onPeriodChange({ ...period, rangeStart: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label><label className="text-sm">{reportCopy.to}<select value={period.rangeEnd} onChange={event => onPeriodChange({ ...period, rangeEnd: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label></>}
         <label className="text-sm sm:col-span-2 lg:col-span-2">{reportCopy.fileName}<div className="mt-1 flex gap-2"><input value={fileNameInput} onChange={event => { setFileNameInput(event.target.value); setFileNameCustomized(true); }} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm" /><button type="button" onClick={() => setFileNameCustomized(false)} className="shrink-0 rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:border-teal-500" title={reportCopy.reset}>{reportCopy.reset}</button></div></label>
       </div>
       <p className="mt-3 text-xs text-slate-500">{reportCopy.scope}: {reportingPeriodLabel(period, lang)}. {th ? "ไฟล์" : "Files"}: <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "csv")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "xlsx")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "html")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "pdf")}</span></p>
     </div>
 
-    <div className="mt-4 grid gap-4 xl:grid-cols-3">{cards(reportCopy.current, `${siteName}, ${reportingPeriodLabel(period, lang)}.`, () => exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv")), () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx"), logs, rack, rackCapacityHistory, rackUnitCapacity, upsGroupHistory); })(), () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; exportHtml(scopedLogs, siteName, contextMonth, withExtension(resolvedFileName, "html"), rack, rackCapacityHistory, rackUnitCapacity, logs, selectedReportSections, { upsGroupHistory }); })(), () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportDesktopPdf(scopedLogs, siteName, contextMonth, resolvedFileName, rack, rackCapacityHistory, rackUnitCapacity, logs, selectedReportSections, { upsGroupHistory }); })(), { csv: withExtension(resolvedFileName, "csv"), excel: withExtension(resolvedFileName, "xlsx"), html: withExtension(resolvedFileName, "html"), pdf: withExtension(resolvedFileName, "pdf") })}{cards(reportCopy.all, reportCopy.allDesc, async () => exportAllFacilitiesCsv(await loadAll({ includeRack: false, includeImage: false })), async () => exportAllFacilitiesExcel(await loadAll({ includeRack: true, includeImage: false })), async () => exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true }), month), async () => exportAllFacilitiesPdf(await loadAll({ includeRack: true, includeImage: true }), month), { csv: "all-facilities-energy-monitor.csv", excel: "all-facilities-energy-monitor.xlsx", html: "all-facilities-energy-monitor.html", pdf: "all-facilities-energy-monitor.pdf" })}{cards(reportCopy.comparison, reportCopy.comparisonDesc, async () => exportSiteComparisonCsv(await loadComparison(), month), async () => exportSiteComparisonExcel(await loadComparison(), month), async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, month) : null, secondary ? loadRack(secondary.site.id, month) : null]); exportSiteComparisonHtml(comparison, month, `site-comparison-${month}.html`, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack), selectedReportSections); }, async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, month) : null, secondary ? loadRack(secondary.site.id, month) : null]); await exportSiteComparisonPdf(comparison, month, `site-comparison-${month}`, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack)); }, { csv: `site-comparison-${month}.csv`, excel: `site-comparison-${month}.xlsx`, html: `site-comparison-${month}.html`, pdf: `site-comparison-${month}.pdf` })}</div>
+    <div className="mt-4 grid gap-4 xl:grid-cols-3">{cards(reportCopy.current, `${siteName}, ${reportingPeriodLabel(period, lang)}.`, () => exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv")), () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx"), logs, rack, scopedRackCapacityHistory, scopedRackUnitCapacity, scopedUpsGroupHistory); })(), () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; exportHtml(scopedLogs, siteName, contextMonth, withExtension(resolvedFileName, "html"), rack, scopedRackCapacityHistory, scopedRackUnitCapacity, logs, selectedReportSections, { upsGroupHistory: scopedUpsGroupHistory }); })(), () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportDesktopPdf(scopedLogs, siteName, contextMonth, resolvedFileName, rack, scopedRackCapacityHistory, scopedRackUnitCapacity, logs, selectedReportSections, { upsGroupHistory: scopedUpsGroupHistory }); })(), { csv: withExtension(resolvedFileName, "csv"), excel: withExtension(resolvedFileName, "xlsx"), html: withExtension(resolvedFileName, "html"), pdf: withExtension(resolvedFileName, "pdf") })}{cards(reportCopy.all, reportCopy.allDesc, async () => exportAllFacilitiesCsv(await loadAll({ includeRack: false, includeImage: false })), async () => exportAllFacilitiesExcel(await loadAll({ includeRack: true, includeImage: false })), async () => exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true }), contextMonth), async () => exportAllFacilitiesPdf(await loadAll({ includeRack: true, includeImage: true }), contextMonth), { csv: "all-facilities-energy-monitor.csv", excel: "all-facilities-energy-monitor.xlsx", html: "all-facilities-energy-monitor.html", pdf: "all-facilities-energy-monitor.pdf" })}{cards(reportCopy.comparison, reportCopy.comparisonDesc, async () => exportSiteComparisonCsv(await loadComparison(), contextMonth), async () => exportSiteComparisonExcel(await loadComparison(), contextMonth), async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, contextMonth) : null, secondary ? loadRack(secondary.site.id, contextMonth) : null]); exportSiteComparisonHtml(comparison, contextMonth, `site-comparison-${contextMonth}.html`, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack), selectedReportSections); }, async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, contextMonth) : null, secondary ? loadRack(secondary.site.id, contextMonth) : null]); await exportSiteComparisonPdf(comparison, contextMonth, `site-comparison-${contextMonth}`, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack)); }, { csv: `site-comparison-${contextMonth}.csv`, excel: `site-comparison-${contextMonth}.xlsx`, html: `site-comparison-${contextMonth}.html`, pdf: `site-comparison-${contextMonth}.pdf` })}</div>
     {recentReports.length > 0 && <section className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-5"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{th ? "รายงานล่าสุด" : "Recent Reports"}</h3><span className="text-xs text-slate-500">{th ? "บันทึกในเบราว์เซอร์นี้" : "Saved on this browser"}</span></div><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[640px] text-left text-xs"><thead className="text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="pb-2">{th ? "ไฟล์" : "Filename"}</th><th>{th ? "ไซต์" : "Facility"}</th><th>{th ? "ช่วงเวลา" : "Period"}</th><th>{th ? "สร้างเมื่อ" : "Created"}</th><th /></tr></thead><tbody>{recentReports.slice(0, 20).map(item => <tr key={item.id} className="border-t border-slate-800 text-slate-300"><td className="py-2 font-medium">{item.filename}</td><td>{item.facility}</td><td>{item.month}</td><td>{formatWebSavedTimestamp(item.createdAt) ?? item.createdAt}</td><td className="text-right"><button type="button" onClick={() => { try { setRecentReports(HistoryProvider.remove(item.id)); } catch { setRecentReports(current => current.filter(entry => entry.id !== item.id)); } }} className="text-slate-500 hover:text-rose-300">{th ? "ลบ" : "Remove"}</button></td></tr>)}</tbody></table></div></section>}
-    <WebReportPreview lang={lang} siteId={siteId} siteName={siteName} logs={scopedLogs} calculationLogs={logs} month={contextMonth} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} upsGroupHistory={upsGroupHistory} onRefresh={handleRefresh} sections={selectedReportSections} />
+    <WebReportPreview lang={lang} siteId={siteId} siteName={siteName} logs={scopedLogs} calculationLogs={logs} month={contextMonth} rackCapacityHistory={scopedRackCapacityHistory} rackUnitCapacity={scopedRackUnitCapacity} upsGroupHistory={scopedUpsGroupHistory} onRefresh={handleRefresh} sections={selectedReportSections} />
     {message && <p className="mt-4 text-sm text-teal-300">{message}</p>}</section>;
 }
 

@@ -178,11 +178,13 @@ await assertExportsShowOnlyMonth("2026-07", { mode: "single", singleMonth: "2026
 
 // "Current Month" mode follows the app's live reporting month directly,
 // with no separate stored selection to go stale.
-const currentModeJune = defaultReportingPeriod("2026-06");
+const currentModeJune: ReportingPeriodSelection = { mode: "current", singleMonth: "2026-06", rangeStart: "2026-06", rangeEnd: "2026-06" };
 check("Current Month mode resolves to the app's live month", effectiveMonth(currentModeJune, "2026-06") === "2026-06");
 check("Current Month mode filters to exactly that month", filterLogsByPeriod(threeMonthLogs, currentModeJune, "2026-06").length === 1);
 
-// Full History mode is unchanged (existing behavior) - all months included.
+const defaultPeriodJune = defaultReportingPeriod("2026-06");
+check("Default Reporting Period is Last 3 Months", defaultPeriodJune.mode === "range" && defaultPeriodJune.rangeStart === "2026-04" && defaultPeriodJune.rangeEnd === "2026-06");
+check("Default Last 3 Months includes the latest available log rows", filterLogsByPeriod(threeMonthLogs, defaultPeriodJune, "2026-06").length === 1);
 const fullHistory: ReportingPeriodSelection = { mode: "full", singleMonth: "2026-08", rangeStart: "2026-06", rangeEnd: "2026-08" };
 check("Full History mode includes every fetched month", filterLogsByPeriod(threeMonthLogs, fullHistory, "2026-08").length === 3);
 

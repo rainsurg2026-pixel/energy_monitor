@@ -87,4 +87,29 @@ assert.match(browserE2eSource, /E2E_REQUIRE_AUTH/);
 assert.match(browserE2eSource, /Browser\.downloadProgress/);
 assert.match(browserE2eSource, /Network\.responseReceived/);
 
+// Regression: switching sites while staying on the Rack Unit Capacity (or any
+// rack) view used to leave the KPI/trend panels empty until the view was
+// remounted. Root cause: selectSite() always primed the "dashboard" history
+// scope, whose payload is disjoint from the "rack" scope, so the background
+// dashboard response overwrote the rack payload and the page-key was left
+// pointing at ":dashboard" so the effect never re-fetched. The fix routes both
+// selectSite() and the page-load effect through one scopeForView() helper and
+// keys the loaded page by the live view.
+assert.match(appSource, /const scopeForView = \(target: View\): HistoryScope =>/);
+assert.match(appSource, /target === "racks" \|\| target === "rack-units" \? "rack" : target === "history" \|\| target === "reports" \? "full" : "dashboard"/);
+assert.match(appSource, /const scope: HistoryScope = scopeForView\(view\);/);
+assert.match(appSource, /const scope = scopeForView\(view\); const records = await loadHistory\(id, \{ force: true, scope \}\);/);
+assert.match(appSource, /loadedPageKeyRef\.current = `\$\{id\}:\$\{view\}`;/);
+assert.doesNotMatch(appSource, /loadedPageKeyRef\.current = `\$\{id\}:dashboard`/);
+
+// Progressive prefetch after login/site switch warms the other history scopes
+// without ever calling setHistory (the disjoint payloads would blank the
+// mounted view), so History, Reports, and Rack views reopen near-instantly.
+assert.match(appSource, /const prefetchHistoryScopes = useCallback\(\(id: number\) => \{/);
+assert.match(appSource, /for \(const scope of \["full", "rack"\] as const\) void loadHistory\(id, \{ scope, prefetch: true \}\)/);
+assert.match(appSource, /options: \{ force\?: boolean; scope\?: HistoryScope; prefetch\?: boolean \}/);
+assert.match(appSource, /if \(!options\.prefetch\) void request\.then\(showResult, \(\) => undefined\);/);
+assert.match(appSource, /prefetchHistoryScopes\(first\.id\);/);
+assert.match(appSource, /loadedPageKeyRef\.current = `\$\{id\}:\$\{view\}`; prefetchHistoryScopes\(id\);/);
+
 console.log("web-clean-v1 dashboard fixes: browser PDF/download E2E contract assertions passed");
