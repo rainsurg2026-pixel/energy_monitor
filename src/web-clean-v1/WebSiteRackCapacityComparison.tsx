@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react";
 import { BarChart3, Building2, RefreshCw, Search, Server, ShieldCheck, X } from "lucide-react";
 import { calculateRackCapacityMetrics, rackUtilizationLevel } from "../domain/rackCapacity";
 import { isValidRackUnitCapacity, rackAvailabilityStatus, rackCountsReconcile, type RackAvailabilityStatus } from "../domain/rackComparison";
@@ -100,6 +100,30 @@ function rackUnitUnavailableText(site: SiteComparisonState, month: string): stri
   if (!site.unit) return "No monthly Rack Unit Capacity snapshot for " + site.site.name + " — " + monthLabelLong(month, "en") + ".";
   return "Rack Unit Capacity snapshot for " + site.site.name + " — " + monthLabelLong(month, "en") + " contains invalid non-negative values. It is excluded from the comparison.";
 }
+
+const statusBorder: Record<RackAvailabilityStatus, string> = {
+  Ready: "#60a5fa",
+  Limited: "#fb923c",
+  Full: "#f87171"
+};
+
+const SiteSummaryCard: FC<{ state: SiteComparisonState; month: string }> = ({ state, month }) => {
+  const metrics = state.rack ? calculateRackCapacityMetrics(state.rack.records) : null;
+  const availability = metrics && metrics.total > 0 ? (metrics.available.count / metrics.total) * 100 : null;
+  const status = metrics ? rackAvailabilityStatus(metrics.available.count, metrics.total) : null;
+  return <article className="rounded-2xl border bg-slate-900 p-4 shadow-sm" style={{ borderColor: status ? statusBorder[status] + "80" : "#334155" }} data-testid={"rack-comparison-site-" + state.site.id}>
+    {!metrics ? <div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-300"><Building2 className="h-5 w-5" /></div><div><h3 className="font-display text-lg font-bold text-slate-100">{state.site.name}</h3><p className="mt-0.5 text-xs text-slate-500">{state.site.code}</p></div></div><StatusBadge status="Unavailable" /></div> : <>
+      <div className="grid gap-4 md:grid-cols-[8rem_9rem_minmax(0,1fr)] md:items-center">
+        <div className="flex min-h-28 flex-col items-center justify-center border-b border-slate-800 pb-3 text-center md:border-b-0 md:border-r md:pb-0 md:pr-4"><div className="flex items-center gap-2"><Building2 className="h-5 w-5 text-indigo-300" /><h3 className="font-display text-lg font-bold text-slate-100">{state.site.name}</h3></div><p className="mt-1 text-xs text-slate-500">{state.site.code}</p></div>
+        <div className="text-center md:border-r md:border-slate-800 md:pr-4"><p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-300">Available Now</p><p className="mt-1 font-mono text-4xl font-semibold text-emerald-300">{formatFixedNumber(metrics.available.count, 0)}</p><p className="text-xs font-semibold uppercase tracking-[0.14em] text-emerald-300">Racks</p></div>
+        <div className="grid grid-cols-2 gap-x-5 gap-y-4"><Metric label="Total Racks" value={formatFixedNumber(metrics.total, 0)} /><Metric label="In Use" value={formatFixedNumber(metrics.inUse.count, 0)} bordered /><Metric label="Reserved" value={formatFixedNumber(metrics.reserved.count, 0)} className="text-blue-300" bordered /><Metric label="Pending Decommission" value={formatFixedNumber(metrics.pendingDismantle.count, 0)} className="text-amber-300" bordered /></div>
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-4 border-t border-slate-800 pt-3"><Metric label="Availability %" value={formatFixedPercentage(availability, 1)} className="text-emerald-300" /><div className="flex items-center justify-between gap-2"><span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Status</span><StatusBadge status={status ?? "Unavailable"} /></div></div>
+      {metrics.other.count > 0 && <p className="mt-3 text-xs text-amber-200">Other statuses: <span className="font-mono">{metrics.other.count}</span>. Included in total reconciliation.</p>}
+    </>}
+    {!metrics && <p className="mt-4 rounded-xl border border-dashed border-slate-700 bg-slate-950/30 p-4 text-sm leading-relaxed text-amber-200">{unavailableText(state, month, "Rack")}</p>}
+  </article>;
+};
 
 type ZoneSegment = { key: string; label: string; count: number; ratio: number | null; color: string };
 
@@ -244,6 +268,7 @@ export default function WebSiteRackCapacityComparison({ month, activePeriodLabel
   const sites = currentMonthLoaded ? states ?? [] : [];
   return <section className="space-y-5" data-testid="web-site-rack-capacity-comparison">
     <header className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-300"><Server className="h-5 w-5" /></div><div><h2 className="font-display text-2xl font-bold tracking-tight text-slate-100">Site Rack Capacity &amp; Availability Comparison</h2><p className="mt-1 text-sm text-slate-400">Compare site rack capacity by zone and status for deployment planning.</p><p className="mt-2 text-xs uppercase tracking-wide text-slate-500">Reporting Month: <span className="font-mono text-slate-300">{monthLabelLong(month, "en")}</span></p></div></div><button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:border-teal-500"><RefreshCw className="h-4 w-4" />Refresh</button></div></header>
+    <div className="grid gap-4 lg:grid-cols-2">{sites.map(state => <SiteSummaryCard key={state.site.id} state={state} month={month} />)}</div>
     <RackCapacityByZone states={sites} month={month} />
     <RackCapacityDetails states={sites} month={month} />
     <RackPositions states={sites} month={month} />

@@ -56,6 +56,10 @@ for (const heading of [
   "Rack Unit Capacity Comparison",
   "Used and available rack units by site"
 ]) assert.ok(rackComparison.includes(heading), "comparison heading missing: " + heading);
+assert.ok(rackComparison.includes("const SiteSummaryCard:"), "site summary card is present");
+assert.ok(rackComparison.includes("Available Now"), "site summary highlights available racks");
+assert.ok(rackComparison.includes("Total Racks"), "site summary includes total racks");
+assert.ok(rackComparison.indexOf("<SiteSummaryCard key=") < rackComparison.indexOf("<RackCapacityByZone states={sites}"), "site summary precedes zone chart");
 for (const field of ["Rack ID", "Cabinet Size (cm)", "Detail"]) assert.ok(rackComparison.includes(">" + field + "</th>"), "position field missing: " + field);
 assert.ok(rackComparison.includes("Pending Dismantle"));
 assert.ok(rackComparison.includes("Pending Decommission"));
