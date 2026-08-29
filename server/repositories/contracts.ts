@@ -44,6 +44,10 @@ export interface SaveRackCapacityInput {
   actorUserId?: number | null;
   correlationId: string;
   generatedAt?: string;
+  /** Explicit first-save carry-forward; GET remains side-effect-free. */
+  initializeFromPrevious?: boolean;
+  carryForwardSourceMonth?: string;
+  carryForwardSourceRowVersion?: number;
 }
 export interface RackCapacitySaveResult {
   snapshot: RackSnapshotRecord;
@@ -120,6 +124,7 @@ export interface BackendRepository {
   getMonthlyLogs(siteId: number, months: readonly string[]): Promise<MonthlyLog[]>;
   saveMonthlyLog(input: SaveMonthlyLogInput): Promise<PeriodRecord>;
   getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null>;
+  getLatestRackSnapshotBefore(siteId: number, month: string): Promise<RackSnapshotRecord | null>;
   saveRackCapacity(input: SaveRackCapacityInput): Promise<RackCapacitySaveResult>;
   getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null>;
   saveRackUnitSnapshot(input: SaveRackUnitSnapshotInput): Promise<RackUnitSnapshotRecord>;

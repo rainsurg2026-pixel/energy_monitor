@@ -158,19 +158,38 @@ export class InMemoryRepository implements BackendRepository {
   }
 
   async getRackSnapshot(siteId: number, month: string): Promise<RackSnapshotRecord | null> { const snapshot = this.rackSnapshots[`${siteId}:${month}`]; return snapshot ? structuredClone(snapshot) : null; }
+  async getLatestRackSnapshotBefore(siteId: number, month: string): Promise<RackSnapshotRecord | null> {
+    const snapshot = Object.entries(this.rackSnapshots)
+      .filter(([key, candidate]) => key.startsWith(`${siteId}:`) && candidate.month < month)
+      .map(([, candidate]) => candidate)
+      .sort((a, b) => b.month.localeCompare(a.month))[0];
+    return snapshot ? structuredClone(snapshot) : null;
+  }
   async saveRackCapacity(input: SaveRackCapacityInput): Promise<RackCapacitySaveResult> {
-    if (input.changes.length === 0) throw new HttpError(400, "INVALID_RACK_CHANGES", "changes must be a non-empty array.");
+    if (input.changes.length === 0 && !input.initializeFromPrevious) throw new HttpError(400, "INVALID_RACK_CHANGES", "changes must be a non-empty array.");
     const seenRows = new Set<number>();
     for (const change of input.changes) {
-      if (seenRows.has(change.rowNumber)) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes contains duplicate row ${change.rowNumber}.`);
+      if (seenRows.has(change.rowNumber)) throw new HttpError(400, "INVALID_RACK_CHANGES", "changes contains duplicate row " + change.rowNumber + ".");
       seenRows.add(change.rowNumber);
     }
     const key = `${input.siteId}:${input.month}`;
-    const current = this.rackSnapshots[key];
-    if (!current) throw new HttpError(404, "RACK_CAPACITY_NOT_FOUND", "Rack Capacity is not initialized for the requested month.");
-    if (input.expectedRowVersion !== current.rowVersion) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
-
-    const previous = structuredClone(current);
+    let current = this.rackSnapshots[key] ?? null;
+    const previous = current ? structuredClone(current) : null;
+    let created = false;
+    if (!current) {
+      if (!input.initializeFromPrevious) throw new HttpError(404, "RACK_CAPACITY_NOT_FOUND", "Rack Capacity is not initialized for the requested month.");
+      if (input.expectedRowVersion !== null && input.expectedRowVersion !== 0) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
+      const source = await this.getLatestRackSnapshotBefore(input.siteId, input.month);
+      if (!source) throw new HttpError(404, "RACK_CAPACITY_NOT_FOUND", "No prior Rack Capacity snapshot exists to carry forward.");
+      if (input.carryForwardSourceMonth && input.carryForwardSourceMonth !== source.month) throw new HttpError(409, "RACK_CAPACITY_SOURCE_CHANGED", "The prior Rack Capacity snapshot changed before initialization.");
+      if (input.carryForwardSourceRowVersion !== undefined && input.carryForwardSourceRowVersion !== source.rowVersion) throw new HttpError(409, "RACK_CAPACITY_SOURCE_CHANGED", "The prior Rack Capacity snapshot changed before initialization.");
+      current = { month: input.month, rowVersion: 1, records: structuredClone(source.records) };
+      this.rackSnapshots[key] = current;
+      created = true;
+    } else {
+      if (input.initializeFromPrevious && input.changes.length > 0) throw new HttpError(409, "RACK_CAPACITY_ALREADY_INITIALIZED", "Rack Capacity is already initialized for the requested month. Reload it before saving changes.");
+      if (!input.initializeFromPrevious && input.expectedRowVersion !== current.rowVersion) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
+    }
     const previousHistory = structuredClone(this.rackCapacityHistory[input.siteId] ?? []);
     const auditLength = this.auditEvents.length;
     const fields = ["status", "cabinetSize", "detail", "deviceType", "remarks"] as const;
@@ -192,15 +211,13 @@ export class InMemoryRepository implements BackendRepository {
         for (const field of fields) {
           const edit = change[field];
           if (!edit) continue;
-          const actual = record[field];
-          if (normalizeRackEditableValue(field, actual) !== normalizeRackEditableValue(field, edit.expected)) {
-            conflicts.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictField: field, conflictActualValue: actual, conflictReason: "field_mismatch" });
+          if (normalizeRackEditableValue(field, record[field]) !== normalizeRackEditableValue(field, edit.expected)) {
+            conflicts.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: false, conflictField: field, conflictActualValue: record[field], conflictReason: "field_mismatch" });
             break;
           }
         }
       }
       if (conflicts.length > 0) throw new HttpError(409, "RACK_CAPACITY_CONFLICT", "Rack Capacity changed before this save was committed.");
-
       const outcomes: RackFieldChangeOutcome[] = [];
       for (const change of input.changes) {
         const index = records.findIndex(record => record.rowNumber === change.rowNumber);
@@ -210,42 +227,38 @@ export class InMemoryRepository implements BackendRepository {
           const edit = change[field];
           if (!edit) continue;
           const next = normalizeRackEditableValue(field, edit.next);
-          const actual = normalizeRackEditableValue(field, record[field]);
-          if (actual !== next) changedCount++;
+          if (normalizeRackEditableValue(field, record[field]) !== next) changedCount++;
           record[field] = next;
         }
         outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: true });
       }
-
-      const rowVersion = changedCount > 0 ? current.rowVersion + 1 : current.rowVersion;
+      const rowVersion = created ? 1 : changedCount > 0 ? current.rowVersion + 1 : current.rowVersion;
       const snapshot: RackSnapshotRecord = { month: current.month, rowVersion, records };
-      if (changedCount > 0) {
+      if (created || changedCount > 0) {
         this.rackSnapshots[key] = snapshot;
         const metrics = calculateRackCapacityMetrics(records);
         const generatedAt = input.generatedAt ?? new Date().toISOString();
         const history = this.rackCapacityHistory[input.siteId] ?? (this.rackCapacityHistory[input.siteId] = []);
-        this.rackCapacityHistory[input.siteId] = [
-          ...history.filter(row => row.month !== input.month),
-          ...rackHistoryRows(input.facility, input.month, metrics, generatedAt)
-        ];
+        this.rackCapacityHistory[input.siteId] = [...history.filter(row => row.month !== input.month), ...rackHistoryRows(input.facility, input.month, metrics, generatedAt)];
         this.recordAudit({
           actorUserId: input.actorUserId ?? null,
-          action: "update",
+          action: created ? "create" : "update",
           entityType: "rack_capacity_snapshot",
           entityId: key,
-          previousValue: { siteId: input.siteId, month: input.month, rowVersion: current.rowVersion },
-          newValue: { siteId: input.siteId, month: input.month, rowVersion, changedCount },
+          previousValue: created ? null : { siteId: input.siteId, month: input.month, rowVersion: current.rowVersion },
+          newValue: { siteId: input.siteId, month: input.month, rowVersion, changedCount, carriedForwardFrom: created ? (input.carryForwardSourceMonth ?? null) : null },
           correlationId: input.correlationId
         });
       }
       return { snapshot: structuredClone(snapshot), outcomes, changedCount };
     } catch (error) {
-      this.rackSnapshots[key] = previous;
+      if (previous) this.rackSnapshots[key] = previous; else delete this.rackSnapshots[key];
       this.rackCapacityHistory[input.siteId] = previousHistory;
       this.auditEvents.length = auditLength;
       throw error;
     }
   }
+
   async getRackUnitSnapshot(siteId: number, month: string): Promise<RackUnitSnapshotRecord | null> { return this.rackUnitSnapshots[`${siteId}:${month}`] ?? null; }
   async saveRackUnitSnapshot(input: SaveRackUnitSnapshotInput): Promise<RackUnitSnapshotRecord> {
     const key = `${input.siteId}:${input.month}`;

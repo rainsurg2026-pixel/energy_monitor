@@ -39,7 +39,7 @@ function contrastRatio(hex1: string, hex2: string): number {
   return (lighter + 0.05) / (darker + 0.05);
 }
 const lightThemeBlock = css.match(/html\.theme-light\s*\{([\s\S]*?)\n\}/)?.[1] ?? "";
-const dashboardAccentTokens = ["--color-amber-400", "--color-amber-500", "--color-emerald-400", "--color-emerald-500", "--color-purple-400", "--color-rose-400", "--color-rose-500", "--color-sky-400", "--color-teal-400", "--color-teal-500", "--color-indigo-300"];
+const dashboardAccentTokens = ["--color-amber-400", "--color-amber-500", "--color-orange-200", "--color-orange-300", "--color-orange-400", "--color-emerald-300", "--color-emerald-400", "--color-emerald-500", "--color-purple-400", "--color-rose-400", "--color-rose-500", "--color-sky-300", "--color-sky-400", "--color-teal-400", "--color-teal-500", "--color-indigo-300"];
 for (const token of dashboardAccentTokens) {
   const match = lightThemeBlock.match(new RegExp(`${token}: (#[0-9a-fA-F]{6});`));
   assert.ok(match, `${token} must be defined in html.theme-light`);
@@ -50,4 +50,11 @@ for (const token of dashboardAccentTokens) {
   assert.ok(vsSurface >= 4.5, `${token} (${hex}) contrast vs #ffffff card surface must be >=4.5:1 for WCAG AA text, got ${vsSurface.toFixed(2)}:1`);
 }
 
+assert.match(css, /\.dashboard-table/);
+assert.match(css, /--chart-axis:/);
+assert.match(css, /--chart-tooltip-bg:/);
+assert.match(css, /recharts-cartesian-axis-line/);
+const dashboard = readFileSync(new URL("../src/components/DashboardSummary.tsx", import.meta.url), "utf8");
+assert.match(dashboard, /text-orange-200/);
+assert.doesNotMatch(dashboard, /text-slate-650/);
 console.log("web-clean-v1 theme: semantic token and readability assertions passed");

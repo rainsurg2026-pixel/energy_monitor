@@ -12,6 +12,7 @@ import type { AirRecord, DcRecord, EnergyCostRecord, MonthlyLog, SrinakarinInput
 import WebEntryWorkflowHeader, { WebHistoricalEditNotice } from "./WebEntryWorkflowHeader";
 import { formatWebSavedTimestamp } from "./formatting";
 import RackUnitCapacityEntry, { type RackUnitCapacityEntryActions } from "./RackUnitCapacityEntry";
+import { WebRackCapacityEntrySection, type WebRackCapacityEditorActions } from "./WebRackCapacityEditors";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import { monthLabelLong } from "../utils/monthUtils";
 
@@ -34,7 +35,7 @@ export function mergeEntryDraft(draft: MonthlyLog, updates: LiveDrafts): Monthly
 /** Full browser implementation of Desktop's entry workspace.
  * Save All first combines every in-page draft into one MonthlyLog and calls
  * the Web API once, preserving its row-version concurrency contract. */
-export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, months, month, draft, rackUnitInitialRow, busy, readOnly = false, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onRackUnitSaved, onNotice, onDirtyChange, onRegisterActions }: {
+export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, months, month, draft, rackUnitInitialRow, busy, readOnly = false, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onRackUnitSaved, onRackCapacitySaved, onNotice, onDirtyChange, onRegisterActions }: {
   lang: "th" | "en";
   siteId: number;
   siteName: string;
@@ -50,6 +51,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
   onSave: (patch: Partial<MonthlyLog>) => Promise<boolean>;
   onSelectMonth: (month: string, exists: boolean) => void;
   onRackUnitSaved: () => Promise<void> | void;
+  onRackCapacitySaved: () => Promise<void> | void;
   onNotice: (message: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
   onRegisterActions?: (actions: EntryWorkspaceActions | null) => void;
@@ -58,21 +60,24 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
   const monthLabel = monthLabelLong(month, lang);
   const sectionApisRef = useRef<Partial<Record<Section, EntrySectionApi>>>({});
   const rackUnitActionsRef = useRef<RackUnitCapacityEntryActions | null>(null);
+  const rackCapacityActionsRef = useRef<WebRackCapacityEditorActions | null>(null);
   const draftsRef = useRef<LiveDrafts>({});
   const [draftTick, setDraftTick] = useState(0);
   const [savingAll, setSavingAll] = useState(false);
   const [rackUnitDirty, setRackUnitDirty] = useState(false);
+  const [rackCapacityDirty, setRackCapacityDirty] = useState(false);
   const [rackUnitCompletion, setRackUnitCompletion] = useState<SectionCompletion>(() => computeRackUnitCompletion(rackUnitInitialRow?.totalU, rackUnitInitialRow?.usedU));
   const [pendingHistoricalSave, setPendingHistoricalSave] = useState<PendingHistoricalSave | null>(null);
 
   const register = useCallback((section: Section) => (api: EntrySectionApi | null) => { if (api) sectionApisRef.current[section] = api; else delete sectionApisRef.current[section]; }, []);
   const registerRackUnitActions = useCallback((actions: RackUnitCapacityEntryActions | null) => { rackUnitActionsRef.current = actions; }, []);
+  const registerRackCapacityActions = useCallback((actions: WebRackCapacityEditorActions | null) => { rackCapacityActionsRef.current = actions; }, []);
   const reportDraft = useCallback((section: keyof LiveDrafts, value: LiveDrafts[keyof LiveDrafts]) => { draftsRef.current[section] = value as never; setDraftTick(tick => tick + 1); }, []);
   const liveDraft = useMemo<MonthlyLog>(() => mergeEntryDraft(draft, draftsRef.current), [draft, draftTick]);
   const completion = useMemo(() => computeCompletion(liveDraft), [liveDraft]);
   const registeredApis = () => Object.values(sectionApisRef.current).filter((api): api is EntrySectionApi => api !== undefined);
   const hasMonthlyDraftChanges = useMemo(() => registeredApis().some(api => api.hasChanges()), [draftTick, draft]);
-  const hasDraftChanges = useMemo(() => hasMonthlyDraftChanges || rackUnitDirty, [hasMonthlyDraftChanges, rackUnitDirty]);
+  const hasDraftChanges = useMemo(() => hasMonthlyDraftChanges || rackCapacityDirty || rackUnitDirty, [hasMonthlyDraftChanges, rackCapacityDirty, rackUnitDirty]);
   useEffect(() => { onDirtyChange?.(hasDraftChanges); }, [hasDraftChanges, onDirtyChange]);
   const latestMonth = months.at(-1) ?? null;
   const lastSaved = formatWebSavedTimestamp(draft.lastSavedUps ?? draft.lastSavedAir ?? draft.lastSavedDc ?? draft.lastSavedEnergyCost ?? null);
@@ -80,8 +85,10 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
 
   const resetAll = useCallback(() => {
     registeredApis().forEach(api => api.reset());
+    rackCapacityActionsRef.current?.reset();
     rackUnitActionsRef.current?.reset();
     draftsRef.current = {};
+    setRackCapacityDirty(false);
     setRackUnitDirty(false);
     setDraftTick(tick => tick + 1);
   }, []);
@@ -97,6 +104,11 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
         const saved = await onSave({ ups: liveDraft.ups, srinakarinInputs: liveDraft.srinakarinInputs, air: liveDraft.air, dc: liveDraft.dc, energyCost: liveDraft.energyCost });
         if (!saved) return false;
       }
+      const rackCapacityActions = rackCapacityActionsRef.current;
+      const shouldSaveRackCapacity = rackCapacityActions ? rackCapacityActions.hasChanges() : rackCapacityDirty;
+      if (shouldSaveRackCapacity) {
+        if (!rackCapacityActions || !await rackCapacityActions.save()) return false;
+      }
       const rackUnitActions = rackUnitActionsRef.current;
       const shouldSaveRackUnit = rackUnitActions ? rackUnitActions.hasChanges() : rackUnitDirty;
       if (shouldSaveRackUnit) {
@@ -105,7 +117,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
       }
       return true;
     } finally { setSavingAll(false); }
-  }, [busy, hasDraftChanges, hasMonthlyDraftChanges, liveDraft, onNotice, onSave, rackUnitDirty, savingAll]);
+  }, [busy, hasDraftChanges, hasMonthlyDraftChanges, liveDraft, onNotice, onSave, rackCapacityDirty, rackUnitDirty, savingAll]);
   const askHistoricalSave = useCallback((scope: PendingHistoricalSave["scope"], execute: () => Promise<boolean>) => {
     if (!isHistorical) return execute();
     return new Promise<boolean>(resolve => setPendingHistoricalSave({ scope, execute, resolve }));
@@ -134,7 +146,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
     try { pending.resolve(await pending.execute()); } catch { pending.resolve(false); }
   };
   useEffect(() => { onRegisterActions?.({ saveAll, resetAll }); return () => onRegisterActions?.(null); }, [onRegisterActions, resetAll, saveAll]);
-  const jumpToSection = useCallback((section: Section | "rackUnit") => document.getElementById(`entry-section-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), []);
+  const jumpToSection = useCallback((section: Section | "rack" | "rackUnit") => document.getElementById(`entry-section-${section}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), []);
 
   return <div className="space-y-5 pb-40 md:pb-24">
     <WebEntryWorkflowHeader lang={lang} facilityName={siteName} months={months} selectedMonth={month} draft={liveDraft} allowedStartMonth={allowedStartMonth} allowedEndMonth={allowedEndMonth} onSelectMonth={onSelectMonth} />
@@ -146,6 +158,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
       <div id="entry-section-air"><AirTable lang={lang} monthStr={month} initialRecord={draft.air} lastSaved={formatWebSavedTimestamp(draft.lastSavedAir)} meterFields={draft.energyCalculation?.airFields} onSave={air => requestSectionSave("air", { air })} registerApi={register("air")} onDraftChange={air => reportDraft("air", air)} /></div>
       <div id="entry-section-dc"><DcTable lang={lang} monthStr={month} initialRecords={draft.dc} lastSaved={formatWebSavedTimestamp(draft.lastSavedDc)} onSave={dc => requestSectionSave("dc", { dc })} registerApi={register("dc")} onDraftChange={dc => reportDraft("dc", dc)} /></div>
       <div id="entry-section-energy"><EnergyCostTable lang={lang} monthStr={month} initialRecord={draft.energyCost} lastSaved={formatWebSavedTimestamp(draft.lastSavedEnergyCost)} onSave={energyCost => requestSectionSave("energy", { energyCost })} registerApi={register("energy")} onDraftChange={energy => reportDraft("energy", energy)} /></div>
+      <div id="entry-section-rack"><WebRackCapacityEntrySection siteId={siteId} siteName={siteName} month={month} readOnly={readOnly} onSaved={onRackCapacitySaved} onDirtyChange={setRackCapacityDirty} onRegisterActions={registerRackCapacityActions} /></div>
       <div id="entry-section-rack-unit"><RackUnitCapacityEntry siteId={siteId} month={month} initialRow={rackUnitInitialRow} onSaved={onRackUnitSaved} onMessage={onNotice} onCompletionChange={setRackUnitCompletion} onDirtyChange={setRackUnitDirty} onRegisterActions={registerRackUnitActions} /></div>
     </section>
     <StickyEntryToolbar lang={lang} completion={completion} rackUnitCompletion={rackUnitCompletion} lastSaved={lastSaved} readOnly={readOnly} workbookStatus={readOnly ? "readonly" : savingAll || busy ? "busy" : hasDraftChanges ? "dirty" : "saved"} hasDraftChanges={hasDraftChanges} aboveMobileNav facilityName={siteName} monthLabel={month} provider="Production API" onSaveAll={() => void requestSaveAll()} onResetAll={resetAll} onJumpToSection={jumpToSection} />

@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Boxes, Check, Filter, RotateCcw, Save, Search } from "lucide-react";
 import type { RackFieldChangeRequest } from "../data/IDataProvider";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import { formatRackCabinetSize, formatRatioPercent, normalizeRackEditableValue, RACK_CANONICAL_STATUSES, type RackEditableField } from "../utils/rackCapacity";
-import { useRackCapacity } from "../components/rack/RackCapacityContext";
+import { RackCapacityProvider, useRackCapacity } from "../components/rack/RackCapacityContext";
 import { applyRackEditorPartialSave, applyRackEditorSaveFailure, applyRackEditorSaveSuccess, beginRackEditorSave, createRackEditorState, discardRackEditorChanges, rackEditorSourceKey, stageRackEditorField, type RackEditorRecord, type RackEditorState } from "./rackEditorState";
 import { api } from "./api";
+import { cacheRackCapacitySnapshot, useRackCapacitySnapshot } from "./rackCapacityData";
+import { rackSummaryFromSnapshot } from "./rackCapacityPresentation";
+import { calculateRackCapacityMetrics } from "../utils/rackCapacity";
+import { formatFixedNumber } from "../utils/numberFormat";
 
 export interface RackApiSnapshot {
   month?: string;
@@ -14,6 +18,12 @@ export interface RackApiSnapshot {
 }
 
 export interface RackUnitApiSnapshot { rowVersion: number; totalU: number; usedU: number; availableU: number; usagePercent: number | null; availabilityPercent: number | null; }
+
+export interface WebRackCapacityEditorActions {
+  save: () => Promise<boolean>;
+  reset: () => void;
+  hasChanges: () => boolean;
+}
 
 type ApiRackHistoryRow = { month: string; facility: string; rackZone: string; totalRacks: number; inUse: number; available: number; reserved: number; pendingDismantle: number; other: number; usagePct: number | null; availabilityPct: number | null; reservedPct: number | null; pendingDismantlePct: number | null; otherPct: number | null; generatedAt: string; dataVersion: number };
 
@@ -50,9 +60,10 @@ function mergePartialRackSave(state: RackEditorState, snapshot: RackApiSnapshot,
 /** Production-web Rack Capacity editor. It owns a server-confirmed baseline
  * and sends one optimistic, field-level batch per save. The Desktop editor is
  * intentionally left untouched because it uses a different IDataProvider. */
-export function WebRackCapacityEditor({ siteId, month, snapshot, onSaved, onDirtyChange }: { siteId: number; month: string; snapshot: RackApiSnapshot | null; onSaved?: (snapshot: RackApiSnapshot, history: RackCapacityHistoryRow[]) => void; onDirtyChange?: (dirty: boolean) => void }) {
+export function WebRackCapacityEditor({ siteId, month, snapshot, snapshotPersisted = true, carryForwardSourceMonth, carryForwardSourceRowVersion, readOnly = false, onSaved, onDraftChange, onDirtyChange, onRegisterActions }: { siteId: number; month: string; snapshot: RackApiSnapshot | null; snapshotPersisted?: boolean; carryForwardSourceMonth?: string | null; carryForwardSourceRowVersion?: number; readOnly?: boolean; onSaved?: (snapshot: RackApiSnapshot, history: RackCapacityHistoryRow[]) => void; onDraftChange?: (snapshot: RackApiSnapshot) => void; onDirtyChange?: (dirty: boolean) => void; onRegisterActions?: (actions: WebRackCapacityEditorActions | null) => void }) {
   const { selectedZone } = useRackCapacity();
   const [state, setState] = useState<RackEditorState | null>(() => snapshot ? createRackEditorState(siteId, month, snapshot.rowVersion, editorRecords(snapshot)) : null);
+  const activeSaveKeyRef = useRef<string | null>(null);
   const [query, setQuery] = useState("");
   const [zoneFilter, setZoneFilter] = useState(selectedZone ?? "");
   const [statusFilter, setStatusFilter] = useState("");
@@ -64,8 +75,12 @@ export function WebRackCapacityEditor({ siteId, month, snapshot, onSaved, onDirt
     const key = rackEditorSourceKey(siteId, month, snapshot.rowVersion);
     if (stateSourceKey !== key) setState(createRackEditorState(siteId, month, snapshot.rowVersion, editorRecords(snapshot)));
   }, [month, siteId, snapshot, stateSourceKey]);
-  useEffect(() => { onDirtyChange?.((state?.dirtyRows.size ?? 0) > 0); }, [onDirtyChange, state?.dirtyRows.size]);
+  useEffect(() => { onDirtyChange?.(Boolean(state && (!snapshotPersisted || state.dirtyRows.size > 0))); }, [onDirtyChange, snapshotPersisted, state?.dirtyRows.size]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+  useEffect(() => {
+    if (!state || !snapshot || state.sourceKey !== rackEditorSourceKey(siteId, month, snapshot.rowVersion)) return;
+    onDraftChange?.({ ...snapshot, records: state.current.map(record => ({ ...record })) });
+  }, [month, onDraftChange, siteId, snapshot, state]);
   useEffect(() => { if (selectedZone !== null) setZoneFilter(selectedZone); }, [selectedZone]);
 
   const visibleRecords = useMemo(() => {
@@ -76,36 +91,98 @@ export function WebRackCapacityEditor({ siteId, month, snapshot, onSaved, onDirt
   const zones = useMemo(() => Array.from(new Set<string>((state?.current ?? []).map(record => record.rackZone).filter((value): value is string => Boolean(value)))).sort((a, b) => a.localeCompare(b)), [state]);
   const statuses = useMemo(() => Array.from(new Set<string>((state?.current ?? []).map(record => record.status).filter((value): value is string => Boolean(value)))).sort((a, b) => a.localeCompare(b)), [state]);
 
-  if (!snapshot || !state) return <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">Rack Capacity Editor is unavailable for this month because no monthly Rack Capacity snapshot exists.</section>;
-  const dirtyCount = state.dirtyRows.size;
-  const baselineByRow = new Map<number, RackEditorRecord>(state.baseline.flatMap(record => record.rowNumber === null ? [] : [[record.rowNumber, record] as const]));
-  const save = async () => {
-    if (dirtyCount === 0 || state.saving) return;
+  const dirtyCount = state?.dirtyRows.size ?? 0;
+  const baselineByRow = new Map<number, RackEditorRecord>((state?.baseline ?? []).flatMap(record => record.rowNumber === null ? [] : [[record.rowNumber, record] as const]));
+  const canInitialize = Boolean(snapshot && !snapshotPersisted);
+  useEffect(() => { activeSaveKeyRef.current = null; return () => { activeSaveKeyRef.current = null; }; }, [month, siteId, snapshot?.rowVersion]);
+  const save = useCallback(async (): Promise<boolean> => {
+    if (!snapshot || !state || readOnly || (dirtyCount === 0 && !canInitialize) || state.saving) return false;
     const changes = state.current.filter(record => record.rowNumber !== null && state.dirtyRows.has(record.rowNumber)).map(record => changeForRow(baselineByRow.get(record.rowNumber!)!, record));
+    const requestKey = siteId + ":" + month + ":" + snapshot.rowVersion + ":" + (canInitialize ? "initialize" : "update");
+    activeSaveKeyRef.current = requestKey;
     setState(beginRackEditorSave(state));
     try {
-      const result = await api<{ snapshot: RackApiSnapshot; outcomes: Array<{ rowNumber: number; applied: boolean }>; rackCapacityHistory: ApiRackHistoryRow[] }>(`/racks?siteId=${siteId}&month=${encodeURIComponent(month)}`, { method: "PUT", body: JSON.stringify({ changes, expected_row_version: snapshot.rowVersion, force_snapshot: true }) });
+      const result = await api<{ snapshot: RackApiSnapshot; outcomes: Array<{ rowNumber: number; applied: boolean }>; rackCapacityHistory: ApiRackHistoryRow[] }>("/racks?siteId=" + siteId + "&month=" + encodeURIComponent(month), { method: "PUT", body: JSON.stringify({ changes, expected_row_version: snapshotPersisted ? snapshot.rowVersion : null, initialize: canInitialize, carry_forward_source_month: carryForwardSourceMonth, carry_forward_source_row_version: carryForwardSourceRowVersion, force_snapshot: true }) });
+      if (activeSaveKeyRef.current !== requestKey) return false;
       const nextHistory = historyRows(result.rackCapacityHistory);
-       setState(previous => previous ? (result.outcomes.every(outcome => outcome.applied) ? applyRackEditorSaveSuccess(previous, editorRecords(result.snapshot), result.snapshot.rowVersion) : mergePartialRackSave(previous, result.snapshot, result.outcomes)) : previous);
+      setState(previous => previous ? (result.outcomes.every(outcome => outcome.applied) ? applyRackEditorSaveSuccess(previous, editorRecords(result.snapshot), result.snapshot.rowVersion) : mergePartialRackSave(previous, result.snapshot, result.outcomes)) : previous);
       onSaved?.(result.snapshot, nextHistory);
+      return true;
     } catch (reason) {
+      if (activeSaveKeyRef.current !== requestKey) return false;
       setState(previous => previous ? applyRackEditorSaveFailure(previous, reason instanceof Error ? reason.message : "Rack Capacity save failed. Your edits remain available.") : previous);
+      return false;
+    } finally {
+      if (activeSaveKeyRef.current === requestKey) activeSaveKeyRef.current = null;
     }
-  };
+  }, [baselineByRow, canInitialize, carryForwardSourceMonth, carryForwardSourceRowVersion, dirtyCount, month, onSaved, readOnly, siteId, snapshot, snapshotPersisted, state]);
+  const reset = useCallback(() => { setState(previous => previous ? discardRackEditorChanges(previous) : previous); setConfirmDiscard(false); }, []);
   const discard = () => { if (dirtyCount > 0) setConfirmDiscard(true); };
-  const confirm = () => { setState(previous => previous ? discardRackEditorChanges(previous) : previous); setConfirmDiscard(false); };
-  const stage = (rowNumber: number, field: RackEditorField, value: string | null) => setState(previous => previous && !previous.saving ? stageRackEditorField(previous, rowNumber, field, value) : previous);
+  const confirm = () => { reset(); };
+  const hasChanges = useCallback(() => Boolean(snapshot && (!snapshotPersisted || dirtyCount > 0)), [dirtyCount, snapshot, snapshotPersisted]);
+  useEffect(() => { onRegisterActions?.({ save, reset, hasChanges }); return () => onRegisterActions?.(null); }, [hasChanges, onRegisterActions, reset, save]);
+  if (!snapshot || !state) return <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-400">Rack Capacity Editor is unavailable for this month because no monthly Rack Capacity snapshot exists.</section>;
+  const stage = (rowNumber: number, field: RackEditorField, value: string | null) => setState(previous => previous && !previous.saving && !readOnly ? stageRackEditorField(previous, rowNumber, field, value) : previous);
+  const statusLabel = snapshotPersisted ? "Server-confirmed monthly snapshot" : "Carried forward from " + (carryForwardSourceMonth ?? "a prior month") + " · Not yet confirmed";
   return <section aria-busy={state.saving} className="relative overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-xl">
-    <div className="border-b border-slate-800 bg-slate-950/60 px-5 py-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-300"><Boxes className="h-5 w-5" /></div><div><h3 className="font-display text-lg font-bold text-slate-100">Rack Capacity Editor</h3><p className="mt-1 text-xs text-slate-400">Review and update monthly rack status and supporting details for {month}.</p></div></div><div className="flex items-center gap-2 text-xs text-slate-400"><Check className="h-4 w-4 text-emerald-400" />Server-confirmed monthly snapshot</div></div>
-      <div className="mt-5 grid gap-3 md:grid-cols-[1fr_180px_180px_auto]"><label className="relative block"><span className="sr-only">Search Rack ID</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search Rack ID or detail" className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-slate-100 placeholder:text-slate-600" /></label><label className="flex items-center gap-2"><span className="sr-only">Rack Zone</span><Filter className="h-4 w-4 shrink-0 text-slate-500" /><select value={zoneFilter} onChange={event => setZoneFilter(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100"><option value="">Rack Zone</option>{zones.map(zone => <option key={zone} value={zone}>{zone}</option>)}</select></label><label><span className="sr-only">Status</span><select value={statusFilter} onChange={event => setStatusFilter(event.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100"><option value="">Status</option>{statuses.map(status => <option key={status} value={status}>{status}</option>)}</select></label><div className="flex items-center justify-end gap-2"><button type="button" onClick={() => void save()} disabled={dirtyCount === 0 || state.saving} className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold ${dirtyCount > 0 ? "bg-indigo-600 text-white hover:bg-indigo-500" : "bg-slate-700 text-slate-500"}`}><Save className="h-4 w-4" />{state.saving ? "Saving…" : dirtyCount === 1 ? "Save 1 Change" : `Save ${dirtyCount} Changes`}</button>{dirtyCount > 0 && <button type="button" onClick={discard} disabled={state.saving} className="inline-flex items-center gap-2 rounded-lg border border-rose-500/50 px-3 py-2.5 text-sm text-rose-300 hover:bg-rose-500/10"><RotateCcw className="h-4 w-4" />Discard Changes</button>}</div></div>
+    <div className="border-b border-slate-800 bg-slate-950/60 px-5 py-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-300"><Boxes className="h-5 w-5" /></div><div><h3 className="font-display text-lg font-bold text-slate-100">Rack Capacity Editor</h3><p className="mt-1 text-xs text-slate-400">Review and update monthly rack status and supporting details for {month}.</p></div></div><div className="flex items-center gap-2 text-xs text-slate-400"><Check className={snapshotPersisted ? "h-4 w-4 text-emerald-400" : "h-4 w-4 text-sky-400"} />{statusLabel}</div></div>
+      <div className="mt-5 grid gap-3 md:grid-cols-[1fr_180px_180px_auto]"><label className="relative block"><span className="sr-only">Search Rack ID</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search Rack ID or detail" className="w-full rounded-lg border border-slate-700 bg-slate-950 py-2.5 pl-9 pr-3 text-sm text-slate-100 placeholder:text-slate-600" /></label><label className="flex items-center gap-2"><span className="sr-only">Rack Zone</span><Filter className="h-4 w-4 shrink-0 text-slate-500" /><select value={zoneFilter} onChange={event => setZoneFilter(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100"><option value="">Rack Zone</option>{zones.map(zone => <option key={zone} value={zone}>{zone}</option>)}</select></label><label><span className="sr-only">Status</span><select value={statusFilter} onChange={event => setStatusFilter(event.target.value)} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-slate-100"><option value="">Status</option>{statuses.map(status => <option key={status} value={status}>{status}</option>)}</select></label><div className="flex items-center justify-end gap-2"><button type="button" onClick={() => void save()} disabled={readOnly || (!canInitialize && (dirtyCount === 0 || state.saving)) || (canInitialize && state.saving)} className={readOnly ? "inline-flex items-center gap-2 rounded-lg bg-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-500" : canInitialize || dirtyCount > 0 ? "inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500" : "inline-flex items-center gap-2 rounded-lg bg-slate-700 px-4 py-2.5 text-sm font-semibold text-slate-500"}><Save className="h-4 w-4" />{state.saving ? "Saving…" : canInitialize ? "Confirm Monthly Snapshot" : dirtyCount === 1 ? "Save 1 Change" : "Save " + dirtyCount + " Changes"}</button>{dirtyCount > 0 && <button type="button" onClick={discard} disabled={state.saving} className="inline-flex items-center gap-2 rounded-lg border border-rose-500/50 px-3 py-2.5 text-sm text-rose-300 hover:bg-rose-500/10"><RotateCcw className="h-4 w-4" />Discard Changes</button>}</div></div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs"><span className="text-slate-400">{dirtyCount > 0 ? `${dirtyCount} unsaved ${dirtyCount === 1 ? "change" : "changes"}` : "No unsaved changes"}</span><span className="text-slate-500">Showing {visibleRecords.length} of {state.current.length} racks</span></div>
       {state.error && <p role="alert" className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">{state.error}</p>}
     </div>
-    <div className="max-h-[620px] overflow-auto"><table className="min-w-[1050px] w-full border-collapse text-left text-xs"><thead className="sticky top-0 z-10 bg-slate-950 text-[10px] uppercase tracking-wider text-slate-500"><tr>{["Zone", "Rack ID", "Status", "Cabinet Size (cm)", "Detail", "Device Type", "Remarks"].map(label => <th key={label} className="border-b border-slate-800 px-4 py-3 font-semibold">{label}</th>)}</tr></thead><tbody>{visibleRecords.map(record => { const dirty = record.rowNumber !== null && state.dirtyRows.has(record.rowNumber); return <tr key={`${record.rowNumber}-${record.rackId}`} className={dirty ? "bg-indigo-500/10" : "border-b border-slate-800/70"}><td className="px-4 py-2.5 font-medium text-slate-300">{record.rackZone ?? "—"}</td><td className="px-4 py-2.5 font-mono text-slate-100">{record.rackId ?? "—"}</td><td className="px-4 py-2.5"><select aria-label={`${record.rackId ?? "Rack"} Status`} value={valueForInput("status", record.status)} onChange={event => stage(record.rowNumber!, "status", event.target.value)} className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100">{record.status && !RACK_CANONICAL_STATUSES.includes(record.status as (typeof RACK_CANONICAL_STATUSES)[number]) && <option value={record.status}>{record.status}</option>}{RACK_CANONICAL_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}</select></td>{rackEditorFields.slice(1).map(field => <td key={field} className="px-4 py-2.5"><input aria-label={`${record.rackId ?? "Rack"} ${fieldLabel(field)}`} value={valueForInput(field, record[field])} onChange={event => stage(record.rowNumber!, field, event.target.value)} placeholder={displayField(field, record[field]) || "—"} className="w-full min-w-[130px] rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100 placeholder:text-slate-600" /></td>)}</tr>; })}</tbody></table></div>
+    <div className="max-h-[620px] overflow-auto"><table className="min-w-[1050px] w-full border-collapse text-left text-xs"><thead className="sticky top-0 z-10 bg-slate-950 text-[10px] uppercase tracking-wider text-slate-500"><tr>{["Zone", "Rack ID", "Status", "Cabinet Size (cm)", "Detail", "Device Type", "Remarks"].map(label => <th key={label} className="border-b border-slate-800 px-4 py-3 font-semibold">{label}</th>)}</tr></thead><tbody>{visibleRecords.map(record => { const dirty = record.rowNumber !== null && state.dirtyRows.has(record.rowNumber); return <tr key={`${record.rowNumber}-${record.rackId}`} className={dirty ? "bg-indigo-500/10" : "border-b border-slate-800/70"}><td className="px-4 py-2.5 font-medium text-slate-300">{record.rackZone ?? "—"}</td><td className="px-4 py-2.5 font-mono text-slate-100">{record.rackId ?? "—"}</td><td className="px-4 py-2.5"><select aria-label={`${record.rackId ?? "Rack"} Status`} value={valueForInput("status", record.status)} onChange={event => stage(record.rowNumber!, "status", event.target.value)} className="w-full rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100" disabled={readOnly}>{record.status && !RACK_CANONICAL_STATUSES.includes(record.status as (typeof RACK_CANONICAL_STATUSES)[number]) && <option value={record.status}>{record.status}</option>}{RACK_CANONICAL_STATUSES.map(status => <option key={status} value={status}>{status}</option>)}</select></td>{rackEditorFields.slice(1).map(field => <td key={field} className="px-4 py-2.5"><input aria-label={`${record.rackId ?? "Rack"} ${fieldLabel(field)}`} value={valueForInput(field, record[field])} onChange={event => stage(record.rowNumber!, field, event.target.value)} placeholder={displayField(field, record[field]) || "—"} className="w-full min-w-[130px] rounded border border-slate-700 bg-slate-950 px-2 py-1.5 text-slate-100 placeholder:text-slate-600" disabled={readOnly} /></td>)}</tr>; })}</tbody></table></div>
     <div className="border-t border-slate-800 px-5 py-3 text-xs text-slate-500">Showing {visibleRecords.length} of {state.current.length} racks</div>
     {confirmDiscard && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/80 px-4"><section role="dialog" aria-modal="true" aria-labelledby="discard-rack-title" className="w-full max-w-sm rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><p id="discard-rack-title" className="font-display text-lg font-bold text-slate-100">Discard {dirtyCount} unsaved changes? Your edits will be lost.</p><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={() => setConfirmDiscard(false)} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">Cancel</button><button type="button" onClick={confirm} className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white">Discard Changes</button></div></section></div>}
     {state.saving && <div className="absolute inset-0 z-20 cursor-wait bg-slate-950/20" aria-label="Saving Rack Capacity" />}
   </section>;
+}
+
+
+function RackCapacityEntrySummary({ metrics, persisted, sourceMonth }: { metrics: ReturnType<typeof calculateRackCapacityMetrics>; persisted: boolean; sourceMonth: string | null }) {
+  const values = [
+    ["Total Racks", metrics.total],
+    ["In Use", metrics.inUse.count],
+    ["Available", metrics.available.count],
+    ["Reserved", metrics.reserved.count],
+    ["Pending Dismantle", metrics.pendingDismantle.count]
+  ] as const;
+  return <div className="space-y-3" data-testid="rack-capacity-entry-summary">
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <h4 className="font-display text-sm font-bold uppercase tracking-[0.08em] text-slate-200">Rack Capacity &amp; Layout</h4>
+      <span className={persisted ? "text-xs text-emerald-400" : "text-xs text-sky-300"}>{persisted ? "Server-confirmed monthly snapshot" : "Carried forward from " + (sourceMonth ?? "a prior month") + " · Not yet confirmed"}</span>
+    </div>
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+      {values.map(([label, value]) => <div key={label} className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2">
+        <p className="text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
+        <p className="mt-1 font-mono text-lg font-semibold text-slate-100">{formatFixedNumber(value, 0)}</p>
+      </div>)}
+    </div>
+  </div>;
+}
+
+export function WebRackCapacityEntrySection({ siteId, siteName, month, readOnly = false, onSaved, onDirtyChange, onRegisterActions }: { siteId: number; siteName: string; month: string; readOnly?: boolean; onSaved?: () => void; onDirtyChange?: (dirty: boolean) => void; onRegisterActions?: (actions: WebRackCapacityEditorActions | null) => void }) {
+  const loaded = useRackCapacitySnapshot(siteId, month);
+  const key = siteId + ":" + month;
+  const [draftSnapshot, setDraftSnapshot] = useState<RackApiSnapshot | null>(null);
+  const [savedState, setSavedState] = useState<{ persisted: boolean; sourceMonth: string | null; sourceRowVersion?: number } | null>(null);
+  useEffect(() => {
+    if (loaded.key === key && loaded.status === "ready") { setDraftSnapshot(loaded.snapshot); setSavedState(null); }
+  }, [key, loaded.key, loaded.snapshot, loaded.status]);
+  const activeSnapshot = loaded.key === key && loaded.status === "ready" ? draftSnapshot : null;
+  const persisted = savedState?.persisted ?? loaded.persisted;
+  const sourceMonth = savedState?.sourceMonth ?? loaded.sourceMonth;
+  const sourceRowVersion = savedState?.sourceRowVersion ?? loaded.sourceRowVersion;
+  const summary = rackSummaryFromSnapshot(activeSnapshot);
+  const metrics = calculateRackCapacityMetrics(summary?.records ?? []);
+  if (loaded.key !== key || loaded.status === "loading") return <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300" data-testid="rack-capacity-entry-section">Loading Rack Capacity…</section>;
+  if (loaded.status === "error") return <section role="alert" className="rounded-2xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100" data-testid="rack-capacity-entry-section"><h3 className="font-semibold">Rack Capacity unavailable</h3><p className="mt-2 text-sm">{loaded.error}</p></section>;
+  if (!activeSnapshot) return <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-5 text-sm text-amber-100" data-testid="rack-capacity-entry-section"><h3 className="font-semibold">Rack Capacity &amp; Layout</h3><p className="mt-2">No prior confirmed Rack Capacity snapshot is available for {month}. Use the supported import or initialization workflow to create the first monthly snapshot.</p></section>;
+  return <RackCapacityProvider key={key} lang="en" facilityName={siteName} initialReportingMonth={month} rackCapacity={summary} rackUnitCapacity={[]} rackCapacityHistory={[]}>
+    <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-950/40 p-4 sm:p-5" data-testid="rack-capacity-entry-section">
+      <RackCapacityEntrySummary metrics={metrics} persisted={persisted} sourceMonth={sourceMonth} />
+      <WebRackCapacityEditor siteId={siteId} month={month} snapshot={activeSnapshot} snapshotPersisted={persisted} carryForwardSourceMonth={sourceMonth} carryForwardSourceRowVersion={sourceRowVersion} readOnly={readOnly} onDraftChange={setDraftSnapshot} onSaved={next => { const saved = { snapshot: next, persisted: true, sourceMonth: null, sourceRowVersion: undefined }; setDraftSnapshot(saved.snapshot); setSavedState({ persisted: true, sourceMonth: null, sourceRowVersion: undefined }); cacheRackCapacitySnapshot(siteId, month, saved); onSaved?.(); }} onDirtyChange={onDirtyChange} onRegisterActions={onRegisterActions} />
+    </section>
+  </RackCapacityProvider>;
 }
 
 /** Web equivalent of Desktop's Total/Used Rack Unit Capacity workflow.

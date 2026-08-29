@@ -31,8 +31,8 @@ function rackEditValue(value: unknown, field: RackEditableField, path: string): 
   if (typeof value !== "string") throw new HttpError(400, "INVALID_RACK_CHANGES", `${path} must be a string or null.`);
   return normalizeRackEditableValue(field, value);
 }
-function parseRackChanges(value: unknown): RackFieldChange[] {
-  if (!Array.isArray(value) || value.length === 0) throw new HttpError(400, "INVALID_RACK_CHANGES", "changes must be a non-empty array.");
+function parseRackChanges(value: unknown, allowEmpty = false): RackFieldChange[] {
+  if (!Array.isArray(value) || (value.length === 0 && !allowEmpty)) throw new HttpError(400, "INVALID_RACK_CHANGES", "changes must be a non-empty array.");
   const seenRows = new Set<number>();
   return value.map((entry, index) => {
     const source = rackObject(entry, `changes[${index}]`);
@@ -345,7 +345,14 @@ export class ApiService {
     await this.requireSite(siteId);
     const { month: selected } = await this.requireVisibleMonth(month);
     const snapshot = await this.repository.getRackSnapshot(siteId, selected);
-    return { siteId, month: selected, snapshot: snapshot ? { ...snapshot, metrics: calculateRackCapacityMetrics(snapshot.records) } : null };
+    if (snapshot) return { siteId, month: selected, snapshot: { ...snapshot, metrics: calculateRackCapacityMetrics(snapshot.records) }, carryForwardCandidate: null };
+    const candidate = await this.repository.getLatestRackSnapshotBefore(siteId, selected);
+    return {
+      siteId,
+      month: selected,
+      snapshot: null,
+      carryForwardCandidate: candidate ? { sourceMonth: candidate.month, snapshot: { ...candidate, metrics: calculateRackCapacityMetrics(candidate.records) } } : null
+    };
   }
 
   async saveRacks(siteId: number, month: unknown, body: unknown, correlationId: string, actorUserId?: number | null): Promise<unknown> {
@@ -354,11 +361,17 @@ export class ApiService {
     const source = body === null || typeof body !== "object" || Array.isArray(body)
       ? (() => { throw new HttpError(400, "INVALID_BODY", "Request body must be a JSON object."); })()
       : body as Record<string, unknown>;
-    const changes = parseRackChanges(source.changes);
+    const initializeFromPrevious = source.initialize === true;
+    if (source.initialize !== undefined && typeof source.initialize !== "boolean") throw new HttpError(400, "INVALID_BODY", "initialize must be a boolean.");
+    const changes = parseRackChanges(source.changes, initializeFromPrevious);
     const expectedRowVersion = parseExpectedRowVersion(source.expected_row_version);
+    const carryForwardSourceMonth = source.carry_forward_source_month === undefined ? undefined : this.strictMonth(source.carry_forward_source_month, "carry_forward_source_month");
+    const parsedSourceVersion = source.carry_forward_source_row_version === undefined ? undefined : parseExpectedRowVersion(source.carry_forward_source_row_version);
+    const carryForwardSourceRowVersion = parsedSourceVersion === null ? undefined : parsedSourceVersion;
+    if (!initializeFromPrevious && (carryForwardSourceMonth !== undefined || carryForwardSourceRowVersion !== undefined)) throw new HttpError(400, "INVALID_BODY", "Carry-forward source metadata requires initialize=true.");
     const now = this.now();
     const result = await this.repository.withTransaction(async repository => {
-      const saved = await repository.saveRackCapacity({ siteId, facility: site.code, month: selected, changes, expectedRowVersion, actorUserId, correlationId, generatedAt: now.toISOString() });
+      const saved = await repository.saveRackCapacity({ siteId, facility: site.code, month: selected, changes, expectedRowVersion, actorUserId, correlationId, generatedAt: now.toISOString(), initializeFromPrevious, carryForwardSourceMonth, carryForwardSourceRowVersion });
       const history = (await repository.listRackCapacityHistory(siteId)).filter(row => period.startMonth <= row.month && row.month <= period.endMonth && row.month <= monthOfDate(now));
       return { saved, history };
     });
