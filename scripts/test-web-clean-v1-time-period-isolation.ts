@@ -45,6 +45,12 @@ assert.match(app, /<HistoricalCharts logs=\{history\.logs\} lang=\{lang\} select
 assert.match(app, /<HistoricalExplorer logs=\{history\.logs\} lang=\{lang\} selectedMonth=\{displayMonth\} displayPeriod=\{globalDisplayPeriodRange\}/);
 assert.match(app, /view === "comparison" && <WebSiteComparison lang=\{lang\} \/>/);
 assert.match(app, /view === "rack-comparison" && <WebSiteRackCapacityComparison month=\{displayMonth\} \/>/);
+// WebSiteComparison must not keep a `reportMonths` prop that defaults to a new
+// [] each render - that made its load useCallback identity churn and refetch
+// /site-comparison in a loop once the Reports Quick Range stopped feeding it.
+const comparison = readFileSync(new URL("../src/web-clean-v1/WebSiteComparison.tsx", import.meta.url), "utf8");
+assert.doesNotMatch(comparison, /reportMonths|activePeriodLabel/);
+assert.match(comparison, /const load = useCallback\(async \(\) => \{[\s\S]*\}, \[\]\);/);
 
 // --- A: the Global Display Period is applied CLIENT-side, not just server-side
 assert.match(app, /const displayPeriodStart = bootstrap\?\.displayPeriod\.startMonth \?\? null;/);
