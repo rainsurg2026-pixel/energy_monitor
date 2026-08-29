@@ -113,7 +113,12 @@ export default function CleanWebApp() {
   const [history, setHistory] = useState<HistoryData>({ months: [], logs: [] });
   const [month, setMonth] = useState(todayMonth());
   const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriodSelection>(() => defaultReportingPeriod(todayMonth()));
-  const [reportingPeriodCustomized, setReportingPeriodCustomized] = useState(false);
+  // Non-null = an active trailing preset (the Last 3 Months default, or an
+  // explicitly chosen Last 3 / 6 / 12 Months). Its window always ends at the
+  // selected Reporting Month and slides with it. Null = a bespoke selection
+  // (custom Month Range / Single Month / Current / Full) that is preserved
+  // exactly, only clamped to months the active site has.
+  const [reportingPeriodPreset, setReportingPeriodPreset] = useState<ReportingPeriodPreset | null>(3);
   const [draft, setDraft] = useState<MonthlyLog | null>(null);
   const [rowVersion, setRowVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -194,8 +199,8 @@ export default function CleanWebApp() {
     const idle = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback;
     if (idle) idle(run, { timeout: 3000 }); else window.setTimeout(run, 1200);
   }, [loadHistory]);
-  const updateReportingPeriod = useCallback((next: ReportingPeriodSelection) => {
-    setReportingPeriodCustomized(true);
+  const updateReportingPeriod = useCallback((next: ReportingPeriodSelection, preset: ReportingPeriodPreset | null = null) => {
+    setReportingPeriodPreset(preset);
     setReportingPeriod(next);
     if (siteId) void loadHistory(siteId, { scope: "full" }).catch(error => setNotice(readError(error)));
   }, [loadHistory, siteId]);
@@ -257,8 +262,11 @@ export default function CleanWebApp() {
   useEffect(() => {
     if (reportingPeriodAvailableMonths.length === 0) return;
     setReportingPeriod(current => {
-      if (!reportingPeriodCustomized) {
-        const next = defaultReportingPeriod(reportingPeriodEndMonth, reportingPeriodAvailableMonths);
+      // A trailing preset always ends at the currently selected Reporting
+      // Month - it is never anchored to the latest available month, the newest
+      // site snapshot, or the current calendar month.
+      if (reportingPeriodPreset !== null) {
+        const next = reportingPeriodForPreset(reportingPeriodEndMonth, reportingPeriodPreset, reportingPeriodAvailableMonths);
         return current.mode === next.mode && current.singleMonth === next.singleMonth && current.rangeStart === next.rangeStart && current.rangeEnd === next.rangeEnd ? current : next;
       }
       if (current.mode === "current" || current.mode === "full") return current;
@@ -272,7 +280,7 @@ export default function CleanWebApp() {
       const nextEnd = rangeStart <= rangeEnd ? rangeEnd : reportingPeriodAvailableMonths.at(-1)!;
       return nextStart === current.rangeStart && nextEnd === current.rangeEnd ? current : { ...current, rangeStart: nextStart, rangeEnd: nextEnd };
     });
-  }, [reportingPeriodAvailableMonths, reportingPeriodCustomized, reportingPeriodEndMonth, siteId]);
+  }, [reportingPeriodAvailableMonths, reportingPeriodEndMonth, reportingPeriodPreset, siteId]);
   useEffect(() => { void initialize().catch(error => setNotice(readError(error))); }, [initialize]);
   useEffect(() => { if (notice) { const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); } }, [notice]);
   useEffect(() => { document.documentElement.lang = lang; }, [lang]);
@@ -437,7 +445,7 @@ export default function CleanWebApp() {
       setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
     } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
-  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setViewState("entry"); setUser(null); setBootstrap(null); setDraft(null); setReportingPeriodCustomized(false); setReportingPeriod(defaultReportingPeriod(todayMonth())); }, []);
+  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setViewState("entry"); setUser(null); setBootstrap(null); setDraft(null); setReportingPeriodPreset(3); setReportingPeriod(defaultReportingPeriod(todayMonth())); }, []);
   useEffect(() => { setUnauthorizedHandler(() => { setEntryDirty(false); setRackDirty(false); clearSession(); }); return () => setUnauthorizedHandler(null); }, [clearSession]);
   const logout = async () => { const action = async () => { setEntryDirty(false); setRackDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { clearSession(); } }; deferNavigation(action); };
   const registerEntryActions = useCallback((actions: EntryWorkspaceActions | null) => { entryActionsRef.current = actions; }, []);
@@ -632,7 +640,7 @@ const PERIOD_MODE_OPTIONS: Array<{ value: ReportingPeriodMode; label: string }> 
  *  CSV/Excel/PDF builders (see reportPeriod.ts), so Excel/CSV/PDF always
  *  reflect the current selection, never a stale earlier one. Matches
  *  Desktop's four Reporting Period modes, confirmed by direct inspection. */
-function Reports({ lang, siteId, siteName, logs, month, sites, period, periodEndMonth, periodMonthsAvailable, rackCapacityHistory, rackUnitCapacity, upsGroupHistory, onPeriodChange, onRefresh }: { lang: AppLanguage; siteId: number | null; siteName: string; logs: MonthlyLog[]; month: string; sites: Site[]; period: ReportingPeriodSelection; periodEndMonth: string; periodMonthsAvailable: readonly string[]; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; upsGroupHistory: UpsGroupHistoryReport | null; onPeriodChange: (next: ReportingPeriodSelection) => void; onRefresh: () => Promise<void> }) {
+function Reports({ lang, siteId, siteName, logs, month, sites, period, periodEndMonth, periodMonthsAvailable, rackCapacityHistory, rackUnitCapacity, upsGroupHistory, onPeriodChange, onRefresh }: { lang: AppLanguage; siteId: number | null; siteName: string; logs: MonthlyLog[]; month: string; sites: Site[]; period: ReportingPeriodSelection; periodEndMonth: string; periodMonthsAvailable: readonly string[]; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; upsGroupHistory: UpsGroupHistoryReport | null; onPeriodChange: (next: ReportingPeriodSelection, preset?: ReportingPeriodPreset | null) => void; onRefresh: () => Promise<void> }) {
   const th = lang === "th";
   const reportCopy = th ? {
     title: "รายงานและการส่งออก", intro: "Excel เก็บค่าที่กรอก ค่าวันที่บันทึก และค่าคำนวณของ Desktop เป็นเซลล์ชนิดข้อมูล ตัวเลขมีทศนิยม 2 ตำแหน่ง และวันที่ใช้รูปแบบ dd-Mmm-yy",
@@ -643,7 +651,7 @@ function Reports({ lang, siteId, siteName, logs, month, sites, period, periodEnd
   };
   const [message, setMessage] = useState<string | null>(null);
   const selectedPreset = matchingReportingPeriodPreset(period, periodEndMonth, periodMonthsAvailable);
-  const choosePreset = (count: ReportingPeriodPreset) => onPeriodChange(reportingPeriodForPreset(periodEndMonth, count, periodMonthsAvailable));
+  const choosePreset = (count: ReportingPeriodPreset) => onPeriodChange(reportingPeriodForPreset(periodEndMonth, count, periodMonthsAvailable), count);
   const availableReportMonths = useMemo(() => [...new Set(periodMonthsAvailable)].sort(), [periodMonthsAvailable]);
   const selectedReportMonths = useMemo(() => monthsForReportingPeriod(availableReportMonths.length > 0 ? availableReportMonths : logs.map(log => log.month), period, periodEndMonth), [availableReportMonths, logs, period, periodEndMonth]);
   const selectedReportMonthSet = useMemo(() => new Set(selectedReportMonths), [selectedReportMonths]);

@@ -23,8 +23,34 @@ const custom = { ...lastSix, rangeStart: "2026-03" };
 assert.equal(matchingReportingPeriodPreset(custom, "2026-07", ["2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07"]), null);
 assert.deepEqual(monthsForReportingPeriod(["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"], reportingPeriodForPreset("2026-05", 12, ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"]), "2026-05"), ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05"]);
 
+// A trailing preset's END month is always the currently selected Reporting
+// Month, never the latest available / current calendar month.
+assert.deepEqual((p => ({ start: p.rangeStart, end: p.rangeEnd }))(reportingPeriodForPreset("2026-01", 3, ["2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02", "2026-08"])), { start: "2025-11", end: "2026-01" });
+assert.deepEqual((p => ({ start: p.rangeStart, end: p.rangeEnd }))(reportingPeriodForPreset("2026-01", 6, ["2025-06", "2025-07", "2025-08", "2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-08"])), { start: "2025-08", end: "2026-01" });
+assert.deepEqual((p => ({ start: p.rangeStart, end: p.rangeEnd }))(reportingPeriodForPreset("2026-01", 12, ["2025-02", "2025-06", "2025-12", "2026-01", "2026-08"])), { start: "2025-02", end: "2026-01" });
+// The resolved end never leaks a later available month into the window.
+assert.equal(reportingPeriodForPreset("2026-01", 3, ["2026-01", "2026-08"]).rangeEnd, "2026-01");
+
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
-assert.ok(app.includes("defaultReportingPeriod(reportingPeriodEndMonth, reportingPeriodAvailableMonths)"), "default period uses latest available months");
+// The reconcile effect re-resolves an active preset against the selected
+// Reporting Month (reportingPeriodEndMonth) every time it changes - it is not
+// anchored to defaultReportingPeriod / latest-available anymore.
+assert.ok(app.includes("reportingPeriodForPreset(reportingPeriodEndMonth, reportingPeriodPreset, reportingPeriodAvailableMonths)"), "an active preset always ends at the selected Reporting Month");
+assert.ok(app.includes("const [reportingPeriodPreset, setReportingPeriodPreset] = useState<ReportingPeriodPreset | null>(3)"), "the active trailing preset is tracked (default Last 3 Months)");
+assert.match(app, /const choosePreset = \(count: ReportingPeriodPreset\) => onPeriodChange\(reportingPeriodForPreset\(periodEndMonth, count, periodMonthsAvailable\), count\);/);
+assert.match(app, /onPeriodChange: \(next: ReportingPeriodSelection, preset\?: ReportingPeriodPreset \| null\) => void/);
+// Rack comparison is fed the same active reporting month and period label.
+assert.ok(app.includes('<WebSiteRackCapacityComparison month={activeReportingMonth} activePeriodLabel={reportingPeriodLabel(reportingPeriod, lang)}'), "rack comparison uses the active reporting month");
+assert.ok(app.includes("const activeReportingMonth = effectiveMonth(reportingPeriod, reportingPeriodEndMonth);"), "active reporting month resolves from the lifted period + selected month");
+assert.match(app, /const reportingPeriodEndMonth = useMemo\(\(\) => \{\s*const available = reportingPeriodAvailableMonths\.filter\(value => value <= month\);\s*return available\.at\(-1\) \?\? month;/);
+// The rack comparison component itself must derive everything from the month
+// prop - no internal "latest snapshot / new Date()" period.
+const rackComparison = readFileSync(new URL("../src/web-clean-v1/WebSiteRackCapacityComparison.tsx", import.meta.url), "utf8");
+assert.match(rackComparison, /api<RackSnapshotApiResponse>\(`\/racks\?siteId=\$\{site\.id\}&month=\$\{encodeURIComponent\(month\)\}`\)/);
+assert.match(rackComparison, /\}, \[month\]\);/); // load() request/generation key is the month prop
+assert.ok(rackComparison.includes('"No monthly Rack Capacity snapshot"'), "no-data text is month-scoped, not a latest-month fallback");
+assert.match(rackComparison, /for \$\{site\.site\.name\} — \$\{monthLabelLong\(month, "en"\)\}/);
+assert.doesNotMatch(rackComparison, /new Date\(\)|latestAvailableMonth|latestHistoryMonth/);
 assert.ok(app.includes('"Last " + count + " Months"'), "English preset label exists");
 assert.ok(app.includes('"ย้อนหลัง " + count + " เดือน"'), "Thai preset label exists");
 assert.match(app, /selectedReportMonths/);
