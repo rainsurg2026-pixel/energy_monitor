@@ -18,7 +18,7 @@ import { api, setUnauthorizedHandler, type SessionUser, type Role } from "./api"
 import { buildAllFacilitiesReportHtml, buildSiteComparisonReportHtml, exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportAllFacilitiesHtml as exportAllFacilitiesHtmlFile, exportAllFacilitiesPdf as exportAllFacilitiesPdfFile, exportCsv, exportDesktopPdf as exportDesktopPdfFile, exportExcel, exportHtml as exportHtmlFile, exportSiteComparisonCsv, exportSiteComparisonExcel, exportSiteComparisonHtml, exportSiteComparisonPdf as exportSiteComparisonPdfFile, rackReportFromSnapshot, type ExportFacility, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
 import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, matchingReportingPeriodPreset, monthsForReportingPeriod, reportingPeriodForPreset, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodPreset, type ReportingPeriodSelection } from "./reportPeriod";
-import { facilityStorageKey, latestEnergyMonth, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
+import { clampMonthToDisplayPeriod, facilityStorageKey, latestEnergyMonth, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
 import { applyTheme, languageStorageKey, normalizeLanguage, normalizeTheme, themeStorageKey, type AppLanguage, type Theme } from "./theme";
 import { formatWebSavedTimestamp } from "./formatting";
 import { HistoryProvider } from "../reporting/HistoryProvider";
@@ -48,9 +48,14 @@ type HistoryScope = "dashboard" | "rack" | "full";
  *  scope omits rack capacity), so every code path that primes history on a
  *  site switch must request the scope the *current* view renders from -
  *  otherwise a background dashboard fetch overwrites the rack payload and the
- *  Rack Unit KPIs/trend render empty until the view is remounted. */
+ *  Rack Unit KPIs/trend render empty until the view is remounted.
+ *
+ *  Dashboard uses "full": the trend charts must be able to show the entire
+ *  configured Global Display Period (e.g. Last 12 Months), which the trimmed
+ *  "dashboard" scope (newest 6 log months only) cannot supply. "entry" keeps
+ *  the light scope - it only ever renders one month plus the month picker. */
 const scopeForView = (target: View): HistoryScope =>
-  target === "racks" || target === "rack-units" ? "rack" : target === "history" || target === "reports" ? "full" : "dashboard";
+  target === "racks" || target === "rack-units" ? "rack" : target === "entry" ? "dashboard" : "full";
 type Site = FacilitySite;
 type Bootstrap = BootstrapState;
 type BootstrapApi = Omit<Bootstrap, "sites"> & { sites: Array<{ site: Omit<Site, "availableMonths" | "latestAvailableMonth">; availableMonths: string[]; latestAvailableMonth: string | null }> };
@@ -253,12 +258,12 @@ export default function CleanWebApp() {
       if (!first) { setFacilityError("No facility is available for this account."); return; }
       const initialMonth = first.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth());
       setInitialHistoryLoading(true); setBusy(true); setFacilityLoading(false);
-      const historyPromise = loadHistory(first.id, { scope: "dashboard" });
+      const historyPromise = loadHistory(first.id, { scope: scopeForView("entry") });
       const monthPromise = loadMonth(first.id, initialMonth);
       const [initialHistory] = await Promise.all([historyPromise, monthPromise]);
       const energyMonth = latestEnergyMonth(initialHistory.logs, initialMonth);
       if (energyMonth !== initialMonth) await loadMonth(first.id, energyMonth, initialHistory);
-      loadedPageKeyRef.current = `${first.id}:dashboard`;
+      loadedPageKeyRef.current = `${first.id}:entry`;
       prefetchHistoryScopes(first.id);
     } catch (error) {
       if (activeSiteIdRef.current === null) setFacilityError(`Unable to load facilities: ${readError(error)}`);
@@ -420,7 +425,7 @@ export default function CleanWebApp() {
       const result = await api<{ rowVersion: number }>(`/sites/${siteId}/periods/${month}`, { method: "PUT", body: JSON.stringify({ log, expected_row_version: rowVersion, provenance: { sourceType: "web-clean-v1" } }) });
       setDraft(log); setRowVersion(result.rowVersion);
       const refreshed = await loadHistory(siteId, { force: true, scope: "dashboard" });
-      // The History and Reports views read the "full" scope and Rack views the
+      // Dashboard, History and Reports read the "full" scope and Rack views the
       // "rack" scope; drop those so an edited historical month is not shown
       // stale there until an unrelated forced refresh.
       historyCacheRef.current.delete(`${siteId}:full`);
@@ -444,11 +449,20 @@ export default function CleanWebApp() {
   const refreshAfterSettings = async () => {
     const result = normalizeBootstrap(await api<BootstrapApi>("/bootstrap"));
     const current = result.sites.find(item => item.id === siteId) ?? result.sites[0] ?? null;
+    // The allowed month window changed: every site's cached history payload is
+    // now scoped differently, so drop the lot and force the current view to
+    // reload rather than showing a stale pre-save range.
+    historyCacheRef.current.clear();
+    loadedPageKeyRef.current = null;
     setBootstrap(result); setSiteId(current?.id ?? null); setFacilityError(null);
     if (current) {
-      const records = await loadHistory(current.id, { force: true, scope: "dashboard" });
-      const candidate = current.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth());
-      await loadMonth(current.id, latestEnergyMonth(records.logs, candidate), records);
+      const records = await loadHistory(current.id, { force: true, scope: scopeForView(view) });
+      const windowEnd = result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth();
+      // Reconcile the Selected Reporting Month ONLY if it is now out of range:
+      // keep the user's position when it is still valid, otherwise snap to the
+      // nearest valid boundary - never jump to the site's latest month.
+      const reconciledMonth = clampMonthToDisplayPeriod(month, result.displayPeriod.startMonth, windowEnd, current.availableMonths);
+      await loadMonth(current.id, reconciledMonth, records);
     }
   };
   const refreshReports = useCallback(async () => {
@@ -496,7 +510,7 @@ export default function CleanWebApp() {
         <main className="min-w-0 pb-20 md:pb-6">{view !== "dashboard" && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">{shellCopy.reportingMonth}</span><div className="text-lg font-semibold">{month}</div></div><input aria-label={shellCopy.reportingMonth} type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value, history.months.includes(event.target.value))} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">{shellCopy.displayPeriod} {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />{shellCopy.completion} <b className="text-teal-300">{completion.overall.percent}%</b></div></div>}
            <Suspense fallback={<ViewLoading lang={lang} />}>
            {(busy || initialHistoryLoading) && <div className="mb-4 text-sm text-teal-300">{shellCopy.working}</div>}
-          {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={displayMonth} siteName={site.name} siteCode={site.code} lang={lang} upsGroupHistory={historyUpsGroupHistory} onNotice={setNotice} />}
+          {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={displayMonth} displayPeriod={globalDisplayPeriodRange} siteName={site.name} siteCode={site.code} lang={lang} upsGroupHistory={historyUpsGroupHistory} onNotice={setNotice} />}
           {view === "entry" && draft && <WebEntryWorkspace lang={lang} siteId={siteId!} siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} rackUnitInitialRow={history.rackUnitCapacity?.find(row => row.month === month) ?? null} busy={busy} readOnly={bootstrap?.readOnlyMode ?? false} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={(selected, exists) => void selectMonth(selected, exists)} onRackUnitSaved={async () => { if (!siteId) return; const records = await loadHistory(siteId, { force: true, scope: "dashboard" }); await loadMonth(siteId, month, records); }} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
           {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={displayMonth} discardVersion={rackDiscardVersion} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} onHistorySaved={() => { void loadHistory(siteId, { force: true, scope: "rack" }); }} onDirtyChange={setRackDirty} />}
           {view === "rack-units" && siteId && <RackUnitCapacityView siteId={siteId} siteName={site?.name ?? null} month={displayMonth} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} />}
@@ -537,11 +551,18 @@ function sourceDashboardMapping(siteCode: string, source?: DashboardUpsMappingRe
  *  KPI group totals from silently rendering empty. The detailed per-UPS
  *  UMDB/STS/OUDB hardware mapping table has no Web/DB equivalent at all
  *  (Desktop-only busbar data) and is left empty rather than fabricated. */
-function DashboardView({ logs, month, siteName = "Facility", siteCode = "", dashboardMapping, lang, upsGroupHistory, onNotice }: { logs: MonthlyLog[]; month: string; siteName?: string; siteCode?: string; dashboardMapping?: DashboardUpsMappingReport | null; lang: "th" | "en"; upsGroupHistory: UpsGroupHistoryReport | null; onNotice?: (message: string) => void }) {
+function DashboardView({ logs, month, displayPeriod, siteName = "Facility", siteCode = "", dashboardMapping, lang, upsGroupHistory, onNotice }: { logs: MonthlyLog[]; month: string; displayPeriod?: string; siteName?: string; siteCode?: string; dashboardMapping?: DashboardUpsMappingReport | null; lang: "th" | "en"; upsGroupHistory: UpsGroupHistoryReport | null; onNotice?: (message: string) => void }) {
   const { selectedReportView, selectedYear, selectedPeriod } = useReport();
   const [exportNotice, setExportNotice] = useState<string | null>(null);
   const notify = onNotice === undefined ? (message: string) => setExportNotice(message) : onNotice;
-  const activeMonth = useMemo(() => selectedDashboardMonth(logs, selectedYear, selectedPeriod, month), [logs, month, selectedPeriod, selectedYear]);
+  // The dashboard period selector can resolve `${year}-${period}` for a month
+  // outside the Global Display Period; keep it inside the window (falling back
+  // to the already-clamped `month`) so no KPI/PDF ever targets a hidden month.
+  const activeMonth = useMemo(() => {
+    const resolved = selectedDashboardMonth(logs, selectedYear, selectedPeriod, month);
+    const [windowStart, windowEnd] = (displayPeriod ?? "").split("..");
+    return windowStart && windowEnd && (resolved < windowStart || resolved > windowEnd) ? month : resolved;
+  }, [displayPeriod, logs, month, selectedPeriod, selectedYear]);
   const inferredSiteCode = siteCode || (siteName !== "Facility" ? siteName : (typeof document !== "undefined" ? document.querySelector<HTMLSelectElement>("#facility-selector option:checked")?.textContent ?? "" : ""));
   const upsMapping = useMemo(() => buildDashboardUpsMapping(upsGroupHistory, activeMonth, sourceDashboardMapping(inferredSiteCode, dashboardMapping).mapping), [activeMonth, dashboardMapping, inferredSiteCode, upsGroupHistory]);
   const upsGroupNames = useMemo(() => Array.from(new Set((upsGroupHistory?.rows ?? []).map(row => row.group))), [upsGroupHistory]);

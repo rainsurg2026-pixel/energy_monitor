@@ -7,6 +7,7 @@ import {
   reportingPeriodForPreset,
   type ReportingPeriodSelection
 } from "../src/web-clean-v1/reportPeriod";
+import { clampMonthToDisplayPeriod } from "../src/web-clean-v1/facilityContext";
 
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 
@@ -55,6 +56,30 @@ assert.match(app, /<Reports [^>]*month=\{displayMonth\}[^>]*monthsAvailable=\{si
 
 // --- clearSession no longer resets a (now non-existent) shared period --------
 assert.ok(!/setReportingPeriod\(defaultReportingPeriod/.test(app), "clearSession must not touch a shared reporting period");
+
+// ---------------------------------------------------------------------------
+// PART 2 / 7 - Global Display Period actually governs, and Settings save
+// reconciles the Selected Reporting Month deterministically.
+// ---------------------------------------------------------------------------
+// Dashboard month resolution is clamped into the window (the `${year}-${period}`
+// escape in selectedDashboardMonth cannot target a hidden month).
+assert.match(app, /const activeMonth = useMemo\(\(\) => \{\s*const resolved = selectedDashboardMonth\(logs, selectedYear, selectedPeriod, month\);\s*const \[windowStart, windowEnd\] = \(displayPeriod \?\? ""\)\.split\("\.\."\);\s*return windowStart && windowEnd && \(resolved < windowStart \|\| resolved > windowEnd\) \? month : resolved;/);
+assert.match(app, /<DashboardView logs=\{history\.logs\} month=\{displayMonth\} displayPeriod=\{globalDisplayPeriodRange\}/);
+// Settings save: clear time-window caches + reconcile month to nearest boundary.
+assert.match(app, /historyCacheRef\.current\.clear\(\);\s*loadedPageKeyRef\.current = null;\s*setBootstrap\(result\)/);
+assert.match(app, /const reconciledMonth = clampMonthToDisplayPeriod\(month, result\.displayPeriod\.startMonth, windowEnd, current\.availableMonths\);/);
+assert.ok(!app.includes("latestEnergyMonth(records.logs, candidate)"), "the Settings refresh path no longer jumps to the site's latest month");
+
+// clampMonthToDisplayPeriod: keep-if-valid, else NEAREST boundary (not latest).
+assert.equal(clampMonthToDisplayPeriod("2026-07", "2026-01", "2026-12"), "2026-07"); // in range -> unchanged
+assert.equal(clampMonthToDisplayPeriod("2026-07", "2026-01", "2026-06"), "2026-06"); // past end -> end
+assert.equal(clampMonthToDisplayPeriod("2025-11", "2026-01", "2026-12"), "2026-01"); // before start -> start
+assert.equal(clampMonthToDisplayPeriod("2026-12", "2026-01", "2026-06", ["2026-02", "2026-05"]), "2026-05"); // -> nearest available <= end
+assert.equal(clampMonthToDisplayPeriod("2025-01", "2026-01", "2026-06", ["2026-02", "2026-05"]), "2026-02"); // -> nearest available >= start
+
+// PART 3 - Dashboard uses the "full" history scope so its trend charts can
+// show the whole configured Global Display Period, not the newest 6 months.
+assert.match(app, /target === "racks" \|\| target === "rack-units" \? "rack" : target === "entry" \? "dashboard" : "full"/);
 
 // ---------------------------------------------------------------------------
 // Functional: a trailing preset's window always ends at the SELECTED reporting

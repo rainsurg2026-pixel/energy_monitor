@@ -51,4 +51,16 @@ export function latestEnergyMonth(logs: readonly { month: string }[], fallback: 
   return logs.map(log => log.month).filter(month => /^\d{4}-(0[1-9]|1[0-2])$/.test(month)).sort().at(-1) ?? fallback;
 }
 
+/** Keep a user-selected reporting month inside the Global Display Period.
+ * A month already in range is returned unchanged (the user's position is
+ * preserved); an out-of-range month snaps to the NEAREST valid boundary -
+ * never to "the latest available month". When `available` months are given,
+ * the boundary resolves to the closest month the site actually has. */
+export function clampMonthToDisplayPeriod(month: string, startMonth: string, endMonth: string, available: readonly string[] = []): string {
+  if (month >= startMonth && month <= endMonth) return month;
+  const inRange = [...available].filter(value => value >= startMonth && value <= endMonth).sort();
+  if (month < startMonth) return inRange[0] ?? startMonth;
+  return inRange.at(-1) ?? endMonth;
+}
+
 export function facilityStorageKey(userId: string): string { return `energy-monitor:selected-facility:${userId}`; }
