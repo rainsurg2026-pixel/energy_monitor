@@ -490,6 +490,33 @@ export function fitPdfImageToPage(canvasWidth: number, canvasHeight: number, pag
   };
 }
 
+/**
+ * Neutralizes `src/index.css`'s app-wide dark-theme table readability override
+ * inside the offscreen PDF renderer.
+ *
+ * That stylesheet forces `color/fill/font-weight` `!important` on every
+ * `table:not(.dashboard-table)` and all its descendants so in-app legacy tables
+ * stay legible; in the default (non-`.theme-light`) theme it resolves to
+ * `--color-text: #f4f7fb` (near-white). The PDF exporter mounts the report into
+ * the main document, so that rule cascades onto the report's tables and their
+ * `<td>` values render near-white on the white PDF page - while KPI cards,
+ * cover, and hand-built SVG charts (not inside `<table>`) stay correct. The
+ * `srcdoc` Live Preview is unaffected because its iframe is an isolated
+ * document the app CSS never reaches.
+ *
+ * Redefining the foreground custom properties on the renderer host makes the
+ * leaked `color: var(--color-text) !important` resolve to a readable dark
+ * value; the explicit `td`/`th` rules (higher specificity than the app rule,
+ * plus later source order) restore the report's intended print colours and
+ * bold headers. Scoped to `[data-energy-monitor-pdf-renderer]` only.
+ */
+export const PDF_EXPORT_SURFACE_CSS =
+  "[data-energy-monitor-pdf-renderer]{--color-text:#243247;--color-text-secondary:#40566e;--color-text-muted:#5f6f82;--ui-text:#243247;color:#243247}" +
+  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table)," +
+  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table) *{color:#243247!important;-webkit-text-fill-color:#243247!important;fill:#243247!important;opacity:1!important}" +
+  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table) td{color:#1f2937!important;-webkit-text-fill-color:#1f2937!important}" +
+  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table) th{color:#40566e!important;-webkit-text-fill-color:#40566e!important;font-weight:bold!important}";
+
 async function waitForReportImages(root: HTMLElement): Promise<void> {
   const images = [...root.querySelectorAll<HTMLImageElement>("img")];
   await Promise.all(images.map(async image => {
@@ -532,10 +559,19 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
   });
   const reportStyle = parsed.head.querySelector("style");
   if (reportStyle) host.appendChild(reportStyle.cloneNode(true));
+  const surfaceStyle = document.createElement("style");
+  surfaceStyle.dataset.energyMonitorPdfSurface = "true";
+  surfaceStyle.textContent = PDF_EXPORT_SURFACE_CSS;
+  host.appendChild(surfaceStyle);
   for (const child of [...parsed.body.childNodes]) host.appendChild(child.cloneNode(true));
   document.body.appendChild(host);
   try {
     await waitForReportImages(host);
+    // Let the offscreen renderer finish layout so html2canvas reads settled
+    // geometry and computed styles (no arbitrary timeout).
+    if (typeof requestAnimationFrame === "function") {
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }
     const pages = [...host.querySelectorAll<HTMLElement>(".cover, .page")];
     if (pages.length === 0) throw new Error("The report did not contain any printable pages.");
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
@@ -550,7 +586,17 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
         logging: false,
         width: Math.max(page.scrollWidth, 1),
         height: Math.max(page.scrollHeight, page.offsetHeight, 1),
-        windowWidth: Math.max(page.scrollWidth, 1)
+        windowWidth: Math.max(page.scrollWidth, 1),
+        // Belt-and-suspenders: guarantee the readable-table-surface CSS is in
+        // the cloned document html2canvas actually rasterizes, independent of
+        // whether it carries body <style> clones through.
+        onclone: clonedDoc => {
+          if (clonedDoc.getElementById("__em-pdf-surface")) return;
+          const cloneStyle = clonedDoc.createElement("style");
+          cloneStyle.id = "__em-pdf-surface";
+          cloneStyle.textContent = PDF_EXPORT_SURFACE_CSS;
+          clonedDoc.head.appendChild(cloneStyle);
+        }
       });
       if (index > 0) pdf.addPage("a4", "landscape");
       const placement = fitPdfImageToPage(canvas.width, canvas.height);
