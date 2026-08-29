@@ -6,7 +6,7 @@ import { usagePercent } from "../domain/rackUnitCapacity";
 import { formatFixedNumber, formatFixedPercentage } from "../utils/numberFormat";
 import { monthLabelLong } from "../utils/monthUtils";
 import { formatRackCabinetSize } from "../utils/rackCapacity";
-import { rackStatusColorForRatio } from "../utils/rackStatusConfig";
+import { rackStatusHex } from "../utils/rackStatusConfig";
 import { api } from "./api";
 import { loadRackCapacitySnapshot } from "./rackCapacityData";
 import type { RackApiSnapshot, RackUnitApiSnapshot } from "./WebRackCapacityEditors";
@@ -127,21 +127,24 @@ const SiteSummaryCard: FC<{ state: SiteComparisonState; month: string }> = ({ st
 
 type ZoneSegment = { key: string; label: string; count: number; ratio: number | null; color: string };
 
+export function zoneAvailableTotalLabel(zone: { available: { count: number }; total: number }): string {
+  return formatFixedNumber(zone.available.count, 0) + " / " + formatFixedNumber(zone.total, 0);
+}
 function zoneSegments(zone: ReturnType<typeof calculateRackCapacityMetrics>["zoneMetrics"][number]): ZoneSegment[] {
   return [
-    { key: "inUse", label: "In Use", count: zone.inUse.count, ratio: zone.inUse.ratio, color: rackStatusColorForRatio("In Use", zone.inUse.ratio) },
-    { key: "available", label: "Available", count: zone.available.count, ratio: zone.available.ratio, color: rackStatusColorForRatio("Available", zone.available.ratio) },
-    { key: "reserved", label: "Reserved", count: zone.reserved.count, ratio: zone.reserved.ratio, color: rackStatusColorForRatio("Reserved", zone.reserved.ratio) },
-    { key: "pending", label: "Pending Decommission", count: zone.pendingDismantle.count, ratio: zone.pendingDismantle.ratio, color: rackStatusColorForRatio("Pending Dismantle", zone.pendingDismantle.ratio) }
+    { key: "inUse", label: "In Use", count: zone.inUse.count, ratio: zone.inUse.ratio, color: rackStatusHex("In Use") },
+    { key: "available", label: "Available", count: zone.available.count, ratio: zone.available.ratio, color: rackStatusHex("Available") },
+    { key: "reserved", label: "Reserved", count: zone.reserved.count, ratio: zone.reserved.ratio, color: rackStatusHex("Reserved") },
+    { key: "pending", label: "Pending Decommission", count: zone.pendingDismantle.count, ratio: zone.pendingDismantle.ratio, color: rackStatusHex("Pending Dismantle") }
   ];
 }
 
-function ZoneStatusStack({ zone }: { zone: ReturnType<typeof calculateRackCapacityMetrics>["zoneMetrics"][number] }) {
+function ZoneStatusStack({ zone, scaleMax }: { zone: ReturnType<typeof calculateRackCapacityMetrics>["zoneMetrics"][number]; scaleMax: number }) {
   const segments = zoneSegments(zone);
   const tooltip = [zone.zone, "Total: " + formatFixedNumber(zone.total, 0)].concat(segments.map(segment => segment.label + ": " + formatFixedNumber(segment.count, 0))).join(" | ");
   return <div className="flex h-7 min-w-0 overflow-hidden rounded-md border border-slate-700 bg-slate-950" role="img" aria-label={tooltip} title={tooltip}>
     {segments.map(segment => {
-      const width = zone.total > 0 ? (segment.count / zone.total) * 100 : 0;
+      const width = scaleMax > 0 ? (segment.count / scaleMax) * 100 : 0;
       const showLabel = segment.count > 0 && width >= 12;
       return <div key={segment.key} className="flex min-w-0 items-center justify-center overflow-hidden px-1 text-[10px] font-semibold text-white" style={{ width: width + "%", backgroundColor: segment.color }} title={segment.label + ": " + formatFixedNumber(segment.count, 0)}>{showLabel ? formatFixedNumber(segment.count, 0) : null}</div>;
     })}
@@ -153,16 +156,19 @@ function ZoneLegend() {
 }
 
 function RackCapacityByZone({ states, month }: { states: SiteComparisonState[]; month: string }) {
+  const scaleMax = states.reduce((maximum, state) => {
+    const metrics = state.rack ? calculateRackCapacityMetrics(state.rack.records) : null;
+    return Math.max(maximum, ...(metrics?.zoneMetrics.map(zone => zone.total) ?? []));
+  }, 1);
   return <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5" aria-label="Rack Capacity by Zone" data-testid="rack-comparison-zone-availability">
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><BarChart3 className="h-4 w-4 text-indigo-300" /><h3 className="font-display text-sm font-bold uppercase tracking-[0.08em] text-slate-200">Rack Capacity by Zone</h3></div><ZoneLegend /></div>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div className="flex items-center gap-2"><BarChart3 className="h-4 w-4 text-indigo-300" /><h3 className="font-display text-sm font-bold uppercase tracking-[0.08em] text-slate-200">Rack Capacity by Zone</h3></div><div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2"><ZoneLegend /><span className="text-[10px] uppercase tracking-[0.08em] text-slate-500">Shared scale: 0 to {formatFixedNumber(scaleMax, 0)} racks</span></div></div>
     <div className="grid gap-5 lg:grid-cols-2">{states.map(state => {
       const metrics = state.rack ? calculateRackCapacityMetrics(state.rack.records) : null;
-      return <article key={state.site.id} className="min-w-0 rounded-xl border border-slate-800/80 bg-slate-950/30 p-3 sm:p-4"><h4 className="mb-3 flex items-center gap-2 font-display text-sm font-bold text-sky-300"><Building2 className="h-4 w-4" />{state.site.name}</h4>{!metrics ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-amber-200">{unavailableText(state, month, "Rack")}</p> : metrics.zoneMetrics.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-500">No rack zones exist for this month.</p> : <div className="space-y-2.5">{metrics.zoneMetrics.map(zone => <div key={zone.zone} className="grid grid-cols-[3.5rem_minmax(0,1fr)_2.75rem] items-center gap-2.5"><span className="truncate text-xs font-semibold text-slate-300">{zone.zone}</span><ZoneStatusStack zone={zone} /><span className="text-right font-mono text-xs text-slate-300">{formatFixedNumber(zone.total, 0)}</span></div>)}</div>}</article>;
+      return <article key={state.site.id} className="min-w-0 rounded-xl border border-slate-800/80 bg-slate-950/30 p-3 sm:p-4"><div className="mb-3"><h4 className="flex items-center gap-2 font-display text-sm font-bold text-sky-300"><Building2 className="h-4 w-4" />{state.site.name}</h4>{metrics && <p className="mt-1 text-xs text-slate-500">Available <span className="font-mono text-emerald-300">{formatFixedNumber(metrics.available.count, 0)}</span><span className="text-slate-500"> / </span><span className="font-mono text-slate-300">{formatFixedNumber(metrics.total, 0)}</span> racks</p>}</div>{!metrics ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-amber-200">{unavailableText(state, month, "Rack")}</p> : metrics.zoneMetrics.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-500">No rack zones exist for this month.</p> : <><div className="mb-2 grid grid-cols-[3.5rem_minmax(0,1fr)_6.5rem] items-center gap-2.5 px-1 text-[10px] uppercase tracking-[0.08em] text-slate-500"><span /><span /><span className="whitespace-nowrap text-right">Available / Total</span></div><div className="space-y-2.5">{metrics.zoneMetrics.map(zone => <div key={zone.zone} className="grid grid-cols-[3.5rem_minmax(0,1fr)_6.5rem] items-center gap-2.5"><span className="truncate text-xs font-semibold text-slate-300">{zone.zone}</span><ZoneStatusStack zone={zone} scaleMax={scaleMax} /><span className="whitespace-nowrap text-right font-mono text-xs" aria-label={"Available / Total: " + zoneAvailableTotalLabel(zone)}><span className="text-emerald-300">{formatFixedNumber(zone.available.count, 0)}</span><span className="text-slate-500"> / </span><span className="text-slate-300">{formatFixedNumber(zone.total, 0)}</span></span></div>)}</div></>}</article>;
     })}</div>
     {states.length === 0 && <p className="mt-4 rounded-xl border border-dashed border-slate-700 p-8 text-center text-sm text-slate-500">No active Sites are available for comparison.</p>}
   </section>;
 }
-
 function RackCapacityDetails({ states, month }: { states: SiteComparisonState[]; month: string }) {
   return <section className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5" aria-label="Rack Capacity Details" data-testid="rack-comparison-details">
     <div className="mb-4 flex items-center gap-2"><Server className="h-4 w-4 text-indigo-300" /><h3 className="font-display text-sm font-bold uppercase tracking-[0.08em] text-slate-200">Rack Capacity Details</h3><span className="text-xs text-slate-500">Counts by zone</span></div>

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { rackAvailabilityStatus, rackCountsReconcile, rankRackLocations, isValidRackUnitCapacity } from "../src/domain/rackComparison";
 import { calculateRackCapacityMetrics, rackUtilizationLevel } from "../src/domain/rackCapacity";
-import { displayPositionStatus, filterRackPositions, rackPositionRows } from "../src/web-clean-v1/WebSiteRackCapacityComparison";
+import { displayPositionStatus, filterRackPositions, rackPositionRows, zoneAvailableTotalLabel } from "../src/web-clean-v1/WebSiteRackCapacityComparison";
 
 const comparison = readFileSync(new URL("../src/web-clean-v1/WebSiteComparison.tsx", import.meta.url), "utf8");
 const rackComparison = readFileSync(new URL("../src/web-clean-v1/WebSiteRackCapacityComparison.tsx", import.meta.url), "utf8");
@@ -64,8 +64,14 @@ for (const field of ["Rack ID", "Cabinet Size (cm)", "Detail"]) assert.ok(rackCo
 assert.ok(rackComparison.includes("Pending Dismantle"));
 assert.ok(rackComparison.includes("Pending Decommission"));
 assert.match(rackComparison, /\{state\.site\.name\} Rack Capacity Details/);
-assert.ok(rackComparison.includes("rackStatusColorForRatio"));
+for (const status of ["In Use", "Available", "Reserved", "Pending Dismantle"]) assert.ok(rackComparison.includes(`rackStatusHex("${status}")`), "shared semantic color missing: " + status);
 assert.ok(rackComparison.includes("zone.total"));
+assert.ok(rackComparison.includes("Available / Total"), "zone capacity column header missing");
+assert.match(rackComparison, /formatFixedNumber\(zone\.available\.count, 0\)[\s\S]{0,260}formatFixedNumber\(zone\.total, 0\)/, "zone label uses available and total counts");
+assert.ok(rackComparison.includes("zoneAvailableTotalLabel(zone)"), "zone label has an accessible available/total value");
+assert.ok(rackComparison.includes("scaleMax"), "zone bars use a shared scale");
+assert.ok(rackComparison.includes("Shared scale: 0 to"), "shared scale is visible");
+assert.ok(rackComparison.includes("Available <span"), "site-level available summary is present");
 assert.ok(rackComparison.includes("title={tooltip}"));
 assert.doesNotMatch(rackComparison, /<details[^>]*\bopen\b/);
 assert.ok(rackComparison.includes("<RackCapacityByZone states={sites}"));
@@ -100,6 +106,8 @@ const zoneFixture = calculateRackCapacityMetrics([
 ]);
 const zoneA = zoneFixture.zoneMetrics[0];
 assert.equal(zoneA.inUse.count + zoneA.available.count + zoneA.reserved.count + zoneA.pendingDismantle.count, zoneA.total, "stacked status counts sum to zone total");
+assert.equal(zoneAvailableTotalLabel({ available: { count: 3 }, total: 98 }), "3 / 98");
+assert.equal(zoneAvailableTotalLabel({ available: { count: 0 }, total: 75 }), "0 / 75");
 
 // Regression model: the same mounted view can rebind A -> B -> A without a
 // remount, while each site's rows remain isolated and delayed results stay
