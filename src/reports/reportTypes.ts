@@ -214,4 +214,15 @@ export interface ReportData {
    *  facility itself has no Rack Capacity data (mirrors rackCapacityPage's
    *  own unavailable-data gate). */
   rackComparison: { self: ReportRackComparisonFacility; other: ReportRackComparisonFacility | null } | null;
+  /** Selected-month Rack Unit Capacity comparison plus each site's history for
+   * the six-month trend. Optional for legacy report callers. */
+  rackUnitComparison?: { sites: ReportRackUnitComparisonFacility[] } | null;
+}
+
+/** Rack Unit Capacity rows for one side of a site comparison. Keeping this
+ * separate from comparison lets the shared report renderer consume the same
+ * selected-month and trend data as the export builders. */
+export interface ReportRackUnitComparisonFacility {
+  label: string;
+  rows: import("../excel/RackUnitCapacityWriter").RackUnitCapacityRow[];
 }

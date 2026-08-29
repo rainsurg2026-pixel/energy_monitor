@@ -1,6 +1,7 @@
 import type { MonthlyLog } from "../types";
 import { buildCombinedCsv } from "../utils/exportData";
 import { calculateEnergyCostForMonth } from "../domain/energyCost";
+import { calculateRackCapacityMetrics } from "../domain/rackCapacity";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
 import { buildReportHtml } from "../reports/pdf/reportHtml";
 import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord, UpsGroupHistoryReport } from "../reports/reportTypes";
@@ -14,6 +15,15 @@ import type { ReportSectionId } from "../reporting/reportingTypes";
 import { addInteractiveDashboard, injectInteractiveDashboardCharts, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
 
 const workbookDashboardPlans = new WeakMap<object, ExcelDashboardPlan[]>();
+
+export interface ExportRackUnitImageMetadata {
+  reportingMonth: string;
+  contentType: "image/png" | "image/jpeg";
+  byteSize?: number;
+  width?: number;
+  height?: number;
+  savedAt?: string | null;
+}
 
 export interface ExportRackUnitCapacityRow extends RackUnitCapacityRow {
   /** Metadata only; image bytes remain in server-side storage. */
@@ -35,6 +45,9 @@ export interface ExportFacility {
   /** The selected month's image loaded from the authenticated Storage API. */
   rackUnitCapacityImageDataUri?: string | null;
   rackUnitCapacityImageMeta?: ReportData["rackUnitCapacityImageMeta"];
+  /** Retains discovered image metadata even when a legacy source has no
+   * matching Rack Unit numeric row; bytes and storage keys are never exported. */
+  rackUnitCapacityImages?: ExportRackUnitImageMetadata[];
   /** Explicit report scope for secondary tables when the selected month has
    * no MonthlyLog (for example a Rack Unit-only historical month). */
   reportingMonths?: string[];
@@ -91,7 +104,8 @@ export interface SiteComparisonExport {
   displayPeriod: { startMonth: string; endMonth: string };
   months: string[];
   sites: Array<ComparisonSite & {
-    rackUnitCapacity?: Array<{ month: string; totalU: number; usedU: number; availableU: number; usagePercent: number | null }>;
+    rack?: RackCapacityReport | null;
+    rackUnitCapacity?: Array<{ month: string; totalU: number; usedU: number; availableU: number; usagePercent?: number | null; availabilityPct?: number | null; imageAttached?: boolean; imageContentType?: "image/png" | "image/jpeg" | null; imageSavedAt?: string | null }>;
   }>;
 }
 
@@ -110,8 +124,8 @@ function download(content: BlobPart, fileName: string, type: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function exportCsv(logs: MonthlyLog[], siteName: string, fileName?: string): void {
-  download(buildCombinedCsv(logs), fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.csv`, "text/csv;charset=utf-8");
+export function exportCsv(logs: MonthlyLog[], siteName: string, fileName?: string, additional: ExportAdditional = {}): void {
+  download(buildFacilityCsv({ siteName, logs, ...additional }), fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.csv`, "text/csv;charset=utf-8");
 }
 
 function parseCsvLine(line: string): string[] {
@@ -149,8 +163,10 @@ function configureTableSheet(sheet: any, headers: unknown[], rows: unknown[][]):
   });
 }
 
-function addTableSheet(workbook: any, prefix: string, title: string, headers: unknown[], rows: unknown[][]): void {
-  configureTableSheet(workbook.addWorksheet(sheetName(prefix, title)), headers, rows);
+function addTableSheet(workbook: any, prefix: string, title: string, headers: unknown[], rows: unknown[][]): any {
+  const sheet = workbook.addWorksheet(sheetName(prefix, title));
+  configureTableSheet(sheet, headers, rows);
+  return sheet;
 }
 
 function monthSet(logs: MonthlyLog[]): Set<string> {
@@ -299,13 +315,21 @@ export async function workbookForFacilities(facilities: ExportFacility[]) {
     addTableSheet(workbook, prefix, "Dashboard-FAC DC", ["Month", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current (A)", "AC Power (W)", "Monthly Energy (kWh)"], dashboardDcRows);
 
     const rackUnitRows = (facility.rackUnitCapacity ?? []).filter(row => months.has(row.month)).sort((a, b) => a.month.localeCompare(b.month));
-    addTableSheet(workbook, prefix, "Rack Unit Capacity", ["Month", "Total (U)", "Used (U)", "Available (U)", "Availability Capacity (%)", "Image Attached", "Image Content Type", "Image Saved At"], rackUnitRows.map(row => [row.month, row.totalU, row.usedU, row.availableU, row.availabilityPct, row.imageAttached ? "Yes" : "No", row.imageContentType ?? null, row.imageSavedAt ?? null]));
+    const rackUnitSheet = addTableSheet(workbook, prefix, "Rack Unit Capacity", ["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Attached", "Image Content Type", "Image Saved At"], rackUnitRows.map(row => [row.month, row.totalU, row.usedU, row.availableU, row.totalU > 0 ? row.usedU / row.totalU : null, row.availabilityPct, row.imageAttached ? "Yes" : "No", row.imageContentType ?? null, row.imageSavedAt ?? null]));
+    rackUnitSheet.getColumn(5).numFmt = "0.0%";
+    rackUnitSheet.getColumn(6).numFmt = "0.0%";
     const rackHistoryRows = (facility.rackHistory ?? []).filter(row => months.has(row.snapshotMonth)).sort((a, b) => a.snapshotMonth.localeCompare(b.snapshotMonth) || a.rackZone.localeCompare(b.rackZone));
     addTableSheet(workbook, prefix, "Rack Capacity History", ["Snapshot Month", "Facility", "Rack Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle", "Other", "Usage (%)", "Availability (%)", "Reserved (%)", "Pending Dismantle (%)", "Other (%)", "Generated At", "Data Version"], rackHistoryRows.map(row => [row.snapshotMonth, row.facility, row.rackZone, row.totalRacks, row.inUse, row.available, row.reserved, row.pendingDismantle, row.other, row.usagePct, row.availabilityPct, row.reservedPct, row.pendingDismantlePct, row.otherPct, row.generatedAt, row.dataVersion]));
     const upsHistoryRows = (facility.upsGroupHistory?.rows ?? []).filter(row => months.has(row.month)).sort((a, b) => a.month.localeCompare(b.month) || a.group.localeCompare(b.group));
     addTableSheet(workbook, prefix, "UPS Group History", ["Month", "Facility", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)", "Generated At", "Data Version"], upsHistoryRows.map(row => [row.month, row.facility, row.group, row.totalLoadKw, row.totalLoadKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh, row.generatedAt, row.dataVersion]));
     const rackRecords = facility.rack?.records ?? [];
     addTableSheet(workbook, prefix, "Rack Capacity Raw", ["Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], rackRecords.map(row => [facility.rack?.sourceSnapshot ?? null, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
+    for (const section of facilityExportSections(facility)) {
+      const sheet = addTableSheet(workbook, prefix, section.name, section.headers, section.rows);
+      section.headers.forEach((header, index) => {
+        if (String(header).includes("Usage (%)") || String(header).includes("Availability (%)")) sheet.getColumn(index + 1).numFmt = "0.0%";
+      });
+    }
   }
   workbookDashboardPlans.set(workbook, dashboardPlans);
   return workbook;
@@ -321,6 +345,151 @@ export async function writeInteractiveExcelWorkbook(workbook: any): Promise<Uint
   workbook.calcProperties.fullCalcOnLoad = true;
   const buffer = await workbook.xlsx.writeBuffer();
   return injectInteractiveDashboardCharts(buffer, workbookDashboardPlans.get(workbook) ?? []);
+}
+
+
+export interface ExportTableSection {
+  name: string;
+  headers: string[];
+  rows: unknown[][];
+}
+
+function exportRatio(value: number | null | undefined): number | null {
+  return value === null || value === undefined || !Number.isFinite(value) ? null : value;
+}
+
+function exportRackUnitUsage(row: { totalU: number; usedU: number }): number | null {
+  return row.totalU > 0 ? row.usedU / row.totalU : null;
+}
+
+function exportRackUnitRows(facility: ExportFacility): unknown[][] {
+  return [...(facility.rackUnitCapacity ?? [])]
+    .sort((left, right) => left.month.localeCompare(right.month))
+    .map(row => [
+      facility.siteName,
+      row.month,
+      row.totalU,
+      row.usedU,
+      row.availableU,
+      exportRackUnitUsage(row),
+      exportRatio(row.availabilityPct),
+      row.imageAttached ? "Yes" : "No",
+      row.imageContentType ?? null,
+      row.imageSavedAt ?? null
+    ]);
+}
+
+function exportRackUnitTrendRows(facility: ExportFacility): unknown[][] {
+  const allRows = [...(facility.rackUnitCapacity ?? [])].sort((left, right) => left.month.localeCompare(right.month));
+  const endMonth = facility.rack?.sourceSnapshot ?? allRows.at(-1)?.month ?? null;
+  return allRows
+    .filter(row => !endMonth || row.month <= endMonth)
+    .slice(-6)
+    .map(row => [
+      facility.siteName,
+      row.month,
+      row.totalU,
+      row.usedU,
+      row.availableU,
+      exportRackUnitUsage(row),
+      exportRatio(row.availabilityPct)
+    ]);
+}
+
+export function facilityExportSections(facility: ExportFacility): ExportTableSection[] {
+  const sections: ExportTableSection[] = [];
+  if (facility.rack) {
+    const metrics = calculateRackCapacityMetrics(facility.rack.records);
+    const sourceMonth = facility.rack.sourceSnapshot;
+    sections.push({
+      name: "RACK_CAPACITY_SUMMARY",
+      headers: ["Site", "Snapshot Month", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other", "Usage (%)", "Availability (%)"],
+      rows: [[
+        facility.siteName,
+        sourceMonth,
+        metrics.total,
+        metrics.inUse.count,
+        metrics.available.count,
+        metrics.reserved.count,
+        metrics.pendingDismantle.count,
+        metrics.other.count,
+        exportRatio(metrics.total > 0 ? metrics.inUse.count / metrics.total : null),
+        exportRatio(metrics.total > 0 ? metrics.available.count / metrics.total : null)
+      ]]
+    });
+    sections.push({
+      name: "RACK_CAPACITY_DETAILS",
+      headers: ["Site", "Snapshot Month", "Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other", "Usage (%)", "Availability (%)"],
+      rows: metrics.zoneMetrics.map(zone => [
+        facility.siteName,
+        sourceMonth,
+        zone.zone,
+        zone.total,
+        zone.inUse.count,
+        zone.available.count,
+        zone.reserved.count,
+        zone.pendingDismantle.count,
+        zone.other.count,
+        exportRatio(zone.total > 0 ? zone.inUse.count / zone.total : null),
+        exportRatio(zone.total > 0 ? zone.available.count / zone.total : null)
+      ])
+    });
+    sections.push({
+      name: "RACK_POSITIONS",
+      headers: ["Site", "Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"],
+      rows: [...facility.rack.records]
+        .sort((left, right) => left.rowNumber - right.rowNumber)
+        .map(row => [facility.siteName, sourceMonth, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks])
+    });
+  }
+
+  if (facility.rackUnitCapacity?.length) {
+    sections.push({
+      name: "RACK_UNIT_CAPACITY",
+      headers: ["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Attached", "Image Content Type", "Image Saved At"],
+      rows: exportRackUnitRows(facility)
+    });
+    sections.push({
+      name: "RACK_UNIT_TREND",
+      headers: ["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"],
+      rows: exportRackUnitTrendRows(facility)
+    });
+    sections.push({
+      name: "RACK_UNIT_TREND_NOTE",
+      headers: ["Site", "Note"],
+      rows: [[facility.siteName, "Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots."]]
+    });
+  }
+
+  const images = [...(facility.rackUnitCapacityImages ?? [])].sort((left, right) => left.reportingMonth.localeCompare(right.reportingMonth));
+  if (images.length) {
+    sections.push({
+      name: "RACK_UNIT_CAPACITY_IMAGES",
+      headers: ["Site", "Reporting Month", "Content Type", "Byte Size", "Width", "Height", "Saved At"],
+      rows: images.map(image => [facility.siteName, image.reportingMonth, image.contentType, image.byteSize ?? null, image.width ?? null, image.height ?? null, image.savedAt ?? null])
+    });
+  }
+
+  return sections;
+}
+
+function csvValue(header: string, value: unknown): unknown {
+  if (value === null || value === undefined) return null;
+  if (header.includes("(%)") && typeof value === "number") return `${(value * 100).toFixed(1)}%`;
+  return value;
+}
+
+function csvSection(section: ExportTableSection): string {
+  return [section.headers, ...section.rows]
+    .map(row => row.map((value, index) => csvCell(csvValue(section.headers[index] ?? "", value))).join(","))
+    .join("\n");
+}
+
+export function buildFacilityCsv(facility: ExportFacility): string {
+  const sections = facilityExportSections(facility);
+  const parts = [`# Facility: ${facility.siteName}`, buildCombinedCsv(facility.logs)];
+  for (const section of sections) parts.push(`# Section: ${section.name}\n${csvSection(section)}`);
+  return parts.join("\n\n");
 }
 
 /** Supports both the object form used by CleanWeb v1 and the positional form
@@ -339,7 +508,7 @@ export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName
 }
 
 export function buildAllFacilitiesCsv(facilities: ExportFacility[]): string {
-  return facilities.map(facility => `# Facility: ${facility.siteName}\n${buildCombinedCsv(facility.logs)}`).join("\n\n");
+  return facilities.map(buildFacilityCsv).join("\n\n");
 }
 
 export function exportAllFacilitiesCsv(facilities: ExportFacility[]): void {
@@ -352,36 +521,108 @@ export async function exportAllFacilitiesExcel(facilities: ExportFacility[]): Pr
   download(data, "all-facilities-energy-monitor.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
-const csvCell = (value: string | number | null): string => value === null ? "" : /[",\n]/.test(String(value)) ? `"${String(value).replace(/"/g, '""')}"` : String(value);
+
+function csvCell(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  const text = typeof value === "object" ? JSON.stringify(value) : String(value);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
 const comparisonNumber = (value: number | null): string => value === null || !Number.isFinite(value) ? "" : value.toFixed(2);
 
-export function buildSiteComparisonCsv(data: SiteComparisonExport, referenceMonth: string): string {
-  const rows = [["Facility", "Site code", "Reporting month", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"]];
-  for (const item of data.sites) {
-    const metrics = item.months.find(entry => entry.month === referenceMonth)?.metrics ?? null;
-    rows.push([item.site.name, item.site.code, referenceMonth, comparisonNumber(metrics?.buildingEnergy ?? null), comparisonNumber(metrics?.buildingCost ?? null), comparisonNumber(metrics?.floorEnergy ?? null), comparisonNumber(metrics?.floorCost ?? null), comparisonNumber(metrics?.avgRate ?? null), comparisonNumber(metrics?.floorShare ?? null)]);
+function comparisonRackUsageRatio(row: { totalU: number; usedU: number; usagePercent?: number | null }): number | null {
+  if (row.usagePercent !== null && row.usagePercent !== undefined && Number.isFinite(row.usagePercent)) return row.usagePercent / 100;
+  return row.totalU > 0 ? row.usedU / row.totalU : null;
+}
+
+function comparisonRackUnitRows(site: SiteComparisonExport["sites"][number], referenceMonth: string): unknown[][] {
+  return (site.rackUnitCapacity ?? [])
+    .filter(row => row.month === referenceMonth)
+    .map(row => [site.site.name, row.month, row.totalU, row.usedU, row.availableU, comparisonRackUsageRatio(row), exportRatio(row.availabilityPct ?? (row.totalU > 0 ? row.availableU / row.totalU : null)), row.imageAttached ? "Yes" : "No", row.imageContentType ?? null, row.imageSavedAt ?? null]);
+}
+
+function comparisonRackUnitTrendRows(site: SiteComparisonExport["sites"][number], referenceMonth: string): unknown[][] {
+  return (site.rackUnitCapacity ?? [])
+    .filter(row => row.month <= referenceMonth)
+    .sort((left, right) => left.month.localeCompare(right.month))
+    .slice(-6)
+    .map(row => [site.site.name, row.month, row.totalU, row.usedU, row.availableU, comparisonRackUsageRatio(row), exportRatio(row.availabilityPct ?? (row.totalU > 0 ? row.availableU / row.totalU : null))]);
+}
+
+export function siteComparisonExportSections(data: SiteComparisonExport, referenceMonth: string): ExportTableSection[] {
+  const sections: ExportTableSection[] = [{
+    name: "SITE_COMPARISON",
+    headers: ["Facility", "Site code", "Reporting month", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"],
+    rows: data.sites.map(item => {
+      const metrics = item.months.find(entry => entry.month === referenceMonth)?.metrics ?? null;
+      return [item.site.name, item.site.code, referenceMonth, comparisonNumber(metrics?.buildingEnergy ?? null), comparisonNumber(metrics?.buildingCost ?? null), comparisonNumber(metrics?.floorEnergy ?? null), comparisonNumber(metrics?.floorCost ?? null), comparisonNumber(metrics?.avgRate ?? null), comparisonNumber(metrics?.floorShare ?? null)];
+    })
+  }];
+
+  const rackSummaryRows: unknown[][] = [];
+  const rackDetailRows: unknown[][] = [];
+  const rackPositionRows: unknown[][] = [];
+  const rackUnitRows: unknown[][] = [];
+  const rackUnitTrendRows: unknown[][] = [];
+  for (const site of data.sites) {
+    if (site.rack) {
+      const metrics = calculateRackCapacityMetrics(site.rack.records);
+      const month = site.rack.sourceSnapshot ?? referenceMonth;
+      rackSummaryRows.push([site.site.name, month, metrics.total, metrics.inUse.count, metrics.available.count, metrics.reserved.count, metrics.pendingDismantle.count, metrics.other.count, exportRatio(metrics.total > 0 ? metrics.inUse.count / metrics.total : null), exportRatio(metrics.total > 0 ? metrics.available.count / metrics.total : null)]);
+      rackDetailRows.push(...metrics.zoneMetrics.map(zone => [site.site.name, month, zone.zone, zone.total, zone.inUse.count, zone.available.count, zone.reserved.count, zone.pendingDismantle.count, zone.other.count, exportRatio(zone.total > 0 ? zone.inUse.count / zone.total : null), exportRatio(zone.total > 0 ? zone.available.count / zone.total : null)]));
+      rackPositionRows.push(...site.rack.records.map(row => [site.site.name, month, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
+    }
+    rackUnitRows.push(...comparisonRackUnitRows(site, referenceMonth));
+    rackUnitTrendRows.push(...comparisonRackUnitTrendRows(site, referenceMonth));
   }
-  return rows.map(row => row.map(csvCell).join(",")).join("\n");
+  if (rackSummaryRows.length) sections.push({ name: "RACK_CAPACITY_SUMMARY", headers: ["Site", "Snapshot Month", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other", "Usage (%)", "Availability (%)"], rows: rackSummaryRows });
+  if (rackDetailRows.length) sections.push({ name: "RACK_CAPACITY_DETAILS", headers: ["Site", "Snapshot Month", "Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other", "Usage (%)", "Availability (%)"], rows: rackDetailRows });
+  if (rackPositionRows.length) sections.push({ name: "RACK_POSITIONS", headers: ["Site", "Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], rows: rackPositionRows });
+  if (rackUnitRows.length) sections.push({ name: "RACK_UNIT_CAPACITY_COMPARISON", headers: ["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Attached", "Image Content Type", "Image Saved At"], rows: rackUnitRows });
+  if (rackUnitTrendRows.length) sections.push({ name: "RACK_UNIT_TREND_COMPARISON", headers: ["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], rows: rackUnitTrendRows });
+  if (rackUnitTrendRows.length) sections.push({ name: "RACK_UNIT_TREND_NOTE", headers: ["Scope", "Note"], rows: [["All facilities", "Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots."]] });
+  return sections;
+}
+
+function comparisonWorksheetRows(section: ExportTableSection): unknown[][] {
+  return section.rows.map(row => row.map((value, index) => {
+    if (section.name === "SITE_COMPARISON" && index >= 3 && index <= 8 && typeof value === "string" && value !== "") return Number(value);
+    return value;
+  }));
+}
+
+export function buildSiteComparisonCsv(data: SiteComparisonExport, referenceMonth: string): string {
+  return siteComparisonExportSections(data, referenceMonth).map(section => "# Section: " + section.name + "\n" + csvSection(section)).join("\n\n");
 }
 
 export function exportSiteComparisonCsv(data: SiteComparisonExport, referenceMonth: string): void {
-  download(buildSiteComparisonCsv(data, referenceMonth), `site-comparison-${referenceMonth}.csv`, "text/csv;charset=utf-8");
+  download(buildSiteComparisonCsv(data, referenceMonth), "site-comparison-" + referenceMonth + ".csv", "text/csv;charset=utf-8");
+}
+
+
+export async function workbookForSiteComparison(data: SiteComparisonExport, referenceMonth: string): Promise<any> {
+  const ExcelJS = (await import("exceljs")).default;
+  const workbook = new ExcelJS.Workbook();
+  const sections = siteComparisonExportSections(data, referenceMonth);
+  const [energySection, ...additionalSections] = sections;
+  if (energySection) {
+    const sheet = workbook.addWorksheet("Site Comparison");
+    configureTableSheet(sheet, energySection.headers, comparisonWorksheetRows(energySection));
+  }
+  for (const section of additionalSections) {
+    const sheet = addTableSheet(workbook, "Comparison", section.name, section.headers, comparisonWorksheetRows(section));
+    section.headers.forEach((header, index) => {
+      if (String(header).includes("Usage (%)") || String(header).includes("Availability (%)")) sheet.getColumn(index + 1).numFmt = "0.0%";
+    });
+  }
+  return workbook;
 }
 
 export async function exportSiteComparisonExcel(data: SiteComparisonExport, referenceMonth: string): Promise<void> {
-  const ExcelJS = (await import("exceljs")).default;
-  const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet("Site Comparison");
-  for (const row of buildSiteComparisonCsv(data, referenceMonth).split("\n")) sheet.addRow(parseCsvLine(row));
-  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
-  sheet.autoFilter = { from: "A1", to: { row: 1, column: sheet.getRow(1).cellCount } };
-  sheet.columns.forEach(column => { column.width = 24; });
+  const workbook = await workbookForSiteComparison(data, referenceMonth);
   const bytes = await workbook.xlsx.writeBuffer();
-  download(bytes, `site-comparison-${referenceMonth}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  download(bytes, "site-comparison-" + referenceMonth + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
-
 function reportRows(logs: MonthlyLog[], calculationLogs: MonthlyLog[] = logs): ReportMonthlyRow[] {
   return [...logs].sort((left, right) => left.month.localeCompare(right.month)).map(log => {
     const calculation = calculateEnergyCostForMonth(calculationLogs, log.month);
@@ -726,6 +967,23 @@ function comparisonTrend(site: ComparisonSite, months: string[]): ReportMonthlyR
   });
 }
 
+
+function comparisonRackUnitRowsForReport(site: SiteComparisonExport["sites"][number]): RackUnitCapacityRow[] {
+  return (site.rackUnitCapacity ?? []).map(row => ({
+    month: row.month,
+    totalU: row.totalU,
+    usedU: row.usedU,
+    availableU: row.availableU,
+    availabilityPct: row.availabilityPct ?? (row.totalU > 0 ? row.availableU / row.totalU : null)
+  }));
+}
+
+function comparisonRackUnitReport(data: SiteComparisonExport): ReportData["rackUnitComparison"] {
+  return {
+    sites: data.sites.map(site => ({ label: site.site.name, rows: comparisonRackUnitRowsForReport(site) }))
+  };
+}
+
 function siteComparisonReportForDownload(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): ReportData {
   const [primary, secondary] = data.sites;
   if (!primary) throw new Error("No facilities are available for comparison.");
@@ -747,7 +1005,7 @@ function siteComparisonReportForDownload(data: SiteComparisonExport, referenceMo
     engineeringDashboard: null,
     rack: null,
     rackHistory: [],
-    rackUnitCapacity: [],
+    rackUnitCapacity: comparisonRackUnitRowsForReport(primary),
     rackUnitCapacityImageDataUri: null,
     rackUnitCapacityImageMeta: null,
     comparison: {
@@ -756,7 +1014,8 @@ function siteComparisonReportForDownload(data: SiteComparisonExport, referenceMo
       selfTrend: comparisonTrend(primary, trendMonths),
       otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
     },
-    rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
+    rackComparison: (selfRack ?? primary.rack) ? { self: { label: primary.site.name, records: (selfRack ?? primary.rack)!.records }, other: secondary && (otherRack ?? secondary.rack) ? { label: secondary.site.name, records: (otherRack ?? secondary.rack)!.records } : null } : null,
+    rackUnitComparison: comparisonRackUnitReport(data)
   };
 }
 
@@ -787,7 +1046,7 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
     engineeringDashboard: null,
     rack: null,
     rackHistory: [],
-    rackUnitCapacity: [],
+    rackUnitCapacity: comparisonRackUnitRowsForReport(primary),
     rackUnitCapacityImageDataUri: null,
     rackUnitCapacityImageMeta: null,
     comparison: {
@@ -796,7 +1055,8 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
       selfTrend: comparisonTrend(primary, trendMonths),
       otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
     },
-    rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
+    rackComparison: (selfRack ?? primary.rack) ? { self: { label: primary.site.name, records: (selfRack ?? primary.rack)!.records }, other: secondary && (otherRack ?? secondary.rack) ? { label: secondary.site.name, records: (otherRack ?? secondary.rack)!.records } : null } : null,
+    rackUnitComparison: comparisonRackUnitReport(data)
   };
   renderReportPopup(popup, buildReportHtml(report));
 }

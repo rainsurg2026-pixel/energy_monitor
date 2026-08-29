@@ -161,9 +161,11 @@ if (comparisonEligible) {
 // the original set - Capacity Trend and Forecast, Rack Capacity Usage/
 // Availability % Trend, and Rack Unit Capacity Availability % Trend were
 // all removed. Feature 4 adds 2 more (Site Comparison) when eligible.
-const expectedTrendPages = 6 + (comparisonEligible ? 2 : 0);
+const expectedTrendPages = 7 + (comparisonEligible ? 2 : 0);
 if ((html.match(/class="page trend-page"/g) ?? []).length !== expectedTrendPages) throw new Error(`Each trend must occupy one full report page (expected ${expectedTrendPages}).`);
 const expectedPointLabels = [
+  ...report.monthlyRows.map(row => row.buildingEnergyKwh),
+  ...report.monthlyRows.map(row => row.floorEnergyKwh),
   ...report.monthlyRows.map(row => row.floorEnergyKwh),
   ...report.monthlyRows.map(row => row.upsEnergyKwh),
   ...report.monthlyRows.map(row => row.airEnergyKwh),
