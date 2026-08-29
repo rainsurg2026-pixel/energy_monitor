@@ -314,25 +314,65 @@ export class PostgresRepository implements BackendRepository {
     return { month: monthString(row.snapshot_month), rowVersion: row.row_version, records: records.rows.map(item => ({ rowNumber: item.source_row_number, rackZone: item.rack_zone, rackId: item.rack_id, status: item.status, cabinetSize: item.cabinet_size, detail: item.detail, deviceType: item.device_type, remarks: item.remarks })) };
   }
 
+  async getLatestRackSnapshotBefore(siteId: number, month: string): Promise<RackSnapshotRecord | null> {
+    const result = await query<{ snapshot_month: string }>(this.executor,
+      "SELECT snapshot_month FROM rack_capacity_snapshots WHERE site_id = $1 AND snapshot_month < $2::date ORDER BY snapshot_month DESC, id DESC LIMIT 1",
+      [siteId, month + "-01"]);
+    const row = result.rows[0];
+    return row ? this.getRackSnapshot(siteId, monthString(row.snapshot_month)) : null;
+  }
+
   async saveRackCapacity(input: SaveRackCapacityInput): Promise<RackCapacitySaveResult> {
     if (!this.pool) throw new Error("A transaction-bound repository cannot start a nested transaction.");
     return withTransaction(this.pool, client => this.saveRackCapacityInTransaction(client, input));
   }
 
   protected async saveRackCapacityInTransaction(executor: DbExecutor, input: SaveRackCapacityInput): Promise<RackCapacitySaveResult> {
-    if (input.changes.length === 0) throw new HttpError(400, "INVALID_RACK_CHANGES", "changes must be a non-empty array.");
+    if (input.changes.length === 0 && !input.initializeFromPrevious) throw new HttpError(400, "INVALID_RACK_CHANGES", "changes must be a non-empty array.");
     const seenRows = new Set<number>();
     for (const change of input.changes) {
       if (seenRows.has(change.rowNumber)) throw new HttpError(400, "INVALID_RACK_CHANGES", `changes contains duplicate row ${change.rowNumber}.`);
       seenRows.add(change.rowNumber);
     }
 
+    if (input.initializeFromPrevious) await query(executor, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", ["rack-capacity:" + input.siteId + ":" + input.month]);
     const snapshotResult = await query<{ id: string; snapshot_month: string; row_version: number }>(executor,
       "SELECT id, snapshot_month, row_version FROM rack_capacity_snapshots WHERE site_id = $1 AND snapshot_month = $2::date FOR UPDATE",
-      [input.siteId, `${input.month}-01`]);
-    const snapshotRow = snapshotResult.rows[0];
-    if (!snapshotRow) throw new HttpError(404, "RACK_CAPACITY_NOT_FOUND", "Rack Capacity is not initialized for the requested month.");
-    if (input.expectedRowVersion !== snapshotRow.row_version) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
+      [input.siteId, input.month + "-01"]);
+    let snapshotRow = snapshotResult.rows[0];
+    let created = false;
+    if (!snapshotRow) {
+      if (!input.initializeFromPrevious) throw new HttpError(404, "RACK_CAPACITY_NOT_FOUND", "Rack Capacity is not initialized for the requested month.");
+      if (input.expectedRowVersion !== null && input.expectedRowVersion !== 0) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
+      const source = await this.getLatestRackSnapshotBefore(input.siteId, input.month);
+      if (!source) throw new HttpError(404, "RACK_CAPACITY_NOT_FOUND", "No prior Rack Capacity snapshot exists to carry forward.");
+      if (input.carryForwardSourceMonth && input.carryForwardSourceMonth !== source.month) throw new HttpError(409, "RACK_CAPACITY_SOURCE_CHANGED", "The prior Rack Capacity snapshot changed before initialization.");
+      if (input.carryForwardSourceRowVersion !== undefined && input.carryForwardSourceRowVersion !== source.rowVersion) throw new HttpError(409, "RACK_CAPACITY_SOURCE_CHANGED", "The prior Rack Capacity snapshot changed before initialization.");
+      const createdResult = await query<{ id: string; snapshot_month: string; row_version: number }>(executor,
+        "INSERT INTO rack_capacity_snapshots(site_id, snapshot_month, row_version) VALUES ($1, $2::date, 1) ON CONFLICT (site_id, snapshot_month) DO NOTHING RETURNING id, snapshot_month, row_version",
+        [input.siteId, input.month + "-01"]);
+      snapshotRow = createdResult.rows[0];
+      if (!snapshotRow) {
+        const existingResult = await query<{ id: string; snapshot_month: string; row_version: number }>(executor,
+          "SELECT id, snapshot_month, row_version FROM rack_capacity_snapshots WHERE site_id = $1 AND snapshot_month = $2::date FOR UPDATE",
+          [input.siteId, input.month + "-01"]);
+        snapshotRow = existingResult.rows[0];
+        if (!snapshotRow) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
+        if (input.changes.length > 0) throw new HttpError(409, "RACK_CAPACITY_ALREADY_INITIALIZED", "Rack Capacity is already initialized for the requested month. Reload it before saving changes.");
+      } else {
+        created = true;
+        for (const record of source.records) {
+          await query(executor,
+            "INSERT INTO rack_capacity_records(snapshot_id, source_row_number, rack_zone, rack_id, status, cabinet_size, detail, device_type, remarks, raw_inputs) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'{}'::jsonb)",
+            [snapshotRow.id, record.rowNumber, record.rackZone, record.rackId, record.status, record.cabinetSize, record.detail, record.deviceType, record.remarks]);
+        }
+      }
+    } else if (input.initializeFromPrevious) {
+      if (input.changes.length > 0) throw new HttpError(409, "RACK_CAPACITY_ALREADY_INITIALIZED", "Rack Capacity is already initialized for the requested month. Reload it before saving changes.");
+    } else if (input.expectedRowVersion !== snapshotRow.row_version) {
+      throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
+    }
+    if (!snapshotRow) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
 
     type DbRackRow = { id: string; source_row_number: number | null; rack_zone: string | null; rack_id: string | null; status: string | null; cabinet_size: string | null; detail: string | null; device_type: string | null; remarks: string | null };
     const rowsResult = await query<DbRackRow>(executor,
@@ -391,12 +431,14 @@ export class PostgresRepository implements BackendRepository {
       outcomes.push({ rowNumber: change.rowNumber, rackId: change.rackId, applied: true });
     }
 
-    const rowVersion = changedCount > 0 ? snapshotRow.row_version + 1 : snapshotRow.row_version;
-    if (changedCount > 0) {
+    const rowVersion = created ? 1 : changedCount > 0 ? snapshotRow.row_version + 1 : snapshotRow.row_version;
+    if (changedCount > 0 && !created) {
       const versionResult = await query<{ row_version: number }>(executor,
         "UPDATE rack_capacity_snapshots SET row_version = row_version + 1, updated_at = now() WHERE id = $1 AND row_version = $2 RETURNING row_version",
         [snapshotRow.id, snapshotRow.row_version]);
       if (!versionResult.rows[0]) throw new HttpError(409, "STALE_VERSION", "Rack Capacity changed before this save was committed.");
+    }
+    if (created || changedCount > 0) {
       const generatedAt = input.generatedAt ?? new Date().toISOString();
       const metrics = calculateRackCapacityMetrics(rows.map(record => ({ rowNumber: record.source_row_number, rackZone: record.rack_zone, rackId: record.rack_id, status: record.status, cabinetSize: record.cabinet_size, detail: record.detail, deviceType: record.device_type, remarks: record.remarks })));
       for (const historyRow of rackHistoryRows(input.facility, input.month, metrics, generatedAt)) {
@@ -414,7 +456,7 @@ export class PostgresRepository implements BackendRepository {
       }
       await query(executor,
         "INSERT INTO audit_events(actor_type, actor_user_id, action, entity_type, entity_id, previous_value, new_value, correlation_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-        [input.actorUserId === null || input.actorUserId === undefined ? "system" : "user", input.actorUserId ?? null, "update", "rack_capacity_snapshot", `${input.siteId}:${input.month}`, JSON.stringify({ site_id: input.siteId, snapshot_month: input.month, row_version: snapshotRow.row_version }), JSON.stringify({ site_id: input.siteId, snapshot_month: input.month, row_version: rowVersion, changed_count: changedCount }), input.correlationId]);
+        [input.actorUserId === null || input.actorUserId === undefined ? "system" : "user", input.actorUserId ?? null, created ? "create" : "update", "rack_capacity_snapshot", `${input.siteId}:${input.month}`, JSON.stringify(created ? null : { site_id: input.siteId, snapshot_month: input.month, row_version: snapshotRow.row_version }), JSON.stringify({ site_id: input.siteId, snapshot_month: input.month, row_version: rowVersion, changed_count: changedCount, carried_forward_from: created ? (input.carryForwardSourceMonth ?? null) : null }), input.correlationId]);
     }
 
     const snapshot: RackSnapshotRecord = {

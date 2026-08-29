@@ -26,7 +26,7 @@ import { ReportRegistry } from "../reporting/ReportRegistry";
 import type { ReportHistoryItem, ReportSectionId } from "../reporting/reportingTypes";
 import { loadWebRackUnitCapacityImage, type WebRackUnitCapacityImage } from "./rackUnitImage";
 import { WebRackCapacityDashboard, WebRackUnitCapacityDashboard } from "./WebRackCapacityViews";
-import type { RackApiSnapshot } from "./WebRackCapacityEditors";
+import { clearRackCapacitySnapshotCache, useRackCapacitySnapshot } from "./rackCapacityData";
 
 const DashboardSummary = lazy(() => import("../components/DashboardSummary"));
 const ExecutiveDashboard = lazy(() => import("../components/ExecutiveDashboard"));
@@ -125,8 +125,6 @@ export default function CleanWebApp() {
   const [rowVersion, setRowVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [entryDirty, setEntryDirty] = useState(false);
-  const [rackDirty, setRackDirty] = useState(false);
-  const [rackDiscardVersion, setRackDiscardVersion] = useState(0);
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation | null>(null);
   const [pendingCreateMonth, setPendingCreateMonth] = useState<string | null>(null);
   const entryActionsRef = useRef<EntryWorkspaceActions | null>(null);
@@ -174,7 +172,7 @@ export default function CleanWebApp() {
   const historyUpsGroupHistory = history.upsGroupHistory ?? null;
   const historyRackCapacityHistory = history.rackCapacityHistory ?? [];
   const historyRackUnitCapacity = history.rackUnitCapacity ?? [];
-  const unsavedChanges = entryDirty || rackDirty;
+  const unsavedChanges = entryDirty;
   const unsavedChangesRef = useRef(false);
   unsavedChangesRef.current = unsavedChanges;
 
@@ -393,8 +391,8 @@ export default function CleanWebApp() {
   }, [initialize, undoLastEdit, view]);
 
   const deferNavigation = (action: PendingNavigation) => { if (unsavedChanges) setPendingNavigation(previous => previous ?? action); else void action(); };
-  const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setRackDirty(false); setViewState(next); }); };
-  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setRackDirty(false); setBusy(true); setInitialHistoryLoading(true); setFacilityError(null); setHistory({ months: [], logs: [] }); setDraft(null); setRowVersion(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const scope = scopeForView(view); const records = await loadHistory(id, { force: true, scope }); /* Reporting Month is user context: keep the currently selected month across a facility switch rather than jumping to the new site's latest month. If the month has no data on the new site, loadMonth renders the normal empty state for it. */ await loadMonth(id, month, records); loadedPageKeyRef.current = `${id}:${view}`; prefetchHistoryScopes(id); } catch (error) { setNotice(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setInitialHistoryLoading(false); setBusy(false); } }; deferNavigation(action); };
+  const setView = (next: View) => { if (next === view) return; deferNavigation(() => { setEntryDirty(false); setViewState(next); }); };
+  const selectSite = async (id: number) => { const nextSite = bootstrap?.sites.find(item => item.id === id); if (!nextSite || !user || id === siteId) return; const action = async () => { setEntryDirty(false); setBusy(true); setInitialHistoryLoading(true); setFacilityError(null); setHistory({ months: [], logs: [] }); setDraft(null); setRowVersion(null); try { activeSiteIdRef.current = id; loadedPageKeyRef.current = null; setSiteId(id); storeFacility(user.id, id); const scope = scopeForView(view); const records = await loadHistory(id, { force: true, scope }); /* Reporting Month is user context: keep the currently selected month across a facility switch rather than jumping to the new site's latest month. If the month has no data on the new site, loadMonth renders the normal empty state for it. */ await loadMonth(id, month, records); loadedPageKeyRef.current = `${id}:${view}`; prefetchHistoryScopes(id); } catch (error) { setNotice(`Unable to load ${nextSite.name}: ${readError(error)}`); } finally { setInitialHistoryLoading(false); setBusy(false); } }; deferNavigation(action); };
   const selectMonth = async (selected: string, exists = true) => {
     if (!siteId || selected === month) return;
     const action = async () => {
@@ -402,7 +400,7 @@ export default function CleanWebApp() {
         setPendingCreateMonth(selected);
         return;
       }
-      setEntryDirty(false); setRackDirty(false); setBusy(true);
+      setEntryDirty(false); setBusy(true);
       try { await loadMonth(siteId, selected, history); setFacilityError(null); }
       catch (error) { setNotice(readError(error)); }
       finally { setBusy(false); }
@@ -412,7 +410,7 @@ export default function CleanWebApp() {
   const confirmCreateMonth = async () => {
     const selected = pendingCreateMonth;
     if (!selected || !siteId) return;
-    setPendingCreateMonth(null); setEntryDirty(false); setRackDirty(false); setBusy(true);
+    setPendingCreateMonth(null); setEntryDirty(false); setBusy(true);
     try { await loadMonth(siteId, selected, history); setFacilityError(null); }
     catch (error) { setNotice(readError(error)); }
     finally { setBusy(false); }
@@ -436,13 +434,13 @@ export default function CleanWebApp() {
       setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
     } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
-  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setViewState("entry"); setUser(null); setBootstrap(null); setDraft(null); }, []);
-  useEffect(() => { setUnauthorizedHandler(() => { setEntryDirty(false); setRackDirty(false); clearSession(); }); return () => setUnauthorizedHandler(null); }, [clearSession]);
-  const logout = async () => { const action = async () => { setEntryDirty(false); setRackDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { clearSession(); } }; deferNavigation(action); };
+  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); clearRackCapacitySnapshotCache(); loadedPageKeyRef.current = null; setViewState("entry"); setUser(null); setBootstrap(null); setDraft(null); }, []);
+  useEffect(() => { setUnauthorizedHandler(() => { setEntryDirty(false); clearSession(); }); return () => setUnauthorizedHandler(null); }, [clearSession]);
+  const logout = async () => { const action = async () => { setEntryDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { clearSession(); } }; deferNavigation(action); };
   const registerEntryActions = useCallback((actions: EntryWorkspaceActions | null) => { entryActionsRef.current = actions; }, []);
   const clearBrowserGuardMarker = () => { const currentState = window.history.state; if (!currentState?.__emUnsavedGuard) return; const nextState = { ...currentState }; delete nextState.__emUnsavedGuard; window.history.replaceState(nextState, "", window.location.href); };
   const stayOnPage = () => { clearBrowserGuardMarker(); setPendingNavigation(null); };
-  const discardPendingNavigation = () => { const action = pendingNavigation; clearBrowserGuardMarker(); setPendingNavigation(null); setEntryDirty(false); if (rackDirty) setRackDiscardVersion(version => version + 1); setRackDirty(false); if (action) void action(); };
+  const discardPendingNavigation = () => { const action = pendingNavigation; clearBrowserGuardMarker(); setPendingNavigation(null); setEntryDirty(false); if (action) void action(); };
   const savePendingNavigation = async () => { const action = pendingNavigation; if (!action) return; const saved = await entryActionsRef.current?.saveAll(); if (!saved) return; setPendingNavigation(null); setEntryDirty(false); void action(); };
   const changeTheme = (next: Theme) => { setTheme(next); applyTheme(next); if (user) { try { localStorage.setItem(themeStorageKey(user.id), next); } catch { /* theme still applies for current page */ } } };
   const changeLanguage = (next: AppLanguage) => { setLang(next); if (user) { try { localStorage.setItem(languageStorageKey(user.id), next); } catch { /* language still applies for current page */ } } };
@@ -511,8 +509,8 @@ export default function CleanWebApp() {
            <Suspense fallback={<ViewLoading lang={lang} />}>
            {(busy || initialHistoryLoading) && <div className="mb-4 text-sm text-teal-300">{shellCopy.working}</div>}
           {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={displayMonth} displayPeriod={globalDisplayPeriodRange} siteName={site.name} siteCode={site.code} lang={lang} upsGroupHistory={historyUpsGroupHistory} onNotice={setNotice} />}
-          {view === "entry" && draft && <WebEntryWorkspace lang={lang} siteId={siteId!} siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} rackUnitInitialRow={history.rackUnitCapacity?.find(row => row.month === month) ?? null} busy={busy} readOnly={bootstrap?.readOnlyMode ?? false} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={(selected, exists) => void selectMonth(selected, exists)} onRackUnitSaved={async () => { if (!siteId) return; const records = await loadHistory(siteId, { force: true, scope: "dashboard" }); await loadMonth(siteId, month, records); }} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
-          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={displayMonth} discardVersion={rackDiscardVersion} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} onHistorySaved={() => { void loadHistory(siteId, { force: true, scope: "rack" }); }} onDirtyChange={setRackDirty} />}
+          {view === "entry" && draft && <WebEntryWorkspace lang={lang} siteId={siteId!} siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} rackUnitInitialRow={history.rackUnitCapacity?.find(row => row.month === month) ?? null} busy={busy} readOnly={bootstrap?.readOnlyMode ?? false} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={(selected, exists) => void selectMonth(selected, exists)} onRackUnitSaved={async () => { if (!siteId) return; const records = await loadHistory(siteId, { force: true, scope: "dashboard" }); await loadMonth(siteId, month, records); }} onRackCapacitySaved={async () => { if (!siteId) return; historyCacheRef.current.delete(String(siteId) + ":full"); await loadHistory(siteId, { force: true, scope: "rack", prefetch: true }); }} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
+          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={displayMonth} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} onGoToEntry={() => setView("entry")} />}
           {view === "rack-units" && siteId && <RackUnitCapacityView siteId={siteId} siteName={site?.name ?? null} month={displayMonth} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} />}
           {view === "history" && <section className="space-y-8"><HistoricalCharts logs={history.logs} lang={lang} selectedMonth={displayMonth} displayPeriod={globalDisplayPeriodRange} dataSourceLabel={lang === "th" ? "แหล่งข้อมูล: Production API" : "Source: Production API"} /><HistoricalExplorer logs={history.logs} lang={lang} selectedMonth={displayMonth} displayPeriod={globalDisplayPeriodRange} upsGroupHistory={historyUpsGroupHistory} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} onEditMonth={selected => { setView("entry"); void selectMonth(selected); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></section>}
           {view === "comparison" && <WebSiteComparison lang={lang} />}
@@ -523,8 +521,7 @@ export default function CleanWebApp() {
          </main></div>
       <nav aria-label={lang === "th" ? "เมนูนำทางบนมือถือ" : "Mobile application navigation"} className="fixed bottom-0 left-0 right-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-800 bg-slate-950 px-1 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? "page" : undefined} className={`min-w-[4.75rem] shrink-0 flex flex-col items-center gap-1 py-2 ${mobileNavTextClassName} ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className={mobileNavIconClassName} />{item.label}</button>; })}</nav>
       {pendingCreateMonth && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/85 px-4 backdrop-blur-sm"><section role="dialog" aria-modal="true" aria-labelledby="create-month-title" className="w-full max-w-sm overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl"><div className="space-y-4 p-6"><div className="flex items-center gap-3"><div className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-2.5 text-indigo-400"><Calendar className="h-5 w-5" /></div><div><h2 id="create-month-title" className="font-display text-base font-bold text-slate-100">{lang === "th" ? "สร้างบันทึกรายเดือน" : "Create Monthly Record"}</h2><p className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-400">{pendingCreateMonth}</p></div></div><p className="rounded-xl border border-slate-800 bg-slate-950/50 p-4 text-xs leading-relaxed text-slate-300">{lang === "th" ? "ยังไม่มีบันทึกของเดือนนี้ในฐานข้อมูล ต้องการสร้างบันทึกใหม่เพื่อเริ่มกรอกข้อมูลหรือไม่" : "No record exists for this month yet. Create a new monthly record to start entering data?"}</p><div className="flex gap-2.5"><button type="button" onClick={() => setPendingCreateMonth(null)} className="flex-1 rounded-xl border border-slate-700/50 bg-slate-800 px-3 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-700">{lang === "th" ? "ยกเลิก" : "Cancel"}</button><button type="button" onClick={() => void confirmCreateMonth()} className="flex-1 rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-600/15 hover:bg-indigo-500">{lang === "th" ? "สร้างบันทึก" : "Create"}</button></div></div></section></div>}
-      {pendingNavigation && !rackDirty && <div role="dialog" aria-modal="true" aria-labelledby="unsaved-entry-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><h2 id="unsaved-entry-title" className="font-display text-lg font-bold text-slate-100">{lang === "th" ? "มีข้อมูลที่ยังไม่ได้บันทึก" : "Unsaved Data Entry changes"}</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">{lang === "th" ? "ต้องการบันทึกข้อมูลก่อนออกจากหน้านี้ หรือละทิ้งการแก้ไข?" : "Save your current entries before continuing, discard them, or stay on this page."}</p><div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={stayOnPage} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">{lang === "th" ? "ยกเลิก" : "Cancel"}</button><button type="button" onClick={discardPendingNavigation} className="rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-300">{lang === "th" ? "ละทิ้ง" : "Discard"}</button><button type="button" onClick={() => void savePendingNavigation()} className="rounded-lg bg-teal-500 px-3 py-2 text-sm font-semibold text-slate-950">{lang === "th" ? "บันทึกและดำเนินการต่อ" : "Save & Continue"}</button></div></section></div>}
-      {pendingNavigation && rackDirty && <div role="dialog" aria-modal="true" aria-labelledby="unsaved-rack-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><h2 id="unsaved-rack-title" className="font-display text-lg font-bold text-slate-100">Unsaved changes</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">You have unsaved changes. Leave without saving?</p><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={stayOnPage} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">Stay and Review</button><button type="button" onClick={discardPendingNavigation} className="rounded-lg bg-rose-600 px-3 py-2 text-sm font-semibold text-white">Leave Without Saving</button></div></section></div>}
+      {pendingNavigation && <div role="dialog" aria-modal="true" aria-labelledby="unsaved-entry-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><h2 id="unsaved-entry-title" className="font-display text-lg font-bold text-slate-100">{lang === "th" ? "มีข้อมูลที่ยังไม่ได้บันทึก" : "Unsaved Data Entry changes"}</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">{lang === "th" ? "ต้องการบันทึกข้อมูลก่อนออกจากหน้านี้ หรือละทิ้งการแก้ไข?" : "Save your current entries before continuing, discard them, or stay on this page."}</p><div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={stayOnPage} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">{lang === "th" ? "ยกเลิก" : "Cancel"}</button><button type="button" onClick={discardPendingNavigation} className="rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-300">{lang === "th" ? "ละทิ้ง" : "Discard"}</button><button type="button" onClick={() => void savePendingNavigation()} className="rounded-lg bg-teal-500 px-3 py-2 text-sm font-semibold text-slate-950">{lang === "th" ? "บันทึกและดำเนินการต่อ" : "Save & Continue"}</button></div></section></div>}
       <AppNotice message={notice} />
     </div>
   </ReportProvider>;
@@ -601,27 +598,14 @@ function DashboardView({ logs, month, displayPeriod, siteName = "Facility", site
   );
 }
 
-/** Production Rack view. The raw monthly snapshot is fetched from the
- * facility/month endpoint; presentation and editing stay in the dedicated
- * Production components so Desktop's Rack UI remains unchanged. */
-function RackCapacityView({ siteId, siteName, month, discardVersion, rackCapacityHistory, rackUnitCapacity, onHistorySaved, onDirtyChange }: { siteId: number; siteName: string | null; month: string; discardVersion: number; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; onHistorySaved?: () => void; onDirtyChange?: (dirty: boolean) => void }) {
-  const [rack, setRack] = useState<RackApiSnapshot | null>(null);
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    setStatus("loading"); setError(null);
-    api<{ snapshot: RackApiSnapshot | null }>(`/racks?siteId=${siteId}&month=${month}`).then(racks => {
-      if (cancelled) return;
-      setRack(racks.snapshot); setStatus("ready");
-    }).catch(reason => { if (!cancelled) { setError(readError(reason)); setStatus("error"); } });
-    return () => { cancelled = true; };
-  }, [siteId, month]);
-
-  if (status === "loading") return <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">Loading Rack Capacity…</section>;
-  if (status === "error") return <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">Rack Capacity unavailable</h2><p className="mt-2 text-sm">{error}</p></section>;
-  return <WebRackCapacityDashboard resetVersion={discardVersion} siteId={siteId} siteName={siteName} month={month} snapshot={rack} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} onSaved={(next) => { setRack(next); onHistorySaved?.(); }} onDirtyChange={onDirtyChange} />;
+/** Production Rack view. Raw data is read by the shared exact site/month loader.
+ * Candidate values are intentionally not shown here: only confirmed snapshots
+ * belong in the analytical view. */
+function RackCapacityView({ siteId, siteName, month, rackCapacityHistory, rackUnitCapacity, onGoToEntry }: { siteId: number; siteName: string | null; month: string; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; onGoToEntry?: () => void }) {
+  const rack = useRackCapacitySnapshot(siteId, month);
+  if (rack.key !== siteId + ":" + month || rack.status === "loading") return <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">Loading Rack Capacity…</section>;
+  if (rack.status === "error") return <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">Rack Capacity unavailable</h2><p className="mt-2 text-sm">{rack.error}</p></section>;
+  return <WebRackCapacityDashboard siteId={siteId} siteName={siteName} month={month} snapshot={rack.persisted ? rack.snapshot : null} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} onGoToEntry={onGoToEntry} />;
 }
 
 function RackUnitCapacityView({ siteId, siteName, month, rackCapacityHistory, rackUnitCapacity }: { siteId: number; siteName: string | null; month: string; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[] }) {

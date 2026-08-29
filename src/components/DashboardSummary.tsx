@@ -681,7 +681,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                         const value = getAirValue(activeLog, field);
                         return <td key={field} className="py-3 px-3 text-right font-mono">{formatNumber2(value)}</td>;
                       })}
-                      <td className="py-3 px-3 text-right font-mono text-slate-650">—</td>
+                      <td className="py-3 px-3 text-right font-mono text-slate-500">—</td>
                     </tr>
                     {/* Monthly Difference */}
                     <tr className="border-t-2 border-slate-800 bg-teal-950/10 font-bold text-teal-300">
