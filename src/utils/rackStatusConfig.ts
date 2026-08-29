@@ -28,10 +28,10 @@ export const RACK_STATUS_DISPLAY_ORDER: readonly RackDisplayStatus[] = [...RACK_
  *  `rackStatusColorForRatio`). Kept distinct from Available's green so the
  *  fixed-color set (rackStatusHex) still has 5 mutually distinct colors. */
 const PRESENTATION_BY_STATUS: Record<RackDisplayStatus, RackStatusPresentation> = {
-  "In Use": { status: "In Use", labelEn: "In Use", labelTh: "ใช้งานอยู่", hex: "#10b981" },
+  "In Use": { status: "In Use", labelEn: "In Use", labelTh: "ใช้งานอยู่", hex: "#f59e0b" },
   "Available": { status: "Available", labelEn: "Available", labelTh: "ว่าง", hex: "#22c55e" },
   "Reserved": { status: "Reserved", labelEn: "Reserved", labelTh: "จองไว้", hex: "#3b82f6" },
-  "Pending Dismantle": { status: "Pending Dismantle", labelEn: "Pending Dismantle", labelTh: "รอถอดถอน", hex: "#92400e" },
+  "Pending Dismantle": { status: "Pending Dismantle", labelEn: "Pending Dismantle", labelTh: "รอถอดถอน", hex: "#ef4444" },
   "Other": { status: "Other", labelEn: "Other", labelTh: "อื่นๆ", hex: "#94a3b8" }
 };
 

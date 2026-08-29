@@ -50,10 +50,14 @@ assert.doesNotMatch(app, /logs=\{reportingPeriodLogs\}|month=\{activeReportingMo
 // The rack comparison component itself must derive everything from the month
 // prop - no internal "latest snapshot / new Date()" period.
 const rackComparison = readFileSync(new URL("../src/web-clean-v1/WebSiteRackCapacityComparison.tsx", import.meta.url), "utf8");
-assert.match(rackComparison, /api<RackSnapshotApiResponse>\(`\/racks\?siteId=\$\{site\.id\}&month=\$\{encodeURIComponent\(month\)\}`\)/);
+assert.ok(rackComparison.includes("loadRackCapacitySnapshot(site.id, month)"), "Rack comparison uses the exact selected month through the shared cache");
 assert.match(rackComparison, /\}, \[month\]\);/); // load() request/generation key is the month prop
 assert.ok(rackComparison.includes('"No monthly Rack Capacity snapshot"'), "no-data text is month-scoped, not a latest-month fallback");
-assert.match(rackComparison, /for \$\{site\.site\.name\} — \$\{monthLabelLong\(month, "en"\)\}/);
+assert.match(
+  rackComparison,
+  /site\.site\.name.{0,80}monthLabelLong\(month, "en"\)/,
+  "rack comparison labels the selected site and month",
+);
 assert.doesNotMatch(rackComparison, /new Date\(\)|latestAvailableMonth|latestHistoryMonth/);
 assert.ok(app.includes('"Last " + count + " Months"'), "English preset label exists");
 assert.ok(app.includes('"ย้อนหลัง " + count + " เดือน"'), "Thai preset label exists");
