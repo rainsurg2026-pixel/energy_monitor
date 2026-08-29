@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { rackAvailabilityStatus, rackCountsReconcile, rankRackLocations, isValidRackUnitCapacity } from "../src/domain/rackComparison";
-import { rackUtilizationLevel } from "../src/domain/rackCapacity";
+import { calculateRackCapacityMetrics, rackUtilizationLevel } from "../src/domain/rackCapacity";
 import { displayPositionStatus, filterRackPositions, rackPositionRows } from "../src/web-clean-v1/WebSiteRackCapacityComparison";
 
 const comparison = readFileSync(new URL("../src/web-clean-v1/WebSiteComparison.tsx", import.meta.url), "utf8");
 const rackComparison = readFileSync(new URL("../src/web-clean-v1/WebSiteRackCapacityComparison.tsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
+const unitView = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityViews.tsx", import.meta.url), "utf8");
 const apiService = readFileSync(new URL("../server/services/apiService.ts", import.meta.url), "utf8");
 
 assert.match(comparison, /api<SiteComparisonExport>\("\/site-comparison"\)/);
@@ -48,21 +49,53 @@ assert.ok(rackComparison.includes("rack-unit-capacity?siteId="), "Rack Unit comp
 assert.doesNotMatch(rackComparison, /api<RackSnapshotApiResponse>/);
 for (const heading of [
   "Site Rack Capacity &amp; Availability Comparison",
-  "Available rack positions by site and zone for deployment planning.",
-  "Available Rack Positions by Zone",
-  "Total Available",
+  "Compare site rack capacity by zone and status for deployment planning.",
+  "Rack Capacity by Zone",
+  "Rack Capacity Details",
   "Rack Positions",
   "Rack Unit Capacity Comparison",
-  "Used and available rack units by site",
-  "Available U represents physical rack space only"
+  "Used and available rack units by site"
 ]) assert.ok(rackComparison.includes(heading), "comparison heading missing: " + heading);
 for (const field of ["Rack ID", "Cabinet Size (cm)", "Detail"]) assert.ok(rackComparison.includes(">" + field + "</th>"), "position field missing: " + field);
 assert.ok(rackComparison.includes("Pending Dismantle"));
 assert.ok(rackComparison.includes("Pending Decommission"));
+assert.match(rackComparison, /\{state\.site\.name\} Rack Capacity Details/);
+assert.ok(rackComparison.includes("rackStatusColorForRatio"));
+assert.ok(rackComparison.includes("zone.total"));
+assert.ok(rackComparison.includes("title={tooltip}"));
+assert.doesNotMatch(rackComparison, /<details[^>]*\bopen\b/);
+assert.ok(rackComparison.includes("<RackCapacityByZone states={sites}"));
+assert.ok(rackComparison.includes("<RackCapacityDetails states={sites}"));
 assert.ok(rackComparison.includes("useMemo<RackPosition[]>"));
 assert.ok(rackComparison.includes("[states]"));
-assert.ok(rackComparison.indexOf("<RackPositions states={sites}") < rackComparison.indexOf("<RackUnitComparison states={sites}"), "Rack Positions stays directly before Rack Unit comparison");
+assert.ok(rackComparison.indexOf("<RackCapacityByZone states={sites}") < rackComparison.indexOf("<RackCapacityDetails states={sites}"), "Zone chart precedes split details");
+assert.ok(rackComparison.indexOf("<RackCapacityDetails states={sites}") < rackComparison.indexOf("<RackPositions states={sites}"), "Split details precede Rack Positions");
+assert.ok(rackComparison.indexOf("<RackPositions states={sites}") < rackComparison.indexOf("<RackUnitComparison states={sites}"), "Rack Positions precedes Rack Unit comparison");
+assert.ok(rackComparison.includes("lg:grid-cols-2"), "Rack Unit comparison uses two columns only at desktop width");
+assert.ok(rackComparison.includes("lg:grid-cols-3"), "Rack position status groups stack below desktop width");
+assert.doesNotMatch(rackComparison, /h-\[330px\]/, "Rack Unit comparison no longer uses the oversized chart height");
 assert.doesNotMatch(rackComparison, /SAMPLE DATA/);
+assert.match(unitView, /formatFixedNumber\(unitCapacityRow \? total : null, 0\)/);
+assert.match(unitView, /formatFixedNumber\(unitCapacityRow \? used : null, 0\)/);
+assert.match(unitView, /formatFixedNumber\(unitCapacityRow \? available : null, 0\)/);
+assert.match(unitView, /formatFixedNumber\(row\.totalU, 0\)/);
+assert.match(unitView, /formatFixedNumber\(row\.usedU, 0\)/);
+assert.match(unitView, /formatFixedNumber\(row\.availableU, 0\)/);
+assert.match(unitView, /formatFixedNumber\(item\.count, 0\)/, "Rack Unit Capacity Mix counts are whole numbers");
+assert.match(unitView, /function safePercent\(value: number \| null\): string \{ return formatFixedPercentage\(value, 1\); \}/);
+assert.ok(unitView.indexOf("Six-month Rack Unit Capacity Trend") < unitView.indexOf("rack-unit-capacity-trend-note"), "Trend note follows the trend section");
+assert.ok(unitView.includes("Rack Unit Capacity Trend Note: Available U represents physical rack space only; actual deployment capacity depends on power, cooling, weight, and contiguous space availability."));
+assert.ok(unitView.includes("หมายเหตุแนวโน้มความจุ Rack Unit"));
+assert.ok(app.includes("rackUnitCapacity={historyRackUnitCapacity} lang={lang}"), "Rack Unit page receives the selected language");
+
+const zoneFixture = calculateRackCapacityMetrics([
+  { rackZone: "Zone A", rackId: "A01", status: "In Use", cabinetSize: null, detail: null, deviceType: null, remarks: null },
+  { rackZone: "Zone A", rackId: "A02", status: "Available", cabinetSize: null, detail: null, deviceType: null, remarks: null },
+  { rackZone: "Zone A", rackId: "A03", status: "Reserved", cabinetSize: null, detail: null, deviceType: null, remarks: null },
+  { rackZone: "Zone A", rackId: "A04", status: "Pending Dismantle", cabinetSize: null, detail: null, deviceType: null, remarks: null }
+]);
+const zoneA = zoneFixture.zoneMetrics[0];
+assert.equal(zoneA.inUse.count + zoneA.available.count + zoneA.reserved.count + zoneA.pendingDismantle.count, zoneA.total, "stacked status counts sum to zone total");
 
 // Regression model: the same mounted view can rebind A -> B -> A without a
 // remount, while each site's rows remain isolated and delayed results stay
