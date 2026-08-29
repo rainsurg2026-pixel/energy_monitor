@@ -3,7 +3,7 @@ import { useReport } from "../ReportContext";
 import type { MonthlyLog } from "../types";
 import { formatMonthYear } from "../utils";
 import { calculateEnergyCostForMonth } from "../utils/energyCost";
-import { selectedPeriodAnchorIndex } from "../utils/reportPeriodSelection";
+import { selectedDashboardMonth } from "../utils/reportPeriodSelection";
 import TrendLineChart from "./TrendLineChart";
 
 interface EngineeringTrendChartsProps {
@@ -57,12 +57,17 @@ export default function EngineeringTrendCharts({ logs, lang }: EngineeringTrendC
     });
     if (processed.length === 0) return [];
 
-    const visibleRows = processed.filter(row => row.month.startsWith(`${selectedYear}-`));
-    if (visibleRows.length === 0) return [];
-
-    const anchorIndex = selectedPeriodAnchorIndex(visibleRows.map(row => row.month), selectedPeriod);
+    // "Last N Months" is a trailing window that ENDS at the selected reporting
+    // month and slides with it - it is not clipped to a single calendar year,
+    // so a 12-month window ending in Feb correctly reaches back into the prior
+    // year. selectedYear/selectedPeriod only resolve which month the window
+    // ends at; the window itself spans the full (already display-period-clipped)
+    // month sequence so every metric keeps its own independent completeness.
+    const anchorMonth = selectedDashboardMonth(processed, selectedYear, selectedPeriod, processed[processed.length - 1]!.month);
+    const anchorIndex = processed.findIndex(row => row.month === anchorMonth);
+    const effectiveAnchor = anchorIndex >= 0 ? anchorIndex : processed.length - 1;
     const windowSize = TREND_WINDOW_SIZE[selectedTrend] ?? 3;
-    return visibleRows.slice(Math.max(0, anchorIndex - windowSize + 1), anchorIndex + 1);
+    return processed.slice(Math.max(0, effectiveAnchor - windowSize + 1), effectiveAnchor + 1);
   }, [logs, selectedPeriod, selectedTrend, selectedYear]);
 
   if (trendData.length === 0) {

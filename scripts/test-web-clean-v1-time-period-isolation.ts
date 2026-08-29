@@ -82,6 +82,18 @@ assert.equal(clampMonthToDisplayPeriod("2025-01", "2026-01", "2026-06", ["2026-0
 assert.match(app, /target === "racks" \|\| target === "rack-units" \? "rack" : target === "entry" \? "dashboard" : "full"/);
 
 // ---------------------------------------------------------------------------
+// PART 5 / 6 - the Dashboard trend window is a trailing "Last N Months" that
+// slides with the selected month and is NOT clipped to one calendar year, so
+// each series keeps its own completeness across the year boundary.
+// ---------------------------------------------------------------------------
+const trend = readFileSync(new URL("../src/components/EngineeringTrendCharts.tsx", import.meta.url), "utf8");
+assert.doesNotMatch(trend, /processed\.filter\(row => row\.month\.startsWith\(`\$\{selectedYear\}-`\)\)/);
+assert.match(trend, /const anchorMonth = selectedDashboardMonth\(processed, selectedYear, selectedPeriod, processed\[processed\.length - 1\]!\.month\)/);
+assert.match(trend, /return processed\.slice\(Math\.max\(0, effectiveAnchor - windowSize \+ 1\), effectiveAnchor \+ 1\)/);
+// missing metric stays null (a per-series gap), the month row is never dropped:
+assert.match(trend, /values: trendData\.map\(point => point\[chart\.key\]\)/);
+
+// ---------------------------------------------------------------------------
 // Functional: a trailing preset's window always ends at the SELECTED reporting
 // month and is independent of the current calendar date.
 // ---------------------------------------------------------------------------
