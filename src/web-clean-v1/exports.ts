@@ -804,7 +804,7 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
 /** Generates a real PDF download for the site-comparison report without
  * opening a popup or invoking the browser print dialog. */
 export async function exportSiteComparisonPdf(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): Promise<void> {
-  await exportReportPdfFromHtml(buildReportHtml(siteComparisonReportForDownload(data, referenceMonth, selfRack, otherRack), sections), fileName ?? `site-comparison-${referenceMonth}`);
+  await exportReportPdfFromHtml(buildSiteComparisonReportHtml(data, referenceMonth, selfRack, otherRack, sections), fileName ?? `site-comparison-${referenceMonth}`);
 }
 
 export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[], extras: ReportDataExtras = {}): void {
@@ -820,41 +820,14 @@ export function exportAllFacilitiesHtml(facilities: ExportFacility[], selectedMo
 }
 
 export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): void {
-  const [primary, secondary] = data.sites;
-  if (!primary) throw new Error("No facilities are available for comparison.");
-  const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
-  const report: ReportData = {
-    title: "Data Center Energy & Facility Monitor Site Comparison",
-    thaiSubtitle: "รายงานเปรียบเทียบการใช้พลังงานระหว่างไซต์",
-    facility: "All Facilities",
-    sourceWorkbook: "Supabase PostgreSQL",
-    generatedAt: new Date().toISOString(),
-    appVersion: "2.3.1 Web Clean v1",
-    reportingMonth: referenceMonth,
-    historicalStart: trendMonths[0] ?? null,
-    historicalEnd: trendMonths.at(-1) ?? null,
-    status: "Complete",
-    validationWarnings: [],
-    monthlyRows: comparisonTrend(primary, trendMonths),
-    currentRow: null,
-    engineeringDashboard: null,
-    rack: null,
-    rackHistory: [],
-    rackUnitCapacity: [],
-    rackUnitCapacityImageDataUri: null,
-    rackUnitCapacityImageMeta: null,
-    comparison: {
-      self: comparisonRow(primary, referenceMonth),
-      other: secondary ? comparisonRow(secondary, referenceMonth) : null,
-      selfTrend: comparisonTrend(primary, trendMonths),
-      otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
-    },
-    rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
-  };
-  download(buildReportHtml(report, sections), fileName ?? `site-comparison-${referenceMonth}.html`, "text/html;charset=utf-8");
+  download(buildSiteComparisonReportHtml(data, referenceMonth, selfRack, otherRack, sections), fileName ?? `site-comparison-${referenceMonth}.html`, "text/html;charset=utf-8");
 }
 
-function allFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: string, sections?: readonly ReportSectionId[]): string {
+/** One combined report document, one facility report per section. Exported so
+ *  the Live Preview renders exactly the same content the All Facilities export
+ *  produces (report model -> preview and the same model -> PDF-safe capture),
+ *  never a duplicate table generation. */
+export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: string, sections?: readonly ReportSectionId[]): string {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
   const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth), sections));
   const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
@@ -863,9 +836,15 @@ function allFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: st
   return `<!doctype html><html><head><meta charset=\"utf-8\"><title>Data Center Energy &amp; Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`;
 }
 
+/** Same-model source for the Site Energy & Cost Comparison Live Preview and the
+ *  comparison HTML/PDF exports. */
+export function buildSiteComparisonReportHtml(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): string {
+  return buildReportHtml(siteComparisonReportForDownload(data, referenceMonth, selfRack, otherRack), sections);
+}
+
 /** Generates one real PDF download containing one report per facility. */
 export async function exportAllFacilitiesPdf(facilities: ExportFacility[], selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): Promise<void> {
-  await exportReportPdfFromHtml(allFacilitiesReportHtml(facilities, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
+  await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
 }
 
 /** Prints one full Desktop-compatible report per facility in one document.
