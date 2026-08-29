@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { rackAvailabilityStatus, rackCountsReconcile, rankRackLocations, isValidRackUnitCapacity } from "../src/domain/rackComparison";
 import { calculateRackCapacityMetrics, rackUtilizationLevel } from "../src/domain/rackCapacity";
 import { displayPositionStatus, filterRackPositions, rackPositionRows, zoneAvailableTotalLabel } from "../src/web-clean-v1/WebSiteRackCapacityComparison";
+import { rackStatusHex } from "../src/utils/rackStatusConfig";
 
 const comparison = readFileSync(new URL("../src/web-clean-v1/WebSiteComparison.tsx", import.meta.url), "utf8");
 const rackComparison = readFileSync(new URL("../src/web-clean-v1/WebSiteRackCapacityComparison.tsx", import.meta.url), "utf8");
@@ -65,6 +66,9 @@ assert.ok(rackComparison.includes("Pending Dismantle"));
 assert.ok(rackComparison.includes("Pending Decommission"));
 assert.match(rackComparison, /\{state\.site\.name\} Rack Capacity Details/);
 for (const status of ["In Use", "Available", "Reserved", "Pending Dismantle"]) assert.ok(rackComparison.includes(`rackStatusHex("${status}")`), "shared semantic color missing: " + status);
+const zoneStatusColors = ["In Use", "Available", "Reserved", "Pending Dismantle"].map(rackStatusHex);
+assert.equal(new Set(zoneStatusColors).size, zoneStatusColors.length, "Rack zone status colors must remain distinct");
+assert.deepEqual(zoneStatusColors, ["#f59e0b", "#22c55e", "#3b82f6", "#ef4444"], "Rack zone status palette should preserve high-contrast semantic colors");
 assert.ok(rackComparison.includes("zone.total"));
 assert.ok(rackComparison.includes("Available / Total"), "zone capacity column header missing");
 assert.match(rackComparison, /formatFixedNumber\(zone\.available\.count, 0\)[\s\S]{0,260}formatFixedNumber\(zone\.total, 0\)/, "zone label uses available and total counts");
