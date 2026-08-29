@@ -125,11 +125,11 @@ assert.doesNotMatch(appSource, /const candidate = nextSite\.latestAvailableMonth
 // Settings refresh path is unchanged.
 assert.match(appSource, /const energyMonth = latestEnergyMonth\(initialHistory\.logs, initialMonth\);/);
 assert.match(appSource, /await loadMonth\(current\.id, latestEnergyMonth\(records\.logs, candidate\), records\);/);
-// The Reporting Period reconcile effect reacts to a site change but only ever
-// re-derives the period, never the month, so presets stay independent of the
-// facility switch.
-assert.match(appSource, /\}, \[reportingPeriodAvailableMonths, reportingPeriodEndMonth, reportingPeriodPreset, siteId\]\);/);
-const reconcileEffect = appSource.slice(appSource.indexOf("if (reportingPeriodAvailableMonths.length === 0) return;"), appSource.indexOf("}, [reportingPeriodAvailableMonths, reportingPeriodEndMonth, reportingPeriodPreset, siteId]);"));
+// The Reporting Period reconcile effect now lives INSIDE the Reports component
+// (Reports-local state). It reacts to a site change but only ever re-derives
+// the local period, never the global month, so the Quick Range stays isolated.
+assert.match(appSource, /\}, \[monthsAvailable, periodEndMonth, reportPreset, siteId\]\);/);
+const reconcileEffect = appSource.slice(appSource.indexOf("if (monthsAvailable.length === 0) return;"), appSource.indexOf("}, [monthsAvailable, periodEndMonth, reportPreset, siteId]);"));
 assert.ok(!reconcileEffect.includes("setMonth("), "the reporting-period reconcile effect never resets the reporting month");
 
 console.log("web-clean-v1 dashboard fixes: browser PDF/download E2E contract assertions passed");

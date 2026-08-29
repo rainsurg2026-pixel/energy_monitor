@@ -9,9 +9,10 @@ assert.match(app, /const DASHBOARD_REPORT_VIEWS = \["executive", "dashboard", "b
 assert.match(app, /selectedReportView === "benchmark" && <BenchmarkDashboard logs=\{logs\} lang=\{lang\} \/>/);
 assert.match(app, /selectedReportView === "forecast" && <ForecastDashboard logs=\{logs\} lang=\{lang\} \/>/);
 assert.match(app, /const HistoricalCharts = lazy\(\(\) => import\("\.\.\/components\/HistoricalCharts"\)\)/);
-// History view now renders from the app-wide Reporting Period selection so the
-// Dashboard, History, Comparisons, Reports, and Exports stay synchronized.
-assert.match(app, /<HistoricalCharts logs=\{reportingPeriodLogs\} lang=\{lang\} selectedMonth=\{activeReportingMonth\}/);
+// History renders from the GLOBAL Selected Reporting Month + full history and
+// is bounded only by the Global Display Period. The Reports-local Quick Range
+// (Last 3/6/12) must never reach this or any other non-Reports view.
+assert.match(app, /<HistoricalCharts logs=\{history\.logs\} lang=\{lang\} selectedMonth=\{displayMonth\}/);
 assert.match(app, /dataSourceLabel=\{lang === "th" \? "แหล่งข้อมูล: Production API" : "Source: Production API"\}/);
 
 assert.match(app, /const exportDashboard = \(format: "pdf" \| "excel" \| "csv" \| "png"\)/);

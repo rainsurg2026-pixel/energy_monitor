@@ -32,17 +32,21 @@ assert.deepEqual((p => ({ start: p.rangeStart, end: p.rangeEnd }))(reportingPeri
 assert.equal(reportingPeriodForPreset("2026-01", 3, ["2026-01", "2026-08"]).rangeEnd, "2026-01");
 
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
-// The reconcile effect re-resolves an active preset against the selected
-// Reporting Month (reportingPeriodEndMonth) every time it changes - it is not
-// anchored to defaultReportingPeriod / latest-available anymore.
-assert.ok(app.includes("reportingPeriodForPreset(reportingPeriodEndMonth, reportingPeriodPreset, reportingPeriodAvailableMonths)"), "an active preset always ends at the selected Reporting Month");
-assert.ok(app.includes("const [reportingPeriodPreset, setReportingPeriodPreset] = useState<ReportingPeriodPreset | null>(3)"), "the active trailing preset is tracked (default Last 3 Months)");
-assert.match(app, /const choosePreset = \(count: ReportingPeriodPreset\) => onPeriodChange\(reportingPeriodForPreset\(periodEndMonth, count, periodMonthsAvailable\), count\);/);
-assert.match(app, /onPeriodChange: \(next: ReportingPeriodSelection, preset\?: ReportingPeriodPreset \| null\) => void/);
-// Rack comparison is fed the same active reporting month and period label.
-assert.ok(app.includes('<WebSiteRackCapacityComparison month={activeReportingMonth} activePeriodLabel={reportingPeriodLabel(reportingPeriod, lang)}'), "rack comparison uses the active reporting month");
-assert.ok(app.includes("const activeReportingMonth = effectiveMonth(reportingPeriod, reportingPeriodEndMonth);"), "active reporting month resolves from the lifted period + selected month");
-assert.match(app, /const reportingPeriodEndMonth = useMemo\(\(\) => \{\s*const available = reportingPeriodAvailableMonths\.filter\(value => value <= month\);\s*return available\.at\(-1\) \?\? month;/);
+// The Quick Range / Reporting Period is Reports-LOCAL state. Its reconcile
+// effect re-resolves an active preset against the selected Reporting Month
+// (the local `periodEndMonth`, <= the global `month`) every time it changes -
+// it is never anchored to latest-available or the calendar month.
+assert.ok(app.includes("reportingPeriodForPreset(periodEndMonth, reportPreset, monthsAvailable)"), "an active preset always ends at the selected Reporting Month");
+assert.ok(app.includes("const [reportPreset, setReportPreset] = useState<ReportingPeriodPreset | null>(3)"), "the active trailing preset is tracked Reports-locally (default Last 3 Months)");
+assert.match(app, /const choosePreset = \(count: ReportingPeriodPreset\) => updatePeriod\(reportingPeriodForPreset\(periodEndMonth, count, periodMonthsAvailable\), count\);/);
+assert.match(app, /const updatePeriod = \(next: ReportingPeriodSelection, preset: ReportingPeriodPreset \| null = null\) => \{/);
+// Rack comparison is fed ONLY the global Selected Reporting Month - no period
+// label, no Quick Range coupling.
+assert.ok(app.includes('<WebSiteRackCapacityComparison month={displayMonth} />'), "rack comparison uses the global Selected Reporting Month");
+assert.ok(app.includes("const contextMonth = effectiveMonth(period, periodEndMonth);"), "the report context month resolves from the Reports-local period + selected month");
+assert.match(app, /const periodEndMonth = useMemo\(\(\) => \{\s*const available = \[\.\.\.monthsAvailable\]\.filter\(value => value <= month\)\.sort\(\);\s*return available\.at\(-1\) \?\? month;/);
+// No non-Reports view reads the Reports-local period-derived values.
+assert.doesNotMatch(app, /logs=\{reportingPeriodLogs\}|month=\{activeReportingMonth\}|reportMonths=\{selectedReportingMonths\}/);
 // The rack comparison component itself must derive everything from the month
 // prop - no internal "latest snapshot / new Date()" period.
 const rackComparison = readFileSync(new URL("../src/web-clean-v1/WebSiteRackCapacityComparison.tsx", import.meta.url), "utf8");
@@ -56,11 +60,12 @@ assert.ok(app.includes('"ย้อนหลัง " + count + " เดือน"
 assert.match(app, /selectedReportMonths/);
 assert.match(app, /periodIdentity/);
 assert.match(app, /reportingMonths: selectedReportMonths/);
-assert.ok(app.includes("filterLogsByPeriod(logs, period, periodEndMonth)"), "exports filter by active period");
-assert.ok(app.includes("reportingPeriodLogs"), "views receive filtered period logs");
-assert.ok(app.includes("displayPeriod={activeReportingDisplayPeriod}"), "history charts receive active period");
-assert.ok(app.includes("reportMonths={selectedReportingMonths}"), "site comparison receives active months");
-assert.ok(app.includes("activePeriodLabel={reportingPeriodLabel(reportingPeriod, lang)}"), "comparison labels use active period");
+assert.ok(app.includes("filterLogsByPeriod(logs, period, periodEndMonth)"), "the report downloads/preview filter by the Reports-local period");
+// The Reports-local period NEVER leaks into a non-Reports view: none of the
+// removed parent-level derived values exist any more.
+assert.doesNotMatch(app, /reportingPeriodLogs|activeReportingMonth|activeReportingDisplayPeriod|selectedReportingMonths|reportingRackCapacityHistory|reportingRackUnitCapacity|reportingUpsGroupHistory|updateReportingPeriod/);
+assert.ok(app.includes("logs={history.logs}") && app.includes("selectedMonth={displayMonth}"), "History gets full history + the global Selected Reporting Month");
+assert.ok(app.includes("<WebSiteComparison lang={lang} />"), "Site Comparison is not scoped by the Reports Quick Range");
 assert.match(app, /WebReportPreview[\s\S]*month=\{contextMonth\}/);
 assert.match(app, /exportAllFacilitiesHtml[\s\S]*contextMonth/);
 assert.ok(app.includes("exportSiteComparisonHtml(comparison, contextMonth"), "site comparison export uses the active period");

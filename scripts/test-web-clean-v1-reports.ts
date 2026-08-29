@@ -12,11 +12,12 @@ assert.match(app, /crypto\.randomUUID/);
 assert.match(app, /HistoryProvider\.add\(item\)/);
 assert.match(app, /const reportContextKey = `\$\{siteName\}\\u0000\$\{contextMonth\}`/);
 assert.match(app, /setFileNameCustomized\(false\)/);
-// The Reporting Period is owned by the app shell (so Dashboard, History,
-// Comparisons, Reports, and Exports stay in sync); Reports drives it through
-// onPeriodChange and offers the Last 3/6/12 Months quick presets while still
-// preserving a custom From/To range.
-assert.match(app, /onPeriodChange=\{updateReportingPeriod\}/);
+// The Reporting Period / Quick Range is owned LOCALLY by the Reports component
+// (never lifted to CleanWebApp), so choosing Last 3/6/12 or a custom From/To
+// range here cannot move the Dashboard, History, Comparisons, or Rack views.
+assert.match(app, /const \[reportPeriod, setReportPeriod\] = useState<ReportingPeriodSelection>\(\(\) => defaultReportingPeriod\(month\)\)/);
+assert.match(app, /const \[reportPreset, setReportPreset\] = useState<ReportingPeriodPreset \| null>\(3\)/);
+assert.doesNotMatch(app, /onPeriodChange/);
 assert.match(app, /const selectedPreset = matchingReportingPeriodPreset\(period, periodEndMonth, periodMonthsAvailable\)/);
 assert.match(app, /choosePreset\(count as ReportingPeriodPreset\)/);
 assert.match(app, /\[3, 6, 12\]\.map\(count =>/);

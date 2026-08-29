@@ -111,14 +111,11 @@ export default function CleanWebApp() {
   const [siteId, setSiteId] = useState<number | null>(null);
   const [view, setViewState] = useState<View>("entry");
   const [history, setHistory] = useState<HistoryData>({ months: [], logs: [] });
+  // B. SELECTED REPORTING MONTH - the top-of-page month picker. Global user
+  // context; every non-Reports view renders this month. The Reports view's
+  // Quick Range / Reporting Period is a separate, Reports-local concept (see
+  // the Reports component) and never mutates this or any other global view.
   const [month, setMonth] = useState(todayMonth());
-  const [reportingPeriod, setReportingPeriod] = useState<ReportingPeriodSelection>(() => defaultReportingPeriod(todayMonth()));
-  // Non-null = an active trailing preset (the Last 3 Months default, or an
-  // explicitly chosen Last 3 / 6 / 12 Months). Its window always ends at the
-  // selected Reporting Month and slides with it. Null = a bespoke selection
-  // (custom Month Range / Single Month / Current / Full) that is preserved
-  // exactly, only clamped to months the active site has.
-  const [reportingPeriodPreset, setReportingPeriodPreset] = useState<ReportingPeriodPreset | null>(3);
   const [draft, setDraft] = useState<MonthlyLog | null>(null);
   const [rowVersion, setRowVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -143,19 +140,35 @@ export default function CleanWebApp() {
   const loadedPageKeyRef = useRef<string | null>(null);
   const pageLoadGenerationRef = useRef(0);
   const site = useMemo(() => bootstrap?.sites.find(item => item.id === siteId) ?? null, [bootstrap, siteId]);
-  const reportingPeriodAvailableMonths = useMemo(() => [...new Set([...(site?.availableMonths ?? []), ...history.months])].sort(), [history.months, site?.availableMonths]);
-  const reportingPeriodEndMonth = useMemo(() => {
-    const available = reportingPeriodAvailableMonths.filter(value => value <= month);
-    return available.at(-1) ?? month;
-  }, [month, reportingPeriodAvailableMonths]);
-  const activeReportingMonth = effectiveMonth(reportingPeriod, reportingPeriodEndMonth);
-  const selectedReportingMonths = useMemo(() => monthsForReportingPeriod(reportingPeriodAvailableMonths.length > 0 ? reportingPeriodAvailableMonths : history.logs.map(log => log.month), reportingPeriod, reportingPeriodEndMonth), [history.logs, reportingPeriod, reportingPeriodAvailableMonths, reportingPeriodEndMonth]);
-  const selectedReportingMonthSet = useMemo(() => new Set(selectedReportingMonths), [selectedReportingMonths]);
-  const reportingPeriodLogs = useMemo(() => filterLogsByPeriod(history.logs, reportingPeriod, reportingPeriodEndMonth), [history.logs, reportingPeriod, reportingPeriodEndMonth]);
-  const reportingRackCapacityHistory = useMemo(() => (history.rackCapacityHistory ?? []).filter(row => selectedReportingMonthSet.has(row.snapshotMonth)), [history.rackCapacityHistory, selectedReportingMonthSet]);
-  const reportingRackUnitCapacity = useMemo(() => (history.rackUnitCapacity ?? []).filter(row => selectedReportingMonthSet.has(row.month)), [history.rackUnitCapacity, selectedReportingMonthSet]);
-  const reportingUpsGroupHistory = useMemo(() => history.upsGroupHistory ? { ...history.upsGroupHistory, rows: history.upsGroupHistory.rows.filter(row => selectedReportingMonthSet.has(row.month)) } : null, [history.upsGroupHistory, selectedReportingMonthSet]);
-  const activeReportingDisplayPeriod = selectedReportingMonths.length > 0 ? selectedReportingMonths[0] + ".." + selectedReportingMonths.at(-1) : reportingPeriodEndMonth + ".." + reportingPeriodEndMonth;
+  // A. GLOBAL DISPLAY PERIOD - the Settings-configured allowed month window.
+  // The server already clamps every payload to it; these mirror it so the
+  // client bounds selectors and chart windows to the same range rather than
+  // trusting the server alone.
+  const displayPeriodStart = bootstrap?.displayPeriod.startMonth ?? null;
+  const displayPeriodEnd = bootstrap?.displayPeriod.endMonth ?? null;
+  const effectiveDisplayPeriodEnd = displayPeriodEnd ? (displayPeriodEnd < todayMonth() ? displayPeriodEnd : todayMonth()) : todayMonth();
+  // Every month the active site has data for, clamped to the Global Display
+  // Period. Root of every month selector and the trailing-window anchors.
+  const siteMonthsAvailable = useMemo(() => {
+    const union = [...new Set([...(site?.availableMonths ?? []), ...history.months])].sort();
+    return displayPeriodStart && displayPeriodEnd
+      ? union.filter(value => value >= displayPeriodStart && value <= displayPeriodEnd)
+      : union;
+  }, [displayPeriodEnd, displayPeriodStart, history.months, site?.availableMonths]);
+  // The selected Reporting Month, hard-clamped into the Global Display Period
+  // so no non-Reports view is ever handed a month outside the window.
+  const displayMonth = useMemo(() => {
+    if (!displayPeriodStart) return month;
+    if (month < displayPeriodStart) return siteMonthsAvailable[0] ?? displayPeriodStart;
+    if (month > effectiveDisplayPeriodEnd) return siteMonthsAvailable.at(-1) ?? effectiveDisplayPeriodEnd;
+    return month;
+  }, [displayPeriodStart, effectiveDisplayPeriodEnd, month, siteMonthsAvailable]);
+  const globalDisplayPeriodRange = displayPeriodStart && displayPeriodEnd
+    ? displayPeriodStart + ".." + displayPeriodEnd
+    : (siteMonthsAvailable[0] ?? displayMonth) + ".." + (siteMonthsAvailable.at(-1) ?? displayMonth);
+  const historyUpsGroupHistory = history.upsGroupHistory ?? null;
+  const historyRackCapacityHistory = history.rackCapacityHistory ?? [];
+  const historyRackUnitCapacity = history.rackUnitCapacity ?? [];
   const unsavedChanges = entryDirty || rackDirty;
   const unsavedChangesRef = useRef(false);
   unsavedChangesRef.current = unsavedChanges;
@@ -199,11 +212,6 @@ export default function CleanWebApp() {
     const idle = (globalThis as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => void }).requestIdleCallback;
     if (idle) idle(run, { timeout: 3000 }); else window.setTimeout(run, 1200);
   }, [loadHistory]);
-  const updateReportingPeriod = useCallback((next: ReportingPeriodSelection, preset: ReportingPeriodPreset | null = null) => {
-    setReportingPeriodPreset(preset);
-    setReportingPeriod(next);
-    if (siteId) void loadHistory(siteId, { scope: "full" }).catch(error => setNotice(readError(error)));
-  }, [loadHistory, siteId]);
   const loadMonth = useCallback(async (id: number, selectedMonth: string, previous?: HistoryData) => {
     const result = await api<MonthData>(`/sites/${id}/periods/${selectedMonth}`);
     const seed = result.log ?? previous?.logs.at(-1);
@@ -259,28 +267,6 @@ export default function CleanWebApp() {
     }
     finally { setInitialHistoryLoading(false); setBusy(false); setFacilityLoading(false); }
   }, [loadHistory, loadMonth, prefetchHistoryScopes]);
-  useEffect(() => {
-    if (reportingPeriodAvailableMonths.length === 0) return;
-    setReportingPeriod(current => {
-      // A trailing preset always ends at the currently selected Reporting
-      // Month - it is never anchored to the latest available month, the newest
-      // site snapshot, or the current calendar month.
-      if (reportingPeriodPreset !== null) {
-        const next = reportingPeriodForPreset(reportingPeriodEndMonth, reportingPeriodPreset, reportingPeriodAvailableMonths);
-        return current.mode === next.mode && current.singleMonth === next.singleMonth && current.rangeStart === next.rangeStart && current.rangeEnd === next.rangeEnd ? current : next;
-      }
-      if (current.mode === "current" || current.mode === "full") return current;
-      if (current.mode === "single") {
-        const singleMonth = reportingPeriodAvailableMonths.includes(current.singleMonth) ? current.singleMonth : reportingPeriodAvailableMonths.at(-1)!;
-        return singleMonth === current.singleMonth ? current : { ...current, singleMonth };
-      }
-      const rangeStart = reportingPeriodAvailableMonths.find(value => value >= current.rangeStart) ?? reportingPeriodAvailableMonths[0]!;
-      const rangeEnd = [...reportingPeriodAvailableMonths].reverse().find(value => value <= current.rangeEnd) ?? reportingPeriodAvailableMonths.at(-1)!;
-      const nextStart = rangeStart <= rangeEnd ? rangeStart : reportingPeriodAvailableMonths[0]!;
-      const nextEnd = rangeStart <= rangeEnd ? rangeEnd : reportingPeriodAvailableMonths.at(-1)!;
-      return nextStart === current.rangeStart && nextEnd === current.rangeEnd ? current : { ...current, rangeStart: nextStart, rangeEnd: nextEnd };
-    });
-  }, [reportingPeriodAvailableMonths, reportingPeriodEndMonth, reportingPeriodPreset, siteId]);
   useEffect(() => { void initialize().catch(error => setNotice(readError(error))); }, [initialize]);
   useEffect(() => { if (notice) { const timer = window.setTimeout(() => setNotice(null), 5000); return () => window.clearTimeout(timer); } }, [notice]);
   useEffect(() => { document.documentElement.lang = lang; }, [lang]);
@@ -445,7 +431,7 @@ export default function CleanWebApp() {
       setNotice(lang === "th" ? "บันทึกข้อมูลไปยัง Data Center Energy & Facility Monitor แล้ว" : "Saved to Data Center Energy & Facility Monitor."); return true;
     } catch (error) { setNotice(readError(error)); return false; } finally { setBusy(false); }
   };
-  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setViewState("entry"); setUser(null); setBootstrap(null); setDraft(null); setReportingPeriodPreset(3); setReportingPeriod(defaultReportingPeriod(todayMonth())); }, []);
+  const clearSession = useCallback(() => { activeSiteIdRef.current = null; historyCacheRef.current.clear(); loadedPageKeyRef.current = null; setViewState("entry"); setUser(null); setBootstrap(null); setDraft(null); }, []);
   useEffect(() => { setUnauthorizedHandler(() => { setEntryDirty(false); setRackDirty(false); clearSession(); }); return () => setUnauthorizedHandler(null); }, [clearSession]);
   const logout = async () => { const action = async () => { setEntryDirty(false); setRackDirty(false); try { await api<void>("/auth/logout", { method: "POST" }); } finally { clearSession(); } }; deferNavigation(action); };
   const registerEntryActions = useCallback((actions: EntryWorkspaceActions | null) => { entryActionsRef.current = actions; }, []);
@@ -510,14 +496,14 @@ export default function CleanWebApp() {
         <main className="min-w-0 pb-20 md:pb-6">{view !== "dashboard" && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">{shellCopy.reportingMonth}</span><div className="text-lg font-semibold">{month}</div></div><input aria-label={shellCopy.reportingMonth} type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value, history.months.includes(event.target.value))} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">{shellCopy.displayPeriod} {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />{shellCopy.completion} <b className="text-teal-300">{completion.overall.percent}%</b></div></div>}
            <Suspense fallback={<ViewLoading lang={lang} />}>
            {(busy || initialHistoryLoading) && <div className="mb-4 text-sm text-teal-300">{shellCopy.working}</div>}
-          {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={reportingPeriodLogs} month={activeReportingMonth} siteName={site.name} siteCode={site.code} lang={lang} upsGroupHistory={reportingUpsGroupHistory} onNotice={setNotice} />}
+          {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={displayMonth} siteName={site.name} siteCode={site.code} lang={lang} upsGroupHistory={historyUpsGroupHistory} onNotice={setNotice} />}
           {view === "entry" && draft && <WebEntryWorkspace lang={lang} siteId={siteId!} siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} rackUnitInitialRow={history.rackUnitCapacity?.find(row => row.month === month) ?? null} busy={busy} readOnly={bootstrap?.readOnlyMode ?? false} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={(selected, exists) => void selectMonth(selected, exists)} onRackUnitSaved={async () => { if (!siteId) return; const records = await loadHistory(siteId, { force: true, scope: "dashboard" }); await loadMonth(siteId, month, records); }} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
-          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={activeReportingMonth} discardVersion={rackDiscardVersion} rackCapacityHistory={reportingRackCapacityHistory} rackUnitCapacity={reportingRackUnitCapacity} onHistorySaved={() => { void loadHistory(siteId, { force: true, scope: "rack" }); }} onDirtyChange={setRackDirty} />}
-          {view === "rack-units" && siteId && <RackUnitCapacityView siteId={siteId} siteName={site?.name ?? null} month={activeReportingMonth} rackCapacityHistory={reportingRackCapacityHistory} rackUnitCapacity={reportingRackUnitCapacity} />}
-          {view === "history" && <section className="space-y-8"><HistoricalCharts logs={reportingPeriodLogs} lang={lang} selectedMonth={activeReportingMonth} displayPeriod={activeReportingDisplayPeriod} dataSourceLabel={lang === "th" ? "แหล่งข้อมูล: Production API" : "Source: Production API"} /><HistoricalExplorer logs={reportingPeriodLogs} lang={lang} selectedMonth={activeReportingMonth} displayPeriod={activeReportingDisplayPeriod} upsGroupHistory={reportingUpsGroupHistory} rackCapacityHistory={reportingRackCapacityHistory} rackUnitCapacity={reportingRackUnitCapacity} onEditMonth={selected => { setView("entry"); void selectMonth(selected); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></section>}
-          {view === "comparison" && <WebSiteComparison lang={lang} reportMonths={selectedReportingMonths} activePeriodLabel={reportingPeriodLabel(reportingPeriod, lang)} />}
-          {view === "rack-comparison" && <WebSiteRackCapacityComparison month={activeReportingMonth} activePeriodLabel={reportingPeriodLabel(reportingPeriod, lang)} />}
-          {view === "reports" && <Reports lang={lang} siteId={siteId} siteName={site?.name ?? "Data Center Energy & Facility Monitor"} logs={history.logs} month={month} sites={bootstrap?.sites ?? []} period={reportingPeriod} periodEndMonth={reportingPeriodEndMonth} periodMonthsAvailable={reportingPeriodAvailableMonths} onPeriodChange={updateReportingPeriod} rackCapacityHistory={history.rackCapacityHistory ?? []} rackUnitCapacity={history.rackUnitCapacity ?? []} upsGroupHistory={history.upsGroupHistory ?? null} onRefresh={refreshReports} />}
+          {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={displayMonth} discardVersion={rackDiscardVersion} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} onHistorySaved={() => { void loadHistory(siteId, { force: true, scope: "rack" }); }} onDirtyChange={setRackDirty} />}
+          {view === "rack-units" && siteId && <RackUnitCapacityView siteId={siteId} siteName={site?.name ?? null} month={displayMonth} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} />}
+          {view === "history" && <section className="space-y-8"><HistoricalCharts logs={history.logs} lang={lang} selectedMonth={displayMonth} displayPeriod={globalDisplayPeriodRange} dataSourceLabel={lang === "th" ? "แหล่งข้อมูล: Production API" : "Source: Production API"} /><HistoricalExplorer logs={history.logs} lang={lang} selectedMonth={displayMonth} displayPeriod={globalDisplayPeriodRange} upsGroupHistory={historyUpsGroupHistory} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} onEditMonth={selected => { setView("entry"); void selectMonth(selected); window.scrollTo({ top: 0, behavior: "smooth" }); }} /></section>}
+          {view === "comparison" && <WebSiteComparison lang={lang} />}
+          {view === "rack-comparison" && <WebSiteRackCapacityComparison month={displayMonth} />}
+          {view === "reports" && <Reports lang={lang} siteId={siteId} siteName={site?.name ?? "Data Center Energy & Facility Monitor"} logs={history.logs} month={displayMonth} sites={bootstrap?.sites ?? []} monthsAvailable={siteMonthsAvailable} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} upsGroupHistory={historyUpsGroupHistory} onRefresh={refreshReports} />}
           </>}
            </Suspense>
          </main></div>
@@ -654,8 +640,49 @@ function exportStageLabel(stage: ExportStage, scope: ExportScope, format: Export
  *  CSV/Excel/PDF builders (see reportPeriod.ts), so Excel/CSV/PDF always
  *  reflect the current selection, never a stale earlier one. Matches
  *  Desktop's four Reporting Period modes, confirmed by direct inspection. */
-function Reports({ lang, siteId, siteName, logs, month, sites, period, periodEndMonth, periodMonthsAvailable, rackCapacityHistory, rackUnitCapacity, upsGroupHistory, onPeriodChange, onRefresh }: { lang: AppLanguage; siteId: number | null; siteName: string; logs: MonthlyLog[]; month: string; sites: Site[]; period: ReportingPeriodSelection; periodEndMonth: string; periodMonthsAvailable: readonly string[]; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; upsGroupHistory: UpsGroupHistoryReport | null; onPeriodChange: (next: ReportingPeriodSelection, preset?: ReportingPeriodPreset | null) => void; onRefresh: () => Promise<void> }) {
+function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, rackCapacityHistory, rackUnitCapacity, upsGroupHistory, onRefresh }: { lang: AppLanguage; siteId: number | null; siteName: string; logs: MonthlyLog[]; month: string; sites: Site[]; monthsAvailable: readonly string[]; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; upsGroupHistory: UpsGroupHistoryReport | null; onRefresh: () => Promise<void> }) {
   const th = lang === "th";
+  // C. REPORT QUICK RANGE / REPORTING PERIOD - state that lives ONLY here.
+  // It controls the report preview + downloads + this page's From/To selects
+  // + the report filename/context, and nothing else. It is never lifted to
+  // CleanWebApp, so choosing "Last 3 Months" here cannot move the Dashboard,
+  // History, Comparisons, Rack, or Rack Unit views. `month` (the global
+  // Selected Reporting Month) is the anchor a trailing preset ends at.
+  const [reportPeriod, setReportPeriod] = useState<ReportingPeriodSelection>(() => defaultReportingPeriod(month));
+  // Non-null = an active trailing preset (default Last 3 Months, or an
+  // explicit Last 3/6/12). Its window ends at the Selected Reporting Month
+  // and slides with it. Null = a bespoke Month Range / Single / Current /
+  // Full selection, preserved exactly and only clamped to available months.
+  const [reportPreset, setReportPreset] = useState<ReportingPeriodPreset | null>(3);
+  const periodEndMonth = useMemo(() => {
+    const available = [...monthsAvailable].filter(value => value <= month).sort();
+    return available.at(-1) ?? month;
+  }, [month, monthsAvailable]);
+  const period = reportPeriod;
+  const periodMonthsAvailable = monthsAvailable;
+  const updatePeriod = (next: ReportingPeriodSelection, preset: ReportingPeriodPreset | null = null) => {
+    setReportPreset(preset);
+    setReportPeriod(next);
+  };
+  useEffect(() => {
+    if (monthsAvailable.length === 0) return;
+    setReportPeriod(current => {
+      if (reportPreset !== null) {
+        const next = reportingPeriodForPreset(periodEndMonth, reportPreset, monthsAvailable);
+        return current.mode === next.mode && current.singleMonth === next.singleMonth && current.rangeStart === next.rangeStart && current.rangeEnd === next.rangeEnd ? current : next;
+      }
+      if (current.mode === "current" || current.mode === "full") return current;
+      if (current.mode === "single") {
+        const singleMonth = monthsAvailable.includes(current.singleMonth) ? current.singleMonth : monthsAvailable.at(-1)!;
+        return singleMonth === current.singleMonth ? current : { ...current, singleMonth };
+      }
+      const rangeStart = monthsAvailable.find(value => value >= current.rangeStart) ?? monthsAvailable[0]!;
+      const rangeEnd = [...monthsAvailable].reverse().find(value => value <= current.rangeEnd) ?? monthsAvailable.at(-1)!;
+      const nextStart = rangeStart <= rangeEnd ? rangeStart : monthsAvailable[0]!;
+      const nextEnd = rangeStart <= rangeEnd ? rangeEnd : monthsAvailable.at(-1)!;
+      return nextStart === current.rangeStart && nextEnd === current.rangeEnd ? current : { ...current, rangeStart: nextStart, rangeEnd: nextEnd };
+    });
+  }, [monthsAvailable, periodEndMonth, reportPreset, siteId]);
   const reportCopy = th ? {
     title: "รายงานและการส่งออก", intro: "Excel เก็บค่าที่กรอก ค่าวันที่บันทึก และค่าคำนวณของ Desktop เป็นเซลล์ชนิดข้อมูล ตัวเลขมีทศนิยม 2 ตำแหน่ง และวันที่ใช้รูปแบบ dd-Mmm-yy",
     context: "บริบทการรายงาน", applies: "ใช้กับการส่งออกของไซต์ปัจจุบัน", period: "ช่วงเวลารายงาน", month: "เดือนรายงาน", from: "ตั้งแต่", to: "ถึง", fileName: "ชื่อไฟล์", reset: "คืนค่าเริ่มต้น", scope: "ขอบเขต", current: "ไซต์ปัจจุบัน", all: "ทุกไซต์", comparison: "เปรียบเทียบพลังงานและค่าใช้จ่ายของไซต์", currentDesc: "ส่งออกข้อมูลของไซต์ปัจจุบันตามช่วงที่เลือก", allDesc: "แยกข้อมูลแต่ละไซต์ใน CSV, ชีต Excel และส่วนรายงาน PDF", comparisonDesc: "เปรียบเทียบพลังงานและค่าใช้จ่ายของทุกไซต์ตามเดือนที่เลือก โดยไม่สร้างค่าทดแทนข้อมูลที่หายไป", csvStarted: "เริ่มดาวน์โหลด CSV แล้ว", excelStarted: "เริ่มดาวน์โหลด Excel แล้ว", pdfStarted: "เปิดหน้าต่างพิมพ์ PDF แล้ว"
@@ -675,7 +702,7 @@ function Reports({ lang, siteId, siteName, logs, month, sites, period, periodEnd
   // Transient success / failure acknowledgement for the last finished action.
   const [exportOutcome, setExportOutcome] = useState<{ key: string; ok: boolean } | null>(null);
   const selectedPreset = matchingReportingPeriodPreset(period, periodEndMonth, periodMonthsAvailable);
-  const choosePreset = (count: ReportingPeriodPreset) => onPeriodChange(reportingPeriodForPreset(periodEndMonth, count, periodMonthsAvailable), count);
+  const choosePreset = (count: ReportingPeriodPreset) => updatePeriod(reportingPeriodForPreset(periodEndMonth, count, periodMonthsAvailable), count);
   const availableReportMonths = useMemo(() => [...new Set(periodMonthsAvailable)].sort(), [periodMonthsAvailable]);
   const selectedReportMonths = useMemo(() => monthsForReportingPeriod(availableReportMonths.length > 0 ? availableReportMonths : logs.map(log => log.month), period, periodEndMonth), [availableReportMonths, logs, period, periodEndMonth]);
   const selectedReportMonthSet = useMemo(() => new Set(selectedReportMonths), [selectedReportMonths]);
@@ -911,9 +938,9 @@ function Reports({ lang, siteId, siteName, logs, month, sites, period, periodEnd
             {[3, 6, 12].map(count => <button type="button" key={count} onClick={() => choosePreset(count as ReportingPeriodPreset)} aria-pressed={selectedPreset === count} className={"rounded-lg border px-3 py-2 text-xs font-semibold transition-colors " + (selectedPreset === count ? "border-teal-300 bg-teal-400 text-slate-950" : "border-slate-700 text-slate-300 hover:border-teal-500")}>{th ? "ย้อนหลัง " + count + " เดือน" : "Last " + count + " Months"}</button>)}
           </div>
         </div>
-        <label className="text-sm">{reportCopy.period}<select value={period.mode} onChange={event => onPeriodChange({ ...period, mode: event.target.value as ReportingPeriodMode })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{PERIOD_MODE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{th ? ({ current: "เดือนปัจจุบัน", single: "เดือนเดียว", range: "ช่วงเดือน", full: "ประวัติทั้งหมด" } as Record<ReportingPeriodMode, string>)[opt.value] : opt.label}</option>)}</select></label>
-        {period.mode === "single" && <label className="text-sm">{reportCopy.month}<select value={period.singleMonth} onChange={event => onPeriodChange({ ...period, singleMonth: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label>}
-        {period.mode === "range" && <><label className="text-sm">{reportCopy.from}<select value={period.rangeStart} onChange={event => onPeriodChange({ ...period, rangeStart: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label><label className="text-sm">{reportCopy.to}<select value={period.rangeEnd} onChange={event => onPeriodChange({ ...period, rangeEnd: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label></>}
+        <label className="text-sm">{reportCopy.period}<select value={period.mode} onChange={event => updatePeriod({ ...period, mode: event.target.value as ReportingPeriodMode })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{PERIOD_MODE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{th ? ({ current: "เดือนปัจจุบัน", single: "เดือนเดียว", range: "ช่วงเดือน", full: "ประวัติทั้งหมด" } as Record<ReportingPeriodMode, string>)[opt.value] : opt.label}</option>)}</select></label>
+        {period.mode === "single" && <label className="text-sm">{reportCopy.month}<select value={period.singleMonth} onChange={event => updatePeriod({ ...period, singleMonth: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label>}
+        {period.mode === "range" && <><label className="text-sm">{reportCopy.from}<select value={period.rangeStart} onChange={event => updatePeriod({ ...period, rangeStart: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label><label className="text-sm">{reportCopy.to}<select value={period.rangeEnd} onChange={event => updatePeriod({ ...period, rangeEnd: event.target.value })} className="mt-1 block w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{availableMonths.map(m => <option key={m} value={m}>{m}</option>)}</select></label></>}
         <label className="text-sm sm:col-span-2 lg:col-span-2">{reportCopy.fileName}<div className="mt-1 flex gap-2"><input value={fileNameInput} onChange={event => { setFileNameInput(event.target.value); setFileNameCustomized(true); }} className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 font-mono text-sm" /><button type="button" onClick={() => setFileNameCustomized(false)} className="shrink-0 rounded-lg border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:border-teal-500" title={reportCopy.reset}>{reportCopy.reset}</button></div></label>
       </div>
       <p className="mt-3 text-xs text-slate-500">{reportCopy.scope}: {reportingPeriodLabel(period, lang)}. {th ? "ไฟล์" : "Files"}: <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "csv")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "xlsx")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "html")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "pdf")}</span></p>
