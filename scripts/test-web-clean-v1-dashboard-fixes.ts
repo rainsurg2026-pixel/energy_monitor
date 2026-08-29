@@ -112,4 +112,24 @@ assert.match(appSource, /if \(!options\.prefetch\) void request\.then\(showResul
 assert.match(appSource, /prefetchHistoryScopes\(first\.id\);/);
 assert.match(appSource, /loadedPageKeyRef\.current = `\$\{id\}:\$\{view\}`; prefetchHistoryScopes\(id\);/);
 
+// Regression: a facility switch must preserve the user's selected Reporting
+// Month. selectSite() used to recompute the month from the new site's
+// latestAvailableMonth / latestEnergyMonth on every switch, silently jumping
+// A -> B -> A off the month the user picked. It now reloads the SAME month for
+// the new site; if that month has no data on the new site, loadMonth() renders
+// the normal empty state and the month still does not change.
+assert.match(appSource, /const scope = scopeForView\(view\); const records = await loadHistory\(id, \{ force: true, scope \}\);[^;]*await loadMonth\(id, month, records\);/);
+assert.doesNotMatch(appSource, /await loadMonth\(id, latestEnergyMonth\(/);
+assert.doesNotMatch(appSource, /const candidate = nextSite\.latestAvailableMonth/);
+// Initial load still resolves the default month (not a site switch), and the
+// Settings refresh path is unchanged.
+assert.match(appSource, /const energyMonth = latestEnergyMonth\(initialHistory\.logs, initialMonth\);/);
+assert.match(appSource, /await loadMonth\(current\.id, latestEnergyMonth\(records\.logs, candidate\), records\);/);
+// The Reporting Period reconcile effect reacts to a site change but only ever
+// re-derives the period, never the month, so presets stay independent of the
+// facility switch.
+assert.match(appSource, /\}, \[reportingPeriodAvailableMonths, reportingPeriodCustomized, reportingPeriodEndMonth, siteId\]\);/);
+const reconcileEffect = appSource.slice(appSource.indexOf("if (reportingPeriodAvailableMonths.length === 0) return;"), appSource.indexOf("}, [reportingPeriodAvailableMonths, reportingPeriodCustomized, reportingPeriodEndMonth, siteId]);"));
+assert.ok(!reconcileEffect.includes("setMonth("), "the reporting-period reconcile effect never resets the reporting month");
+
 console.log("web-clean-v1 dashboard fixes: browser PDF/download E2E contract assertions passed");
