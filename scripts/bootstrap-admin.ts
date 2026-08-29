@@ -12,7 +12,7 @@ loadDotEnvFile();
 // misdirected DIRECT_DATABASE_URL could send to the wrong database - the
 // same target guard seed-production-master-data.ts uses, checked before
 // any pool/connection is created.
-const environmentCheck = verifyProductionEnvironment(process.env.NODE_ENV);
+const environmentCheck = verifyProductionEnvironment(process.env.NODE_ENV, { vercelEnv: process.env.VERCEL_ENV, readOnlyMode: process.env.READ_ONLY_MODE === "true" });
 if (!environmentCheck.ok) {
   throw new Error(`Refusing to run: ${environmentCheck.reason}`);
 }

@@ -19,7 +19,7 @@ import { runPreflightScopeGuard, seedProductionSites } from "./lib/seedProductio
 
 loadDotEnvFile();
 
-const environmentCheck = verifyProductionEnvironment(process.env.NODE_ENV);
+const environmentCheck = verifyProductionEnvironment(process.env.NODE_ENV, { vercelEnv: process.env.VERCEL_ENV, readOnlyMode: process.env.READ_ONLY_MODE === "true" });
 if (!environmentCheck.ok) {
   throw new Error(`Refusing to run: ${environmentCheck.reason}`);
 }

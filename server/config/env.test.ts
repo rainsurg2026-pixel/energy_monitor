@@ -165,3 +165,32 @@ function mockResponse() {
   };
   return response as unknown as Parameters<ReturnType<typeof createCorsMiddleware>>[1] & { headers: Map<string, string>; body: unknown; statusCode: number };
 }
+
+
+test("hosted Preview fails closed when READ_ONLY_MODE is missing or false", () => {
+  assert.throws(
+    () => loadServerConfig(previewEnvironment({ READ_ONLY_MODE: undefined }), { requireDatabase: false, requireRuntimeDatabase: false }),
+    /READ_ONLY_MODE=true/
+  );
+  assert.throws(
+    () => loadServerConfig(previewEnvironment({ READ_ONLY_MODE: "false" }), { requireDatabase: false, requireRuntimeDatabase: false }),
+    /READ_ONLY_MODE=true/
+  );
+});
+
+test("hosted Preview rejects DIRECT_DATABASE_URL even when read-only mode is enabled", () => {
+  assert.throws(
+    () => loadServerConfig(
+      previewEnvironment({ DIRECT_DATABASE_URL: "postgres://postgres:pw@db.tofdgndrrpnnyhbuurbx.supabase.co:5432/postgres" }),
+      { requireDatabase: false, requireRuntimeDatabase: false }
+    ),
+    /DIRECT_DATABASE_URL must not be configured/
+  );
+  assert.throws(
+    () => loadMigrationDatabaseConfig({
+      ...previewEnvironment(),
+      DIRECT_DATABASE_URL: "postgres://postgres:pw@db.tofdgndrrpnnyhbuurbx.supabase.co:5432/postgres"
+    }),
+    /DIRECT_DATABASE_URL must not be configured/
+  );
+});
