@@ -33,8 +33,8 @@ assert.doesNotMatch(comparison, /Rack Unit Utilization Trend|Rack Capacity and U
 assert.match(app, /const WebSiteRackCapacityComparison = lazy\(\(\) => import\("\.\/WebSiteRackCapacityComparison"\)\)/);
 assert.match(app, /id: "comparison"[^\n]*Site Energy & Cost Comparison/);
 assert.match(app, /id: "rack-comparison"[^\n]*Site Rack Capacity Comparison/);
-assert.match(app, /view === "comparison" && <WebSiteComparison lang=\{lang\} \/>/);
-assert.match(app, /view === "rack-comparison" && <WebSiteRackCapacityComparison month=\{month\} \/>/);
+assert.ok(app.includes('view === "comparison" && <WebSiteComparison lang={lang} reportMonths={selectedReportingMonths}'), "comparison view shares active months");
+assert.ok(app.includes('view === "rack-comparison" && <WebSiteRackCapacityComparison month={activeReportingMonth}'), "rack comparison uses active report month");
 // The "Create Monthly Record" prompt is entry-only, so rack-comparison (and
 // every other read view) never triggers it.
 assert.match(app, /if \(!exists && view === "entry"\)/);

@@ -490,6 +490,33 @@ export function fitPdfImageToPage(canvasWidth: number, canvasHeight: number, pag
   };
 }
 
+/**
+ * Neutralizes `src/index.css`'s app-wide dark-theme table readability override
+ * inside the offscreen PDF renderer.
+ *
+ * That stylesheet forces `color/fill/font-weight` `!important` on every
+ * `table:not(.dashboard-table)` and all its descendants so in-app legacy tables
+ * stay legible; in the default (non-`.theme-light`) theme it resolves to
+ * `--color-text: #f4f7fb` (near-white). The PDF exporter mounts the report into
+ * the main document, so that rule cascades onto the report's tables and their
+ * `<td>` values render near-white on the white PDF page - while KPI cards,
+ * cover, and hand-built SVG charts (not inside `<table>`) stay correct. The
+ * `srcdoc` Live Preview is unaffected because its iframe is an isolated
+ * document the app CSS never reaches.
+ *
+ * Redefining the foreground custom properties on the renderer host makes the
+ * leaked `color: var(--color-text) !important` resolve to a readable dark
+ * value; the explicit `td`/`th` rules (higher specificity than the app rule,
+ * plus later source order) restore the report's intended print colours and
+ * bold headers. Scoped to `[data-energy-monitor-pdf-renderer]` only.
+ */
+export const PDF_EXPORT_SURFACE_CSS =
+  "[data-energy-monitor-pdf-renderer]{--color-text:#243247;--color-text-secondary:#40566e;--color-text-muted:#5f6f82;--ui-text:#243247;color:#243247}" +
+  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table)," +
+  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table) *{color:#243247!important;-webkit-text-fill-color:#243247!important;fill:#243247!important;opacity:1!important}" +
+  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table) td{color:#1f2937!important;-webkit-text-fill-color:#1f2937!important}" +
+  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table) th{color:#40566e!important;-webkit-text-fill-color:#40566e!important;font-weight:bold!important}";
+
 async function waitForReportImages(root: HTMLElement): Promise<void> {
   const images = [...root.querySelectorAll<HTMLImageElement>("img")];
   await Promise.all(images.map(async image => {
@@ -532,10 +559,19 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
   });
   const reportStyle = parsed.head.querySelector("style");
   if (reportStyle) host.appendChild(reportStyle.cloneNode(true));
+  const surfaceStyle = document.createElement("style");
+  surfaceStyle.dataset.energyMonitorPdfSurface = "true";
+  surfaceStyle.textContent = PDF_EXPORT_SURFACE_CSS;
+  host.appendChild(surfaceStyle);
   for (const child of [...parsed.body.childNodes]) host.appendChild(child.cloneNode(true));
   document.body.appendChild(host);
   try {
     await waitForReportImages(host);
+    // Let the offscreen renderer finish layout so html2canvas reads settled
+    // geometry and computed styles (no arbitrary timeout).
+    if (typeof requestAnimationFrame === "function") {
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }
     const pages = [...host.querySelectorAll<HTMLElement>(".cover, .page")];
     if (pages.length === 0) throw new Error("The report did not contain any printable pages.");
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
@@ -550,7 +586,17 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
         logging: false,
         width: Math.max(page.scrollWidth, 1),
         height: Math.max(page.scrollHeight, page.offsetHeight, 1),
-        windowWidth: Math.max(page.scrollWidth, 1)
+        windowWidth: Math.max(page.scrollWidth, 1),
+        // Belt-and-suspenders: guarantee the readable-table-surface CSS is in
+        // the cloned document html2canvas actually rasterizes, independent of
+        // whether it carries body <style> clones through.
+        onclone: clonedDoc => {
+          if (clonedDoc.getElementById("__em-pdf-surface")) return;
+          const cloneStyle = clonedDoc.createElement("style");
+          cloneStyle.id = "__em-pdf-surface";
+          cloneStyle.textContent = PDF_EXPORT_SURFACE_CSS;
+          clonedDoc.head.appendChild(cloneStyle);
+        }
       });
       if (index > 0) pdf.addPage("a4", "landscape");
       const placement = fitPdfImageToPage(canvas.width, canvas.height);
@@ -758,7 +804,7 @@ export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport
 /** Generates a real PDF download for the site-comparison report without
  * opening a popup or invoking the browser print dialog. */
 export async function exportSiteComparisonPdf(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): Promise<void> {
-  await exportReportPdfFromHtml(buildReportHtml(siteComparisonReportForDownload(data, referenceMonth, selfRack, otherRack), sections), fileName ?? `site-comparison-${referenceMonth}`);
+  await exportReportPdfFromHtml(buildSiteComparisonReportHtml(data, referenceMonth, selfRack, otherRack, sections), fileName ?? `site-comparison-${referenceMonth}`);
 }
 
 export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[], extras: ReportDataExtras = {}): void {
@@ -774,41 +820,14 @@ export function exportAllFacilitiesHtml(facilities: ExportFacility[], selectedMo
 }
 
 export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): void {
-  const [primary, secondary] = data.sites;
-  if (!primary) throw new Error("No facilities are available for comparison.");
-  const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
-  const report: ReportData = {
-    title: "Data Center Energy & Facility Monitor Site Comparison",
-    thaiSubtitle: "รายงานเปรียบเทียบการใช้พลังงานระหว่างไซต์",
-    facility: "All Facilities",
-    sourceWorkbook: "Supabase PostgreSQL",
-    generatedAt: new Date().toISOString(),
-    appVersion: "2.3.1 Web Clean v1",
-    reportingMonth: referenceMonth,
-    historicalStart: trendMonths[0] ?? null,
-    historicalEnd: trendMonths.at(-1) ?? null,
-    status: "Complete",
-    validationWarnings: [],
-    monthlyRows: comparisonTrend(primary, trendMonths),
-    currentRow: null,
-    engineeringDashboard: null,
-    rack: null,
-    rackHistory: [],
-    rackUnitCapacity: [],
-    rackUnitCapacityImageDataUri: null,
-    rackUnitCapacityImageMeta: null,
-    comparison: {
-      self: comparisonRow(primary, referenceMonth),
-      other: secondary ? comparisonRow(secondary, referenceMonth) : null,
-      selfTrend: comparisonTrend(primary, trendMonths),
-      otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
-    },
-    rackComparison: selfRack ? { self: { label: primary.site.name, records: selfRack.records }, other: secondary && otherRack ? { label: secondary.site.name, records: otherRack.records } : null } : null
-  };
-  download(buildReportHtml(report, sections), fileName ?? `site-comparison-${referenceMonth}.html`, "text/html;charset=utf-8");
+  download(buildSiteComparisonReportHtml(data, referenceMonth, selfRack, otherRack, sections), fileName ?? `site-comparison-${referenceMonth}.html`, "text/html;charset=utf-8");
 }
 
-function allFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: string, sections?: readonly ReportSectionId[]): string {
+/** One combined report document, one facility report per section. Exported so
+ *  the Live Preview renders exactly the same content the All Facilities export
+ *  produces (report model -> preview and the same model -> PDF-safe capture),
+ *  never a duplicate table generation. */
+export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: string, sections?: readonly ReportSectionId[]): string {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
   const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth), sections));
   const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
@@ -817,9 +836,15 @@ function allFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: st
   return `<!doctype html><html><head><meta charset=\"utf-8\"><title>Data Center Energy &amp; Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`;
 }
 
+/** Same-model source for the Site Energy & Cost Comparison Live Preview and the
+ *  comparison HTML/PDF exports. */
+export function buildSiteComparisonReportHtml(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): string {
+  return buildReportHtml(siteComparisonReportForDownload(data, referenceMonth, selfRack, otherRack), sections);
+}
+
 /** Generates one real PDF download containing one report per facility. */
 export async function exportAllFacilitiesPdf(facilities: ExportFacility[], selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): Promise<void> {
-  await exportReportPdfFromHtml(allFacilitiesReportHtml(facilities, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
+  await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
 }
 
 /** Prints one full Desktop-compatible report per facility in one document.

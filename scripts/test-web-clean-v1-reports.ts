@@ -12,12 +12,19 @@ assert.match(app, /crypto\.randomUUID/);
 assert.match(app, /HistoryProvider\.add\(item\)/);
 assert.match(app, /const reportContextKey = `\$\{siteName\}\\u0000\$\{contextMonth\}`/);
 assert.match(app, /setFileNameCustomized\(false\)/);
-assert.match(app, /const available = \[\.\.\.new Set\(logs\.map\(log => log\.month\)\)\]/);
-assert.match(app, /const fallback = available\.includes\(month\) \? month : available\.at\(-1\) \?\? month/);
+// The Reporting Period is owned by the app shell (so Dashboard, History,
+// Comparisons, Reports, and Exports stay in sync); Reports drives it through
+// onPeriodChange and offers the Last 3/6/12 Months quick presets while still
+// preserving a custom From/To range.
+assert.match(app, /onPeriodChange=\{updateReportingPeriod\}/);
+assert.match(app, /const selectedPreset = matchingReportingPeriodPreset\(period, periodEndMonth, periodMonthsAvailable\)/);
+assert.match(app, /choosePreset\(count as ReportingPeriodPreset\)/);
+assert.match(app, /\[3, 6, 12\]\.map\(count =>/);
+assert.match(app, /const contextMonth = effectiveMonth\(period, periodEndMonth\)/);
 assert.match(app, /Recent Reports/);
 assert.match(app, /HistoryProvider\.remove\(item\.id\)/);
 assert.match(app, /all-facilities-energy-monitor\.xlsx/);
-assert.match(app, /site-comparison-\$\{month\}\.xlsx/);
+assert.match(app, /site-comparison-\$\{contextMonth\}\.xlsx/);
 assert.match(app, /exportAllFacilitiesHtml/);
 assert.match(app, /exportSiteComparisonHtml/);
 assert.match(app, /withExtension\(resolvedFileName, "html"\)/);

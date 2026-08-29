@@ -87,4 +87,49 @@ assert.match(browserE2eSource, /E2E_REQUIRE_AUTH/);
 assert.match(browserE2eSource, /Browser\.downloadProgress/);
 assert.match(browserE2eSource, /Network\.responseReceived/);
 
+// Regression: switching sites while staying on the Rack Unit Capacity (or any
+// rack) view used to leave the KPI/trend panels empty until the view was
+// remounted. Root cause: selectSite() always primed the "dashboard" history
+// scope, whose payload is disjoint from the "rack" scope, so the background
+// dashboard response overwrote the rack payload and the page-key was left
+// pointing at ":dashboard" so the effect never re-fetched. The fix routes both
+// selectSite() and the page-load effect through one scopeForView() helper and
+// keys the loaded page by the live view.
+assert.match(appSource, /const scopeForView = \(target: View\): HistoryScope =>/);
+assert.match(appSource, /target === "racks" \|\| target === "rack-units" \? "rack" : target === "history" \|\| target === "reports" \? "full" : "dashboard"/);
+assert.match(appSource, /const scope: HistoryScope = scopeForView\(view\);/);
+assert.match(appSource, /const scope = scopeForView\(view\); const records = await loadHistory\(id, \{ force: true, scope \}\);/);
+assert.match(appSource, /loadedPageKeyRef\.current = `\$\{id\}:\$\{view\}`;/);
+assert.doesNotMatch(appSource, /loadedPageKeyRef\.current = `\$\{id\}:dashboard`/);
+
+// Progressive prefetch after login/site switch warms the other history scopes
+// without ever calling setHistory (the disjoint payloads would blank the
+// mounted view), so History, Reports, and Rack views reopen near-instantly.
+assert.match(appSource, /const prefetchHistoryScopes = useCallback\(\(id: number\) => \{/);
+assert.match(appSource, /for \(const scope of \["full", "rack"\] as const\) void loadHistory\(id, \{ scope, prefetch: true \}\)/);
+assert.match(appSource, /options: \{ force\?: boolean; scope\?: HistoryScope; prefetch\?: boolean \}/);
+assert.match(appSource, /if \(!options\.prefetch\) void request\.then\(showResult, \(\) => undefined\);/);
+assert.match(appSource, /prefetchHistoryScopes\(first\.id\);/);
+assert.match(appSource, /loadedPageKeyRef\.current = `\$\{id\}:\$\{view\}`; prefetchHistoryScopes\(id\);/);
+
+// Regression: a facility switch must preserve the user's selected Reporting
+// Month. selectSite() used to recompute the month from the new site's
+// latestAvailableMonth / latestEnergyMonth on every switch, silently jumping
+// A -> B -> A off the month the user picked. It now reloads the SAME month for
+// the new site; if that month has no data on the new site, loadMonth() renders
+// the normal empty state and the month still does not change.
+assert.match(appSource, /const scope = scopeForView\(view\); const records = await loadHistory\(id, \{ force: true, scope \}\);[^;]*await loadMonth\(id, month, records\);/);
+assert.doesNotMatch(appSource, /await loadMonth\(id, latestEnergyMonth\(/);
+assert.doesNotMatch(appSource, /const candidate = nextSite\.latestAvailableMonth/);
+// Initial load still resolves the default month (not a site switch), and the
+// Settings refresh path is unchanged.
+assert.match(appSource, /const energyMonth = latestEnergyMonth\(initialHistory\.logs, initialMonth\);/);
+assert.match(appSource, /await loadMonth\(current\.id, latestEnergyMonth\(records\.logs, candidate\), records\);/);
+// The Reporting Period reconcile effect reacts to a site change but only ever
+// re-derives the period, never the month, so presets stay independent of the
+// facility switch.
+assert.match(appSource, /\}, \[reportingPeriodAvailableMonths, reportingPeriodEndMonth, reportingPeriodPreset, siteId\]\);/);
+const reconcileEffect = appSource.slice(appSource.indexOf("if (reportingPeriodAvailableMonths.length === 0) return;"), appSource.indexOf("}, [reportingPeriodAvailableMonths, reportingPeriodEndMonth, reportingPeriodPreset, siteId]);"));
+assert.ok(!reconcileEffect.includes("setMonth("), "the reporting-period reconcile effect never resets the reporting month");
+
 console.log("web-clean-v1 dashboard fixes: browser PDF/download E2E contract assertions passed");

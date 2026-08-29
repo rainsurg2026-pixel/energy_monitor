@@ -152,7 +152,7 @@ function RackUnitComparison({ states, month }: { states: SiteComparisonState[]; 
   </section>;
 }
 
-export default function WebSiteRackCapacityComparison({ month }: { month: string }) {
+export default function WebSiteRackCapacityComparison({ month, activePeriodLabel }: { month: string; activePeriodLabel?: string }) {
   const [states, setStates] = useState<SiteComparisonState[] | null>(null);
   const [loadedMonth, setLoadedMonth] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -203,7 +203,7 @@ export default function WebSiteRackCapacityComparison({ month }: { month: string
   if (error && !currentMonthLoaded) return <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100">{error}</section>;
   const sites = currentMonthLoaded ? states ?? [] : [];
   return <section className="space-y-5" data-testid="web-site-rack-capacity-comparison">
-    <header className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-300"><Server className="h-5 w-5" /></div><div><h2 className="font-display text-2xl font-bold tracking-tight text-slate-100">Site Rack Capacity &amp; Availability Comparison</h2><p className="mt-1 text-sm text-slate-400">Available rack positions by site and zone for deployment planning.</p><p className="mt-2 text-xs uppercase tracking-wide text-slate-500">Reporting period: <span className="font-mono text-slate-300">{monthLabelLong(month, "en")}</span></p></div></div><button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:border-teal-500"><RefreshCw className="h-4 w-4" />Refresh</button></div></header>
+    <header className="rounded-2xl border border-slate-800 bg-slate-900 p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-300"><Server className="h-5 w-5" /></div><div><h2 className="font-display text-2xl font-bold tracking-tight text-slate-100">Site Rack Capacity &amp; Availability Comparison</h2><p className="mt-1 text-sm text-slate-400">Available rack positions by site and zone for deployment planning.</p><p className="mt-2 text-xs uppercase tracking-wide text-slate-500">Reporting period: <span className="font-mono text-slate-300">{activePeriodLabel ?? monthLabelLong(month, "en")}</span></p></div></div><button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:border-teal-500"><RefreshCw className="h-4 w-4" />Refresh</button></div></header>
     {error && <p role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">Some comparison data could not be loaded; unavailable Sites remain excluded from totals and ranking.</p>}
     <div className="grid gap-4 lg:grid-cols-2">{sites.map(state => <SiteSummaryCard key={state.site.id} state={state} month={month} />)}</div>
     {sites.length === 0 && <p className="rounded-xl border border-dashed border-slate-700 p-8 text-center text-sm text-slate-500">No active Sites are available for comparison.</p>}
