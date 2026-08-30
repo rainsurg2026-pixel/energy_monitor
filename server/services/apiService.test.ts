@@ -37,8 +37,13 @@ function storage(overrides: Partial<RackUnitImageStorage> = {}): RackUnitImageSt
 
 const now = () => new Date("2026-08-14T00:00:00.000Z");
 
-const unavailable = await new ApiService(repository(), now, storage({ hasObject: async () => false })).getRackUnit(2, "2026-07") as { snapshot: { image: { available: boolean } } };
-assert.equal(unavailable.snapshot.image.available, false, "metadata must not claim a missing storage object is available");
+const unavailable = await new ApiService(repository(), now, storage({ hasObject: async () => false })).getRackUnit(2, "2026-07") as { snapshot: { image: { available: boolean } | null } };
+assert.equal(unavailable.snapshot.image?.available, false, "metadata must not claim a missing storage object is available");
+assert.ok(unavailable.snapshot.image, "snapshot.image metadata is still present when the storage probe fails - the Data Entry editor hydrates the saved image from this, not from `available`");
+
+const noStorage = await new ApiService(repository(), now).getRackUnit(2, "2026-07") as { snapshot: { image: { available: boolean } | null } };
+assert.ok(noStorage.snapshot.image, "snapshot.image metadata is still present when no image storage is configured");
+assert.equal(noStorage.snapshot.image?.available, false, "`available` is false with no storage, but the image record is intact for the editor to render");
 
 const available = await new ApiService(repository(), now, storage({ hasObject: async () => true })).getRackUnit(2, "2026-07") as { snapshot: { image: { available: boolean } } };
 assert.equal(available.snapshot.image.available, true, "existing storage object remains available to the editor");

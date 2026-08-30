@@ -133,4 +133,25 @@ assert.match(rackUnitEntry, /disabled=\{busy\}/);
 assert.match(rackUnitEntry, /imageLoadError/);
 assert.match(rackUnitEntry, /onError=\{\(\) =>/);
 
+// Monthly Rack Unit Capacity Image hydrates in the Data Entry editor.
+// 1. Existing image is decided from the persisted snapshot's image metadata
+//    (DB truth), not the storage-liveness probe `image.available` - the probe
+//    is false whenever object storage is briefly unreachable/unconfigured and
+//    was hiding a genuinely-saved image from the editor.
+assert.match(rackUnitEntry, /setHasSavedImage\(row\.image != null\)/);
+assert.doesNotMatch(rackUnitEntry, /setHasSavedImage\(Boolean\(row\.image\?\.available\)\)/);
+// 2. Hydration fetch keys on the exact site + selected Data Entry month, no fallback.
+assert.match(rackUnitEntry, /api<RackUnitSnapshotResponse>\(`\/rack-unit-capacity\?siteId=\$\{siteId\}&month=\$\{encodeURIComponent\(month\)\}`\)/);
+assert.match(rackUnitEntry, /\}, \[siteId, month, initialRow\?\.totalU, initialRow\?\.usedU\]\);/);
+// 3. Existing image renders alongside the numeric fields (same section, keyed off hasSavedImage).
+assert.match(rackUnitEntry, /hasSavedImage && !imageLoadError \? <img src=\{imageUrl\}/);
+assert.match(rackUnitEntry, /const imageUrl = `\/api\/v1\/sites\/\$\{siteId\}\/rack-unit-capacity\/\$\{encodeURIComponent\(month\)\}\/image`;/);
+// 4/5. Save only writes the image object when a replacement is staged; a
+//      numeric-only save sends no image payload, so the stored image is kept.
+assert.match(rackUnitEntry, /if \(stagedImage\) \{\s*await api\(`\/sites\/\$\{siteId\}\/rack-unit-capacity\/\$\{month\}\/image`, \{/);
+assert.doesNotMatch(rackUnitEntry, /rack-unit-capacity\/\$\{month\}\/image`[\s\S]{0,40}method: "DELETE"/);
+assert.ok(!/body: JSON\.stringify\(\{[^}]*image/.test(rackUnitEntry), "the numeric PUT body never carries an image field");
+// 6. Stale-response protection when site/month changes quickly.
+assert.match(rackUnitEntry, /let cancelled = false;[\s\S]*if \(cancelled\) return;[\s\S]*return \(\) => \{ cancelled = true; \};/);
+
 console.log("web entry workflow: preserves Desktop save/navigation protection and month/completion controls");
