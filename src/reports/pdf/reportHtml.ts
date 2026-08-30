@@ -1,7 +1,8 @@
 import type { EngineeringDashboardSnapshot, ReportComparisonFacility, ReportData, ReportMonthlyRow } from "../reportTypes";
+import { RACK_UNIT_CAPACITY_TREND_NOTE } from "../reportTypes";
 import { formatNumber } from "../../utils/numberFormatBridge";
 import { formatTimestamp } from "../../utils";
-import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics } from "../../utils/rackCapacity";
+import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics, rackPositionExportRows } from "../../utils/rackCapacity";
 import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
 import { calculateCapacityHealthScore, utilizationColorHex } from "../../utils/capacityHealth";
 import { getCapacityHealth } from "../../utils/capacityForecast";
@@ -52,6 +53,94 @@ function table(headers: string[], rows: string[][], className = ""): string {
   return `<div class="table-wrap ${className}"><table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map((cell, index) => `<td${index === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
 }
 
+
+function formatInteger(value: number | null | undefined): string {
+  return typeof value === "number" && Number.isFinite(value) ? Math.round(value).toLocaleString("en-US") : "—";
+}
+
+function formatRatioPercent1(value: number | null | undefined): string {
+  return value === null || value === undefined || !Number.isFinite(value) ? "—" : (value * 100).toFixed(1) + "%";
+}
+
+function formatUsagePercent1(value: number | null | undefined): string {
+  return value === null || value === undefined || !Number.isFinite(value) ? "—" : value.toFixed(1) + "%";
+}
+
+function rackPositionsTable(records: NonNullable<ReportData["rack"]>["records"]): string {
+  const headers = ["Status", "Rack ID", "Cabinet Size (cm)", "Detail"];
+  const rows = rackPositionExportRows(records).map(row => [
+    escapeHtml(row.status),
+    escapeHtml(row.rackId ?? "—"),
+    escapeHtml(row.cabinetSize ?? "—"),
+    escapeHtml(row.detail ?? "—")
+  ]);
+  if (rows.length === 0) {
+    return table(headers, [["—", "—", "—", "No Available, Reserved, or Pending Decommission rack positions in the confirmed snapshot."]], "dense");
+  }
+  return table(headers, rows, "dense");
+}
+
+function rackUnitTrendRows(data: ReportData): RackUnitCapacityRow[] {
+  const endMonth = data.reportingMonth;
+  return [...data.rackUnitCapacity]
+    .filter(row => !endMonth || row.month <= endMonth)
+    .sort((left, right) => left.month.localeCompare(right.month))
+    .slice(-6);
+}
+
+
+function rackUnitTrendPage(data: ReportData): string {
+  const rows = rackUnitTrendRows(data);
+  if (rows.length === 0) return "";
+  const renderedRows = rows.map(row => [
+    escapeHtml(formatMonth(row.month)),
+    formatInteger(row.totalU),
+    formatInteger(row.usedU),
+    formatInteger(row.availableU),
+    formatUsagePercent1(usagePercent(row)),
+    formatRatioPercent1(row.availabilityPct)
+  ]);
+  return '<section class="page"><h2>Rack Unit Capacity Six-Month Trend</h2><p class="note">' +
+    escapeHtml(data.facility) + ' · ' + escapeHtml(formatMonth(data.reportingMonth)) +
+    '</p>' + table(["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], renderedRows) +
+    '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p>' +
+    '<p class="note">' + escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE) + '</p></section>';
+}
+
+function rackUnitComparisonPage(data: ReportData): string {
+  const sites = data.rackUnitComparison?.sites ?? [];
+  const populated = sites.filter(site => site.rows.length > 0);
+  if (populated.length === 0) return "";
+  const selectedRows = populated.flatMap(site => site.rows.filter(row => row.month === data.reportingMonth).map(row => [
+    escapeHtml(site.label),
+    escapeHtml(formatMonth(row.month)),
+    formatInteger(row.totalU),
+    formatInteger(row.usedU),
+    formatInteger(row.availableU),
+    formatUsagePercent1(usagePercent(row)),
+    formatRatioPercent1(row.availabilityPct)
+  ]));
+  const trendRows = populated.flatMap(site => [...site.rows]
+    .filter(row => !data.reportingMonth || row.month <= data.reportingMonth)
+    .sort((left, right) => left.month.localeCompare(right.month))
+    .slice(-6)
+    .map(row => [
+      escapeHtml(site.label),
+      escapeHtml(formatMonth(row.month)),
+      formatInteger(row.totalU),
+      formatInteger(row.usedU),
+      formatInteger(row.availableU),
+      formatUsagePercent1(usagePercent(row)),
+      formatRatioPercent1(row.availabilityPct)
+    ]));
+  return '<section class="page"><h2>Rack Unit Capacity Comparison</h2><p class="note">Reference month: ' +
+    escapeHtml(formatMonth(data.reportingMonth)) + '</p>' +
+    table(["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], selectedRows) +
+    '<h3>Six-Month Trend</h3>' +
+    table(["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], trendRows) +
+    '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p>' +
+    '<p class="note">' + escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE) + '</p></section>';
+}
 function compactNumber(value: number, values: Array<number | null>): string {
   void values;
   const absolute = Math.abs(value);
@@ -288,13 +377,13 @@ function renderRackUnitCapacityExecutivePage(data: ReportData): string {
     ? "—"
     : `${trendDirection === "Up" ? "▲" : trendDirection === "Down" ? "▼" : "◆"} ${Math.abs(calculatePercentageDelta(usagePctNow, usagePctPrev)).toFixed(1)}%`;
   const trendNote = trendDirection === null ? "no prior month" : getTrendLabel(trendDirection, "en");
-  const availabilityText = formatRatioPercent(row.availabilityPct);
+  const availabilityText = formatRatioPercent1(row.availabilityPct);
   const kpis = [
-    kpi("Total (U)", String(row.totalU), "U", ""),
-    kpi("Used (U)", String(row.usedU), "U", ""),
-    kpi("Available (U)", String(row.availableU), "U", ""),
+    kpi("Total (U)", formatInteger(row.totalU), "U", ""),
+    kpi("Used (U)", formatInteger(row.usedU), "U", ""),
+    kpi("Available (U)", formatInteger(row.availableU), "U", ""),
     kpi("Availability %", availabilityText, "", ""),
-    kpi("Usage %", usagePctNow === null ? "—" : `${usagePctNow.toFixed(1)}%`, "", ""),
+    kpi("Usage %", formatUsagePercent1(usagePctNow), "", ""),
     kpi("Trend vs Previous Month", trendValue, "", trendNote)
   ].join("");
   const donut = donutSvg(
@@ -309,7 +398,7 @@ function renderRackUnitCapacityExecutivePage(data: ReportData): string {
   const legend = `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackInUse}"></i><span>Used (U)</span><strong>${row.usedU}</strong></div>` +
     `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackAvailable}"></i><span>Available (U)</span><strong>${row.availableU}</strong></div>` +
     `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackTotal}"></i><span>Total (U)</span><strong>${row.totalU}</strong></div>`;
-  return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><div class="kpis-3col">${kpis}</div><div class="rack-unit-capacity-layout"><div class="ruc-left"><div class="block gauge-row">${donut}<div class="gauge-caption">${legend}</div></div></div><div class="ruc-right">${rackUnitCapacityImageFigure(data, row)}</div></div></section>`;
+  return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><div class="kpis-3col">${kpis}</div><div class="rack-unit-capacity-layout"><div class="ruc-left"><div class="block gauge-row">${donut}<div class="gauge-caption">${legend}</div></div></div><div class="ruc-right">${rackUnitCapacityImageFigure(data, row)}</div></div></section>${rackUnitTrendPage(data)}`;
 }
 
 /** Half-donut gauge arc: a track path drawn once in a neutral color, then
@@ -415,19 +504,40 @@ function comparisonFacilityLabel(label: string): string {
  *  energy "Site Comparison" page (comparisonPage below) - the two compare
  *  different business dimensions and must not be conflated into one page.
  *  Top: one pie per facility; bottom: the comparison table. */
+
+function rackComparisonDetailBlock(label: string, records: NonNullable<ReportData["rack"]>["records"]): string {
+  const metrics = calculateRackCapacityMetrics(records);
+  const rows = metrics.zoneMetrics.map(zone => [
+    escapeHtml(zone.zone),
+    formatInteger(zone.total),
+    formatInteger(zone.inUse.count),
+    formatInteger(zone.available.count),
+    formatInteger(zone.reserved.count),
+    formatInteger(zone.pendingDismantle.count),
+    formatRatioPercent1(zone.available.ratio)
+  ]);
+  return '<div class="block"><h3>Rack Capacity Details — ' + escapeHtml(comparisonFacilityLabel(label)) + '</h3>' +
+    table(["Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle", "Availability (%)"], rows) +
+    '<h3>Rack Positions — ' + escapeHtml(comparisonFacilityLabel(label)) + '</h3>' +
+    rackPositionsTable(records) + '</div>';
+}
+
 function rackComparisonPage(data: ReportData): string {
   if (!data.rackComparison) return "";
   const { self, other } = data.rackComparison;
   const selfMetrics = calculateRackCapacityMetrics(self.records);
   const rows: string[][] = [rackComparisonRow(self.label, selfMetrics)];
   const donuts = [rackComparisonDonutBlock(self.label, selfMetrics)];
+  const details = [rackComparisonDetailBlock(self.label, self.records)];
   if (other) {
     const otherMetrics = calculateRackCapacityMetrics(other.records);
     rows.push(rackComparisonRow(other.label, otherMetrics));
     donuts.push(rackComparisonDonutBlock(other.label, otherMetrics));
+    details.push(rackComparisonDetailBlock(other.label, other.records));
   }
-  const note = other ? "" : `<p class="note">Only ${escapeHtml(comparisonFacilityLabel(self.label))} is shown — the sibling facility's Rack Capacity data was unavailable for this export.</p>`;
-  return `<section class="page"><h2>Rack Capacity Site Comparison</h2><div class="rack-comparison-donuts">${donuts.join("")}</div>${table(["Facility", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle"], rows)}${note}</section>`;
+  const note = other ? "" : '<p class="note">Only ' + escapeHtml(comparisonFacilityLabel(self.label)) + ' is shown — the sibling facility\'s Rack Capacity data was unavailable for this export.</p>';
+  return '<section class="page"><h2>Rack Capacity Site Comparison</h2><div class="rack-comparison-donuts">' + donuts.join("") + '</div>' +
+    table(["Facility", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle"], rows) + details.join("") + note + '</section>';
 }
 
 function rackCapacityPage(data: ReportData): string {
@@ -469,7 +579,7 @@ function rackCapacityPage(data: ReportData): string {
     `${metrics.pendingDismantle.count} (${formatRatioPercent(metrics.pendingDismantle.ratio, 1)})`,
     String(metrics.total)
   ]);
-  return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">${escapeHtml(data.facility)} · Usage ${formatRatioPercent(metrics.inUse.ratio)} · Availability ${formatRatioPercent(metrics.available.ratio)}</p><div class="kpis">${kpis}</div><div class="rack-donut-row"><div>${donut}</div><div class="table-wrap" style="flex:1"><table><thead><tr><th class="left">Rack Zone</th><th>In Use</th><th>Available</th><th>Reserved</th><th>Pending Dismantle</th><th>Total</th></tr></thead><tbody>${zoneRows.map(row => `<tr>${row.map((cell, i) => `<td${i === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div></section>`;
+  return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">${escapeHtml(data.facility)} · Usage ${formatRatioPercent(metrics.inUse.ratio)} · Availability ${formatRatioPercent(metrics.available.ratio)}</p><div class="kpis">${kpis}</div><div class="rack-donut-row"><div>${donut}</div><div class="table-wrap" style="flex:1"><h3>Rack Capacity Details</h3><table><thead><tr><th class="left">Rack Zone</th><th>In Use</th><th>Available</th><th>Reserved</th><th>Pending Dismantle</th><th>Total</th></tr></thead><tbody>${zoneRows.map(row => `<tr>${row.map((cell, i) => `<td${i === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div><div class="block"><h3>Rack Positions</h3>${rackPositionsTable(data.rack.records)}</div></section>`;
 }
 
 /** Stable export-only facility colors. Match by name so long display labels
@@ -556,6 +666,8 @@ function filterReportHtmlBySections(html: string, selectedSections: readonly Rep
     if (page.includes("Executive Dashboard")) return keep("executive");
     if (page.includes("Building Energy Dashboard")) return keep("executive") || keep("dashboard") || keep("ups") || keep("air-conditioning") || keep("dc");
     if (page.includes("Monthly Energy &amp; Cost Table")) return keep("executive") || keep("appendix");
+    if (page.includes("Rack Unit Capacity Comparison")) return keep("site-comparison");
+    if (page.includes("Rack Unit Capacity Six-Month Trend")) return keep("rack-unit-capacity");
     if (page.includes("Rack Unit Capacity and Utilization")) return keep("rack-unit-capacity");
     if (page.includes("Capacity Health and Zone Heatmap")) return keep("rack-capacity") || keep("rack-unit-capacity");
     if (page.includes("Rack Capacity Site Comparison") || page.includes("<h2>Site Comparison</h2>")) return keep("site-comparison");
@@ -591,5 +703,5 @@ export function buildReportHtml(data: ReportData, selectedSections?: readonly Re
   ];
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(data.title)}</title><style>
 @page{size:A4 landscape;margin:0}*{box-sizing:border-box}html,body{margin:0;color:#243247;background:#fff;font:12px/1.3 ${FONT_STACK}}.cover,.page{width:1123px;min-height:794px;margin:0;background:#fff}.cover{padding:64px 72px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:34px;margin:0;color:#29415d}.cover h2{font-size:20px;font-weight:400;color:#7c6a68}.meta{margin-top:16px;border-top:1px solid #e6d9d2;padding-top:12px;color:#5f6f82}.page{page-break-before:always;padding:34px 40px 38px}.page h2{font-size:23px;margin:0 0 7px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:5px}.page h3{font-size:16px;color:#3e5874;margin:0 0 6px}.dashboard-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #e8d7d0;padding-bottom:8px}.dashboard-head h2{border:0;padding:0;margin:0}.dashboard-head p{margin:3px 0;color:#5f6f82}.eyebrow{font-size:9px!important;font-weight:bold;letter-spacing:1px;color:#a25e4c!important}.dashboard-tag{font-size:10px;text-align:right;color:#52687f;border-left:1px solid #e7d9d2;padding-left:12px}.continuation{font-size:10px;font-weight:bold;color:#68798a;border-bottom:1px solid #e7d9d2;padding-bottom:4px;margin-bottom:7px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:9px 0}.kpi{min-height:74px;padding:9px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:6px;break-inside:avoid}.kpi-label{font-size:10px;color:#67788b;text-transform:uppercase;font-weight:bold}.kpi-value{font-size:21px;font-weight:700;margin-top:5px;color:#29415d}.kpi-unit,.kpi-note,.note{font-size:10px;color:#64758a}.kpi-note{margin-top:3px}.block{margin:9px 0;padding:9px;border:1px solid #e7dcd6;border-radius:6px;break-inside:avoid}.capacity-health-page .block{margin:10px 0;padding:12px}.capacity-health-page .gauge-row{min-height:165px;gap:28px;align-items:center}.capacity-health-page .gauge-row svg{flex:0 0 auto}.capacity-health-page .heatmap-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.note{margin:6px 0 0}.table-wrap{margin:4px 0;overflow:hidden}table{border-collapse:collapse;width:100%;font-size:10px}th,td{padding:4px;border:1px solid #eadfda;text-align:right;vertical-align:top}td.left,th:first-child{text-align:left}th{background:#eee3dd;color:#40566e;font-weight:bold}.dense table{font-size:8.5px}.dense th,.dense td{padding:3px}.ups-comparison{display:grid;gap:7px;margin-top:8px}.ups-bar-row{display:grid;grid-template-columns:90px 1fr 52px;gap:8px;align-items:center;font-size:11px}.ups-bar-row strong{text-align:right}.ups-track{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden}.ups-track i{display:block;height:100%;border-radius:99px;background:${REPORT_PALETTE.ups}}.ups-track i.medium{background:${REPORT_PALETTE.rate}}.ups-track i.high{background:${REPORT_PALETTE.pue}}.trend-page{height:183mm;display:flex;flex-direction:column}.trend-page h2{font-size:26px;margin-bottom:2px}.chart-unit{margin:0 0 5px;color:#657488;font-size:12px}.trend-svg{width:100%;height:142mm;flex:1;overflow:visible}.grid{stroke:#dce4ea;stroke-width:1}.axis-tick,.month-label,.point-value{fill:#44566b;font-family:${FONT_STACK}}.axis-tick{font-size:20px}.month-label{font-size:19px}.point-value{font-size:19px;font-weight:bold}.chart-explanation{margin:2px 5mm 0;font-size:12px;color:#52687f;text-align:center}.trend-legend{display:flex;gap:18px;margin:0 0 4px}.trend-legend span{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#3e5874;font-weight:600}.trend-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}.rack-donut-row{display:flex;gap:16px;align-items:flex-start;margin-top:8px}.rack-comparison-donuts{display:flex;gap:32px;justify-content:center;margin:10px 0 16px}.rack-comparison-donut{text-align:center}.rack-comparison-donut h3{margin-bottom:4px}.rack-comparison-legend{display:flex;flex-direction:column;gap:3px;margin-top:8px;text-align:left}.legend-row{display:flex;align-items:center;gap:6px;font-size:10px;color:#3e5874}.legend-row i{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}.legend-row strong{margin-left:auto;font-weight:700}.rack-unit-capacity-image-figure{margin:8px 0 0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;max-width:100%}.rack-unit-capacity-image{display:block;width:auto;height:auto;max-width:100%;max-height:150px;object-fit:contain;border:1px solid #e7dcd6;border-radius:8px;box-shadow:0 1px 3px rgba(41,65,93,.12)}.rack-unit-capacity-image-caption{display:flex;flex-direction:column;gap:1px;margin-top:5px;font-size:9px;color:#657488}.rack-unit-capacity-image-placeholder{margin-top:8px;width:260px;height:150px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;border:1px dashed #cfc0b8;border-radius:8px;background:#f8f3f0;color:#8a7d78;font-size:10px}.gauge-row{display:flex;align-items:center;gap:20px;margin-top:6px}.gauge-caption{flex:1}.gauge-health-label{font-size:20px;font-weight:700;margin:0 0 4px}.heatmap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}.heatmap-tile{border-radius:8px;padding:8px}.heatmap-zone{font-size:12px;font-weight:700;margin:0}.heatmap-pct{font-size:18px;font-weight:700;margin:2px 0}.heatmap-detail{font-size:9px;margin:0;opacity:.9}.kpis-3col{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:9px 0}.rack-unit-capacity-layout{display:flex;gap:16px;align-items:stretch;margin-top:4px}.rack-unit-capacity-layout .ruc-left{flex:3;min-width:0}.rack-unit-capacity-layout .ruc-right{flex:2;min-width:0;display:flex;align-items:center;justify-content:center}.rack-unit-capacity-layout .rack-unit-capacity-image-figure,.rack-unit-capacity-layout .rack-unit-capacity-image-placeholder{width:100%;max-width:100%;height:auto;min-height:90mm}.rack-unit-capacity-layout .rack-unit-capacity-image{max-width:100%;max-height:82mm;width:auto;height:auto}
-</style></head><body><main class="cover"><h1>${escapeHtml(data.title)}</h1><h2>${escapeHtml(data.thaiSubtitle)}</h2><div class="meta">Facility: ${escapeHtml(data.facility)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}</div></main>${executive}${executiveTrend}${dashboard}${trendPages.map(([title, unit, color, values, explanation]) => trendPage(title, unit, [{ name: title, color, values }], data.monthlyRows, explanation, "FACILITY TREND ANALYTICS")).join("")}<section class="page"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section>${comparisonPage(data)}${rackCapacityPage(data)}${renderRackUnitCapacityExecutivePage(data)}${capacityHealthPage(data)}${rackComparisonPage(data)}<script>document.body.dataset.reportReady="true";</script></body></html>`;
+</style></head><body><main class="cover"><h1>${escapeHtml(data.title)}</h1><h2>${escapeHtml(data.thaiSubtitle)}</h2><div class="meta">Facility: ${escapeHtml(data.facility)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}</div></main>${executive}${executiveTrend}${dashboard}${trendPages.map(([title, unit, color, values, explanation]) => trendPage(title, unit, [{ name: title, color, values }], data.monthlyRows, explanation, "FACILITY TREND ANALYTICS")).join("")}<section class="page"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section>${comparisonPage(data)}${rackCapacityPage(data)}${renderRackUnitCapacityExecutivePage(data)}${rackUnitComparisonPage(data)}${capacityHealthPage(data)}${rackComparisonPage(data)}<script>document.body.dataset.reportReady="true";</script></body></html>`;
 }

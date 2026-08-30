@@ -75,6 +75,39 @@ assert.match(rackViewsSource, /Monthly Rack Unit Capacity Image/);
 assert.match(rackUnitSummarySource, /provider\?: Pick<IDataProvider, "getRackUnitCapacityImage">/);
 assert.match(rackUnitSummarySource, /!provider\?\.getRackUnitCapacityImage/);
 assert.match(rackUnitSummarySource, /facilityName \?\? ""/);
+
+// Monthly Rack Unit Capacity Image — the live Rack Unit Capacity & Utilization
+// page section, held to the approved four-state contract and exact-lookup semantics.
+const rackUnitImageSource = readFileSync(new URL("../src/web-clean-v1/rackUnitImage.ts", import.meta.url), "utf8");
+const reportPreviewSource = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
+// 1. Section is rendered on the live page with the exact-site image provider.
+assert.match(appSource, /const imageProvider = useMemo\(\(\) => createWebRackUnitImageProvider\(siteId\), \[siteId\]\)/);
+assert.match(appSource, /<WebRackUnitCapacityDashboard [^>]*imageProvider=\{imageProvider\}/);
+assert.match(rackViewsSource, /<RackUnitImage provider=\{imageProvider\} facilityName=\{facilityName\} month=\{month\} \/>/);
+// 2. Exact siteId + selected reporting month, never a latest-month fallback.
+assert.match(appSource, /getRackUnitCapacityImage: async \(facility, reportingMonth\) => \{\s*const image = await loadWebRackUnitCapacityImage\(siteId, reportingMonth\)/);
+assert.match(rackUnitImageSource, /No latest-month fallback is allowed/);
+assert.match(rackUnitImageSource, /\/rack-unit-capacity\?siteId=\$\{siteId\}&month=\$\{encodeURIComponent\(reportingMonth\)\}/);
+// 3/4/5. Four distinct render states: loading, image, no-data, error.
+assert.match(rackViewsSource, /Loading Monthly Rack Unit Capacity Image…/);
+assert.match(rackViewsSource, /<img src=\{image\.dataUri\}[^>]*object-contain/);
+assert.match(rackViewsSource, /No Monthly Rack Unit Capacity Image is available for this reporting month\./);
+assert.match(rackViewsSource, /Unable to load Monthly Rack Unit Capacity Image\./);
+assert.match(rackViewsSource, /\.catch\(\(\) => \{ if \(!cancelled\) \{ setImage\(null\); setError\(true\); \} \}\)/);
+// 6. Site/month switch cannot surface a stale prior image: in-flight guard + keyed remount.
+assert.match(rackViewsSource, /let cancelled = false;/);
+assert.match(rackViewsSource, /return \(\) => \{ cancelled = true; \};/);
+assert.match(rackViewsSource, /<RackCapacityProvider key=\{`\$\{siteName \?\? ""\}:\$\{month\}`\}/);
+// 7. Export/report path is untouched and shares the same underlying loader.
+assert.match(reportPreviewSource, /loadWebRackUnitCapacityImage\(siteId, month\)\.catch\(\(\) => null\)/);
+assert.match(reportPreviewSource, /rackUnitCapacityImageDataUri: rackUnitImage\?\.dataUri \?\? null/);
+
+// Site Energy & Cost Comparison export: the per-site rows are { month, metrics }
+// objects and must be filtered on `.month`, never compared whole against the
+// Set<string> of selected months (has(row) is always false and blanked every
+// energy/cost value across CSV/Excel/HTML/PDF).
+assert.match(appSource, /months: item\.months\.filter\(entry => selectedReportMonthSet\.has\(entry\.month\)\)/);
+assert.doesNotMatch(appSource, /item\.months\.filter\(value => selectedReportMonthSet\.has\(value\)\)/);
 assert.match(exportSource, /import\("html2canvas"\)/);
 assert.match(exportSource, /import\("jspdf"\)/);
 assert.match(exportSource, /scale: PDF_RENDER_SCALE/);

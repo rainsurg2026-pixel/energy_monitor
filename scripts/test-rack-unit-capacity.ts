@@ -320,7 +320,7 @@ async function testFullSavePipeline(label: string, sourcePath: string, imagesRoo
   // ---- v2.2.6 hotfix: full executive page (KPIs + donut + image), not just
   // the old stripped-down block - restores Dashboard/PDF parity. ----
   check(`${label}: PDF shows the "Rack Unit Capacity and Utilization" page heading`, html.includes("<h2>Rack Unit Capacity and Utilization</h2>"));
-  check(`${label}: PDF shows Availability % (30.00%, i.e. 150/500)`, /Availability %[\s\S]{0,80}30\.00%/.test(html));
+  check(`${label}: PDF shows Availability % (30.0%, i.e. 150/500)`, /Availability %[\s\S]{0,80}30\.0%/.test(html));
   check(`${label}: PDF shows Usage % (70.0%, i.e. 350/500)`, /Usage %[\s\S]{0,80}70\.0%/.test(html));
   check(`${label}: PDF shows a Trend vs Previous Month card with a real value (both months have data)`, /Trend vs Previous Month[\s\S]{0,40}(▲|▼|◆)/.test(html));
   check(`${label}: PDF Rack Unit Capacity donut legend shows Used (U)/Available (U)/Total (U) rows`, html.includes(">Used (U)<") && html.includes(">Available (U)<") && html.includes(">Total (U)<"));

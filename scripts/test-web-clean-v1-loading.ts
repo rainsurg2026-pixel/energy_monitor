@@ -40,9 +40,9 @@ assert.ok(app.includes("selectedMonth={displayMonth}"), "non-Reports views use t
 assert.match(app, /exportSiteComparisonHtml\([\s\S]*selectedReportSections\)/);
 assert.match(app, /dataSourceLabel=\{lang === "th" \? "Production API" : "Source: Production API"\}/);
 assert.ok(app.includes("const allFacilitiesCacheRef = useRef(new Map<string, Promise<ExportFacility[]>>());"), "All Facilities exports cache their request payload");
-assert.ok(app.includes("includeRack ? loadRack(site.id, periodEndMonth) : Promise.resolve(null)"), "All Facilities loader skips rack requests when not needed");
-assert.ok(app.includes("includeImage ? loadReportImage(site.id, periodEndMonth) : Promise.resolve(null)"), "All Facilities loader skips image requests when not needed");
-assert.ok(app.includes("exportAllFacilitiesCsv(await loadAll({ includeRack: false, includeImage: false }))"), "CSV export requests only history");
+assert.ok(app.includes("includeRack ? loadRack(site.id, selectedMonth) : Promise.resolve(null)"), "All Facilities loader uses the selected reporting month and skips rack requests when not needed");
+assert.ok(app.includes("includeImage ? loadReportImage(site.id, selectedMonth) : Promise.resolve(null)"), "All Facilities loader uses the selected reporting month and skips image requests when not needed");
+assert.ok(app.includes("exportAllFacilitiesCsv(await loadAll({ includeRack: true, includeImage: false }))"), "CSV export requests Rack Capacity and Rack Positions data");
 assert.ok(app.includes("exportAllFacilitiesExcel(await loadAll({ includeRack: true, includeImage: false }))"), "Excel export omits image requests");
 assert.ok(app.includes("exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true }), contextMonth)"), "HTML export requests report assets");
 assert.ok(app.includes("exportAllFacilitiesPdf(await loadAll({ includeRack: true, includeImage: true }), contextMonth)"), "PDF export requests report assets");

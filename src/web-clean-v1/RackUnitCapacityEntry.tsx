@@ -75,7 +75,13 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
         setBaselineTotalU(String(row.totalU));
         setBaselineUsedU(String(row.usedU));
         setRowVersion(row.rowVersion);
-        setHasSavedImage(Boolean(row.image?.available));
+        // Hydrate from the persisted snapshot's image metadata (DB truth), not
+        // from the storage liveness probe `image.available` - that probe is
+        // false whenever object storage is briefly unreachable or unconfigured
+        // for the environment, which was hiding a genuinely-saved image from the
+        // editor. The <img> GET below is authoritative and its onError handler
+        // falls back to the empty uploader if the object is truly missing.
+        setHasSavedImage(row.image != null);
         setImageLoadError(false);
       })
       .catch(() => undefined);

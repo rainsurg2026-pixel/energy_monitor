@@ -97,6 +97,49 @@ export function clampRatio(ratioValue: number | null): number {
   return Math.max(0, Math.min(1, ratioValue));
 }
 
+/**
+ * Rack Positions detail contract - shared by the Site Rack Capacity comparison
+ * UI (`WebSiteRackCapacityComparison`), the CSV/XLSX table exports and the
+ * HTML/PDF report so the four surfaces cannot drift. Rack Positions list only
+ * the deployable / exception positions; "In Use" racks are represented in the
+ * Rack Capacity metrics (summary/details), never as position rows. The canonical
+ * stored status "Pending Dismantle" is presented with the current product
+ * wording "Pending Decommission".
+ */
+export const RACK_POSITION_EXPORT_STATUSES = ["Available", "Reserved", "Pending Decommission"] as const;
+export type RackPositionExportStatus = (typeof RACK_POSITION_EXPORT_STATUSES)[number];
+
+export function rackPositionExportStatus(status: string | null | undefined): RackPositionExportStatus | null {
+  if (status === "Available" || status === "Reserved" || status === "Pending Decommission") return status;
+  if (status === "Pending Dismantle") return "Pending Decommission";
+  return null;
+}
+
+export interface RackPositionExportRow {
+  rowNumber: number;
+  status: RackPositionExportStatus;
+  rackId: string | null;
+  cabinetSize: string | null;
+  detail: string | null;
+}
+
+/** Deployable / exception rack positions in canonical group order, then by
+ *  source row number. Excludes "In Use" and any unrecognized status. */
+export function rackPositionExportRows(records: readonly DomainRackRecord[]): RackPositionExportRow[] {
+  const order = new Map<RackPositionExportStatus, number>(RACK_POSITION_EXPORT_STATUSES.map((status, index) => [status, index]));
+  return records
+    .map(record => ({ record, status: rackPositionExportStatus(record.status) }))
+    .filter((entry): entry is { record: DomainRackRecord; status: RackPositionExportStatus } => entry.status !== null)
+    .sort((left, right) => (order.get(left.status)! - order.get(right.status)!) || ((left.record.rowNumber ?? 0) - (right.record.rowNumber ?? 0)))
+    .map(({ record, status }) => ({
+      rowNumber: record.rowNumber ?? 0,
+      status,
+      rackId: record.rackId ?? null,
+      cabinetSize: record.cabinetSize ?? null,
+      detail: record.detail ?? null
+    }));
+}
+
 export type RackDisplayStatus = "In Use" | "Available" | "Reserved" | "Pending Dismantle" | "Other";
 export function statusRatio(m: RackCapacityMetrics | RackZoneMetrics, status: RackDisplayStatus): RackStatusRatio {
   switch (status) {

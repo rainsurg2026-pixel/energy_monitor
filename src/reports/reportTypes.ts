@@ -1,5 +1,10 @@
 export type ReportStatus = "Complete" | "Partial" | "Validation warning";
 
+/** Product wording shared by the Rack Unit views and every CSV/XLSX/HTML/PDF
+ *  Rack Unit export. Must stay identical to the English string rendered by
+ *  `WebRackCapacityViews`/`WebSiteRackCapacityComparison`. */
+export const RACK_UNIT_CAPACITY_TREND_NOTE = "Rack Unit Capacity Trend Note: Available U represents physical rack space only; actual deployment capacity depends on power, cooling, weight, and contiguous space availability.";
+
 /** One persisted row from the "2. UPS Group History" worksheet. */
 export interface UpsGroupHistoryRow {
   facility: string;
@@ -214,4 +219,15 @@ export interface ReportData {
    *  facility itself has no Rack Capacity data (mirrors rackCapacityPage's
    *  own unavailable-data gate). */
   rackComparison: { self: ReportRackComparisonFacility; other: ReportRackComparisonFacility | null } | null;
+  /** Selected-month Rack Unit Capacity comparison plus each site's history for
+   * the six-month trend. Optional for legacy report callers. */
+  rackUnitComparison?: { sites: ReportRackUnitComparisonFacility[] } | null;
+}
+
+/** Rack Unit Capacity rows for one side of a site comparison. Keeping this
+ * separate from comparison lets the shared report renderer consume the same
+ * selected-month and trend data as the export builders. */
+export interface ReportRackUnitComparisonFacility {
+  label: string;
+  rows: import("../excel/RackUnitCapacityWriter").RackUnitCapacityRow[];
 }
