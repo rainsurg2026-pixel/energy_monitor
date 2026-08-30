@@ -27,7 +27,7 @@ export default function TrendLineChart({ labels, series, unit, height = 360 }: T
   // clipped by the chart edge.
   const x = (index: number) => left + (labels.length <= 1 ? plotWidth / 2 : (index + 1) / (labels.length + 1) * plotWidth);
   const y = (value: number) => top + (max - value) / range * plotHeight;
-  return <div className="trend-line-chart w-full overflow-x-auto"><svg viewBox={`0 0 ${width} ${height}`} className="min-w-[1080px] w-full text-xs" role="img" aria-label={`${unit} trend`}>
+  return <div className="trend-line-chart w-full overflow-x-auto"><svg viewBox={`0 0 ${width} ${height}`} className={`${labels.length > 6 ? "min-w-[720px] sm:min-w-[1080px]" : "min-w-0 sm:min-w-[1080px]"} w-full text-xs`} role="img" aria-label={`${unit} trend`}>
     <line x1={left} y1={top} x2={left} y2={height - bottom} stroke="currentColor" className="text-slate-400" strokeWidth="1" />
     <line x1={left} y1={height - bottom} x2={width - right} y2={height - bottom} stroke="currentColor" className="text-slate-400" strokeWidth="1" />
     {[0, 1, 2, 3, 4].map(step => { const value = max - range * step / 4; const yy = y(value); return <text key={step} x={left - 8} y={yy + 4} textAnchor="end" className="fill-slate-300">{formatNumber2(value)}</text>; })}

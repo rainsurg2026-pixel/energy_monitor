@@ -141,6 +141,17 @@ html.theme-light .recharts-wrapper text {
   font-size: 0.75rem !important;
 }
 
+@media (max-width: 767px) {
+  .em-shell .recharts-wrapper text { font-size: 0.6875rem !important; }
+  .em-shell .recharts-legend-wrapper, .em-shell .recharts-legend-item-text { font-size: 0.75rem !important; }
+  .em-shell .recharts-default-tooltip, .em-shell .recharts-default-tooltip * { font-size: 0.6875rem !important; }
+  .em-shell table th, .em-shell table td { font-size: 0.6875rem !important; }
+  .em-shell table th, .em-shell table td { padding-left: 0.6rem; padding-right: 0.6rem; }
+  .trend-line-chart svg text { font-size: 0.6875rem !important; }
+  .trend-line-chart > div { font-size: 0.75rem !important; }
+  .trend-chart-card { padding: 1rem !important; }
+}
+
 /* CleanWebApp exposes ten desktop navigation items (Dashboard plus the nine
  * after the Production Rack comparison split). Keep the existing utility as a
  * fallback while ensuring the full nav stays on one row at xl width. */

@@ -89,37 +89,37 @@ export default function ExecutiveDashboard({ logs, lang }: ExecutiveDashboardPro
 
       {/* Building versus 4th-floor electricity comparison */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl">
+        <div className="bg-slate-900 border border-slate-800 p-4 sm:p-5 rounded-2xl shadow-xl">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{lang === "th" ? "เปรียบเทียบการใช้ไฟฟ้า" : "Electricity Consumption Comparison"}</span>
             <Zap className="w-4 h-4 text-indigo-400" />
           </div>
-          <div className="grid grid-cols-2 gap-4 mt-5">
+          <div className="grid grid-cols-1 min-[430px]:grid-cols-2 gap-4 mt-4 sm:mt-5">
             <div>
               <span className="text-[10px] text-slate-500 uppercase">{lang === "th" ? "ทั้งตึก" : "Whole Building"}</span>
-              <div className="text-2xl font-mono font-black text-slate-100 mt-1">{formatNumber2(aggregateStats.totalBuildingEnergy)}<span className="text-xs text-slate-400 ml-1">kWh</span></div>
+              <div className="break-words text-xl min-[430px]:text-[1.35rem] sm:text-2xl font-mono font-black text-slate-100 mt-1 leading-tight">{formatNumber2(aggregateStats.totalBuildingEnergy)}<span className="text-xs text-slate-400 ml-1">kWh</span></div>
             </div>
             <div>
               <span className="text-[10px] text-slate-500 uppercase">{lang === "th" ? "ชั้น 4" : "4th Floor"}</span>
-              <div className="text-2xl font-mono font-black text-indigo-400 mt-1">{formatNumber2(aggregateStats.totalEnergy)}<span className="text-xs text-slate-400 ml-1">kWh</span></div>
+              <div className="break-words text-xl min-[430px]:text-[1.35rem] sm:text-2xl font-mono font-black text-indigo-400 mt-1 leading-tight">{formatNumber2(aggregateStats.totalEnergy)}<span className="text-xs text-slate-400 ml-1">kWh</span></div>
             </div>
           </div>
           <p className="text-[10px] text-slate-500 mt-4">{lang === "th" ? "สัดส่วนการใช้ไฟชั้น 4 เทียบกับทั้งตึก" : "4th-floor share of whole-building electricity"}: {aggregateStats.totalBuildingEnergy > 0 ? formatNumber2(aggregateStats.totalEnergy / aggregateStats.totalBuildingEnergy * 100) : "—"}%</p>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl">
+        <div className="bg-slate-900 border border-slate-800 p-4 sm:p-5 rounded-2xl shadow-xl">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{lang === "th" ? "เปรียบเทียบค่าไฟฟ้า" : "Electricity Cost Comparison"}</span>
             <Coins className="w-4 h-4 text-emerald-400" />
           </div>
-          <div className="grid grid-cols-2 gap-4 mt-5">
+          <div className="grid grid-cols-1 min-[430px]:grid-cols-2 gap-4 mt-4 sm:mt-5">
             <div>
               <span className="text-[10px] text-slate-500 uppercase">{lang === "th" ? "ทั้งตึก" : "Whole Building"}</span>
-              <div className="text-2xl font-mono font-black text-slate-100 mt-1">฿{formatNumber2(aggregateStats.totalBuildingCost)}</div>
+              <div className="break-words text-xl min-[430px]:text-[1.35rem] sm:text-2xl font-mono font-black text-slate-100 mt-1 leading-tight">฿{formatNumber2(aggregateStats.totalBuildingCost)}</div>
             </div>
             <div>
               <span className="text-[10px] text-slate-500 uppercase">{lang === "th" ? "ชั้น 4" : "4th Floor"}</span>
-              <div className="text-2xl font-mono font-black text-emerald-400 mt-1">฿{formatNumber2(aggregateStats.totalCost)}</div>
+              <div className="break-words text-xl min-[430px]:text-[1.35rem] sm:text-2xl font-mono font-black text-emerald-400 mt-1 leading-tight">฿{formatNumber2(aggregateStats.totalCost)}</div>
             </div>
           </div>
           <p className="text-[10px] text-slate-500 mt-4">{lang === "th" ? "ใช้ค่าเฉลี่ยอัตราค่าไฟเต็มความละเอียดจากข้อมูล workbook" : "4th-floor cost uses the shared full-precision workbook rate"}</p>
