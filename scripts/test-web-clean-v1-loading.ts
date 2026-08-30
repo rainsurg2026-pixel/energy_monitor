@@ -46,7 +46,7 @@ assert.ok(app.includes("exportAllFacilitiesCsv(await loadAll({ includeRack: true
 assert.ok(app.includes("exportAllFacilitiesExcel(await loadAll({ includeRack: true, includeImage: false }), buildSiteComparisonReportModel(await loadComparison(), contextMonth))"), "Excel export omits image requests and carries the cross-site model");
 assert.ok(app.includes("exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true }), buildSiteComparisonReportModel(await loadComparison(), contextMonth), contextMonth)"), "HTML export requests report assets with the cross-site model");
 assert.ok(app.includes("exportAllFacilitiesPdf(await loadAll({ includeRack: true, includeImage: true }), buildSiteComparisonReportModel(await loadComparison(), contextMonth), contextMonth)"), "PDF export requests report assets with the cross-site model");
-assert.ok(app.includes("Site Rack Capacity Comparison\", icon: Building2"), "site rack comparison has a distinct navigation icon");
+assert.ok(app.includes("Site Rack Capacity & Availability Comparison\", icon: Building2"), "site rack comparison has a distinct navigation icon");
 assert.ok(app.includes("displayPeriod={globalDisplayPeriodRange}"), "history views are bounded by the Global Display Period, not the Reports Quick Range");
 assert.match(historicalCharts, /selectedMonth: string/);
 assert.match(historicalCharts, /useState<TrendPeriod>\(6\)/);

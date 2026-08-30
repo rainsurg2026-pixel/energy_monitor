@@ -108,7 +108,7 @@ function rackUnitTrendPage(data: ReportData): string {
     formatUsagePercent1(usagePercent(row)),
     formatRatioPercent1(row.availabilityPct)
   ]);
-  return '<section class="page"><h2>Rack Unit Capacity Six-Month Trend</h2><p class="note">' +
+  return '<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity Six-Month Trend</h2><p class="note">' +
     escapeHtml(data.facility) + ' · ' + escapeHtml(formatMonth(data.reportingMonth)) +
     '</p>' + table(["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], renderedRows) +
     '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p>' +
@@ -141,7 +141,7 @@ function rackUnitComparisonPage(data: ReportData): string {
       formatUsagePercent1(usagePercent(row)),
       formatRatioPercent1(row.availabilityPct)
     ]));
-  return '<section class="page"><h2>Rack Unit Capacity Comparison</h2><p class="note">Reference month: ' +
+  return '<section class="page" data-report-section="site-rack-comparison"><h2>Rack Unit Capacity Comparison</h2><p class="note">Reference month: ' +
     escapeHtml(formatMonth(data.reportingMonth)) + '</p>' +
     table(["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], selectedRows) +
     '<h3>Six-Month Trend</h3>' +
@@ -200,11 +200,11 @@ export function trendChartXPosition(index: number, rowCount: number, width = 160
   return left + (index + 1) * categorySlot;
 }
 
-function trendPage(title: string, unit: string, series: TrendSeries[], rows: ReportMonthlyRow[], explanation: string, sectionLabel?: string): string {
+function trendPage(title: string, unit: string, series: TrendSeries[], rows: ReportMonthlyRow[], explanation: string, sectionLabel?: string, reportSection: ReportSectionId = "historical"): string {
   const eyebrow = sectionLabel ? `<p class="eyebrow">${escapeHtml(sectionLabel)}</p>` : "";
   const allValues = series.flatMap(s => s.values);
   const defined = allValues.filter((value): value is number => value !== null && Number.isFinite(value));
-  if (!defined.length) return `<section class="page trend-page">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)}</p><p>No valid values are available for this selected reporting window.</p></section>`;
+  if (!defined.length) return `<section class="page trend-page" data-report-section="${reportSection}">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)}</p><p>No valid values are available for this selected reporting window.</p></section>`;
   const width = 1600, height = 810, left = 140, right = 80, top = 82, bottom = 110;
   const actualMin = Math.min(...defined), actualMax = Math.max(...defined), rawRange = actualMax - actualMin || Math.max(Math.abs(actualMax) * 0.2, 1);
   const domainMin = Math.min(0, actualMin - rawRange * 0.16), domainMax = actualMax + Math.max(rawRange * 0.28, Math.abs(actualMax) * 0.04);
@@ -236,7 +236,7 @@ function trendPage(title: string, unit: string, series: TrendSeries[], rows: Rep
   const details = multi
     ? series.map(s => `${escapeHtml(s.name)} — ${escapeHtml(trendSeriesDetails(unit, s.values, rows))}`).join(" ")
     : escapeHtml(trendSeriesDetails(unit, series[0]?.values ?? [], rows));
-  return `<section class="page trend-page">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)} · latest ${rows.length}-month window ending at ${escapeHtml(formatMonth(rows.at(-1)?.month ?? null))}</p>${legend}<svg class="trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}">${grid}${seriesSvg}${labels}</svg><p class="chart-explanation">${escapeHtml(explanation)} ${details}</p></section>`;
+  return `<section class="page trend-page" data-report-section="${reportSection}">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)} · latest ${rows.length}-month window ending at ${escapeHtml(formatMonth(rows.at(-1)?.month ?? null))}</p>${legend}<svg class="trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}">${grid}${seriesSvg}${labels}</svg><p class="chart-explanation">${escapeHtml(explanation)} ${details}</p></section>`;
 }
 
 function monthlyTable(rows: ReportMonthlyRow[]): string {
@@ -254,7 +254,7 @@ function upsComparison(title: string, groups: EngineeringDashboardSnapshot["upsG
 
 function executiveDashboardPage(data: ReportData): string {
   const rows = data.monthlyRows;
-  if (rows.length === 0) return `<section class="page executive-dashboard-page"><p class="eyebrow">EXECUTIVE DASHBOARD</p><h2>Executive Dashboard</h2><p class="note">No monthly records are available for the selected reporting window.</p></section>`;
+  if (rows.length === 0) return `<section class="page executive-dashboard-page" data-report-section="executive"><p class="eyebrow">EXECUTIVE DASHBOARD</p><h2>Executive Dashboard</h2><p class="note">No monthly records are available for the selected reporting window.</p></section>`;
   const sum = (selector: (row: ReportMonthlyRow) => number | null): number => rows.reduce((total, row) => {
     const value = selector(row);
     return typeof value === "number" && Number.isFinite(value) ? total + value : total;
@@ -277,7 +277,7 @@ function executiveDashboardPage(data: ReportData): string {
     latest?.status === "Complete" ? "Selected month passed the report completeness check." : "Selected month is partial; review missing source readings before making operational decisions.",
     upsGroups.length === 0 ? "UPS group status is unavailable for the selected month." : `UPS status loaded from Dashboard-FAC group history for ${formatMonth(data.reportingMonth)}.`
   ];
-  return `<section class="page executive-dashboard-page"><div class="dashboard-head"><div><p class="eyebrow">EXECUTIVE DASHBOARD</p><h2>Executive Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${rows.length} reporting month(s)</p></div><div class="dashboard-tag">Management summary<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis-3col">${kpi("Total Building Energy", format2(buildingEnergy), "kWh", `${rows.length} reporting month(s)`)}${kpi("Total 4th Floor Energy", format2(floorEnergy), "kWh", "UPS + AC + DC power panels")}${kpi("Total Building Cost", format2(buildingCost), "THB", "Stored/calculated building cost")}${kpi("Total 4th Floor Cost", format2(floorCost), "THB", "Calculated at building average rate")}${kpi("4th Floor Energy Share", `${format2(floorShare)}%`, "of building energy", "Selected reporting window")}${kpi("UPS Status", upsStatus, "Dashboard-FAC", "Persisted group status for selected month")}</div><article class="block"><h3>Management insights</h3><ul class="insight-list">${insights.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></article></section>`;
+  return `<section class="page executive-dashboard-page" data-report-section="executive"><div class="dashboard-head"><div><p class="eyebrow">EXECUTIVE DASHBOARD</p><h2>Executive Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${rows.length} reporting month(s)</p></div><div class="dashboard-tag">Management summary<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis-3col">${kpi("Total Building Energy", format2(buildingEnergy), "kWh", `${rows.length} reporting month(s)`)}${kpi("Total 4th Floor Energy", format2(floorEnergy), "kWh", "UPS + AC + DC power panels")}${kpi("Total Building Cost", format2(buildingCost), "THB", "Stored/calculated building cost")}${kpi("Total 4th Floor Cost", format2(floorCost), "THB", "Calculated at building average rate")}${kpi("4th Floor Energy Share", `${format2(floorShare)}%`, "of building energy", "Selected reporting window")}${kpi("UPS Status", upsStatus, "Dashboard-FAC", "Persisted group status for selected month")}</div><article class="block"><h3>Management insights</h3><ul class="insight-list">${insights.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></article></section>`;
 }
 
 function engineeringDashboard(data: ReportData, dashboard: EngineeringDashboardSnapshot): string {
@@ -292,7 +292,7 @@ function engineeringDashboard(data: ReportData, dashboard: EngineeringDashboardS
   const airRows = [[formatMonth(dashboard.previousMonth), ...dashboard.airFields.map(field => format2(dashboard.airPrevious[field])), "—"], [formatMonth(data.reportingMonth), ...dashboard.airFields.map(field => format2(dashboard.airCurrent[field])), "—"], ["Monthly Difference", ...dashboard.airFields.map(field => format2(dashboard.airDifference[field])), dashboard.airEnergyKwh === null ? "—" : `${format2(dashboard.airEnergyKwh)} kWh`]];
   const dcRows = dashboard.dcPanels.map((row, index) => [String(index + 1), escapeHtml(row.panelId), format2(row.voltage), format2(row.current), format2(row.dcPowerW), format2(row.acCurrentA), format2(row.acPowerW), format2(row.monthlyEnergyKwh)]);
   const overall = table(["Reporting Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Avg Rate (THB/kWh)", "4th Floor Share (%)"], [[formatMonth(data.reportingMonth), format2(dashboard.buildingEnergyKwh), format2(dashboard.buildingCostThb), format2(dashboard.floorEnergyKwh), format2(dashboard.floorCostThb), format2(dashboard.averageRateThbPerKwh), `${format2(dashboard.floorSharePercent)}%`]]);
-  return `<section class="page dashboard-page"><div class="dashboard-head"><div><p class="eyebrow">SELECTED-MONTH ENGINEERING ANALYSIS</p><h2>Building Energy Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${dashboard.daysInMonth} days in selected month</p></div><div class="dashboard-tag">Engineering analysis<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis">${kpi("Total 4th Floor Energy", format2(dashboard.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Estimated 4th Floor Electricity Cost", format2(dashboard.floorCostThb), "THB", "Calculated from building average rate")}${kpi("4th Floor Energy Share", `${format2(dashboard.floorSharePercent)}%`, "of building energy", `Building total: ${format2(dashboard.buildingEnergyKwh)} kWh`)}${kpi("Building Average Electricity Rate", format2(dashboard.averageRateThbPerKwh), "THB/kWh", `Building cost: ${format2(dashboard.buildingCostThb)} THB`)}</div>${srinakarinOverall}<article class="block"><h3>${detailedUpsTitle}</h3>${table(["No.", "UPS Group", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %", "Monthly Energy kWh"], upsRows)}<p class="note">UPS group capacity and mapping values are read directly from Dashboard-FAC. Monthly energy uses load × 24 hours × selected-month days.</p></article>${upsComparison(detailedComparisonTitle, dashboard.upsGroups)}</section><section class="page dashboard-page"><div class="continuation">Building Energy Dashboard · ${escapeHtml(formatMonth(data.reportingMonth))}</div><article class="block"><h3>${showAcPowerPanel ? "UPS / PPC Detailed Configuration Mapping" : "UPS Detailed Configuration Mapping"}</h3>${table(detailedHeaders, upsDetails, "dense")}<p class="note">Detail total: ${format2(dashboard.detailedVoltageAvg)} V average · ${format2(dashboard.detailedCurrentSum)} A · ${format2(dashboard.totalUpsKw)} kW · ${format2(dashboard.totalUpsKva)} kVA.</p></article><article class="block"><h3>2. Air Conditioning Energy Consumption — 4th Floor</h3>${table(["Reporting Month", ...dashboard.airFields.map(field => `${field.toUpperCase()} (GWh)`), "Total AC Energy"], airRows)}<p class="note">Air-conditioning energy is the complete GWh meter difference × 1,000,000. Missing readings remain unavailable, rather than being treated as zero.</p></article><article class="block"><h3>3. DC Power Panel Load Status</h3>${table(["No.", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current @220V (A)", "AC Power (W)", "Monthly Energy (kWh)"], dcRows)}<p class="note">DC total: ${format2(dashboard.totalDcPowerW)} W DC · ${format2(dashboard.totalDcAcCurrentA)} A AC · ${format2(dashboard.totalDcAcPowerW)} W AC · ${format2(dashboard.totalDcEnergyKwh)} kWh.</p></article><article class="block"><h3>4. Overall Energy Consumption & Electricity Cost</h3>${overall}</article></section>`;
+  return `<section class="page dashboard-page" data-report-section="dashboard"><div class="dashboard-head"><div><p class="eyebrow">SELECTED-MONTH ENGINEERING ANALYSIS</p><h2>Building Energy Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${dashboard.daysInMonth} days in selected month</p></div><div class="dashboard-tag">Engineering analysis<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis">${kpi("Total 4th Floor Energy", format2(dashboard.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Estimated 4th Floor Electricity Cost", format2(dashboard.floorCostThb), "THB", "Calculated from building average rate")}${kpi("4th Floor Energy Share", `${format2(dashboard.floorSharePercent)}%`, "of building energy", `Building total: ${format2(dashboard.buildingEnergyKwh)} kWh`)}${kpi("Building Average Electricity Rate", format2(dashboard.averageRateThbPerKwh), "THB/kWh", `Building cost: ${format2(dashboard.buildingCostThb)} THB`)}</div>${srinakarinOverall}<article class="block"><h3>${detailedUpsTitle}</h3>${table(["No.", "UPS Group", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %", "Monthly Energy kWh"], upsRows)}<p class="note">UPS group capacity and mapping values are read directly from Dashboard-FAC. Monthly energy uses load × 24 hours × selected-month days.</p></article>${upsComparison(detailedComparisonTitle, dashboard.upsGroups)}</section><section class="page dashboard-page" data-report-section="dashboard"><div class="continuation">Building Energy Dashboard · ${escapeHtml(formatMonth(data.reportingMonth))}</div><article class="block"><h3>${showAcPowerPanel ? "UPS / PPC Detailed Configuration Mapping" : "UPS Detailed Configuration Mapping"}</h3>${table(detailedHeaders, upsDetails, "dense")}<p class="note">Detail total: ${format2(dashboard.detailedVoltageAvg)} V average · ${format2(dashboard.detailedCurrentSum)} A · ${format2(dashboard.totalUpsKw)} kW · ${format2(dashboard.totalUpsKva)} kVA.</p></article><article class="block"><h3>2. Air Conditioning Energy Consumption — 4th Floor</h3>${table(["Reporting Month", ...dashboard.airFields.map(field => `${field.toUpperCase()} (GWh)`), "Total AC Energy"], airRows)}<p class="note">Air-conditioning energy is the complete GWh meter difference × 1,000,000. Missing readings remain unavailable, rather than being treated as zero.</p></article><article class="block"><h3>3. DC Power Panel Load Status</h3>${table(["No.", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current @220V (A)", "AC Power (W)", "Monthly Energy (kWh)"], dcRows)}<p class="note">DC total: ${format2(dashboard.totalDcPowerW)} W DC · ${format2(dashboard.totalDcAcCurrentA)} A AC · ${format2(dashboard.totalDcAcPowerW)} W AC · ${format2(dashboard.totalDcEnergyKwh)} kWh.</p></article><article class="block"><h3>4. Overall Energy Consumption & Electricity Cost</h3>${overall}</article></section>`;
 }
 
 function reportRackStatusColor(status: string): string {
@@ -371,11 +371,11 @@ function rackUnitCapacityImageFigure(data: ReportData, row: RackUnitCapacityRow)
 function renderRackUnitCapacityExecutivePage(data: ReportData): string {
   const subtitle = `${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))}`;
   if (data.rackUnitCapacity.length === 0) {
-    return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">Rack Unit Capacity data is not yet available in this workbook.</p></section>`;
+    return `<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">Rack Unit Capacity data is not yet available in this workbook.</p></section>`;
   }
   const row = unitCapacityRowForReportingMonth(data);
   if (!row) {
-    return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">No Rack Unit Capacity data is available for the selected reporting month (${escapeHtml(formatMonth(data.reportingMonth))}).</p></section>`;
+    return `<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">No Rack Unit Capacity data is available for the selected reporting month (${escapeHtml(formatMonth(data.reportingMonth))}).</p></section>`;
   }
   const previousRow = findPreviousRackUnitCapacityRow(data.rackUnitCapacity, row.month);
   const usagePctNow = usagePercent(row);
@@ -406,7 +406,7 @@ function renderRackUnitCapacityExecutivePage(data: ReportData): string {
   const legend = `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackInUse}"></i><span>Used (U)</span><strong>${row.usedU}</strong></div>` +
     `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackAvailable}"></i><span>Available (U)</span><strong>${row.availableU}</strong></div>` +
     `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackTotal}"></i><span>Total (U)</span><strong>${row.totalU}</strong></div>`;
-  return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><div class="kpis-3col">${kpis}</div><div class="rack-unit-capacity-layout"><div class="ruc-left"><div class="block gauge-row">${donut}<div class="gauge-caption">${legend}</div></div></div><div class="ruc-right">${rackUnitCapacityImageFigure(data, row)}</div></div></section>${rackUnitTrendPage(data)}`;
+  return `<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><div class="kpis-3col">${kpis}</div><div class="rack-unit-capacity-layout"><div class="ruc-left"><div class="block gauge-row">${donut}<div class="gauge-caption">${legend}</div></div></div><div class="ruc-right">${rackUnitCapacityImageFigure(data, row)}</div></div></section>${rackUnitTrendPage(data)}`;
 }
 
 /** Half-donut gauge arc: a track path drawn once in a neutral color, then
@@ -468,7 +468,7 @@ function capacityHealthPage(data: ReportData): string {
   const gauge = capacityGaugeBlock(data);
   const heatmap = zoneHeatmapBlock(data);
   if (!gauge && !heatmap) return "";
-  return `<section class="page capacity-health-page"><h2>Capacity Health and Zone Heatmap</h2>${gauge}${heatmap}</section>`;
+  return `<section class="page capacity-health-page" data-report-section="rack-capacity"><h2>Capacity Health and Zone Heatmap</h2>${gauge}${heatmap}</section>`;
 }
 
 function rackComparisonRow(label: string, m: RackCapacityMetrics): string[] {
@@ -544,13 +544,13 @@ function rackComparisonPage(data: ReportData): string {
     details.push(rackComparisonDetailBlock(other.label, other.records));
   }
   const note = other ? "" : '<p class="note">Only ' + escapeHtml(comparisonFacilityLabel(self.label)) + ' is shown — the sibling facility\'s Rack Capacity data was unavailable for this export.</p>';
-  return '<section class="page"><h2>Rack Capacity Site Comparison</h2><div class="rack-comparison-donuts">' + donuts.join("") + '</div>' +
+  return '<section class="page" data-report-section="site-rack-comparison"><h2>Rack Capacity Site Comparison</h2><div class="rack-comparison-donuts">' + donuts.join("") + '</div>' +
     table(["Facility", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle"], rows) + details.join("") + note + '</section>';
 }
 
 function rackCapacityPage(data: ReportData): string {
   if (!data.rack || data.rack.records.length === 0) {
-    return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">Rack capacity data is unavailable in this workbook.</p></section>`;
+    return `<section class="page" data-report-section="rack-capacity"><h2>Rack Capacity and Utilization</h2><p class="note">Rack capacity data is unavailable in this workbook.</p></section>`;
   }
   const metrics = calculateRackCapacityMetrics(data.rack.records);
   const cards = [
@@ -587,7 +587,7 @@ function rackCapacityPage(data: ReportData): string {
     `${metrics.pendingDismantle.count} (${formatRatioPercent(metrics.pendingDismantle.ratio, 1)})`,
     String(metrics.total)
   ]);
-  return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">${escapeHtml(data.facility)} · Usage ${formatRatioPercent(metrics.inUse.ratio)} · Availability ${formatRatioPercent(metrics.available.ratio)}</p><div class="kpis">${kpis}</div><div class="rack-donut-row"><div>${donut}</div><div class="table-wrap" style="flex:1"><h3>Rack Capacity Details</h3><table><thead><tr><th class="left">Rack Zone</th><th>In Use</th><th>Available</th><th>Reserved</th><th>Pending Dismantle</th><th>Total</th></tr></thead><tbody>${zoneRows.map(row => `<tr>${row.map((cell, i) => `<td${i === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div><div class="block"><h3>Rack Positions</h3>${rackPositionsTable(data.rack.records)}</div></section>`;
+  return `<section class="page" data-report-section="rack-capacity"><h2>Rack Capacity and Utilization</h2><p class="note">${escapeHtml(data.facility)} · Usage ${formatRatioPercent(metrics.inUse.ratio)} · Availability ${formatRatioPercent(metrics.available.ratio)}</p><div class="kpis">${kpis}</div><div class="rack-donut-row"><div>${donut}</div><div class="table-wrap" style="flex:1"><h3>Rack Capacity Details</h3><table><thead><tr><th class="left">Rack Zone</th><th>In Use</th><th>Available</th><th>Reserved</th><th>Pending Dismantle</th><th>Total</th></tr></thead><tbody>${zoneRows.map(row => `<tr>${row.map((cell, i) => `<td${i === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div><div class="block"><h3>Rack Positions</h3>${rackPositionsTable(data.rack.records)}</div></section>`;
 }
 
 /** Stable export-only facility colors. Match by name so long display labels
@@ -627,7 +627,8 @@ function comparisonTrendPages(data: ReportData): string {
       buildSeries("buildingEnergyKwh"),
       selfTrend,
       "Whole-building monthly energy for the selected reporting window, self vs. sibling facility.",
-      "SITE COMPARISON"
+      "SITE COMPARISON",
+      "site-energy-comparison"
     ) +
     trendPage(
       "Floor 4 Electricity Cost Trend",
@@ -635,7 +636,8 @@ function comparisonTrendPages(data: ReportData): string {
       buildSeries("floorCostThb"),
       selfTrend,
       "Estimated 4th Floor electricity cost for the selected reporting window, self vs. sibling facility.",
-      "SITE COMPARISON"
+      "SITE COMPARISON",
+      "site-energy-comparison"
     )
   );
 }
@@ -648,7 +650,7 @@ function comparisonPage(data: ReportData): string {
   const note = other
     ? ""
     : `<p class="note">Only ${escapeHtml(comparisonFacilityLabel(self.label))} is shown — the sibling facility's workbook was unavailable for this export.</p>`;
-  return `${comparisonTrendPages(data)}<section class="page"><h2>Site Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(self.month))}</p>${table(["Facility", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], rows)}${note}</section>`;
+  return `${comparisonTrendPages(data)}<section class="page" data-report-section="site-energy-comparison"><h2>Site Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(self.month))}</p>${table(["Facility", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], rows)}${note}</section>`;
 }
 function comparisonRow(facility: ReportComparisonFacility): string[] {
   return [
@@ -663,23 +665,15 @@ function comparisonRow(facility: ReportComparisonFacility): string[] {
 }
 
 function filterReportBodySections(body: string, selectedSections: readonly ReportSectionId[]): string {
-  const selected = new Set(selectedSections);
-  const keep = (section: ReportSectionId) => selected.has(section);
-  const pages = body.split(/(?=<section class="page)/).filter(page => page.startsWith('<section class="page'));
-  const selectedPages = pages.filter(page => {
-    if (page.includes('class="page trend-page"')) return keep("historical") || keep("executive");
-    if (page.includes("Executive Dashboard")) return keep("executive");
-    if (page.includes("Building Energy Dashboard")) return keep("executive") || keep("dashboard") || keep("ups") || keep("air-conditioning") || keep("dc");
-    if (page.includes("Monthly Energy &amp; Cost Table")) return keep("executive") || keep("appendix");
-    if (page.includes("Rack Unit Capacity Comparison")) return keep("site-energy-comparison") || keep("site-rack-comparison");
-    if (page.includes("Rack Unit Capacity Six-Month Trend")) return keep("rack-unit-capacity");
-    if (page.includes("Rack Unit Capacity and Utilization")) return keep("rack-unit-capacity");
-    if (page.includes("Capacity Health and Zone Heatmap")) return keep("rack-capacity") || keep("rack-unit-capacity");
-    if (page.includes("Rack Capacity Site Comparison") || page.includes("<h2>Site Comparison</h2>")) return keep("site-energy-comparison") || keep("site-rack-comparison");
-    if (page.includes("Rack Capacity and Utilization")) return keep("rack-capacity");
-    return false;
-  });
-  return selectedPages.join("");
+  const selected = new Set<string>(selectedSections);
+  return body
+    .split(/(?=<section class="page)/)
+    .filter(page => page.startsWith('<section class="page'))
+    .filter(page => {
+      const match = page.match(/data-report-section="([a-z-]+)"/);
+      return !match || selected.has(match[1]);
+    })
+    .join("");
 }
 
 export function buildReportBodyPages(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
@@ -694,7 +688,8 @@ export function buildReportBodyPages(data: ReportData, selectedSections?: readon
     ],
     data.monthlyRows,
     "Monthly whole-building and 4th-floor energy consumption for the selected reporting window.",
-    "EXECUTIVE DASHBOARD · TREND ANALYTICS"
+    "EXECUTIVE DASHBOARD · TREND ANALYTICS",
+    "executive"
   );
   const trendPages: Array<[string, string, string, Array<number | null>, string]> = [
     ["Total 4th Floor Energy Trend", "kWh", REPORT_PALETTE.energy, data.monthlyRows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy for the selected reporting window."],
@@ -706,8 +701,8 @@ export function buildReportBodyPages(data: ReportData, selectedSections?: readon
   ];
   const body =
     `${executive}${executiveTrend}${dashboard}` +
-    trendPages.map(([title, unit, color, values, explanation]) => trendPage(title, unit, [{ name: title, color, values }], data.monthlyRows, explanation, "FACILITY TREND ANALYTICS")).join("") +
-    `<section class="page"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section>` +
+    trendPages.map(([title, unit, color, values, explanation]) => trendPage(title, unit, [{ name: title, color, values }], data.monthlyRows, explanation, "FACILITY TREND ANALYTICS", "historical")).join("") +
+    `<section class="page" data-report-section="appendix"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section>` +
     `${comparisonPage(data)}${rackCapacityPage(data)}${renderRackUnitCapacityExecutivePage(data)}` +
     `${rackUnitComparisonPage(data)}${capacityHealthPage(data)}${rackComparisonPage(data)}`;
   return selectedSections !== undefined ? filterReportBodySections(body, selectedSections) : body;
