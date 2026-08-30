@@ -32,7 +32,6 @@ assert.match(app, /withExtension\(resolvedFileName, "html"\)/);
 const exports = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
 assert.match(exports, /export function exportHtml/);
 assert.match(exports, /export function exportAllFacilitiesHtml/);
-assert.match(exports, /export function exportSiteComparisonHtml/);
 assert.match(exports, /text\/html;charset=utf-8/);
 assert.match(app, /<WebReportPreview[^>]+logs=\{scopedLogs\} calculationLogs=\{logs\}/);
 assert.match(app, /ReportRegistry\.all\(\)/);

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
-import { buildAllFacilitiesCsv, buildAllFacilitiesReportHtml, buildFacilityCsv, buildSiteComparisonCsv, buildSiteComparisonReportHtml, buildSiteComparisonReportModel, facilityExportSections, facilityReportData, fitPdfImageToPage, siteComparisonExportSections, workbookForFacilities, workbookForSiteComparison, writeInteractiveExcelWorkbook, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
+import { buildAllFacilitiesCsv, buildAllFacilitiesReportHtml, buildFacilityCsv, buildSiteComparisonCsv, buildSiteComparisonReportModel, facilityExportSections, facilityReportData, fitPdfImageToPage, siteComparisonExportSections, workbookForFacilities, writeInteractiveExcelWorkbook, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
 import type { ReportData } from "../src/reports/reportTypes";
 import { buildCombinedCsv } from "../src/utils/exportData";
 import { buildReportHtml, buildReportBodyPages } from "../src/reports/pdf/reportHtml";
@@ -394,12 +394,6 @@ const comparisonCompleteCsv = buildSiteComparisonCsv(completeComparison, "2026-0
 check("Site Comparison CSV includes Rack Capacity, Rack Positions, and Rack Unit sections", ["RACK_CAPACITY_SUMMARY", "RACK_CAPACITY_DETAILS", "RACK_POSITIONS", "RACK_UNIT_CAPACITY_COMPARISON", "RACK_UNIT_TREND_COMPARISON"].every(section => comparisonCompleteCsv.includes("# Section: " + section)));
 check("Site Comparison CSV reconciles both sites to the same Rack Unit source values", comparisonCompleteCsv.includes("Rangsit,2026-06,9963,7407,2556") && comparisonCompleteCsv.includes("Srinakarin,2026-06,9963,7407,2556") && comparisonCompleteCsv.includes(",Available,A-02,") && comparisonCompleteCsv.includes(",Reserved,B-01,"));
 check("Site Comparison Rack Positions section excludes In Use detailed racks", (() => { const section = comparisonSections.find(entry => entry.name === "RACK_POSITIONS"); return section !== undefined && section.rows.length > 0 && section.rows.every(row => String(row[2]) !== "In Use" && row[3] !== "A-01"); })());
-const comparisonWorkbook = await workbookForSiteComparison(completeComparison, "2026-06");
-const comparisonUnitSheet = comparisonWorkbook.worksheets.find(sheet => sheet.name.includes("RACK_UNIT_CAPACITY_COMPARISON"));
-const comparisonUnitRow = comparisonUnitSheet?.getSheetValues().find(row => Array.isArray(row) && row[2] === "2026-06") as unknown[] | undefined;
-check("Site Comparison XLSX retains Rack Unit KPI values as numeric cells", typeof comparisonUnitRow?.[3] === "number" && comparisonUnitRow?.[3] === 9963 && comparisonUnitRow?.[4] === 7407 && comparisonUnitRow?.[5] === 2556);
-check("Site Comparison HTML/PDF contains the Rack Unit comparison and deployable positions", buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("Rack Unit Capacity Comparison") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("Rack Positions") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("A-02") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("B-01"));
-
 // ── Regression: Site Energy & Cost Comparison per-site month filter ─────────
 // sites[].months holds { month, metrics } objects. loadComparison must filter
 // them on entry.month; comparing the objects against the Set<string> of
@@ -430,11 +424,7 @@ check("Site Comparison keeps the selected month's energy/cost metrics when filte
 check("Site Comparison excludes non-selected months (2026-05 metrics never surface for a 2026-06 reference)", siteComparisonExportSections(monthFieldFiltered, "2026-05").find(section => section.name === "SITE_COMPARISON")!.rows.every(row => row[3] === "" && row[4] === ""));
 check("filtering the { month, metrics } rows against the raw month-string set blanks every metric (documents the defect)", objectFilteredRow.slice(3).every(cell => cell === ""));
 const comparisonFixedCsv = buildSiteComparisonCsv(monthFieldFiltered, "2026-06");
-const comparisonFixedHtml = buildSiteComparisonReportHtml(monthFieldFiltered, "2026-06");
-const comparisonFixedWorkbook = await workbookForSiteComparison(monthFieldFiltered, "2026-06");
-const comparisonEnergySheet = comparisonFixedWorkbook.worksheets.find(sheet => sheet.name === "Site Comparison");
-const comparisonEnergyRow = comparisonEnergySheet?.getSheetValues().find(row => Array.isArray(row) && row.includes(completeComparison.sites[0].site.name)) as unknown[] | undefined;
-check("Site Comparison CSV / XLSX / HTML+PDF builders all receive the selected month's building-energy value", comparisonFixedCsv.includes("100.00") && comparisonFixedHtml.includes("100.00") && comparisonEnergyRow !== undefined && comparisonEnergyRow.includes(100) && comparisonEnergyRow.includes(500));
+check("Site Comparison CSV builder receives the selected month building-energy value", comparisonFixedCsv.includes("100.00") && comparisonFixedCsv.includes("500.00"));
 // ============================================================
 // Desktop-source acceptance gate: build the actual Web Excel export from the
 // two Desktop workbooks and their external Rack Unit image stores. This is a
@@ -609,4 +599,15 @@ for (const sourceCase of [
   check("all-facilities csv keeps per-facility blocks", csvCmp.includes("# Facility: Rangsit") && csvCmp.includes("# Facility: Srinakarin"));
 }
 
+// Task 1.6: the web-only popup/print and download wrappers are orphaned now
+// that Reports uses direct file exports; the shared comparison builders remain
+// covered above for the protected data regression.
+{
+  const exportSource = readFileSync("src/web-clean-v1/exports.ts", "utf8");
+  for (const name of ["openReportPopup", "renderReportPopup", "renderReportErrorPopup", "printDesktopPdf", "printSiteComparisonPdf", "printAllFacilitiesPdf", "exportSiteComparisonCsv", "exportSiteComparisonExcel", "exportSiteComparisonHtml", "exportSiteComparisonPdf"]) {
+    check(name + " orphaned export removed", !exportSource.includes("function " + name + "("));
+  }
+  check("parseCsvLine dead helper removed", !exportSource.includes("function parseCsvLine("));
+  check("monthSet dead helper removed", !exportSource.includes("function monthSet("));
+}
 console.log(`web-clean-v1 exports: 7 + ${checks} assertions passed`);

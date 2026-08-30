@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildSiteComparisonReportHtml, type SiteComparisonExport } from "../src/web-clean-v1/exports";
 
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
@@ -84,10 +83,7 @@ assert.match(preview, /\$\{pageCount\} pages/);
 // ---------------------------------------------------------------------------
 const exportsSource = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
 assert.match(exportsSource, /export function buildAllFacilitiesReportHtml\(/);
-assert.match(exportsSource, /export function buildSiteComparisonReportHtml\(/);
 assert.match(exportsSource, /await exportReportPdfFromHtml\(buildAllFacilitiesReportHtml\(facilities, comparison, selectedMonth, sections\)/);
-assert.match(exportsSource, /download\(buildSiteComparisonReportHtml\(data, referenceMonth, selfRack, otherRack, sections\)/);
-assert.match(exportsSource, /await exportReportPdfFromHtml\(buildSiteComparisonReportHtml\(data, referenceMonth, selfRack, otherRack, sections\)/);
 // CSV builders are still the plain data path.
 assert.match(exportsSource, /export function buildAllFacilitiesCsv\(/);
 assert.match(exportsSource, /export function buildSiteComparisonCsv\(/);
@@ -96,24 +92,11 @@ assert.match(exportsSource, /export function buildSiteComparisonCsv\(/);
 // REPORT_CSS block, a per-facility cover + body-page sequence, page-break-joined.
 const allFacilitiesFn = exportsSource.slice(
   exportsSource.indexOf("export function buildAllFacilitiesReportHtml("),
-  exportsSource.indexOf("export function buildSiteComparisonReportHtml("),
+  exportsSource.indexOf("export async function exportAllFacilitiesPdf("),
 );
 assert.match(allFacilitiesFn, /reportCoverMain\(data\) \+ buildReportBodyPages\(data, sections\)/);
 assert.match(allFacilitiesFn, /<style>\$\{REPORT_CSS\}<\/style>/);
 assert.doesNotMatch(allFacilitiesFn, /new DOMParser\(\)/);
 assert.match(exportsSource, /page-break-before:always/);
-
-// Functional: the Site Comparison preview model (no DOM needed) covers both
-// sites - the same model the comparison HTML/PDF export uses.
-const comparison: SiteComparisonExport = {
-  displayPeriod: { startMonth: "2026-06", endMonth: "2026-07" },
-  months: ["2026-06", "2026-07"],
-  sites: [
-    { site: { id: 1, code: "rangsit", name: "Rangsit" }, months: [{ month: "2026-07", metrics: { buildingEnergy: 100, buildingCost: 500, floorEnergy: 50, floorCost: 250, avgRate: 5, floorShare: 50 } }] },
-    { site: { id: 2, code: "srinakarin", name: "Srinakarin" }, months: [{ month: "2026-07", metrics: { buildingEnergy: 200, buildingCost: 900, floorEnergy: 80, floorCost: 360, avgRate: 4.5, floorShare: 40 } }] }
-  ]
-};
-const comparisonHtml = buildSiteComparisonReportHtml(comparison, "2026-07");
-assert.ok(comparisonHtml.includes("Rangsit") && comparisonHtml.includes("Srinakarin"), "comparison preview names both sites");
 
 console.log("web-clean-v1 export feedback: per-action busy/success/error, scope-driven Live Preview, and shared report model verified");

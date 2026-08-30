@@ -183,22 +183,6 @@ export function exportCsv(logs: MonthlyLog[], siteName: string, fileName?: strin
   download(buildFacilityCsv({ siteName, logs, ...additional }), fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.csv`, "text/csv;charset=utf-8");
 }
 
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let current = "";
-  let quoted = false;
-  for (let index = 0; index < line.length; index++) {
-    const character = line[index];
-    if (character === '"') {
-      if (quoted && line[index + 1] === '"') { current += '"'; index++; }
-      else quoted = !quoted;
-    } else if (character === "," && !quoted) { fields.push(current); current = ""; }
-    else current += character;
-  }
-  fields.push(current);
-  return fields;
-}
-
 function sheetName(prefix: string, name: string): string {
   const title = name.replace(".csv", "").replace(/[\\/*?:\[\]]/g, "-");
   const prefixLength = Math.max(1, 31 - title.length - 1);
@@ -224,9 +208,6 @@ function addTableSheet(workbook: any, prefix: string, title: string, headers: un
   return sheet;
 }
 
-function monthSet(logs: MonthlyLog[]): Set<string> {
-  return new Set(logs.map(log => log.month));
-}
 
 function fallbackDashboardMapping(siteName: string): DashboardUpsMappingReport | null {
   const normalized = siteName.trim().toLowerCase();
@@ -688,7 +669,7 @@ function siteComparisonSectionsFromModel(model: SiteComparisonReportModel): Expo
 function crossSiteReportPagesAdapter(model: SiteComparisonReportModel): string {
   const view = modelAsSiteComparisonExport(model);
   const [primary, secondary] = model.sites;
-  const full = buildSiteComparisonReportHtml(view, model.referenceMonth, primary?.rack ?? null, secondary?.rack ?? null);
+  const full = buildReportHtml(buildTwoSiteComparisonReportData(view, model.referenceMonth, primary?.rack ?? null, secondary?.rack ?? null));
   const bodyStart = full.indexOf("</main>") + "</main>".length;
   const scriptStart = full.indexOf('<script>document.body.dataset.reportReady="true";</script>');
   return full.slice(bodyStart, scriptStart)
@@ -706,34 +687,8 @@ export function buildSiteComparisonCsv(data: SiteComparisonExport, referenceMont
   return siteComparisonExportSections(data, referenceMonth).map(section => "# Section: " + section.name + "\n" + csvSection(section)).join("\n\n");
 }
 
-export function exportSiteComparisonCsv(data: SiteComparisonExport, referenceMonth: string): void {
-  download(buildSiteComparisonCsv(data, referenceMonth), "site-comparison-" + referenceMonth + ".csv", "text/csv;charset=utf-8");
-}
 
 
-export async function workbookForSiteComparison(data: SiteComparisonExport, referenceMonth: string): Promise<any> {
-  const ExcelJS = (await import("exceljs")).default;
-  const workbook = new ExcelJS.Workbook();
-  const sections = siteComparisonExportSections(data, referenceMonth);
-  const [energySection, ...additionalSections] = sections;
-  if (energySection) {
-    const sheet = workbook.addWorksheet("Site Comparison");
-    configureTableSheet(sheet, energySection.headers, comparisonWorksheetRows(energySection));
-  }
-  for (const section of additionalSections) {
-    const sheet = addTableSheet(workbook, "Comparison", section.name, section.headers, comparisonWorksheetRows(section));
-    section.headers.forEach((header, index) => {
-      if (String(header).includes("Usage (%)") || String(header).includes("Availability (%)")) sheet.getColumn(index + 1).numFmt = "0.0%";
-    });
-  }
-  return workbook;
-}
-
-export async function exportSiteComparisonExcel(data: SiteComparisonExport, referenceMonth: string): Promise<void> {
-  const workbook = await workbookForSiteComparison(data, referenceMonth);
-  const bytes = await workbook.xlsx.writeBuffer();
-  download(bytes, "site-comparison-" + referenceMonth + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-}
 function reportRows(logs: MonthlyLog[], calculationLogs: MonthlyLog[] = logs): ReportMonthlyRow[] {
   return [...logs].sort((left, right) => left.month.localeCompare(right.month)).map(log => {
     const calculation = calculateEnergyCostForMonth(calculationLogs, log.month);
@@ -965,85 +920,12 @@ export async function exportDesktopPdf(logs: MonthlyLog[], siteName: string, sel
   await exportReportPdfFromHtml(buildReportHtml(data, sections), fileName ?? `Energy_Report_${siteName}_${selectedMonth}`);
 }
 
-/**
- * Opens the print popup - must be called synchronously, in the same event
- * loop turn as the triggering click, before any `await`. Browsers key
- * window.open()'s popup-blocker permission off the original user gesture;
- * once an async gap (e.g. an awaited API fetch for rack data) has elapsed,
- * that gesture has expired and window.open() gets silently blocked. The
- * caller opens the (initially blank) window immediately on click, then
- * writes the real report into it once any async data has loaded, via
- * printDesktopPdf/printSiteComparisonPdf/printAllFacilitiesPdf below.
- */
-const reportPopupStyle = "body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;padding:32px;background:#f8fafc;color:#0f172a}main{max-width:720px;margin:10vh auto;padding:28px;border:1px solid #cbd5e1;border-radius:16px;background:#fff;box-shadow:0 12px 32px #0f172a1a}h1{font-size:20px;margin:0 0 10px}p{line-height:1.6;color:#475569}.spinner{display:inline-block;width:14px;height:14px;margin-right:8px;border:2px solid #cbd5e1;border-top-color:#0f766e;border-radius:50%;vertical-align:-2px;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}";
 
-function popupStatusHtml(title: string, heading: string, message: string, loading: boolean): string {
-  const indicator = loading ? '<span class="spinner" aria-hidden="true"></span>' : "";
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${reportPopupStyle}</style></head><body><main><h1>${indicator}${heading}</h1><p>${message}</p></main></body></html>`;
-}
 
-function writePopupDocument(popup: Window, html: string, title: string): void {
-  if (popup.closed) throw new Error("The report window was closed before the report was ready.");
-  popup.document.open();
-  popup.document.write(html);
-  popup.document.close();
-  popup.document.title = title;
-}
 
-export function openReportPopup(name: string): Window {
-  // `noopener`/`noreferrer` make window.open() return null in Chromium. That
-  // leaves a visible about:blank tab but removes the WindowProxy needed to
-  // write the report into it. Open the same-origin blank popup first, sever
-  // its opener immediately, then populate it below.
-  const popup = window.open("", name, "popup");
-  if (!popup) throw new Error("The report window was blocked by the browser.");
-  popup.opener = null;
-  // The report data may require an API request before it can be rendered. A
-  // real loading document prevents the browser from showing a blank tab while
-  // that request is in flight.
-  writePopupDocument(popup, popupStatusHtml("Preparing report…", "Preparing report", "The report is being assembled. This window will open the print dialog when it is ready.", true), "Preparing report…");
-  popup.document.title = "Preparing report…";
-  popup.setTimeout(() => { if (!popup.closed) popup.document.title = "Preparing report…"; }, 0);
-  return popup;
-}
 
-/** Replaces a stalled/failed report popup with a visible, non-sensitive error. */
-export function renderReportErrorPopup(popup: Window): void {
-  try {
-    writePopupDocument(popup, popupStatusHtml("Report export failed", "Report could not be generated", "The report data could not be prepared. Return to the application and try again.", false), "Report export failed");
-  } catch {
-    // The user may have closed the popup. The main application still receives
-    // the original error through the caller's promise and can show a notice.
-  }
-}
 
-/** Write the report before printing and handle both possible document-load
- * states. `document.close()` can complete before a listener is registered;
- * checking readyState and scheduling a fallback avoids a blank/stuck popup. */
-export function renderReportPopup(popup: Window, html: string, fileName?: string): void {
-  writePopupDocument(popup, html, fileName ?? "Energy Monitor report");
-  let printed = false;
-  const print = () => {
-    if (printed || popup.closed) return;
-    printed = true;
-    popup.focus();
-    popup.print();
-  };
-  popup.addEventListener("load", print, { once: true });
-  // `load` is the normal path. The timeout is a compatibility fallback for a
-  // document written with document.open/write/close where the load event can
-  // race the listener registration.
-  popup.setTimeout(print, popup.document.readyState !== "loading" ? 0 : 750);
-}
 
-/** Desktop's print HTML, populated only with the selected facility's API DTOs.
- *  fileName (without extension) becomes the print dialog's suggested "Save
- *  as PDF" name, via document.title - the browser convention for print-to-PDF.
- *  `popup` must come from openReportPopup(), called synchronously on click. */
-export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly import("../reporting/reportingTypes").ReportSectionId[], extras: ReportDataExtras = {}): void {
-  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs, extras);
-  renderReportPopup(popup, buildReportHtml(data, sections), fileName);
-}
 
 function comparisonRow(site: ComparisonSite, referenceMonth: string) {
   const metrics = site.months.find(entry => entry.month === referenceMonth)?.metrics ?? null;
@@ -1095,7 +977,7 @@ function comparisonRackUnitReport(data: SiteComparisonExport): ReportData["rackU
   };
 }
 
-function siteComparisonReportForDownload(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): ReportData {
+function buildTwoSiteComparisonReportData(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): ReportData {
   const [primary, secondary] = data.sites;
   if (!primary) throw new Error("No facilities are available for comparison.");
   const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
@@ -1130,53 +1012,7 @@ function siteComparisonReportForDownload(data: SiteComparisonExport, referenceMo
   };
 }
 
-/** Uses Desktop report renderer; comparison values come from the scoped API DTO.
- *  selfRack/otherRack feed the shared renderer's "Rack Capacity Site
- *  Comparison" page (rackComparisonPage in reportHtml.ts) - the same
- *  reused RackCapacityReport shape as the main facility report, never a
- *  second comparison calculation. */
-export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): void {
-  const [primary, secondary] = data.sites;
-  if (!primary) throw new Error("No facilities are available for comparison.");
-  const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
-  const primaryRow = comparisonRow(primary, referenceMonth);
-  const report: ReportData = {
-    title: "Data Center Energy & Facility Monitor Site Comparison",
-    thaiSubtitle: "รายงานเปรียบเทียบการใช้พลังงานระหว่างไซต์",
-    facility: "All Facilities",
-    sourceWorkbook: "Supabase PostgreSQL",
-    generatedAt: new Date().toISOString(),
-    appVersion: "2.3.1 Web Clean v1",
-    reportingMonth: referenceMonth,
-    historicalStart: trendMonths[0] ?? null,
-    historicalEnd: trendMonths.at(-1) ?? null,
-    status: "Complete",
-    validationWarnings: [],
-    monthlyRows: comparisonTrend(primary, trendMonths),
-    currentRow: null,
-    engineeringDashboard: null,
-    rack: null,
-    rackHistory: [],
-    rackUnitCapacity: comparisonRackUnitRowsForReport(primary),
-    rackUnitCapacityImageDataUri: null,
-    rackUnitCapacityImageMeta: null,
-    comparison: {
-      self: primaryRow,
-      other: secondary ? comparisonRow(secondary, referenceMonth) : null,
-      selfTrend: comparisonTrend(primary, trendMonths),
-      otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
-    },
-    rackComparison: (selfRack ?? primary.rack) ? { self: { label: primary.site.name, records: (selfRack ?? primary.rack)!.records }, other: secondary && (otherRack ?? secondary.rack) ? { label: secondary.site.name, records: (otherRack ?? secondary.rack)!.records } : null } : null,
-    rackUnitComparison: comparisonRackUnitReport(data)
-  };
-  renderReportPopup(popup, buildReportHtml(report));
-}
 
-/** Generates a real PDF download for the site-comparison report without
- * opening a popup or invoking the browser print dialog. */
-export async function exportSiteComparisonPdf(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): Promise<void> {
-  await exportReportPdfFromHtml(buildSiteComparisonReportHtml(data, referenceMonth, selfRack, otherRack, sections), fileName ?? `site-comparison-${referenceMonth}`);
-}
 
 export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[], extras: ReportDataExtras = {}): void {
   const html = buildReportHtml(facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs, extras), sections);
@@ -1187,9 +1023,6 @@ export function exportAllFacilitiesHtml(facilities: ExportFacility[], comparison
   download(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor.html", "text/html;charset=utf-8");
 }
 
-export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): void {
-  download(buildSiteComparisonReportHtml(data, referenceMonth, selfRack, otherRack, sections), fileName ?? `site-comparison-${referenceMonth}.html`, "text/html;charset=utf-8");
-}
 
 /** One combined report document, one facility report per section. Exported so
  *  the Live Preview renders exactly the same content the All Facilities export
@@ -1204,24 +1037,7 @@ export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], compa
   return `<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy &amp; Facility Monitor All Facilities</title><style>${REPORT_CSS}</style></head><body>${perFacility}${comparison ? crossSiteReportPagesAdapter(comparison) : ""}<script>document.body.dataset.reportReady="true";</script></body></html>`;
 }
 
-/** Same-model source for the Site Energy & Cost Comparison Live Preview and the
- *  comparison HTML/PDF exports. */
-export function buildSiteComparisonReportHtml(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): string {
-  return buildReportHtml(siteComparisonReportForDownload(data, referenceMonth, selfRack, otherRack), sections);
-}
-
 /** Generates one real PDF download containing one report per facility. */
 export async function exportAllFacilitiesPdf(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): Promise<void> {
   await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
-}
-
-/** Prints one full Desktop-compatible report per facility in one document.
- *  `popup` must come from openReportPopup(), called synchronously on click. */
-export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[], selectedMonth: string): void {
-  if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth)));
-  const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
-  const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
-  const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
-  renderReportPopup(popup, `<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy & Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`);
 }
