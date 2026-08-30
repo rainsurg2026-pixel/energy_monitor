@@ -625,4 +625,18 @@ for (const sourceCase of [
   check("parseCsvLine dead helper removed", !exportSource.includes("function parseCsvLine("));
   check("monthSet dead helper removed", !exportSource.includes("function monthSet("));
 }
+{
+  const raw = { displayPeriod: { startMonth: "2026-05", endMonth: "2026-06" }, months: ["2026-05", "2026-06"], sites: [{ site: { id: 1, code: "RST", name: "Rangsit" }, months: [
+    { month: "2026-05", metrics: { buildingEnergy: 111, buildingCost: 555, floorEnergy: 44, floorCost: 222, avgRate: 5, floorShare: 39.6 } },
+    { month: "2026-06", metrics: { buildingEnergy: 222, buildingCost: 999, floorEnergy: 88, floorCost: 444, avgRate: 4.5, floorShare: 39.6 } },
+  ], rackUnitCapacity: [] }] } as any;
+  const model = buildSiteComparisonReportModel(raw, "2026-06");
+  const section = siteComparisonExportSections(model).find(s => s.name === "SITE_COMPARISON")!;
+  const row = section.rows[0].map(String).join("|");
+  check("selected month energy/cost survive comparison model", row.includes("222") && row.includes("999") && row.includes("88") && row.includes("444"));
+  check("non-selected month metrics are absent from comparison summary", !row.includes("111") && !row.includes("555"));
+  const csvPositive = buildSiteComparisonCsv(model);
+  check("comparison CSV keeps selected-month metrics", csvPositive.includes("222") && csvPositive.includes("999"));
+}
+
 console.log(`web-clean-v1 exports: 7 + ${checks} assertions passed`);
