@@ -748,24 +748,11 @@ Month = 2026-06, all three formats (real CSV string, real re-read XLSX
 bytes, real PDF HTML string) are asserted to contain only June and none
 of July/August; then the same for 2026-07 - still passing, unchanged.
 Current Month / Month Range / Full History modes are separately asserted.
-This flow is scoped to "Current Facility" (the only card with a Reporting
-Period/Month selector - the UI's own copy already discloses "Applies to
-the Current Facility export below", an intentional, pre-existing
-difference from "All Facilities"/"Site Comparison", not something this
-pass restructured).
+The Reports surface now exposes exactly two export scopes: "Current Facility" and "All Facilities". Current Facility remains site-specific; All Facilities adds both cross-site comparison blocks inside the combined report. The standalone Site Comparison export scope was removed.
 
-**Facility context**: `Reports()` gained a `siteId` prop (previously
-absent - it received only `siteName`) specifically so the new rack fetch
-could target the correct site; "All Facilities"/Site-Comparison rack
-fetches use each facility's own `site.id` from the already-scoped API
-responses, never a hardcoded or reused ID. Verified via the new
-facility-isolation assertions above.
+**Facility context**: `Reports()` uses `siteId` so Current Facility rack data targets the selected site. All Facilities uses each facility's own `site.id` from scoped API responses; cross-site energy and rack comparisons are consolidated inside that All Facilities payload, never a hardcoded or reused ID.
 
-**Excel/CSV**: unchanged - rack data was never part of the Excel/CSV
-structure (`workbookForFacilities`/`buildCombinedCsv`) on either Desktop
-or Web; only the PDF renders a Rack Capacity section. No new column/sheet
-was added, matching Desktop (Desktop's Excel export likewise has no rack
-sheet).
+**Excel/CSV**: redesigned for report parity. Excel now places presentation sheets `01`-`07` before raw/audit sheets, adds `90 Site Energy Comparison` and `91 Site Rack Comparison` for All Facilities, and keeps hidden `Dashboard_Data` last. CSV includes the same rack/rack-unit comparison sections and selected-month energy/cost values.
 
 **Number formatting**: unchanged - the rack KPIs/zone tiles reuse
 `formatRatioPercent`/the existing `kpi()`/`table()` HTML helpers already
@@ -1148,7 +1135,7 @@ there as "example only, do not assume").
 | Excel | Structured workbook, Desktop-derived sections | Reuses existing `workbookForFacilities`/`buildSectionCsvs` (UPS/Air/DC/Energy sheets), now respecting the selected period scope; content re-verified via ExcelJS read-back | STATIC/API VERIFIED |
 | CSV | Structured data | Reuses existing `buildCombinedCsv`, now period-scoped; content verified | STATIC/API VERIFIED |
 | PDF | Primary human-readable report; title, facility, reporting month, KPIs, tables | Reuses the existing Desktop-compatible `buildReportHtml` renderer unchanged; now period-scoped; filename reaches the print dialog via `document.title` (the browser print-to-PDF convention); content verified (human-readable "Mon YYYY" month label, matching Desktop, confirmed correct after an initial wrong test assumption was caught and fixed) | STATIC/API VERIFIED |
-| Current Facility / All Facilities / Site Comparison | Report is single-facility-scoped; Site Comparison is one of the 10 checkable sections, not evidence of a separate "All Facilities" mode | Web's pre-existing 3-card structure (Current Facility / All Facilities / Site Comparison) predates this session and was not restructured - each already keeps facility data cleanly isolated (verified by the existing `test:web-clean-v1-exports` assertions) | PARTIALLY VERIFIED - Desktop's exact report-type taxonomy (one configurable report vs. 3 fixed cards) was not reproduced 1:1; not restructured this pass to avoid scope creep beyond the stated gate criteria |
+| Current Facility / All Facilities | Two export scopes. Current Facility is site-specific and excludes cross-site pages; All Facilities contains both Site Energy & Cost and Site Rack Capacity & Availability comparisons | Web now uses the same two-scope model; the standalone Site Comparison export card is removed and both comparison blocks are generated once inside All Facilities | VERIFIED - report-structure, exports, reconciliation and full gate suites |
 | Rack Report (`rack` field in the PDF DTO) | Rack Capacity is one of the 10 checkable sections | **NOT IMPLEMENTED** - `rack: null` remains. The API/calculation data needed now exists (built earlier this session for the Rack Capacity view), but `RackCapacityReport`'s full type needs `byCabinetSize`/`byDeviceType`/`validation` fields and a dedicated per-export fetch not yet wired up | NOT VERIFIED - explicitly scoped out, documented rather than silently omitted |
 | Number formatting | kWh/THB/%, Desktop precision | Unchanged - reuses the existing centralized `formatNumber2`; no competing formatting logic added | VERIFIED (pre-existing) |
 | Section ordering | Cover -> Dashboard -> Trends -> Monthly table -> Comparison -> Rack -> ... | Unchanged - `buildReportHtml`'s existing order was not touched | VERIFIED (pre-existing, not modified) |
