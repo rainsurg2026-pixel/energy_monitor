@@ -35,6 +35,9 @@ export interface ExportRackUnitCapacityRow extends RackUnitCapacityRow {
 
 export interface ExportFacility {
   siteName: string;
+  /** Facility short code (e.g. "RST"/"rangsit"), for Excel sheet prefixes and
+   *  the Site code column. Falls back to a slug of `siteName` when absent. */
+  siteCode?: string;
   logs: MonthlyLog[];
   /** Full history used as calculation context when `logs` is a filtered report scope. */
   calculationLogs?: MonthlyLog[];

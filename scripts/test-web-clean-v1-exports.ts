@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
@@ -550,6 +550,12 @@ import { buildSiteComparisonReportModel } from "../src/web-clean-v1/exports";
   check("metricsByMonth covers every month", Object.keys(model.sites[1].metricsByMonth).sort().join(",") === "2026-05,2026-06");
   check("rackUnit availabilityPct backfilled as ratio", Math.abs((model.sites[0].rackUnit[0].availabilityPct ?? -1) - 50 / 200) < 1e-9);
   check("site with no rackUnit -> empty array", model.sites[1].rackUnit.length === 0);
+}
+
+// ── Source code assertions ─────────────────────────────────────────────────────
+{
+  const app = readFileSync("src/web-clean-v1/CleanWebApp.tsx", "utf8");
+  check("loadAll passes siteCode to ExportFacility", /siteName:\s*site\.name,\s*siteCode:\s*site\.code/.test(app.replace(/\s+/g, " ")));
 }
 
 console.log(`web-clean-v1 exports: 7 + ${checks} assertions passed`);
