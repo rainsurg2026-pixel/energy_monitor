@@ -189,8 +189,8 @@ function DashboardViewContainer({
 
 export default function App() {
   // --- STATE DECLARATIONS ---
-  // Language configuration (Thai by default, with English toggle)
-  const [lang, setLang] = useState<"th" | "en">("th");
+  // Language configuration (English by default, with Thai toggle; a saved preference wins)
+  const [lang, setLang] = useState<"th" | "en">("en");
   const [logs, setLogs] = useState<MonthlyLog[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>("");
   const [activeLog, setActiveLog] = useState<MonthlyLog | null>(null);

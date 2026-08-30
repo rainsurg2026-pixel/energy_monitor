@@ -135,7 +135,7 @@ export default function CleanWebApp() {
   // Match src/electron/config.ts DEFAULT_CONFIG.theme. A stored dark choice
   // is still restored by the user-scoped preference effect below.
   const [theme, setTheme] = useState<Theme>("light");
-  const [lang, setLang] = useState<AppLanguage>("th");
+  const [lang, setLang] = useState<AppLanguage>("en");
   const activeSiteIdRef = useRef<number | null>(null);
   const allowBrowserBackRef = useRef(false);
   const historyCacheRef = useRef(new Map<string, HistoryData>());
