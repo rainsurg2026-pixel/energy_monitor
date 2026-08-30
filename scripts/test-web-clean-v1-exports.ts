@@ -519,4 +519,37 @@ for (const sourceCase of [
   check(`${sourceCase.site}: Rack Capacity History preserves source rows when present`, (sheet("Rack Capacity History")?.rowCount ?? 1) === (rackHistory?.length ?? 0) + 1);
 }
 
+// --- SiteComparisonReportModel (N-site shared input) ---
+import { buildSiteComparisonReportModel } from "../src/web-clean-v1/exports";
+{
+  const raw = {
+    displayPeriod: { startMonth: "2026-05", endMonth: "2026-06" },
+    months: ["2026-05", "2026-06"],
+    sites: [
+      { site: { id: 1, code: "rangsit", name: "Rangsit" },
+        months: [
+          { month: "2026-05", metrics: null },
+          { month: "2026-06", metrics: { buildingEnergy: 100, buildingCost: 500, floorEnergy: 40, floorCost: 200, avgRate: 5, floorShare: 40 } },
+        ],
+        rackUnitCapacity: [{ month: "2026-06", totalU: 200, usedU: 150, availableU: 50, usagePercent: 75 }] },
+      { site: { id: 2, code: "srinakarin", name: "Srinakarin" },
+        months: [
+          { month: "2026-05", metrics: { buildingEnergy: 80, buildingCost: 360, floorEnergy: 30, floorCost: 135, avgRate: 4.5, floorShare: 37.5 } },
+          { month: "2026-06", metrics: { buildingEnergy: 90, buildingCost: 405, floorEnergy: 33, floorCost: 148.5, avgRate: 4.5, floorShare: 36.7 } },
+        ],
+        rackUnitCapacity: [] },
+    ],
+  } as any;
+  const model = buildSiteComparisonReportModel(raw, "2026-06");
+  check("model reference month", model.referenceMonth === "2026-06");
+  check("model months ascending & <= ref", JSON.stringify(model.months) === JSON.stringify(["2026-05", "2026-06"]));
+  check("model has all sites", model.sites.length === 2);
+  check("siteCode carried from server DTO", model.sites[0].siteCode === "rangsit" && model.sites[1].siteCode === "srinakarin");
+  check("reference-month metrics resolved", model.sites[0].metrics?.buildingEnergy === 100);
+  check("missing month metrics stay null (no fabrication)", model.sites[0].metricsByMonth["2026-05"] === null);
+  check("metricsByMonth covers every month", Object.keys(model.sites[1].metricsByMonth).sort().join(",") === "2026-05,2026-06");
+  check("rackUnit availabilityPct backfilled as ratio", Math.abs((model.sites[0].rackUnit[0].availabilityPct ?? -1) - 50 / 200) < 1e-9);
+  check("site with no rackUnit -> empty array", model.sites[1].rackUnit.length === 0);
+}
+
 console.log(`web-clean-v1 exports: 7 + ${checks} assertions passed`);

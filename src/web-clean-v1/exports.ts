@@ -110,6 +110,57 @@ export interface SiteComparisonExport {
   }>;
 }
 
+export interface SiteComparisonReportSite {
+  label: string;
+  siteCode: string;
+  metrics: ComparisonMetric | null;
+  metricsByMonth: Record<string, ComparisonMetric | null>;
+  rack: RackCapacityReport | null;
+  rackUnit: Array<{ month: string; totalU: number; usedU: number; availableU: number;
+                    usagePercent: number | null; availabilityPct: number | null }>;
+}
+export interface SiteComparisonReportModel {
+  referenceMonth: string;
+  months: string[];
+  sites: SiteComparisonReportSite[];
+}
+
+/** The single N-site comparison shape consumed identically by the HTML/PDF
+ *  renderer, the Excel `90`/`91` sheet builders, and the CSV section builder.
+ *  Built once from the `/site-comparison` DTO (already Global-Display-Period
+ *  scoped). No value is ever fabricated: a month a site has no metrics for
+ *  stays `null`; `availabilityPct` is the persisted ratio or `availableU/totalU`,
+ *  never a filled zero. */
+export function buildSiteComparisonReportModel(
+  data: SiteComparisonExport,
+  referenceMonth: string,
+): SiteComparisonReportModel {
+  const months = [...data.months].filter(m => m <= referenceMonth).sort();
+  const sites: SiteComparisonReportSite[] = data.sites.map(site => {
+    const byMonth: Record<string, ComparisonMetric | null> = {};
+    for (const m of months) {
+      byMonth[m] = site.months.find(entry => entry.month === m)?.metrics ?? null;
+    }
+    const rackUnit = (site.rackUnitCapacity ?? []).map(row => ({
+      month: row.month,
+      totalU: row.totalU,
+      usedU: row.usedU,
+      availableU: row.availableU,
+      usagePercent: row.usagePercent ?? (row.totalU > 0 ? (row.usedU / row.totalU) * 100 : null),
+      availabilityPct: row.availabilityPct ?? (row.totalU > 0 ? row.availableU / row.totalU : null),
+    }));
+    return {
+      label: site.site.name,
+      siteCode: site.site.code,
+      metrics: byMonth[referenceMonth] ?? null,
+      metricsByMonth: byMonth,
+      rack: (site as { rack?: RackCapacityReport | null }).rack ?? null,
+      rackUnit,
+    };
+  });
+  return { referenceMonth, months, sites };
+}
+
 function download(content: BlobPart, fileName: string, type: string): void {
   const url = URL.createObjectURL(new Blob([content], { type }));
   const link = document.createElement("a");
