@@ -56,6 +56,14 @@ assert.match(busyOverlay, /busy-overlay-indeterminate/);
 assert.match(busyOverlay, /prefers-reduced-motion: reduce/);
 assert.doesNotMatch(busyOverlay, /Math\.random|setInterval/);
 
+// Current-facility PDF/HTML must resolve the selected month image at click time,
+// not rely only on an asynchronously-populated React state that can still be null.
+assert.match(app, /const resolveReportImageForExport = async \(\) => \{\s*const freshImage = await loadReportImage\(siteId, contextMonth\);\s*return freshImage \?\? reportImage;\s*\};/);
+assert.match(app, /const exportHtml = async \(\.\.\.args:[\s\S]*?const image = await resolveReportImageForExport\(\)/);
+assert.match(app, /const exportDesktopPdf = async \(\.\.\.args:[\s\S]*?const image = await resolveReportImageForExport\(\)/);
+assert.match(app, /html: \(\) => \(async \(\) => \{[\s\S]*?await exportHtml\(/);
+assert.match(app, /pdf: \(\) => \(async \(\) => \{[\s\S]*?await exportDesktopPdf\(/);
+
 // ---------------------------------------------------------------------------
 // Live Preview follows SCOPE (content), not FORMAT (download type)
 // ---------------------------------------------------------------------------

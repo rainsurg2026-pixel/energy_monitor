@@ -56,7 +56,8 @@ assert.match(rackUnitSummary, /const TREND_MONTHS = 6/);
 assert.match(rackUnitSummary, /<LabelList/);
 assert.match(rackUnitSummary, /chartMax/);
 assert.match(reportPreview, /loadWebRackUnitCapacityImage/);
-assert.match(app, /rackUnitCapacityImageDataUri: reportImage\?\.dataUri/);
+assert.match(app, /const freshImage = await loadReportImage\(siteId, contextMonth\)/);
+assert.match(app, /rackUnitCapacityImageDataUri: image\?\.dataUri/);
 assert.match(capacityAlerts, /Zone A, Zone B, Zone C/);
 assert.match(capacityAlerts, /scopeLabel\.localeCompare/);
 
