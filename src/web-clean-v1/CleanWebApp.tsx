@@ -521,7 +521,7 @@ export default function CleanWebApp() {
          </main></div>
       <nav aria-label={lang === "th" ? "เมนูนำทางบนมือถือ" : "Mobile application navigation"} className="fixed bottom-0 left-0 right-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-800 bg-slate-950 px-1 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? "page" : undefined} className={`min-w-[4.75rem] shrink-0 flex flex-col items-center gap-1 py-2 ${mobileNavTextClassName} ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className={mobileNavIconClassName} />{item.label}</button>; })}</nav>
       {(busy || initialHistoryLoading || facilityLoading) && <BusyOverlay
-        title={lang === "th" ? (busy ? "กำลังบันทึกข้อมูล…" : "กำลังโหลดข้อมูล…") : (busy ? "Saving changes…" : "Loading data…")}
+        title={lang === "th" ? "กำลังโหลด…" : "Loading…"}
         detail={lang === "th" ? "ระบบกำลังประมวลผล กรุณารอสักครู่" : "The system is processing your request. Please wait."}
         progressLabel={lang === "th" ? "กำลังดำเนินการ" : "Working"}
       />}

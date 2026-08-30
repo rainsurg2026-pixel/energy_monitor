@@ -122,6 +122,25 @@ html.theme-light .recharts-wrapper text {
   font-weight: 400 !important;
 }
 
+/* Data-heavy typography baseline: match the 4th Floor Estimated Cost Trend
+ * chart labels (12px) across charts and tables. Legends retain the reference
+ * chart's slightly larger visual weight. */
+.em-shell .recharts-wrapper text {
+  font-size: 0.75rem !important;
+}
+.em-shell .recharts-legend-wrapper,
+.em-shell .recharts-legend-item-text {
+  font-size: 0.875rem !important;
+}
+.em-shell .recharts-default-tooltip,
+.em-shell .recharts-default-tooltip * {
+  font-size: 0.75rem !important;
+}
+.em-shell table th,
+.em-shell table td {
+  font-size: 0.75rem !important;
+}
+
 /* CleanWebApp exposes ten desktop navigation items (Dashboard plus the nine
  * after the Production Rack comparison split). Keep the existing utility as a
  * fallback while ensuring the full nav stays on one row at xl width. */
