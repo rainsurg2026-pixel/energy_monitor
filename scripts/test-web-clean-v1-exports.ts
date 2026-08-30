@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
-import { buildAllFacilitiesCsv, buildAllFacilitiesReportHtml, buildFacilityCsv, buildSiteComparisonCsv, buildSiteComparisonReportHtml, facilityExportSections, facilityReportData, fitPdfImageToPage, siteComparisonExportSections, workbookForFacilities, workbookForSiteComparison, writeInteractiveExcelWorkbook, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
+import { buildAllFacilitiesCsv, buildAllFacilitiesReportHtml, buildFacilityCsv, buildSiteComparisonCsv, buildSiteComparisonReportHtml, buildSiteComparisonReportModel, facilityExportSections, facilityReportData, fitPdfImageToPage, siteComparisonExportSections, workbookForFacilities, workbookForSiteComparison, writeInteractiveExcelWorkbook, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
 import type { ReportData } from "../src/reports/reportTypes";
 import { buildCombinedCsv } from "../src/utils/exportData";
 import { buildReportHtml, buildReportBodyPages } from "../src/reports/pdf/reportHtml";
@@ -40,7 +40,7 @@ const comparison: SiteComparisonExport = {
   ]
 };
 
-const allFacilities = buildAllFacilitiesCsv([{ siteName: "Rangsit", logs: [log("2026-01")] }, { siteName: "Srinakarin", logs: [log("2026-01")] }]);
+const allFacilities = buildAllFacilitiesCsv([{ siteName: "Rangsit", logs: [log("2026-01")] }, { siteName: "Srinakarin", logs: [log("2026-01")] }], null);
 assert.match(allFacilities, /# Facility: Rangsit/);
 assert.match(allFacilities, /# Facility: Srinakarin/);
 assert.match(allFacilities, /# Energy_Cost/);
@@ -520,7 +520,6 @@ for (const sourceCase of [
 }
 
 // --- SiteComparisonReportModel (N-site shared input) ---
-import { buildSiteComparisonReportModel } from "../src/web-clean-v1/exports";
 {
   const raw = {
     displayPeriod: { startMonth: "2026-05", endMonth: "2026-06" },
@@ -576,11 +575,38 @@ import { buildSiteComparisonReportModel } from "../src/web-clean-v1/exports";
     { siteName: "Rangsit", logs: [log("2026-06")] },
     { siteName: "Srinakarin", logs: [log("2026-06")] },
   ] as any;
-  const allHtml = buildAllFacilitiesReportHtml(two, "2026-06");
+  const allHtml = buildAllFacilitiesReportHtml(two, null, "2026-06");
   check("buildAllFacilitiesReportHtml runs DOM-free in node", allHtml.includes("<!doctype"));
   check("one style block", (allHtml.match(/<style>/g) ?? []).length === 1);
   check("per-facility cover retained (2 covers)", (allHtml.match(/<main class="cover">/g) ?? []).length === 2);
   check("no DOMParser leftovers in output", !allHtml.includes("[object"));
+}
+
+{
+  // New All-Facilities signatures accept a comparison model; null keeps prior output.
+  const facilities = [{ siteName: "Rangsit", siteCode: "rangsit", logs: [log("2026-06")] }] as any;
+  const htmlNoCmp = buildAllFacilitiesReportHtml(facilities, null, "2026-06");
+  check("all-facilities html builds with null comparison", /<!doctype/i.test(htmlNoCmp));
+  const csvNoCmp = buildAllFacilitiesCsv(facilities, null);
+  check("all-facilities csv builds with null comparison", csvNoCmp.includes("# Facility: Rangsit"));
+
+  const two = [
+    { siteName: "Rangsit", siteCode: "rangsit", logs: [log("2026-06")] },
+    { siteName: "Srinakarin", siteCode: "srinakarin", logs: [log("2026-06")] },
+  ] as any;
+  const model = buildSiteComparisonReportModel({
+    displayPeriod: { startMonth: "2026-06", endMonth: "2026-06" },
+    months: ["2026-06"],
+    sites: [
+      { site: { id: 1, code: "rangsit", name: "Rangsit" }, months: [{ month: "2026-06", metrics: { buildingEnergy: 100, buildingCost: 500, floorEnergy: 40, floorCost: 200, avgRate: 5, floorShare: 40 } }], rackUnitCapacity: [] },
+      { site: { id: 2, code: "srinakarin", name: "Srinakarin" }, months: [{ month: "2026-06", metrics: { buildingEnergy: 90, buildingCost: 405, floorEnergy: 33, floorCost: 148.5, avgRate: 4.5, floorShare: 36.7 } }], rackUnitCapacity: [] },
+    ],
+  } as any, "2026-06");
+  const htmlCmp = buildAllFacilitiesReportHtml(two, model, "2026-06");
+  check("all-facilities html tags a cross-site energy section", htmlCmp.includes('data-report-section="site-energy-comparison"'));
+  const csvCmp = buildAllFacilitiesCsv(two, model);
+  check("all-facilities csv appends SITE_COMPARISON section", csvCmp.includes("# Section: SITE_COMPARISON"));
+  check("all-facilities csv keeps per-facility blocks", csvCmp.includes("# Facility: Rangsit") && csvCmp.includes("# Facility: Srinakarin"));
 }
 
 console.log(`web-clean-v1 exports: 7 + ${checks} assertions passed`);

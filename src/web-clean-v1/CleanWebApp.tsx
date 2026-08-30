@@ -15,7 +15,7 @@ import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter"
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import type { EntryWorkspaceActions } from "./WebEntryWorkspace";
 import { api, setUnauthorizedHandler, type SessionUser, type Role } from "./api";
-import { buildAllFacilitiesReportHtml, buildSiteComparisonReportHtml, exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportAllFacilitiesHtml as exportAllFacilitiesHtmlFile, exportAllFacilitiesPdf as exportAllFacilitiesPdfFile, exportCsv, exportDesktopPdf as exportDesktopPdfFile, exportExcel, exportHtml as exportHtmlFile, exportSiteComparisonCsv, exportSiteComparisonExcel, exportSiteComparisonHtml, exportSiteComparisonPdf as exportSiteComparisonPdfFile, rackReportFromSnapshot, type ExportFacility, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
+import { buildAllFacilitiesReportHtml, buildSiteComparisonReportModel, exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportAllFacilitiesHtml, exportAllFacilitiesPdf, exportCsv, exportDesktopPdf as exportDesktopPdfFile, exportExcel, exportHtml as exportHtmlFile, rackReportFromSnapshot, type ExportFacility, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
 import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, matchingReportingPeriodPreset, monthsForReportingPeriod, reportingPeriodForPreset, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodPreset, type ReportingPeriodSelection } from "./reportPeriod";
 import { clampMonthToDisplayPeriod, facilityStorageKey, latestEnergyMonth, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
@@ -627,7 +627,7 @@ const PERIOD_MODE_OPTIONS: Array<{ value: ReportingPeriodMode; label: string }> 
   { value: "full", label: "Full History" }
 ];
 
-type ExportScope = "current" | "all" | "comparison";
+type ExportScope = "current" | "all";
 type ExportFormat = "csv" | "excel" | "html" | "pdf";
 /** Coarse, honest stages - never a fabricated percentage. */
 type ExportStage = "preparing" | "working" | "packaging";
@@ -690,10 +690,10 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
   }, [monthsAvailable, periodEndMonth, reportPreset, siteId]);
   const reportCopy = th ? {
     title: "รายงานและการส่งออก", intro: "Excel เก็บค่าที่กรอก ค่าวันที่บันทึก และค่าคำนวณของ Desktop เป็นเซลล์ชนิดข้อมูล ตัวเลขมีทศนิยม 2 ตำแหน่ง และวันที่ใช้รูปแบบ dd-Mmm-yy",
-    context: "บริบทการรายงาน", applies: "ใช้กับการส่งออกของไซต์ปัจจุบัน", period: "ช่วงเวลารายงาน", month: "เดือนรายงาน", from: "ตั้งแต่", to: "ถึง", fileName: "ชื่อไฟล์", reset: "คืนค่าเริ่มต้น", scope: "ขอบเขต", current: "ไซต์ปัจจุบัน", all: "ทุกไซต์", comparison: "เปรียบเทียบพลังงานและค่าใช้จ่ายของไซต์", currentDesc: "ส่งออกข้อมูลของไซต์ปัจจุบันตามช่วงที่เลือก", allDesc: "แยกข้อมูลแต่ละไซต์ใน CSV, ชีต Excel และส่วนรายงาน PDF", comparisonDesc: "เปรียบเทียบพลังงานและค่าใช้จ่ายของทุกไซต์ตามเดือนที่เลือก โดยไม่สร้างค่าทดแทนข้อมูลที่หายไป", csvStarted: "เริ่มดาวน์โหลด CSV แล้ว", excelStarted: "เริ่มดาวน์โหลด Excel แล้ว", pdfStarted: "เปิดหน้าต่างพิมพ์ PDF แล้ว"
+    context: "บริบทการรายงาน", applies: "ใช้กับการส่งออกของไซต์ปัจจุบัน", period: "ช่วงเวลารายงาน", month: "เดือนรายงาน", from: "ตั้งแต่", to: "ถึง", fileName: "ชื่อไฟล์", reset: "คืนค่าเริ่มต้น", scope: "ขอบเขต", current: "ไซต์ปัจจุบัน", all: "ทุกไซต์", currentDesc: "ส่งออกข้อมูลของไซต์ปัจจุบันตามช่วงที่เลือก", allDesc: "แยกข้อมูลแต่ละไซต์ใน CSV, ชีต Excel และส่วนรายงาน PDF", csvStarted: "เริ่มดาวน์โหลด CSV แล้ว", excelStarted: "เริ่มดาวน์โหลด Excel แล้ว", pdfStarted: "เปิดหน้าต่างพิมพ์ PDF แล้ว"
   } : {
     title: "Exports & PDF Report", intro: "Excel keeps stored entry values, saved dates, and Desktop calculations as typed cells: numbers use two decimals and dates use dd-Mmm-yy",
-    context: "Report Context", applies: "Applies to the Current Facility export below", period: "Reporting Period", month: "Reporting Month", from: "From", to: "To", fileName: "File name", reset: "Reset", scope: "Scope", current: "Current Facility", all: "All Facilities", comparison: "Site Energy & Cost Comparison", currentDesc: "Export the selected facility for the chosen reporting period", allDesc: "Each facility stays isolated in its own CSV block, Excel sheets, HTML, and full PDF section", comparisonDesc: "Energy and cost comparison for the selected month; no values are fabricated for missing records", csvStarted: "CSV download started.", excelStarted: "Excel download started.", pdfStarted: "PDF download started."
+    context: "Report Context", applies: "Applies to the Current Facility export below", period: "Reporting Period", month: "Reporting Month", from: "From", to: "To", fileName: "File name", reset: "Reset", scope: "Scope", current: "Current Facility", all: "All Facilities", currentDesc: "Export the selected facility for the chosen reporting period", allDesc: "Each facility stays isolated in its own CSV block, Excel sheets, HTML, and full PDF section", csvStarted: "CSV download started.", excelStarted: "Excel download started.", pdfStarted: "PDF download started."
   };
   const [message, setMessage] = useState<string | null>(null);
   // Explicit export selection. `scope` drives the Live Preview CONTENT
@@ -845,12 +845,12 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
   const availableMonths = availableReportMonths.length > 0 ? availableReportMonths : [...new Set(logs.map(log => log.month))].sort();
 
   // Live Preview follows the selected export SCOPE (never the download format).
-  // For "all"/"comparison" the preview renders the SAME report model the export
-  // uses (buildAllFacilitiesReportHtml / buildSiteComparisonReportHtml), cached
+  // For "all" the preview renders the SAME report model the export uses
+  // (buildAllFacilitiesReportHtml), cached
   // by exact identity (scope + site set + reporting month + resolved period +
   // sections) and guarded so a stale async response can't overwrite a newer
   // selection.
-  const previewIdentity = [exportScope, exportScope === "current" ? String(siteId) : exportScope === "all" ? sites.map(item => item.id).join(",") : "all-sites", contextMonth, periodIdentity, selectedReportSections.join(",")].join(" | ");
+  const previewIdentity = [exportScope, exportScope === "current" ? String(siteId) : sites.map(item => item.id).join(","), contextMonth, periodIdentity, selectedReportSections.join(",")].join(" | ");
   const previewCacheRef = useRef(new Map<string, string>());
   const previewGenRef = useRef(0);
   const [scopedPreview, setScopedPreview] = useState<{ id: string; html: string } | null>(null);
@@ -866,18 +866,9 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
     void (async () => {
       try {
         let html: string;
-        if (exportScope === "all") {
-          const facilities = await loadAll({ includeRack: true, includeImage: true });
-          html = buildAllFacilitiesReportHtml(facilities, contextMonth, selectedReportSections);
-        } else {
-          const comparisonData = await loadComparison();
-          const [primary, secondary] = comparisonData.sites;
-          const [selfRack, otherRack] = await Promise.all([
-            primary ? loadRack(primary.site.id, contextMonth) : Promise.resolve(null),
-            secondary ? loadRack(secondary.site.id, contextMonth) : Promise.resolve(null)
-          ]);
-          html = buildSiteComparisonReportHtml(comparisonData, contextMonth, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack), selectedReportSections);
-        }
+        const facilities = await loadAll({ includeRack: true, includeImage: true });
+        const model = buildSiteComparisonReportModel(await loadComparison(), contextMonth);
+        html = buildAllFacilitiesReportHtml(facilities, model, contextMonth, selectedReportSections);
         if (previewGenRef.current !== generation) return;
         previewCacheRef.current.set(id, html);
         setScopedPreview({ id, html });
@@ -889,12 +880,10 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
         if (previewGenRef.current === generation) setPreviewBuilding(false);
       }
     })();
-  }, [contextMonth, exportScope, loadAll, loadComparison, loadRack, previewIdentity, selectedReportSections]);
+  }, [contextMonth, exportScope, loadAll, loadComparison, previewIdentity, selectedReportSections]);
   const previewContextLabel = exportScope === "current"
     ? `${reportCopy.current} · ${siteName} · ${reportingPeriodLabel(period, lang)}`
-    : exportScope === "all"
-      ? `${reportCopy.all} · ${reportingPeriodLabel(period, lang)}`
-      : `${reportCopy.comparison} · ${contextMonth}`;
+    : `${reportCopy.all} · ${reportingPeriodLabel(period, lang)}`;
   const exportHtml = (...args: Parameters<typeof exportHtmlFile>) => {
     const nextArgs = [...args] as unknown as Parameters<typeof exportHtmlFile>;
     const extras = nextArgs[9] ?? {};
@@ -915,9 +904,6 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
     };
     return exportDesktopPdfFile(...nextArgs);
   };
-  const exportAllFacilitiesHtml = (facilities: Parameters<typeof exportAllFacilitiesHtmlFile>[0], selectedMonth: string) => exportAllFacilitiesHtmlFile(facilities, selectedMonth, undefined, selectedReportSections);
-  const exportAllFacilitiesPdf = (facilities: Parameters<typeof exportAllFacilitiesPdfFile>[0], selectedMonth: string) => exportAllFacilitiesPdfFile(facilities, selectedMonth, undefined, selectedReportSections);
-  const exportSiteComparisonPdf = (...args: Parameters<typeof exportSiteComparisonPdfFile>) => exportSiteComparisonPdfFile(...(args.concat([selectedReportSections]) as Parameters<typeof exportSiteComparisonPdfFile>));
 
   const EXPORT_CARD_FORMATS: Array<{ id: ExportFormat; label: string; Icon: typeof Download; tone: string }> = [
     { id: "csv", label: "CSV", Icon: Download, tone: "text-teal-400" },
@@ -964,7 +950,7 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
       <p className="mt-3 text-xs text-slate-500">{reportCopy.scope}: {reportingPeriodLabel(period, lang)}. {th ? "ไฟล์" : "Files"}: <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "csv")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "xlsx")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "html")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "pdf")}</span></p>
     </div>
 
-    <div className="mt-4 grid gap-4 xl:grid-cols-3">{cards("current", reportCopy.current, `${siteName}, ${reportingPeriodLabel(period, lang)}.`, { csv: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv"), { calculationLogs: logs, rack, rackHistory: scopedRackCapacityHistory, rackUnitCapacity: scopedRackUnitCapacity, upsGroupHistory: scopedUpsGroupHistory }); })(), excel: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx"), logs, rack, scopedRackCapacityHistory, scopedRackUnitCapacity, scopedUpsGroupHistory); })(), html: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; exportHtml(scopedLogs, siteName, contextMonth, withExtension(resolvedFileName, "html"), rack, scopedRackCapacityHistory, scopedRackUnitCapacity, logs, selectedReportSections, { upsGroupHistory: scopedUpsGroupHistory }); })(), pdf: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportDesktopPdf(scopedLogs, siteName, contextMonth, resolvedFileName, rack, scopedRackCapacityHistory, scopedRackUnitCapacity, logs, selectedReportSections, { upsGroupHistory: scopedUpsGroupHistory }); })() }, { csv: withExtension(resolvedFileName, "csv"), excel: withExtension(resolvedFileName, "xlsx"), html: withExtension(resolvedFileName, "html"), pdf: withExtension(resolvedFileName, "pdf") })}{cards("all", reportCopy.all, reportCopy.allDesc, { csv: async () => exportAllFacilitiesCsv(await loadAll({ includeRack: true, includeImage: false })), excel: async () => exportAllFacilitiesExcel(await loadAll({ includeRack: true, includeImage: false })), html: async () => exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true }), contextMonth), pdf: async () => exportAllFacilitiesPdf(await loadAll({ includeRack: true, includeImage: true }), contextMonth) }, { csv: "all-facilities-energy-monitor.csv", excel: "all-facilities-energy-monitor.xlsx", html: "all-facilities-energy-monitor.html", pdf: "all-facilities-energy-monitor.pdf" })}{cards("comparison", reportCopy.comparison, reportCopy.comparisonDesc, { csv: async () => exportSiteComparisonCsv(await loadComparison(), contextMonth), excel: async () => exportSiteComparisonExcel(await loadComparison(), contextMonth), html: async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, contextMonth) : null, secondary ? loadRack(secondary.site.id, contextMonth) : null]); exportSiteComparisonHtml(comparison, contextMonth, `site-comparison-${contextMonth}.html`, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack), selectedReportSections); }, pdf: async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, contextMonth) : null, secondary ? loadRack(secondary.site.id, contextMonth) : null]); await exportSiteComparisonPdf(comparison, contextMonth, `site-comparison-${contextMonth}`, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack)); } }, { csv: `site-comparison-${contextMonth}.csv`, excel: `site-comparison-${contextMonth}.xlsx`, html: `site-comparison-${contextMonth}.html`, pdf: `site-comparison-${contextMonth}.pdf` })}</div>
+    <div className="mt-4 grid gap-4 xl:grid-cols-2">{cards("current", reportCopy.current, `${siteName}, ${reportingPeriodLabel(period, lang)}.`, { csv: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv"), { calculationLogs: logs, rack, rackHistory: scopedRackCapacityHistory, rackUnitCapacity: scopedRackUnitCapacity, upsGroupHistory: scopedUpsGroupHistory }); })(), excel: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx"), logs, rack, scopedRackCapacityHistory, scopedRackUnitCapacity, scopedUpsGroupHistory); })(), html: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; exportHtml(scopedLogs, siteName, contextMonth, withExtension(resolvedFileName, "html"), rack, scopedRackCapacityHistory, scopedRackUnitCapacity, logs, selectedReportSections, { upsGroupHistory: scopedUpsGroupHistory }); })(), pdf: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportDesktopPdf(scopedLogs, siteName, contextMonth, resolvedFileName, rack, scopedRackCapacityHistory, scopedRackUnitCapacity, logs, selectedReportSections, { upsGroupHistory: scopedUpsGroupHistory }); })() }, { csv: withExtension(resolvedFileName, "csv"), excel: withExtension(resolvedFileName, "xlsx"), html: withExtension(resolvedFileName, "html"), pdf: withExtension(resolvedFileName, "pdf") })}{cards("all", reportCopy.all, reportCopy.allDesc, { csv: async () => exportAllFacilitiesCsv(await loadAll({ includeRack: true, includeImage: false }), buildSiteComparisonReportModel(await loadComparison(), contextMonth)), excel: async () => exportAllFacilitiesExcel(await loadAll({ includeRack: true, includeImage: false }), buildSiteComparisonReportModel(await loadComparison(), contextMonth)), html: async () => exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true }), buildSiteComparisonReportModel(await loadComparison(), contextMonth), contextMonth), pdf: async () => exportAllFacilitiesPdf(await loadAll({ includeRack: true, includeImage: true }), buildSiteComparisonReportModel(await loadComparison(), contextMonth), contextMonth) }, { csv: "all-facilities-energy-monitor.csv", excel: "all-facilities-energy-monitor.xlsx", html: "all-facilities-energy-monitor.html", pdf: "all-facilities-energy-monitor.pdf" })}</div>
     <WebReportPreview lang={lang} siteId={siteId} siteName={siteName} logs={scopedLogs} calculationLogs={logs} month={contextMonth} rackCapacityHistory={scopedRackCapacityHistory} rackUnitCapacity={scopedRackUnitCapacity} upsGroupHistory={scopedUpsGroupHistory} onRefresh={handleRefresh} sections={selectedReportSections} contextLabel={previewContextLabel} selectedFormatLabel={exportFormat ? EXPORT_FORMAT_LABELS[exportFormat] : null} overrideHtml={exportScope === "current" ? null : scopedPreview?.html ?? null} pending={exportScope !== "current" && previewBuilding} />
     {sectionPicker}
     {message && <p className="mt-4 text-sm text-teal-300">{message}</p>}

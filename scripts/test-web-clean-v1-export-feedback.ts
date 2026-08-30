@@ -8,7 +8,7 @@ const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx",
 // ---------------------------------------------------------------------------
 // Explicit export selection + per-action feedback
 // ---------------------------------------------------------------------------
-assert.match(app, /type ExportScope = "current" \| "all" \| "comparison";/);
+assert.match(app, /type ExportScope = "current" \| "all";/);
 assert.match(app, /type ExportFormat = "csv" \| "excel" \| "html" \| "pdf";/);
 assert.match(app, /const \[exportScope, setExportScope\] = useState<ExportScope>\("current"\)/);
 assert.match(app, /const \[exportFormat, setExportFormat\] = useState<ExportFormat \| null>\(null\)/);
@@ -50,19 +50,19 @@ assert.doesNotMatch(app, /\$\{[^}]*\}%.*Preparing|progress.*percent/i);
 // ---------------------------------------------------------------------------
 // Live Preview follows SCOPE (content), not FORMAT (download type)
 // ---------------------------------------------------------------------------
-// (6) current -> single-facility path; (7) all -> all-facilities model;
-// (8) comparison -> comparison model. Same model as the export, not a
-// duplicate table build.
-assert.match(app, /if \(exportScope === "all"\) \{\s*const facilities = await loadAll\(\{ includeRack: true, includeImage: true \}\);\s*html = buildAllFacilitiesReportHtml\(facilities, contextMonth, selectedReportSections\);/);
-assert.match(app, /html = buildSiteComparisonReportHtml\(comparisonData, contextMonth, rackReportFromSnapshot\(selfRack\), rackReportFromSnapshot\(otherRack\), selectedReportSections\);/);
+// (6) current -> single-facility path; (7) all -> all-facilities model with
+// the cross-site data carried by the same N-site model as the export.
+assert.match(app, /const facilities = await loadAll\(\{ includeRack: true, includeImage: true \}\);\s*const model = buildSiteComparisonReportModel\(await loadComparison\(\), contextMonth\);\s*html = buildAllFacilitiesReportHtml\(facilities, model, contextMonth, selectedReportSections\);/);
+assert.doesNotMatch(app, /cards\("comparison"/);
+assert.doesNotMatch(app, /reportCopy\.comparison/);
 assert.match(app, /overrideHtml=\{exportScope === "current" \? null : scopedPreview\?\.html \?\? null\}/);
 assert.match(preview, /const html = overrideHtml \?\? currentFacilityHtml;/);
 
 // (9) Format change never changes the preview content: the preview identity
 // and effect key on exportScope + data identity, NOT exportFormat.
-assert.ok(app.includes('const previewIdentity = [exportScope, exportScope === "current" ? String(siteId) : exportScope === "all" ? sites.map(item => item.id).join(",") : "all-sites", contextMonth, periodIdentity, selectedReportSections.join(",")].join(" | ");'), "preview identity is scope + site set + month + period + sections");
+assert.ok(app.includes('const previewIdentity = [exportScope, exportScope === "current" ? String(siteId) : sites.map(item => item.id).join(","), contextMonth, periodIdentity, selectedReportSections.join(",")].join(" | ");'), "preview identity is scope + site set + month + period + sections");
 assert.ok(!/previewIdentity = \[[^\]]*exportFormat/.test(app), "preview identity does not depend on the download format");
-assert.ok(app.includes("}, [contextMonth, exportScope, loadAll, loadComparison, loadRack, previewIdentity, selectedReportSections]);"), "the scoped-preview effect keys on scope + data identity, not format");
+assert.ok(app.includes("}, [contextMonth, exportScope, loadAll, loadComparison, previewIdentity, selectedReportSections]);"), "the scoped-preview effect keys on scope + data identity, not format");
 
 // (10) site / month / period changes invalidate the scoped preview cache.
 assert.match(app, /useEffect\(\(\) => \{ previewCacheRef\.current\.clear\(\); \}, \[sites, periodIdentity\]\);/);
@@ -85,7 +85,7 @@ assert.match(preview, /\$\{pageCount\} pages/);
 const exportsSource = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
 assert.match(exportsSource, /export function buildAllFacilitiesReportHtml\(/);
 assert.match(exportsSource, /export function buildSiteComparisonReportHtml\(/);
-assert.match(exportsSource, /await exportReportPdfFromHtml\(buildAllFacilitiesReportHtml\(facilities, selectedMonth, sections\)/);
+assert.match(exportsSource, /await exportReportPdfFromHtml\(buildAllFacilitiesReportHtml\(facilities, comparison, selectedMonth, sections\)/);
 assert.match(exportsSource, /download\(buildSiteComparisonReportHtml\(data, referenceMonth, selfRack, otherRack, sections\)/);
 assert.match(exportsSource, /await exportReportPdfFromHtml\(buildSiteComparisonReportHtml\(data, referenceMonth, selfRack, otherRack, sections\)/);
 // CSV builders are still the plain data path.

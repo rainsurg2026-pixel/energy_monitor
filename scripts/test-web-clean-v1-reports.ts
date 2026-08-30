@@ -25,9 +25,9 @@ assert.match(app, /const contextMonth = effectiveMonth\(period, periodEndMonth\)
 assert.match(app, /Recent Reports/);
 assert.match(app, /HistoryProvider\.remove\(item\.id\)/);
 assert.match(app, /all-facilities-energy-monitor\.xlsx/);
-assert.match(app, /site-comparison-\$\{contextMonth\}\.xlsx/);
+
 assert.match(app, /exportAllFacilitiesHtml/);
-assert.match(app, /exportSiteComparisonHtml/);
+
 assert.match(app, /withExtension\(resolvedFileName, "html"\)/);
 const exports = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
 assert.match(exports, /export function exportHtml/);

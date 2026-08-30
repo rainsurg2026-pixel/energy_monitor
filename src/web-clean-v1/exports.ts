@@ -320,7 +320,7 @@ function buildExcelDashboardModel(logs: MonthlyLog[], calculationLogs: MonthlyLo
  * reconciled back to the source instead of looking complete while losing
  * information.
  */
-export async function workbookForFacilities(facilities: ExportFacility[]) {
+export async function workbookForFacilities(facilities: ExportFacility[], comparison?: SiteComparisonReportModel | null) {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
   const dashboardPlans: ExcelDashboardPlan[] = [];
@@ -385,6 +385,9 @@ export async function workbookForFacilities(facilities: ExportFacility[]) {
         if (String(header).includes("Usage (%)") || String(header).includes("Availability (%)")) sheet.getColumn(index + 1).numFmt = "0.0%";
       });
     }
+  }
+  if (comparison) {
+    for (const section of siteComparisonSectionsFromModel(comparison)) addTableSheet(workbook, "Comparison", section.name, section.headers, section.rows);
   }
   workbookDashboardPlans.set(workbook, dashboardPlans);
   return workbook;
@@ -579,16 +582,16 @@ export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName
   download(data, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
-export function buildAllFacilitiesCsv(facilities: ExportFacility[]): string {
-  return facilities.map(buildFacilityCsv).join("\n\n");
+export function buildAllFacilitiesCsv(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null): string {
+  return facilities.map(buildFacilityCsv).join("\n\n") + (comparison ? "\n\n" + siteComparisonSectionsFromModel(comparison).map(section => "# Section: " + section.name + "\n" + csvSection(section)).join("\n\n") : "");
 }
 
-export function exportAllFacilitiesCsv(facilities: ExportFacility[]): void {
-  download(buildAllFacilitiesCsv(facilities), "all-facilities-energy-monitor.csv", "text/csv;charset=utf-8");
+export function exportAllFacilitiesCsv(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null): void {
+  download(buildAllFacilitiesCsv(facilities, comparison), "all-facilities-energy-monitor.csv", "text/csv;charset=utf-8");
 }
 
-export async function exportAllFacilitiesExcel(facilities: ExportFacility[]): Promise<void> {
-  const workbook = await workbookForFacilities(facilities);
+export async function exportAllFacilitiesExcel(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null): Promise<void> {
+  const workbook = await workbookForFacilities(facilities, comparison);
   const data = await writeInteractiveExcelWorkbook(workbook);
   download(data, "all-facilities-energy-monitor.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
@@ -655,6 +658,41 @@ export function siteComparisonExportSections(data: SiteComparisonExport, referen
   if (rackUnitTrendRows.length) sections.push({ name: "RACK_UNIT_TREND_COMPARISON", headers: ["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], rows: rackUnitTrendRows });
   if (rackUnitTrendRows.length) sections.push({ name: "RACK_UNIT_TREND_NOTE", headers: ["Scope", "Note"], rows: [["All facilities", RACK_UNIT_CAPACITY_TREND_NOTE]] });
   return sections;
+}
+
+/** Phase-1 adapter: view the N-site model through the existing SiteComparisonExport
+ *  shape so the current section/HTML builders consume it unchanged. Phase 3/4
+ *  replace this with the real N-site layout. */
+function modelAsSiteComparisonExport(model: SiteComparisonReportModel): SiteComparisonExport {
+  return {
+    displayPeriod: { startMonth: model.months[0] ?? model.referenceMonth, endMonth: model.referenceMonth },
+    months: model.months,
+    sites: model.sites.map(site => ({
+      site: { id: 0, code: site.siteCode, name: site.label },
+      months: model.months.map(month => ({ month, metrics: site.metricsByMonth[month] ?? null })),
+      rack: site.rack ?? null,
+      rackUnitCapacity: site.rackUnit.map(row => ({
+        month: row.month, totalU: row.totalU, usedU: row.usedU, availableU: row.availableU,
+        usagePercent: row.usagePercent ?? undefined, availabilityPct: row.availabilityPct ?? undefined,
+      })),
+    })),
+  };
+}
+
+function siteComparisonSectionsFromModel(model: SiteComparisonReportModel): ExportTableSection[] {
+  return siteComparisonExportSections(modelAsSiteComparisonExport(model), model.referenceMonth);
+}
+
+/** Reuse the existing 2-site comparison report body, then re-tag its comparison
+ *  pages with data-report-section so Phase 2's attribute filter keeps them. */
+function crossSiteReportPagesAdapter(model: SiteComparisonReportModel): string {
+  const view = modelAsSiteComparisonExport(model);
+  const [primary, secondary] = model.sites;
+  const full = buildSiteComparisonReportHtml(view, model.referenceMonth, primary?.rack ?? null, secondary?.rack ?? null);
+  const bodyStart = full.indexOf("</main>") + "</main>".length;
+  const scriptStart = full.indexOf('<script>document.body.dataset.reportReady="true";</script>');
+  return full.slice(bodyStart, scriptStart)
+    .replace(/<section class="page"/g, '<section class="page" data-report-section="site-energy-comparison"');
 }
 
 function comparisonWorksheetRows(section: ExportTableSection): unknown[][] {
@@ -1145,11 +1183,8 @@ export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: 
   download(html, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.html`, "text/html;charset=utf-8");
 }
 
-export function exportAllFacilitiesHtml(facilities: ExportFacility[], selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): void {
-  if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth), sections));
-  const html = reports.join("<div style=\"page-break-before:always\"></div>");
-  download(html, fileName ?? "all-facilities-energy-monitor.html", "text/html;charset=utf-8");
+export function exportAllFacilitiesHtml(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): void {
+  download(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor.html", "text/html;charset=utf-8");
 }
 
 export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): void {
@@ -1160,13 +1195,13 @@ export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMo
  *  the Live Preview renders exactly the same content the All Facilities export
  *  produces (report model -> preview and the same model -> PDF-safe capture),
  *  never a duplicate table generation. */
-export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: string, sections?: readonly ReportSectionId[]): string {
+export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, sections?: readonly ReportSectionId[]): string {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
   const perFacility = facilities.map(facility => {
     const data = reportDataFromFacility(facility, selectedMonth);
     return reportCoverMain(data) + buildReportBodyPages(data, sections);
   }).join("<div style=\"page-break-before:always\"></div>");
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy &amp; Facility Monitor All Facilities</title><style>${REPORT_CSS}</style></head><body>${perFacility}<script>document.body.dataset.reportReady="true";</script></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy &amp; Facility Monitor All Facilities</title><style>${REPORT_CSS}</style></head><body>${perFacility}${comparison ? crossSiteReportPagesAdapter(comparison) : ""}<script>document.body.dataset.reportReady="true";</script></body></html>`;
 }
 
 /** Same-model source for the Site Energy & Cost Comparison Live Preview and the
@@ -1176,8 +1211,8 @@ export function buildSiteComparisonReportHtml(data: SiteComparisonExport, refere
 }
 
 /** Generates one real PDF download containing one report per facility. */
-export async function exportAllFacilitiesPdf(facilities: ExportFacility[], selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): Promise<void> {
-  await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
+export async function exportAllFacilitiesPdf(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): Promise<void> {
+  await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
 }
 
 /** Prints one full Desktop-compatible report per facility in one document.
