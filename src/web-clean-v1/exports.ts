@@ -1,10 +1,11 @@
 import type { MonthlyLog } from "../types";
 import { buildCombinedCsv } from "../utils/exportData";
 import { calculateEnergyCostForMonth } from "../domain/energyCost";
-import { calculateRackCapacityMetrics } from "../domain/rackCapacity";
+import { calculateRackCapacityMetrics, rackPositionExportRows } from "../domain/rackCapacity";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
 import { buildReportHtml } from "../reports/pdf/reportHtml";
 import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord, UpsGroupHistoryReport } from "../reports/reportTypes";
+import { RACK_UNIT_CAPACITY_TREND_NOTE } from "../reports/reportTypes";
 import { deriveRackCapacityReport } from "../reports/rackCapacityReportBuilder";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
@@ -396,6 +397,26 @@ function exportRackUnitTrendRows(facility: ExportFacility): unknown[][] {
     ]);
 }
 
+const NO_RACK_POSITIONS_MESSAGE = "No Available, Reserved, or Pending Decommission rack positions in the confirmed snapshot.";
+
+/** One RACK_POSITIONS table row per deployable/exception position, using the
+ *  canonical `rackPositionExportRows` contract (Available/Reserved/Pending
+ *  Decommission only - never "In Use"). */
+function rackPositionSectionRows(siteName: string, sourceMonth: string | null, records: readonly RackRecord[]): unknown[][] {
+  return rackPositionExportRows(records).map(row => [siteName, sourceMonth, row.status, row.rackId, row.cabinetSize, row.detail]);
+}
+
+function exportRackPositionRows(facility: ExportFacility): unknown[][] {
+  return rackPositionSectionRows(facility.siteName, facility.rack?.sourceSnapshot ?? null, facility.rack?.records ?? []);
+}
+
+/** Explicit no-data row for a confirmed snapshot that holds no deployable
+ *  positions. A month with no confirmed snapshot at all emits no rack sections
+ *  (the caller never reaches here), so this never masks a stale fallback. */
+function noRackPositionRow(facility: ExportFacility): unknown[] {
+  return [facility.siteName, facility.rack?.sourceSnapshot ?? null, "NO_DATA", null, null, NO_RACK_POSITIONS_MESSAGE];
+}
+
 export function facilityExportSections(facility: ExportFacility): ExportTableSection[] {
   const sections: ExportTableSection[] = [];
   if (facility.rack) {
@@ -419,7 +440,7 @@ export function facilityExportSections(facility: ExportFacility): ExportTableSec
     });
     sections.push({
       name: "RACK_CAPACITY_DETAILS",
-      headers: ["Site", "Snapshot Month", "Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other", "Usage (%)", "Availability (%)"],
+      headers: ["Site", "Snapshot Month", "Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other"],
       rows: metrics.zoneMetrics.map(zone => [
         facility.siteName,
         sourceMonth,
@@ -429,17 +450,14 @@ export function facilityExportSections(facility: ExportFacility): ExportTableSec
         zone.available.count,
         zone.reserved.count,
         zone.pendingDismantle.count,
-        zone.other.count,
-        exportRatio(zone.total > 0 ? zone.inUse.count / zone.total : null),
-        exportRatio(zone.total > 0 ? zone.available.count / zone.total : null)
+        zone.other.count
       ])
     });
+    const rackPositionRows = exportRackPositionRows(facility);
     sections.push({
       name: "RACK_POSITIONS",
-      headers: ["Site", "Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"],
-      rows: [...facility.rack.records]
-        .sort((left, right) => left.rowNumber - right.rowNumber)
-        .map(row => [facility.siteName, sourceMonth, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks])
+      headers: ["Site", "Snapshot Month", "Status", "Rack ID", "Cabinet Size (cm)", "Detail"],
+      rows: rackPositionRows.length > 0 ? rackPositionRows : [noRackPositionRow(facility)]
     });
   }
 
@@ -457,7 +475,7 @@ export function facilityExportSections(facility: ExportFacility): ExportTableSec
     sections.push({
       name: "RACK_UNIT_TREND_NOTE",
       headers: ["Site", "Note"],
-      rows: [[facility.siteName, "Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots."]]
+      rows: [[facility.siteName, RACK_UNIT_CAPACITY_TREND_NOTE]]
     });
   }
 
@@ -569,18 +587,19 @@ export function siteComparisonExportSections(data: SiteComparisonExport, referen
       const metrics = calculateRackCapacityMetrics(site.rack.records);
       const month = site.rack.sourceSnapshot ?? referenceMonth;
       rackSummaryRows.push([site.site.name, month, metrics.total, metrics.inUse.count, metrics.available.count, metrics.reserved.count, metrics.pendingDismantle.count, metrics.other.count, exportRatio(metrics.total > 0 ? metrics.inUse.count / metrics.total : null), exportRatio(metrics.total > 0 ? metrics.available.count / metrics.total : null)]);
-      rackDetailRows.push(...metrics.zoneMetrics.map(zone => [site.site.name, month, zone.zone, zone.total, zone.inUse.count, zone.available.count, zone.reserved.count, zone.pendingDismantle.count, zone.other.count, exportRatio(zone.total > 0 ? zone.inUse.count / zone.total : null), exportRatio(zone.total > 0 ? zone.available.count / zone.total : null)]));
-      rackPositionRows.push(...site.rack.records.map(row => [site.site.name, month, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
+      rackDetailRows.push(...metrics.zoneMetrics.map(zone => [site.site.name, month, zone.zone, zone.total, zone.inUse.count, zone.available.count, zone.reserved.count, zone.pendingDismantle.count, zone.other.count]));
+      const positions = rackPositionSectionRows(site.site.name, month, site.rack.records);
+      rackPositionRows.push(...(positions.length > 0 ? positions : [[site.site.name, month, "NO_DATA", null, null, NO_RACK_POSITIONS_MESSAGE]]));
     }
     rackUnitRows.push(...comparisonRackUnitRows(site, referenceMonth));
     rackUnitTrendRows.push(...comparisonRackUnitTrendRows(site, referenceMonth));
   }
   if (rackSummaryRows.length) sections.push({ name: "RACK_CAPACITY_SUMMARY", headers: ["Site", "Snapshot Month", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other", "Usage (%)", "Availability (%)"], rows: rackSummaryRows });
-  if (rackDetailRows.length) sections.push({ name: "RACK_CAPACITY_DETAILS", headers: ["Site", "Snapshot Month", "Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other", "Usage (%)", "Availability (%)"], rows: rackDetailRows });
-  if (rackPositionRows.length) sections.push({ name: "RACK_POSITIONS", headers: ["Site", "Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], rows: rackPositionRows });
+  if (rackDetailRows.length) sections.push({ name: "RACK_CAPACITY_DETAILS", headers: ["Site", "Snapshot Month", "Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other"], rows: rackDetailRows });
+  if (rackPositionRows.length) sections.push({ name: "RACK_POSITIONS", headers: ["Site", "Snapshot Month", "Status", "Rack ID", "Cabinet Size (cm)", "Detail"], rows: rackPositionRows });
   if (rackUnitRows.length) sections.push({ name: "RACK_UNIT_CAPACITY_COMPARISON", headers: ["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Attached", "Image Content Type", "Image Saved At"], rows: rackUnitRows });
   if (rackUnitTrendRows.length) sections.push({ name: "RACK_UNIT_TREND_COMPARISON", headers: ["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], rows: rackUnitTrendRows });
-  if (rackUnitTrendRows.length) sections.push({ name: "RACK_UNIT_TREND_NOTE", headers: ["Scope", "Note"], rows: [["All facilities", "Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots."]] });
+  if (rackUnitTrendRows.length) sections.push({ name: "RACK_UNIT_TREND_NOTE", headers: ["Scope", "Note"], rows: [["All facilities", RACK_UNIT_CAPACITY_TREND_NOTE]] });
   return sections;
 }
 

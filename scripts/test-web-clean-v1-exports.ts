@@ -352,7 +352,24 @@ const completeFacilityCsv = buildFacilityCsv(completeFacility);
 const completeFacilitySections = facilityExportSections(completeFacility);
 check("facility CSV includes Rack Capacity, Rack Positions, Rack Unit trend, and image sections", ["RACK_CAPACITY_SUMMARY", "RACK_CAPACITY_DETAILS", "RACK_POSITIONS", "RACK_UNIT_CAPACITY", "RACK_UNIT_TREND", "RACK_UNIT_CAPACITY_IMAGES"].every(section => completeFacilityCsv.includes("# Section: " + section)));
 check("facility CSV reconciles selected Rack Unit values", completeFacilityCsv.includes("2026-06,9963,7407,2556") && completeFacilityCsv.includes("74.3%") && completeFacilityCsv.includes("25.7%"));
-check("facility CSV exports Rack Positions without relying on panel expansion", completeFacilityCsv.includes("A-01") && completeFacilitySections.find(section => section.name === "RACK_POSITIONS")?.rows.length === rackReport!.records.length);
+const completeRackPositions = completeFacilitySections.find(section => section.name === "RACK_POSITIONS");
+const deployablePositionStatuses = new Set(["Available", "Reserved", "Pending Dismantle", "Pending Decommission"]);
+check("facility Rack Positions export lists only deployable/exception positions (Available/Reserved/Pending Decommission), independent of panel state", completeRackPositions !== undefined
+  && completeRackPositions.rows.length === rackReport!.records.filter(record => deployablePositionStatuses.has(record.status ?? "")).length
+  && completeRackPositions.rows.every(row => ["Available", "Reserved", "Pending Decommission"].includes(String(row[2])))
+  && completeFacilityCsv.includes(",Available,A-02,") && completeFacilityCsv.includes(",Reserved,B-01,"));
+check("facility Rack Positions export never emits an In Use detailed rack row", completeRackPositions?.rows.every(row => String(row[2]) !== "In Use" && row[3] !== "A-01"));
+check("facility Rack Capacity Summary still carries the In Use count", completeFacilitySections.find(section => section.name === "RACK_CAPACITY_SUMMARY")?.rows[0]?.[3] === 2);
+const positionStatusMappingReport = rackReportFromSnapshot({ siteId: 9, month: "2026-06", snapshot: { month: "2026-06", rowVersion: 1, records: [
+  { rowNumber: 1, rackZone: "Z", rackId: "P-INUSE", status: "In Use", cabinetSize: "42U", detail: null, deviceType: null, remarks: null },
+  { rowNumber: 2, rackZone: "Z", rackId: "P-AVAIL", status: "Available", cabinetSize: "42U", detail: null, deviceType: null, remarks: null },
+  { rowNumber: 3, rackZone: "Z", rackId: "P-RESV", status: "Reserved", cabinetSize: "42U", detail: null, deviceType: null, remarks: null },
+  { rowNumber: 4, rackZone: "Z", rackId: "P-PEND", status: "Pending Dismantle", cabinetSize: "42U", detail: null, deviceType: null, remarks: null },
+  { rowNumber: 5, rackZone: "Z", rackId: "P-OTHER", status: "Decommissioned", cabinetSize: "42U", detail: null, deviceType: null, remarks: null }
+] } });
+const positionStatusMappingRows = facilityExportSections({ siteName: "MapCheck", logs: [log("2026-06")], rack: positionStatusMappingReport }).find(section => section.name === "RACK_POSITIONS")?.rows ?? [];
+check("Rack Positions status display mapping: Pending Dismantle renders as Pending Decommission; In Use and unknown statuses are excluded", positionStatusMappingRows.map(row => String(row[2])).join("|") === "Available|Reserved|Pending Decommission"
+  && positionStatusMappingRows.map(row => String(row[3])).join("|") === "P-AVAIL|P-RESV|P-PEND");
 check("facility CSV has no object serialization defect", !completeFacilityCsv.includes("[object Object]") && !completeFacilityCsv.includes("undefined"));
 const completeRackWorkbook = await workbookForFacilities([completeFacility]);
 const semanticUnitSheet = completeRackWorkbook.worksheets.find(sheet => sheet.name.includes("RACK_UNIT_CAPACITY"));
@@ -362,7 +379,7 @@ check("XLSX Rack Unit semantic sheet contains the selected row", Boolean(selecte
 check("XLSX keeps Rack Unit KPI cells numeric", typeof selectedUnitRow?.[3] === "number" && selectedUnitRow?.[3] === 9963 && selectedUnitRow?.[4] === 7407 && selectedUnitRow?.[5] === 2556);
 check("XLSX percentage cells remain numeric with native formatting", typeof selectedUnitRow?.[6] === "number" && typeof selectedUnitRow?.[7] === "number" && semanticUnitSheet?.getColumn(6).numFmt === "0.0%" && semanticUnitSheet?.getColumn(7).numFmt === "0.0%");
 const completeReportHtml = buildReportHtml(facilityReportData([log("2026-06")], "Srinakarin", "2026-06", rackReport, [], rackUnitExportRows, [log("2026-06")], { rackUnitCapacityImageDataUri: "data:image/png;base64,TEST", rackUnitCapacityImageMeta: { savedAt: "2026-06-30T01:00:00.000Z", savedBy: "uat", width: 2048, height: 1536 } }));
-check("HTML/PDF source contains Rack Positions even when the UI panel is collapsed", completeReportHtml.includes("Rack Positions") && completeReportHtml.includes("A-01"));
+check("HTML/PDF source contains Rack Positions even when the UI panel is collapsed", completeReportHtml.includes("Rack Positions") && completeReportHtml.includes("Cabinet Size (cm)") && completeReportHtml.includes("A-02") && completeReportHtml.includes("B-01"));
 check("HTML/PDF source contains selected Rack Unit KPI, percentages, trend, and image details", completeReportHtml.includes("9,963") && completeReportHtml.includes("7,407") && completeReportHtml.includes("2,556") && completeReportHtml.includes("74.3%") && completeReportHtml.includes("25.7%") && completeReportHtml.includes("Six-Month Trend") && completeReportHtml.includes("TEST") && completeReportHtml.includes("2048"));
 const completeComparison: SiteComparisonExport = {
   displayPeriod: { startMonth: "2026-01", endMonth: "2026-06" },
@@ -375,12 +392,13 @@ const completeComparison: SiteComparisonExport = {
 const comparisonSections = siteComparisonExportSections(completeComparison, "2026-06");
 const comparisonCompleteCsv = buildSiteComparisonCsv(completeComparison, "2026-06");
 check("Site Comparison CSV includes Rack Capacity, Rack Positions, and Rack Unit sections", ["RACK_CAPACITY_SUMMARY", "RACK_CAPACITY_DETAILS", "RACK_POSITIONS", "RACK_UNIT_CAPACITY_COMPARISON", "RACK_UNIT_TREND_COMPARISON"].every(section => comparisonCompleteCsv.includes("# Section: " + section)));
-check("Site Comparison CSV reconciles both sites to the same Rack Unit source values", comparisonCompleteCsv.includes("Rangsit,2026-06,9963,7407,2556") && comparisonCompleteCsv.includes("Srinakarin,2026-06,9963,7407,2556") && comparisonCompleteCsv.includes("A-01"));
+check("Site Comparison CSV reconciles both sites to the same Rack Unit source values", comparisonCompleteCsv.includes("Rangsit,2026-06,9963,7407,2556") && comparisonCompleteCsv.includes("Srinakarin,2026-06,9963,7407,2556") && comparisonCompleteCsv.includes(",Available,A-02,") && comparisonCompleteCsv.includes(",Reserved,B-01,"));
+check("Site Comparison Rack Positions section excludes In Use detailed racks", (() => { const section = comparisonSections.find(entry => entry.name === "RACK_POSITIONS"); return section !== undefined && section.rows.length > 0 && section.rows.every(row => String(row[2]) !== "In Use" && row[3] !== "A-01"); })());
 const comparisonWorkbook = await workbookForSiteComparison(completeComparison, "2026-06");
 const comparisonUnitSheet = comparisonWorkbook.worksheets.find(sheet => sheet.name.includes("RACK_UNIT_CAPACITY_COMPARISON"));
 const comparisonUnitRow = comparisonUnitSheet?.getSheetValues().find(row => Array.isArray(row) && row[2] === "2026-06") as unknown[] | undefined;
 check("Site Comparison XLSX retains Rack Unit KPI values as numeric cells", typeof comparisonUnitRow?.[3] === "number" && comparisonUnitRow?.[3] === 9963 && comparisonUnitRow?.[4] === 7407 && comparisonUnitRow?.[5] === 2556);
-check("Site Comparison HTML/PDF contains the Rack Unit comparison and full positions", buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("Rack Unit Capacity Comparison") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("Rack Positions") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("A-01"));
+check("Site Comparison HTML/PDF contains the Rack Unit comparison and deployable positions", buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("Rack Unit Capacity Comparison") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("Rack Positions") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("A-02") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("B-01"));
 // ============================================================
 // Desktop-source acceptance gate: build the actual Web Excel export from the
 // two Desktop workbooks and their external Rack Unit image stores. This is a

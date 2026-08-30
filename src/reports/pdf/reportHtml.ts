@@ -1,7 +1,8 @@
 import type { EngineeringDashboardSnapshot, ReportComparisonFacility, ReportData, ReportMonthlyRow } from "../reportTypes";
+import { RACK_UNIT_CAPACITY_TREND_NOTE } from "../reportTypes";
 import { formatNumber } from "../../utils/numberFormatBridge";
 import { formatTimestamp } from "../../utils";
-import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics } from "../../utils/rackCapacity";
+import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics, rackPositionExportRows } from "../../utils/rackCapacity";
 import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
 import { calculateCapacityHealthScore, utilizationColorHex } from "../../utils/capacityHealth";
 import { getCapacityHealth } from "../../utils/capacityForecast";
@@ -66,19 +67,17 @@ function formatUsagePercent1(value: number | null | undefined): string {
 }
 
 function rackPositionsTable(records: NonNullable<ReportData["rack"]>["records"]): string {
-  const rows = [...records]
-    .sort((left, right) => left.rowNumber - right.rowNumber)
-    .map(row => [
-      escapeHtml(String(row.rowNumber)),
-      escapeHtml(row.rackZone ?? "—"),
-      escapeHtml(row.rackId ?? "—"),
-      escapeHtml(row.status ?? "—"),
-      escapeHtml(row.cabinetSize ?? "—"),
-      escapeHtml(row.detail ?? "—"),
-      escapeHtml(row.deviceType ?? "—"),
-      escapeHtml(row.remarks ?? "—")
-    ]);
-  return table(["Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], rows, "dense");
+  const headers = ["Status", "Rack ID", "Cabinet Size (cm)", "Detail"];
+  const rows = rackPositionExportRows(records).map(row => [
+    escapeHtml(row.status),
+    escapeHtml(row.rackId ?? "—"),
+    escapeHtml(row.cabinetSize ?? "—"),
+    escapeHtml(row.detail ?? "—")
+  ]);
+  if (rows.length === 0) {
+    return table(headers, [["—", "—", "—", "No Available, Reserved, or Pending Decommission rack positions in the confirmed snapshot."]], "dense");
+  }
+  return table(headers, rows, "dense");
 }
 
 function rackUnitTrendRows(data: ReportData): RackUnitCapacityRow[] {
@@ -104,7 +103,8 @@ function rackUnitTrendPage(data: ReportData): string {
   return '<section class="page"><h2>Rack Unit Capacity Six-Month Trend</h2><p class="note">' +
     escapeHtml(data.facility) + ' · ' + escapeHtml(formatMonth(data.reportingMonth)) +
     '</p>' + table(["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], renderedRows) +
-    '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p></section>';
+    '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p>' +
+    '<p class="note">' + escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE) + '</p></section>';
 }
 
 function rackUnitComparisonPage(data: ReportData): string {
@@ -138,7 +138,8 @@ function rackUnitComparisonPage(data: ReportData): string {
     table(["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], selectedRows) +
     '<h3>Six-Month Trend</h3>' +
     table(["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], trendRows) +
-    '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p></section>';
+    '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p>' +
+    '<p class="note">' + escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE) + '</p></section>';
 }
 function compactNumber(value: number, values: Array<number | null>): string {
   void values;

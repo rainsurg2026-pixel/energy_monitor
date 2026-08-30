@@ -1,5 +1,10 @@
 export type ReportStatus = "Complete" | "Partial" | "Validation warning";
 
+/** Product wording shared by the Rack Unit views and every CSV/XLSX/HTML/PDF
+ *  Rack Unit export. Must stay identical to the English string rendered by
+ *  `WebRackCapacityViews`/`WebSiteRackCapacityComparison`. */
+export const RACK_UNIT_CAPACITY_TREND_NOTE = "Rack Unit Capacity Trend Note: Available U represents physical rack space only; actual deployment capacity depends on power, cooling, weight, and contiguous space availability.";
+
 /** One persisted row from the "2. UPS Group History" worksheet. */
 export interface UpsGroupHistoryRow {
   facility: string;
