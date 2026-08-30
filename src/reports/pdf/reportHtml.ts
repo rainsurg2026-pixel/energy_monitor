@@ -1,5 +1,5 @@
 import type { EngineeringDashboardSnapshot, ReportComparisonFacility, ReportData, ReportMonthlyRow } from "../reportTypes";
-import { RACK_UNIT_CAPACITY_TREND_NOTE } from "../reportTypes";
+import { RACK_UNIT_CAPACITY_TREND_NOTE, type ComparisonMetric, type SiteComparisonReportModel } from "../reportTypes";
 import { formatNumber } from "../../utils/numberFormatBridge";
 import { formatTimestamp } from "../../utils";
 import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics, rackPositionExportRows } from "../../utils/rackCapacity";
@@ -10,6 +10,7 @@ import { getAccessibleTextColor } from "../../utils/colorContrast";
 import { findPreviousRackUnitCapacityRow, usagePercent } from "../../utils/rackUnitCapacity";
 import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
 import type { ReportSectionId } from "../../reporting/reportingTypes";
+import { isValidRackUnitCapacity, rackAvailabilityStatus } from "../../domain/rackComparison";
 
 const FONT_STACK = '"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif';
 
@@ -42,8 +43,12 @@ const REPORT_PALETTE = {
  *  embed a character-identical `<style>` body. Keeps its
  *  `${REPORT_PALETTE.*}` / `${FONT_STACK}` interpolations. */
 export const REPORT_CSS = `
-@page{size:A4 landscape;margin:0}*{box-sizing:border-box}html,body{margin:0;color:#243247;background:#fff;font:12px/1.3 ${FONT_STACK}}.cover,.page{width:1123px;min-height:794px;margin:0;background:#fff}.cover{padding:64px 72px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:34px;margin:0;color:#29415d}.cover h2{font-size:20px;font-weight:400;color:#7c6a68}.meta{margin-top:16px;border-top:1px solid #e6d9d2;padding-top:12px;color:#5f6f82}.page{page-break-before:always;padding:34px 40px 38px}.page h2{font-size:23px;margin:0 0 7px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:5px}.page h3{font-size:16px;color:#3e5874;margin:0 0 6px}.dashboard-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #e8d7d0;padding-bottom:8px}.dashboard-head h2{border:0;padding:0;margin:0}.dashboard-head p{margin:3px 0;color:#5f6f82}.eyebrow{font-size:9px!important;font-weight:bold;letter-spacing:1px;color:#a25e4c!important}.dashboard-tag{font-size:10px;text-align:right;color:#52687f;border-left:1px solid #e7d9d2;padding-left:12px}.continuation{font-size:10px;font-weight:bold;color:#68798a;border-bottom:1px solid #e7d9d2;padding-bottom:4px;margin-bottom:7px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:9px 0}.kpi{min-height:74px;padding:9px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:6px;break-inside:avoid}.kpi-label{font-size:10px;color:#67788b;text-transform:uppercase;font-weight:bold}.kpi-value{font-size:21px;font-weight:700;margin-top:5px;color:#29415d}.kpi-unit,.kpi-note,.note{font-size:10px;color:#64758a}.kpi-note{margin-top:3px}.block{margin:9px 0;padding:9px;border:1px solid #e7dcd6;border-radius:6px;break-inside:avoid}.capacity-health-page .block{margin:10px 0;padding:12px}.capacity-health-page .gauge-row{min-height:165px;gap:28px;align-items:center}.capacity-health-page .gauge-row svg{flex:0 0 auto}.capacity-health-page .heatmap-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.note{margin:6px 0 0}.table-wrap{margin:4px 0;overflow:hidden}table{border-collapse:collapse;width:100%;font-size:10px}th,td{padding:4px;border:1px solid #eadfda;text-align:right;vertical-align:top}td.left,th:first-child{text-align:left}th{background:#eee3dd;color:#40566e;font-weight:bold}.dense table{font-size:8.5px}.dense th,.dense td{padding:3px}.ups-comparison{display:grid;gap:7px;margin-top:8px}.ups-bar-row{display:grid;grid-template-columns:90px 1fr 52px;gap:8px;align-items:center;font-size:11px}.ups-bar-row strong{text-align:right}.ups-track{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden}.ups-track i{display:block;height:100%;border-radius:99px;background:${REPORT_PALETTE.ups}}.ups-track i.medium{background:${REPORT_PALETTE.rate}}.ups-track i.high{background:${REPORT_PALETTE.pue}}.trend-page{height:183mm;display:flex;flex-direction:column}.trend-page h2{font-size:26px;margin-bottom:2px}.chart-unit{margin:0 0 5px;color:#657488;font-size:12px}.trend-svg{width:100%;height:142mm;flex:1;overflow:visible}.grid{stroke:#dce4ea;stroke-width:1}.axis-tick,.month-label,.point-value{fill:#44566b;font-family:${FONT_STACK}}.axis-tick{font-size:20px}.month-label{font-size:19px}.point-value{font-size:19px;font-weight:bold}.chart-explanation{margin:2px 5mm 0;font-size:12px;color:#52687f;text-align:center}.trend-legend{display:flex;gap:18px;margin:0 0 4px}.trend-legend span{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#3e5874;font-weight:600}.trend-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}.rack-donut-row{display:flex;gap:16px;align-items:flex-start;margin-top:8px}.rack-comparison-donuts{display:flex;gap:32px;justify-content:center;margin:10px 0 16px}.rack-comparison-donut{text-align:center}.rack-comparison-donut h3{margin-bottom:4px}.rack-comparison-legend{display:flex;flex-direction:column;gap:3px;margin-top:8px;text-align:left}.legend-row{display:flex;align-items:center;gap:6px;font-size:10px;color:#3e5874}.legend-row i{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}.legend-row strong{margin-left:auto;font-weight:700}.rack-unit-capacity-image-figure{margin:8px 0 0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;max-width:100%}.rack-unit-capacity-image{display:block;width:auto;height:auto;max-width:100%;max-height:150px;object-fit:contain;border:1px solid #e7dcd6;border-radius:8px;box-shadow:0 1px 3px rgba(41,65,93,.12)}.rack-unit-capacity-image-caption{display:flex;flex-direction:column;gap:1px;margin-top:5px;font-size:9px;color:#657488}.rack-unit-capacity-image-placeholder{margin-top:8px;width:260px;height:150px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;border:1px dashed #cfc0b8;border-radius:8px;background:#f8f3f0;color:#8a7d78;font-size:10px}.gauge-row{display:flex;align-items:center;gap:20px;margin-top:6px}.gauge-caption{flex:1}.gauge-health-label{font-size:20px;font-weight:700;margin:0 0 4px}.heatmap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}.heatmap-tile{border-radius:8px;padding:8px}.heatmap-zone{font-size:12px;font-weight:700;margin:0}.heatmap-pct{font-size:18px;font-weight:700;margin:2px 0}.heatmap-detail{font-size:9px;margin:0;opacity:.9}.kpis-3col{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:9px 0}.rack-unit-capacity-layout{display:flex;gap:16px;align-items:stretch;margin-top:4px}.rack-unit-capacity-layout .ruc-left{flex:3;min-width:0}.rack-unit-capacity-layout .ruc-right{flex:2;min-width:0;display:flex;align-items:center;justify-content:center}.rack-unit-capacity-layout .rack-unit-capacity-image-figure,.rack-unit-capacity-layout .rack-unit-capacity-image-placeholder{width:100%;max-width:100%;height:auto;min-height:90mm}.rack-unit-capacity-layout .rack-unit-capacity-image{max-width:100%;max-height:82mm;width:auto;height:auto}
+@page{size:A4 landscape;margin:0}*{box-sizing:border-box}html,body{margin:0;color:#243247;background:#fff;font:12px/1.3 ${FONT_STACK}}.cover,.page{width:1123px;min-height:794px;margin:0;background:#fff}.cover{padding:64px 72px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:34px;margin:0;color:#29415d}.cover h2{font-size:20px;font-weight:400;color:#7c6a68}.meta{margin-top:16px;border-top:1px solid #e6d9d2;padding-top:12px;color:#5f6f82}.page{page-break-before:always;padding:34px 40px 38px}.page h2{font-size:23px;margin:0 0 7px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:5px}.page h3{font-size:16px;color:#3e5874;margin:0 0 6px}.dashboard-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #e8d7d0;padding-bottom:8px}.dashboard-head h2{border:0;padding:0;margin:0}.dashboard-head p{margin:3px 0;color:#5f6f82}.eyebrow{font-size:9px!important;font-weight:bold;letter-spacing:1px;color:#a25e4c!important}.dashboard-tag{font-size:10px;text-align:right;color:#52687f;border-left:1px solid #e7d9d2;padding-left:12px}.continuation{font-size:10px;font-weight:bold;color:#68798a;border-bottom:1px solid #e7d9d2;padding-bottom:4px;margin-bottom:7px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:9px 0}.kpi{min-height:74px;padding:9px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:6px;break-inside:avoid}.kpi-label{font-size:10px;color:#67788b;text-transform:uppercase;font-weight:bold}.kpi-value{font-size:21px;font-weight:700;margin-top:5px;color:#29415d}.kpi-unit,.kpi-note,.note{font-size:10px;color:#64758a}.kpi-note{margin-top:3px}.block{margin:9px 0;padding:9px;border:1px solid #e7dcd6;border-radius:6px;break-inside:avoid}.capacity-health-page .block{margin:10px 0;padding:12px}.capacity-health-page .gauge-row{min-height:165px;gap:28px;align-items:center}.capacity-health-page .gauge-row svg{flex:0 0 auto}.capacity-health-page .heatmap-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.note{margin:6px 0 0}.table-wrap{margin:4px 0;overflow:hidden}table{border-collapse:collapse;width:100%;font-size:10px}th,td{padding:4px;border:1px solid #eadfda;text-align:right;vertical-align:top}td.left,th:first-child{text-align:left}th{background:#eee3dd;color:#40566e;font-weight:bold}.dense table{font-size:8.5px}.dense th,.dense td{padding:3px}.ups-comparison{display:grid;gap:7px;margin-top:8px}.ups-bar-row{display:grid;grid-template-columns:90px 1fr 52px;gap:8px;align-items:center;font-size:11px}.ups-bar-row strong{text-align:right}.ups-track{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden}.ups-track i{display:block;height:100%;border-radius:99px;background:${REPORT_PALETTE.ups}}.ups-track i.medium{background:${REPORT_PALETTE.rate}}.ups-track i.high{background:${REPORT_PALETTE.pue}}.trend-page{height:183mm;display:flex;flex-direction:column}.trend-page h2{font-size:26px;margin-bottom:2px}.chart-unit{margin:0 0 5px;color:#657488;font-size:12px}.trend-svg{width:100%;height:142mm;flex:1;overflow:visible}.grid{stroke:#dce4ea;stroke-width:1}.axis-tick,.month-label,.point-value{fill:#44566b;font-family:${FONT_STACK}}.axis-tick{font-size:20px}.month-label{font-size:19px}.point-value{font-size:19px;font-weight:bold}.chart-explanation{margin:2px 5mm 0;font-size:12px;color:#52687f;text-align:center}.trend-legend{display:flex;gap:18px;margin:0 0 4px}.trend-legend span{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#3e5874;font-weight:600}.trend-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}.rack-donut-row{display:flex;gap:16px;align-items:flex-start;margin-top:8px}.rack-comparison-donuts{display:flex;gap:32px;justify-content:center;margin:10px 0 16px}.rack-comparison-donut{text-align:center}.rack-comparison-donut h3{margin-bottom:4px}.rack-comparison-legend{display:flex;flex-direction:column;gap:3px;margin-top:8px;text-align:left}.legend-row{display:flex;align-items:center;gap:6px;font-size:10px;color:#3e5874}.legend-row i{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}.legend-row strong{margin-left:auto;font-weight:700}.rack-unit-capacity-image-figure{margin:8px 0 0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;max-width:100%}.rack-unit-capacity-image{display:block;width:auto;height:auto;max-width:100%;max-height:150px;object-fit:contain;border:1px solid #e7dcd6;border-radius:8px;box-shadow:0 1px 3px rgba(41,65,93,.12)}.rack-unit-capacity-image-caption{display:flex;flex-direction:column;gap:1px;margin-top:5px;font-size:9px;color:#657488}.rack-unit-capacity-image-placeholder{margin-top:8px;width:260px;height:150px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;border:1px dashed #cfc0b8;border-radius:8px;background:#f8f3f0;color:#8a7d78;font-size:10px}.gauge-row{display:flex;align-items:center;gap:20px;margin-top:6px}.gauge-caption{flex:1}.gauge-health-label{font-size:20px;font-weight:700;margin:0 0 4px}.heatmap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}.heatmap-tile{border-radius:8px;padding:8px}.heatmap-zone{font-size:12px;font-weight:700;margin:0}.heatmap-pct{font-size:18px;font-weight:700;margin:2px 0}.heatmap-detail{font-size:9px;margin:0;opacity:.9}.kpis-3col{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:9px 0}.rack-unit-capacity-layout{display:flex;gap:16px;align-items:stretch;margin-top:4px}.rack-unit-capacity-layout .ruc-left{flex:3;min-width:0}.rack-unit-capacity-layout .ruc-right{flex:2;min-width:0;display:flex;align-items:center;justify-content:center}.rack-unit-capacity-layout .rack-unit-capacity-image-figure,.rack-unit-capacity-layout .rack-unit-capacity-image-placeholder{width:100%;max-width:100%;height:auto;min-height:90mm}.rack-unit-capacity-layout .rack-unit-capacity-image{max-width:100%;max-height:82mm;width:auto;height:auto}.facility-band{display:flex;align-items:center;justify-content:center;text-align:center}.facility-band h2{font-size:34px;border:0;margin:0;color:#29415d}
 `;
+
+export function facilityBandPage(facilityName: string): string {
+  return `<section class="page facility-band" data-report-section="facility-header"><h2>Facility: ${escapeHtml(facilityName)}</h2></section>`;
+}
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -662,6 +667,114 @@ function comparisonRow(facility: ReportComparisonFacility): string[] {
     format2(facility.averageRateThbPerKwh),
     facility.floorSharePercent === null ? "—" : `${format2(facility.floorSharePercent)}%`
   ];
+}
+
+
+function crossSiteEnergyPages(model: SiteComparisonReportModel): string {
+  const rows = model.months.map(month => ({ month } as ReportMonthlyRow));
+  const seriesFor = (pick: (metric: ComparisonMetric) => number | null): TrendSeries[] => model.sites.map(site => ({
+    name: comparisonFacilityLabel(site.label),
+    color: siteColour(site.label),
+    values: model.months.map(month => {
+      const metric = site.metricsByMonth[month];
+      return metric ? pick(metric) : null;
+    })
+  }));
+  const charts =
+    trendPage("Total Building Energy Consumption Trend", "kWh", seriesFor(metric => metric.buildingEnergy), rows, "Whole-building monthly energy per site for the selected window.", "SITE COMPARISON", "site-energy-comparison") +
+    trendPage("4th Floor Energy Consumption Trend", "kWh", seriesFor(metric => metric.floorEnergy), rows, "4th Floor monthly energy per site.", "SITE COMPARISON", "site-energy-comparison") +
+    trendPage("Total Building Electricity Cost Trend", "THB", seriesFor(metric => metric.buildingCost), rows, "Whole-building monthly electricity cost per site.", "SITE COMPARISON", "site-energy-comparison") +
+    trendPage("Estimated 4th Floor Electricity Cost Trend", "THB", seriesFor(metric => metric.floorCost), rows, "Estimated 4th Floor electricity cost per site.", "SITE COMPARISON", "site-energy-comparison");
+  const tableRows = model.sites.map(site => {
+    const metric = site.metrics;
+    return [escapeHtml(comparisonFacilityLabel(site.label)), format2(metric?.buildingEnergy), format2(metric?.buildingCost), format2(metric?.floorEnergy), format2(metric?.floorCost), format2(metric?.avgRate), metric?.floorShare == null ? "—" : `${format2(metric.floorShare)}%`];
+  });
+  return charts + `<section class="page" data-report-section="site-energy-comparison"><h2>Site Energy &amp; Cost Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(model.referenceMonth))}</p>${table(["Facility", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "Estimated 4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], tableRows)}</section>`;
+}
+
+function crossSiteRackSummaryPage(model: SiteComparisonReportModel): string {
+  const rows = model.sites.map(site => {
+    if (!site.rack) return [escapeHtml(comparisonFacilityLabel(site.label)), "Unavailable", "—", "—", "—", "—", "—", "Unavailable"];
+    const metrics = calculateRackCapacityMetrics(site.rack.records);
+    return [escapeHtml(comparisonFacilityLabel(site.label)), formatInteger(metrics.available.count), formatInteger(metrics.total), formatInteger(metrics.inUse.count), formatInteger(metrics.reserved.count), formatInteger(metrics.pendingDismantle.count), formatRatioPercent1(metrics.available.ratio), rackAvailabilityStatus(metrics.available.count, metrics.total)];
+  });
+  return `<section class="page" data-report-section="site-rack-comparison"><h2>Site Rack Capacity &amp; Availability Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(model.referenceMonth))}. Missing confirmed snapshots are shown as Unavailable and are never treated as zero capacity.</p>${table(["Facility", "Available Now", "Total Racks", "In Use", "Reserved", "Pending Decommission", "Availability %", "Status"], rows)}</section>`;
+}
+
+function crossSiteRackZonePage(model: SiteComparisonReportModel): string {
+  const availableSites = model.sites.filter(site => site.rack !== null);
+  if (availableSites.length === 0) return "";
+  const metricsBySite = availableSites.map(site => ({ site, metrics: calculateRackCapacityMetrics(site.rack!.records) }));
+  const maxZoneTotal = Math.max(1, ...metricsBySite.flatMap(item => item.metrics.zoneMetrics.map(zone => zone.total)));
+  const blocks = metricsBySite.map(({ site, metrics }) => {
+    const zones = metrics.zoneMetrics.map(zone => {
+      const outerWidth = Math.max(5, zone.total / maxZoneTotal * 100);
+      const segment = (count: number, color: string) => `<i style="display:block;height:100%;width:${zone.total > 0 ? count / zone.total * 100 : 0}%;background:${color}"></i>`;
+      const bar = `<div style="height:14px;width:${outerWidth}%;min-width:80px;display:flex;overflow:hidden;border-radius:7px;background:#edf1f5">${segment(zone.inUse.count, REPORT_PALETTE.rackInUse)}${segment(zone.available.count, REPORT_PALETTE.rackAvailable)}${segment(zone.reserved.count, REPORT_PALETTE.rackReserved)}${segment(zone.pendingDismantle.count, REPORT_PALETTE.rackPending)}</div>`;
+      return `<div style="display:grid;grid-template-columns:120px 1fr 70px;gap:10px;align-items:center;margin:7px 0"><strong>${escapeHtml(zone.zone)}</strong>${bar}<span>${formatInteger(zone.total)} racks</span></div>`;
+    }).join("");
+    return `<article class="block"><h3>${escapeHtml(comparisonFacilityLabel(site.label))}</h3>${zones || '<p class="note">No rack zones are available.</p>'}</article>`;
+  }).join("");
+  return `<section class="page" data-report-section="site-rack-comparison"><h2>Rack Capacity by Zone</h2><p class="note">Bar width uses one shared scale across sites; segments show In Use, Available, Reserved, and Pending Decommission.</p>${blocks}</section>`;
+}
+
+function crossSiteRackDetailPages(model: SiteComparisonReportModel): string {
+  return model.sites.filter(site => site.rack !== null).map(site => {
+    const metrics = calculateRackCapacityMetrics(site.rack!.records);
+    const rows = metrics.zoneMetrics.map(zone => [escapeHtml(zone.zone), formatInteger(zone.total), formatInteger(zone.inUse.count), formatInteger(zone.available.count), formatInteger(zone.reserved.count), formatInteger(zone.pendingDismantle.count)]);
+    return `<section class="page" data-report-section="site-rack-comparison"><h2>Rack Capacity Details — ${escapeHtml(comparisonFacilityLabel(site.label))}</h2>${table(["Zone", "Total", "In Use", "Available", "Reserved", "Pending Decommission"], rows)}</section>`;
+  }).join("");
+}
+
+function crossSiteRackPositionPages(model: SiteComparisonReportModel): string {
+  const statuses = ["Available", "Reserved", "Pending Decommission"] as const;
+  return model.sites.filter(site => site.rack !== null).map(site => {
+    const rows = rackPositionExportRows(site.rack!.records);
+    const groups = statuses.map(status => {
+      const tableRows = rows.filter(row => row.status === status).map(row => [escapeHtml(row.rackId ?? "—"), escapeHtml(row.cabinetSize ?? "—"), escapeHtml(row.detail ?? "—")]);
+      return `<article class="block"><h3>${status}</h3>${tableRows.length ? table(["Rack ID", "Cabinet Size (cm)", "Detail"], tableRows) : '<p class="note">No positions.</p>'}</article>`;
+    }).join("");
+    return `<section class="page" data-report-section="site-rack-comparison"><h2>Rack Positions — ${escapeHtml(comparisonFacilityLabel(site.label))}</h2>${groups}</section>`;
+  }).join("");
+}
+
+function crossSiteRackUnitPage(model: SiteComparisonReportModel): string {
+  const currentRows: string[][] = [];
+  const trendRows: string[][] = [];
+  const excluded: string[] = [];
+  for (const site of model.sites) {
+    const validRows = [...site.rackUnit]
+      .filter(row => row.month <= model.referenceMonth)
+      .sort((left, right) => left.month.localeCompare(right.month))
+      .filter(row => {
+        const valid = isValidRackUnitCapacity(row.totalU, row.usedU) && Number.isFinite(row.availableU) && row.availableU >= 0;
+        if (!valid) excluded.push(`${comparisonFacilityLabel(site.label)} ${row.month}`);
+        return valid;
+      });
+    const current = validRows.find(row => row.month === model.referenceMonth);
+    if (current) {
+      const usage = current.totalU > 0 ? current.usedU / current.totalU * 100 : null;
+      const availability = current.totalU > 0 ? current.availableU / current.totalU : null;
+      currentRows.push([escapeHtml(comparisonFacilityLabel(site.label)), formatInteger(current.totalU), formatInteger(current.usedU), formatInteger(current.availableU), formatUsagePercent1(usage), formatRatioPercent1(availability)]);
+    }
+    for (const row of validRows.slice(-6)) {
+      const usage = row.totalU > 0 ? row.usedU / row.totalU * 100 : null;
+      const availability = row.totalU > 0 ? row.availableU / row.totalU : null;
+      trendRows.push([escapeHtml(comparisonFacilityLabel(site.label)), escapeHtml(formatMonth(row.month)), formatInteger(row.totalU), formatInteger(row.usedU), formatInteger(row.availableU), formatUsagePercent1(usage), formatRatioPercent1(availability)]);
+    }
+  }
+  if (currentRows.length === 0 && trendRows.length === 0 && excluded.length === 0) return "";
+  const excludedNote = excluded.length ? `<p class="note">Excluded invalid Rack Unit rows: ${escapeHtml(excluded.join(", "))}.</p>` : "";
+  return `<section class="page" data-report-section="site-rack-comparison"><h2>Rack Unit Capacity Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(model.referenceMonth))}</p>${currentRows.length ? table(["Facility", "Total U", "Used U", "Available U", "Usage %", "Availability %"], currentRows) : '<p class="note">No valid Rack Unit Capacity row is available for the reference month.</p>'}<h3>Six-Month Trend</h3>${trendRows.length ? table(["Site", "Month", "Total U", "Used U", "Available U", "Usage %", "Availability %"], trendRows) : '<p class="note">No valid Rack Unit Capacity trend rows are available.</p>'}${excludedNote}<p class="note">${escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE)}</p></section>`;
+}
+
+function crossSiteRackPages(model: SiteComparisonReportModel): string {
+  return crossSiteRackSummaryPage(model) + crossSiteRackZonePage(model) + crossSiteRackDetailPages(model) + crossSiteRackPositionPages(model) + crossSiteRackUnitPage(model);
+}
+
+export function buildCrossSiteComparisonPages(model: SiteComparisonReportModel, sections?: readonly ReportSectionId[]): string {
+  const body = crossSiteEnergyPages(model) + crossSiteRackPages(model);
+  return sections !== undefined ? filterReportBodySections(body, sections) : body;
 }
 
 function filterReportBodySections(body: string, selectedSections: readonly ReportSectionId[]): string {

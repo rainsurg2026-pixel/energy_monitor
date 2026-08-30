@@ -89,14 +89,14 @@ assert.match(exportsSource, /export function buildAllFacilitiesCsv\(/);
 assert.match(exportsSource, /export function buildSiteComparisonCsv\(/);
 
 // buildAllFacilitiesReportHtml is now DOM-free (no DOMParser): one shared
-// REPORT_CSS block, a per-facility cover + body-page sequence, page-break-joined.
+// REPORT_CSS block, one shared cover, a facility-band + body-page sequence, and one N-site cross-site block.
 const allFacilitiesFn = exportsSource.slice(
   exportsSource.indexOf("export function buildAllFacilitiesReportHtml("),
   exportsSource.indexOf("export async function exportAllFacilitiesPdf("),
 );
-assert.match(allFacilitiesFn, /reportCoverMain\(data\) \+ buildReportBodyPages\(data, sections\)/);
+assert.match(allFacilitiesFn, /facilityBandPage\(facility\.siteName\) \+ buildReportBodyPages\(data, sections\)/);
+assert.match(allFacilitiesFn, /buildCrossSiteComparisonPages\(comparison, sections\)/);
 assert.match(allFacilitiesFn, /<style>\$\{REPORT_CSS\}<\/style>/);
 assert.doesNotMatch(allFacilitiesFn, /new DOMParser\(\)/);
-assert.match(exportsSource, /page-break-before:always/);
 
 console.log("web-clean-v1 export feedback: per-action busy/success/error, scope-driven Live Preview, and shared report model verified");

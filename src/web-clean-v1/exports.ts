@@ -3,8 +3,9 @@ import { buildCombinedCsv } from "../utils/exportData";
 import { calculateEnergyCostForMonth } from "../domain/energyCost";
 import { calculateRackCapacityMetrics, rackPositionExportRows } from "../domain/rackCapacity";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
-import { buildReportHtml, buildReportBodyPages, reportCoverMain, REPORT_CSS } from "../reports/pdf/reportHtml";
-import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord, UpsGroupHistoryReport } from "../reports/reportTypes";
+import { buildCrossSiteComparisonPages, buildReportHtml, buildReportBodyPages, facilityBandPage, REPORT_CSS } from "../reports/pdf/reportHtml";
+import type { ComparisonMetric, ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord, SiteComparisonReportModel, SiteComparisonReportSite, UpsGroupHistoryReport } from "../reports/reportTypes";
+export type { ComparisonMetric, SiteComparisonReportModel, SiteComparisonReportSite } from "../reports/reportTypes";
 import { RACK_UNIT_CAPACITY_TREND_NOTE } from "../reports/reportTypes";
 import { deriveRackCapacityReport } from "../reports/rackCapacityReportBuilder";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
@@ -16,6 +17,10 @@ import type { ReportSectionId } from "../reporting/reportingTypes";
 import { addInteractiveDashboard, injectInteractiveDashboardCharts, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
 
 const workbookDashboardPlans = new WeakMap<object, ExcelDashboardPlan[]>();
+
+function escapeHtmlLocal(value: unknown): string {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 
 export interface ExportRackUnitImageMetadata {
   reportingMonth: string;
@@ -90,15 +95,6 @@ export function rackReportFromSnapshot(response: RackSnapshotApiResponse | null)
   return deriveRackCapacityReport(records, "Rack Capacity", "Table7", snapshot.month, []);
 }
 
-export interface ComparisonMetric {
-  buildingEnergy: number | null;
-  buildingCost: number | null;
-  floorEnergy: number | null;
-  floorCost: number | null;
-  avgRate: number | null;
-  floorShare: number | null;
-}
-
 export interface ComparisonSite {
   site: { id: number; code: string; name: string };
   months: Array<{ month: string; metrics: ComparisonMetric | null }>;
@@ -111,21 +107,6 @@ export interface SiteComparisonExport {
     rack?: RackCapacityReport | null;
     rackUnitCapacity?: Array<{ month: string; totalU: number; usedU: number; availableU: number; usagePercent?: number | null; availabilityPct?: number | null; imageAttached?: boolean; imageContentType?: "image/png" | "image/jpeg" | null; imageSavedAt?: string | null }>;
   }>;
-}
-
-export interface SiteComparisonReportSite {
-  label: string;
-  siteCode: string;
-  metrics: ComparisonMetric | null;
-  metricsByMonth: Record<string, ComparisonMetric | null>;
-  rack: RackCapacityReport | null;
-  rackUnit: Array<{ month: string; totalU: number; usedU: number; availableU: number;
-                    usagePercent: number | null; availabilityPct: number | null }>;
-}
-export interface SiteComparisonReportModel {
-  referenceMonth: string;
-  months: string[];
-  sites: SiteComparisonReportSite[];
 }
 
 /** The single N-site comparison shape consumed identically by the HTML/PDF
@@ -664,18 +645,6 @@ function siteComparisonSectionsFromModel(model: SiteComparisonReportModel): Expo
   return siteComparisonExportSections(modelAsSiteComparisonExport(model), model.referenceMonth);
 }
 
-/** Reuse the existing 2-site comparison report body, then re-tag its comparison
- *  pages with data-report-section so Phase 2's attribute filter keeps them. */
-function crossSiteReportPagesAdapter(model: SiteComparisonReportModel): string {
-  const view = modelAsSiteComparisonExport(model);
-  const [primary, secondary] = model.sites;
-  const full = buildReportHtml(buildTwoSiteComparisonReportData(view, model.referenceMonth, primary?.rack ?? null, secondary?.rack ?? null));
-  const bodyStart = full.indexOf("</main>") + "</main>".length;
-  const scriptStart = full.indexOf('<script>document.body.dataset.reportReady="true";</script>');
-  return full.slice(bodyStart, scriptStart)
-    .replace(/<section class="page"/g, '<section class="page" data-report-section="site-energy-comparison"');
-}
-
 function comparisonWorksheetRows(section: ExportTableSection): unknown[][] {
   return section.rows.map(row => row.map((value, index) => {
     if (section.name === "SITE_COMPARISON" && index >= 3 && index <= 8 && typeof value === "string" && value !== "") return Number(value);
@@ -927,93 +896,6 @@ export async function exportDesktopPdf(logs: MonthlyLog[], siteName: string, sel
 
 
 
-function comparisonRow(site: ComparisonSite, referenceMonth: string) {
-  const metrics = site.months.find(entry => entry.month === referenceMonth)?.metrics ?? null;
-  return {
-    label: site.site.name,
-    month: referenceMonth,
-    buildingEnergyKwh: metrics?.buildingEnergy ?? null,
-    buildingCostThb: metrics?.buildingCost ?? null,
-    floorEnergyKwh: metrics?.floorEnergy ?? null,
-    floorCostThb: metrics?.floorCost ?? null,
-    averageRateThbPerKwh: metrics?.avgRate ?? null,
-    floorSharePercent: metrics?.floorShare ?? null
-  };
-}
-
-function comparisonTrend(site: ComparisonSite, months: string[]): ReportMonthlyRow[] {
-  return months.map(month => {
-    const metrics = site.months.find(entry => entry.month === month)?.metrics ?? null;
-    return {
-      month,
-      buildingEnergyKwh: metrics?.buildingEnergy ?? null,
-      buildingCostThb: metrics?.buildingCost ?? null,
-      floorEnergyKwh: metrics?.floorEnergy ?? null,
-      floorCostThb: metrics?.floorCost ?? null,
-      averageRateThbPerKwh: metrics?.avgRate ?? null,
-      floorSharePercent: metrics?.floorShare ?? null,
-      upsEnergyKwh: null,
-      airEnergyKwh: null,
-      dcEnergyKwh: null,
-      status: metrics ? "Complete" : "Partial"
-    };
-  });
-}
-
-
-function comparisonRackUnitRowsForReport(site: SiteComparisonExport["sites"][number]): RackUnitCapacityRow[] {
-  return (site.rackUnitCapacity ?? []).map(row => ({
-    month: row.month,
-    totalU: row.totalU,
-    usedU: row.usedU,
-    availableU: row.availableU,
-    availabilityPct: row.availabilityPct ?? (row.totalU > 0 ? row.availableU / row.totalU : null)
-  }));
-}
-
-function comparisonRackUnitReport(data: SiteComparisonExport): ReportData["rackUnitComparison"] {
-  return {
-    sites: data.sites.map(site => ({ label: site.site.name, rows: comparisonRackUnitRowsForReport(site) }))
-  };
-}
-
-function buildTwoSiteComparisonReportData(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): ReportData {
-  const [primary, secondary] = data.sites;
-  if (!primary) throw new Error("No facilities are available for comparison.");
-  const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
-  return {
-    title: "Data Center Energy & Facility Monitor Site Comparison",
-    thaiSubtitle: "รายงานเปรียบเทียบการใช้พลังงานระหว่างไซต์",
-    facility: "All Facilities",
-    sourceWorkbook: "Supabase PostgreSQL",
-    generatedAt: new Date().toISOString(),
-    appVersion: "2.3.1 Web Clean v1",
-    reportingMonth: referenceMonth,
-    historicalStart: trendMonths[0] ?? null,
-    historicalEnd: trendMonths.at(-1) ?? null,
-    status: "Complete",
-    validationWarnings: [],
-    monthlyRows: comparisonTrend(primary, trendMonths),
-    currentRow: null,
-    engineeringDashboard: null,
-    rack: null,
-    rackHistory: [],
-    rackUnitCapacity: comparisonRackUnitRowsForReport(primary),
-    rackUnitCapacityImageDataUri: null,
-    rackUnitCapacityImageMeta: null,
-    comparison: {
-      self: comparisonRow(primary, referenceMonth),
-      other: secondary ? comparisonRow(secondary, referenceMonth) : null,
-      selfTrend: comparisonTrend(primary, trendMonths),
-      otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
-    },
-    rackComparison: (selfRack ?? primary.rack) ? { self: { label: primary.site.name, records: (selfRack ?? primary.rack)!.records }, other: secondary && (otherRack ?? secondary.rack) ? { label: secondary.site.name, records: (otherRack ?? secondary.rack)!.records } : null } : null,
-    rackUnitComparison: comparisonRackUnitReport(data)
-  };
-}
-
-
-
 export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[], extras: ReportDataExtras = {}): void {
   const html = buildReportHtml(facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs, extras), sections);
   download(html, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.html`, "text/html;charset=utf-8");
@@ -1030,11 +912,14 @@ export function exportAllFacilitiesHtml(facilities: ExportFacility[], comparison
  *  never a duplicate table generation. */
 export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, sections?: readonly ReportSectionId[]): string {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
+  const sites = facilities.map(facility => escapeHtmlLocal(facility.siteName)).join(", ");
+  const cover = `<main class="cover"><h1>Data Center Energy &amp; Facility Monitor</h1><h2>All Facilities Report</h2><div class="meta">Facility: All Facilities<br>Reporting month: ${escapeHtmlLocal(selectedMonth)}<br>Sites: ${sites}</div></main>`;
   const perFacility = facilities.map(facility => {
     const data = reportDataFromFacility(facility, selectedMonth);
-    return reportCoverMain(data) + buildReportBodyPages(data, sections);
-  }).join("<div style=\"page-break-before:always\"></div>");
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy &amp; Facility Monitor All Facilities</title><style>${REPORT_CSS}</style></head><body>${perFacility}${comparison ? crossSiteReportPagesAdapter(comparison) : ""}<script>document.body.dataset.reportReady="true";</script></body></html>`;
+    return facilityBandPage(facility.siteName) + buildReportBodyPages(data, sections);
+  }).join("");
+  const cross = comparison ? buildCrossSiteComparisonPages(comparison, sections) : "";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>All Facilities Report</title><style>${REPORT_CSS}</style></head><body>${cover}${perFacility}${cross}<script>document.body.dataset.reportReady="true";</script></body></html>`;
 }
 
 /** Generates one real PDF download containing one report per facility. */

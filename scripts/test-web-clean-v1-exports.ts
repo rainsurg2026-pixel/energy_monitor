@@ -568,7 +568,8 @@ for (const sourceCase of [
   const allHtml = buildAllFacilitiesReportHtml(two, null, "2026-06");
   check("buildAllFacilitiesReportHtml runs DOM-free in node", allHtml.includes("<!doctype"));
   check("one style block", (allHtml.match(/<style>/g) ?? []).length === 1);
-  check("per-facility cover retained (2 covers)", (allHtml.match(/<main class="cover">/g) ?? []).length === 2);
+  check("All Facilities has one shared cover", (allHtml.match(/<main class="cover">/g) ?? []).length === 1);
+  check("All Facilities has one facility band per site", (allHtml.match(/data-report-section="facility-header"/g) ?? []).length === 2);
   check("no DOMParser leftovers in output", !allHtml.includes("[object"));
 }
 
