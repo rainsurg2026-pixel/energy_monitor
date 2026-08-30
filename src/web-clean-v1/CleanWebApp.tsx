@@ -766,7 +766,7 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
         return {
           ...item,
           rack: rackReportFromSnapshot(rackResponse),
-          months: item.months.filter(value => selectedReportMonthSet.has(value)),
+          months: item.months.filter(entry => selectedReportMonthSet.has(entry.month)),
           rackUnitCapacity: item.rackUnitCapacity?.map(row => ({ ...row, availabilityPct: row.availabilityPct ?? (row.totalU > 0 ? row.availableU / row.totalU : null) }))
         };
       }));

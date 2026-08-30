@@ -101,6 +101,13 @@ assert.match(rackViewsSource, /<RackCapacityProvider key=\{`\$\{siteName \?\? ""
 // 7. Export/report path is untouched and shares the same underlying loader.
 assert.match(reportPreviewSource, /loadWebRackUnitCapacityImage\(siteId, month\)\.catch\(\(\) => null\)/);
 assert.match(reportPreviewSource, /rackUnitCapacityImageDataUri: rackUnitImage\?\.dataUri \?\? null/);
+
+// Site Energy & Cost Comparison export: the per-site rows are { month, metrics }
+// objects and must be filtered on `.month`, never compared whole against the
+// Set<string> of selected months (has(row) is always false and blanked every
+// energy/cost value across CSV/Excel/HTML/PDF).
+assert.match(appSource, /months: item\.months\.filter\(entry => selectedReportMonthSet\.has\(entry\.month\)\)/);
+assert.doesNotMatch(appSource, /item\.months\.filter\(value => selectedReportMonthSet\.has\(value\)\)/);
 assert.match(exportSource, /import\("html2canvas"\)/);
 assert.match(exportSource, /import\("jspdf"\)/);
 assert.match(exportSource, /scale: PDF_RENDER_SCALE/);

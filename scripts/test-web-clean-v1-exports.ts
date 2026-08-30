@@ -399,6 +399,42 @@ const comparisonUnitSheet = comparisonWorkbook.worksheets.find(sheet => sheet.na
 const comparisonUnitRow = comparisonUnitSheet?.getSheetValues().find(row => Array.isArray(row) && row[2] === "2026-06") as unknown[] | undefined;
 check("Site Comparison XLSX retains Rack Unit KPI values as numeric cells", typeof comparisonUnitRow?.[3] === "number" && comparisonUnitRow?.[3] === 9963 && comparisonUnitRow?.[4] === 7407 && comparisonUnitRow?.[5] === 2556);
 check("Site Comparison HTML/PDF contains the Rack Unit comparison and deployable positions", buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("Rack Unit Capacity Comparison") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("Rack Positions") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("A-02") && buildSiteComparisonReportHtml(completeComparison, "2026-06").includes("B-01"));
+
+// ── Regression: Site Energy & Cost Comparison per-site month filter ─────────
+// sites[].months holds { month, metrics } objects. loadComparison must filter
+// them on entry.month; comparing the objects against the Set<string> of
+// selected months (has(row)) is always false and silently blanks every
+// energy/cost value in CSV / Excel / HTML / PDF.
+const comparisonSelectedMonths = new Set(["2026-06"]);
+const comparisonTwoMonths: SiteComparisonExport = {
+  displayPeriod: { startMonth: "2026-05", endMonth: "2026-06" },
+  months: ["2026-05", "2026-06"],
+  sites: completeComparison.sites.map(site => ({
+    ...site,
+    months: [
+      { month: "2026-05", metrics: { buildingEnergy: 11, buildingCost: 22, floorEnergy: 33, floorCost: 44, avgRate: 5, floorShare: 6 } },
+      { month: "2026-06", metrics: { buildingEnergy: 100, buildingCost: 500, floorEnergy: 50, floorCost: 250, avgRate: 5, floorShare: 50 } }
+    ]
+  }))
+};
+const filterComparisonSites = (predicate: (entry: { month: string; metrics: unknown }) => boolean): SiteComparisonExport => ({
+  ...comparisonTwoMonths,
+  months: comparisonTwoMonths.months.filter(month => comparisonSelectedMonths.has(month)),
+  sites: comparisonTwoMonths.sites.map(site => ({ ...site, months: site.months.filter(predicate) }))
+});
+const monthFieldFiltered = filterComparisonSites(entry => comparisonSelectedMonths.has(entry.month));
+const objectFiltered = filterComparisonSites(entry => (comparisonSelectedMonths as Set<unknown>).has(entry));
+const monthFieldRow = siteComparisonExportSections(monthFieldFiltered, "2026-06").find(section => section.name === "SITE_COMPARISON")!.rows[0];
+const objectFilteredRow = siteComparisonExportSections(objectFiltered, "2026-06").find(section => section.name === "SITE_COMPARISON")!.rows[0];
+check("Site Comparison keeps the selected month's energy/cost metrics when filtering on entry.month", monthFieldRow[3] === "100.00" && monthFieldRow[4] === "500.00" && monthFieldRow[5] === "50.00" && monthFieldRow[6] === "250.00" && monthFieldRow[7] === "5.00" && monthFieldRow[8] === "50.00");
+check("Site Comparison excludes non-selected months (2026-05 metrics never surface for a 2026-06 reference)", siteComparisonExportSections(monthFieldFiltered, "2026-05").find(section => section.name === "SITE_COMPARISON")!.rows.every(row => row[3] === "" && row[4] === ""));
+check("filtering the { month, metrics } rows against the raw month-string set blanks every metric (documents the defect)", objectFilteredRow.slice(3).every(cell => cell === ""));
+const comparisonFixedCsv = buildSiteComparisonCsv(monthFieldFiltered, "2026-06");
+const comparisonFixedHtml = buildSiteComparisonReportHtml(monthFieldFiltered, "2026-06");
+const comparisonFixedWorkbook = await workbookForSiteComparison(monthFieldFiltered, "2026-06");
+const comparisonEnergySheet = comparisonFixedWorkbook.worksheets.find(sheet => sheet.name === "Site Comparison");
+const comparisonEnergyRow = comparisonEnergySheet?.getSheetValues().find(row => Array.isArray(row) && row.includes(completeComparison.sites[0].site.name)) as unknown[] | undefined;
+check("Site Comparison CSV / XLSX / HTML+PDF builders all receive the selected month's building-energy value", comparisonFixedCsv.includes("100.00") && comparisonFixedHtml.includes("100.00") && comparisonEnergyRow !== undefined && comparisonEnergyRow.includes(100) && comparisonEnergyRow.includes(500));
 // ============================================================
 // Desktop-source acceptance gate: build the actual Web Excel export from the
 // two Desktop workbooks and their external Rack Unit image stores. This is a
