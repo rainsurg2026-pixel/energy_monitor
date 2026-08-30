@@ -3,7 +3,7 @@ import { buildCombinedCsv } from "../utils/exportData";
 import { calculateEnergyCostForMonth } from "../domain/energyCost";
 import { calculateRackCapacityMetrics, rackPositionExportRows } from "../domain/rackCapacity";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
-import { buildReportHtml } from "../reports/pdf/reportHtml";
+import { buildReportHtml, buildReportBodyPages, reportCoverMain, REPORT_CSS } from "../reports/pdf/reportHtml";
 import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord, UpsGroupHistoryReport } from "../reports/reportTypes";
 import { RACK_UNIT_CAPACITY_TREND_NOTE } from "../reports/reportTypes";
 import { deriveRackCapacityReport } from "../reports/rackCapacityReportBuilder";
@@ -1162,11 +1162,11 @@ export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMo
  *  never a duplicate table generation. */
 export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: string, sections?: readonly ReportSectionId[]): string {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth), sections));
-  const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
-  const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
-  const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
-  return `<!doctype html><html><head><meta charset=\"utf-8\"><title>Data Center Energy &amp; Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`;
+  const perFacility = facilities.map(facility => {
+    const data = reportDataFromFacility(facility, selectedMonth);
+    return reportCoverMain(data) + buildReportBodyPages(data, sections);
+  }).join("<div style=\"page-break-before:always\"></div>");
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy &amp; Facility Monitor All Facilities</title><style>${REPORT_CSS}</style></head><body>${perFacility}<script>document.body.dataset.reportReady="true";</script></body></html>`;
 }
 
 /** Same-model source for the Site Energy & Cost Comparison Live Preview and the

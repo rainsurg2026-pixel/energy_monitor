@@ -45,7 +45,7 @@ assert.match(preview, /sections\?: readonly ReportSectionId\[\]/);
 assert.match(preview, /buildReportHtml\(facilityReportData\(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs \?\? logs,\s*\{/);
 const reportHtml = readFileSync(new URL("../src/reports/pdf/reportHtml.ts", import.meta.url), "utf8");
 assert.match(reportHtml, /selectedSections\?: readonly ReportSectionId\[\]/);
-assert.match(reportHtml, /filterReportHtmlBySections/);
+assert.match(reportHtml, /filterReportBodySections/);
 assert.match(historyProvider, /slice\(0, 50\)/);
 
 console.log("web-clean-v1 reports: exports retain a local recent-report history like Desktop");

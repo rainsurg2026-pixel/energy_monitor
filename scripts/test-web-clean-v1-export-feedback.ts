@@ -92,9 +92,15 @@ assert.match(exportsSource, /await exportReportPdfFromHtml\(buildSiteComparisonR
 assert.match(exportsSource, /export function buildAllFacilitiesCsv\(/);
 assert.match(exportsSource, /export function buildSiteComparisonCsv\(/);
 
-// buildAllFacilitiesReportHtml needs a DOM (DOMParser) so it can only be
-// source-checked here: one buildReportHtml() per facility, page-break-joined.
-assert.match(exportsSource, /export function buildAllFacilitiesReportHtml\([\s\S]*?facilities\.map\(facility => buildReportHtml\(reportDataFromFacility\(facility, selectedMonth\), sections\)\)/);
+// buildAllFacilitiesReportHtml is now DOM-free (no DOMParser): one shared
+// REPORT_CSS block, a per-facility cover + body-page sequence, page-break-joined.
+const allFacilitiesFn = exportsSource.slice(
+  exportsSource.indexOf("export function buildAllFacilitiesReportHtml("),
+  exportsSource.indexOf("export function buildSiteComparisonReportHtml("),
+);
+assert.match(allFacilitiesFn, /reportCoverMain\(data\) \+ buildReportBodyPages\(data, sections\)/);
+assert.match(allFacilitiesFn, /<style>\$\{REPORT_CSS\}<\/style>/);
+assert.doesNotMatch(allFacilitiesFn, /new DOMParser\(\)/);
 assert.match(exportsSource, /page-break-before:always/);
 
 // Functional: the Site Comparison preview model (no DOM needed) covers both

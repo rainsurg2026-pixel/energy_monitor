@@ -3,10 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
-import { buildAllFacilitiesCsv, buildFacilityCsv, buildSiteComparisonCsv, buildSiteComparisonReportHtml, facilityExportSections, facilityReportData, fitPdfImageToPage, siteComparisonExportSections, workbookForFacilities, workbookForSiteComparison, writeInteractiveExcelWorkbook, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
+import { buildAllFacilitiesCsv, buildAllFacilitiesReportHtml, buildFacilityCsv, buildSiteComparisonCsv, buildSiteComparisonReportHtml, facilityExportSections, facilityReportData, fitPdfImageToPage, siteComparisonExportSections, workbookForFacilities, workbookForSiteComparison, writeInteractiveExcelWorkbook, rackReportFromSnapshot, type SiteComparisonExport, type RackSnapshotApiResponse } from "../src/web-clean-v1/exports";
 import type { ReportData } from "../src/reports/reportTypes";
 import { buildCombinedCsv } from "../src/utils/exportData";
-import { buildReportHtml } from "../src/reports/pdf/reportHtml";
+import { buildReportHtml, buildReportBodyPages } from "../src/reports/pdf/reportHtml";
 import { trendChartXPosition } from "../src/reports/pdf/reportHtml";
 import { calculateRackCapacityMetrics } from "../src/domain/rackCapacity";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, type ReportingPeriodSelection } from "../src/web-clean-v1/reportPeriod";
@@ -556,6 +556,31 @@ import { buildSiteComparisonReportModel } from "../src/web-clean-v1/exports";
 {
   const app = readFileSync("src/web-clean-v1/CleanWebApp.tsx", "utf8");
   check("loadAll passes siteCode to ExportFacility", /siteName:\s*site\.name,\s*siteCode:\s*site\.code/.test(app.replace(/\s+/g, " ")));
+}
+
+// ── Task 2.2: cover-less body pages + includeCover option + DOM-free All Facilities ──
+{
+  const data = facilityReportData([log("2026-06")], "Rangsit", "2026-06");
+  const withCover = buildReportHtml(data);
+  const noCover = buildReportHtml(data, { includeCover: false });
+  check("default build has a cover", withCover.includes('<main class="cover">'));
+  check("includeCover:false drops the cover", !noCover.includes('<main class="cover">'));
+  check("includeCover:false keeps the body pages", noCover.includes('<section class="page"'));
+  check("bare array second arg still works (back-compat)",
+    buildReportHtml(data, ["executive"]).includes('<main class="cover">'));
+  const body = buildReportBodyPages(data);
+  check("buildReportBodyPages returns only page sections (no doctype/head)",
+    !body.includes("<!doctype") && !body.includes("<head>") && body.trim().startsWith('<section class="page'));
+
+  const two = [
+    { siteName: "Rangsit", logs: [log("2026-06")] },
+    { siteName: "Srinakarin", logs: [log("2026-06")] },
+  ] as any;
+  const allHtml = buildAllFacilitiesReportHtml(two, "2026-06");
+  check("buildAllFacilitiesReportHtml runs DOM-free in node", allHtml.includes("<!doctype"));
+  check("one style block", (allHtml.match(/<style>/g) ?? []).length === 1);
+  check("per-facility cover retained (2 covers)", (allHtml.match(/<main class="cover">/g) ?? []).length === 2);
+  check("no DOMParser leftovers in output", !allHtml.includes("[object"));
 }
 
 console.log(`web-clean-v1 exports: 7 + ${checks} assertions passed`);
