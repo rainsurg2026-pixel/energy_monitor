@@ -25,6 +25,7 @@ const REPORT_VIEW_TABS: ReadonlyArray<{ id: ReportViewId; labelEn: string; label
 
 interface UniversalFilterBarProps {
   onExport?: (format: "pdf" | "excel" | "csv" | "png") => void;
+  exportFormats?: readonly ("pdf" | "excel" | "csv" | "png")[];
   lang: "th" | "en";
   facility?: FacilityEntry | null;
   /** Web hosts can provide server-derived UPS group names when no desktop
@@ -38,7 +39,7 @@ interface UniversalFilterBarProps {
   reportViews?: readonly ReportViewId[];
 }
 
-export default function UniversalFilterBar({ onExport, lang, facility = null, upsGroupNames = [], reportViews = ALL_REPORT_VIEWS }: UniversalFilterBarProps) {
+export default function UniversalFilterBar({ onExport, exportFormats = ["pdf", "excel", "csv", "png"], lang, facility = null, upsGroupNames = [], reportViews = ALL_REPORT_VIEWS }: UniversalFilterBarProps) {
   const {
     selectedYear,
     selectedPeriod,
@@ -326,7 +327,7 @@ export default function UniversalFilterBar({ onExport, lang, facility = null, up
           {onExport && (
             <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
               <span className="text-[10px] text-slate-400 font-bold px-2 uppercase tracking-wide">{t.export}:</span>
-              {["pdf", "excel", "csv", "png"].map((fmt) => (
+              {exportFormats.map((fmt) => (
                 <button
                   key={fmt}
                   onClick={() => onExport(fmt as any)}

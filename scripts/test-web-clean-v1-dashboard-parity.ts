@@ -15,7 +15,8 @@ assert.match(app, /const HistoricalCharts = lazy\(\(\) => import\("\.\.\/compone
 assert.match(app, /<HistoricalCharts logs=\{history\.logs\} lang=\{lang\} selectedMonth=\{displayMonth\}/);
 assert.match(app, /dataSourceLabel=\{lang === "th" \? "แหล่งข้อมูล: Production API" : "Source: Production API"\}/);
 
-assert.match(app, /const exportDashboard = \(format: "pdf" \| "excel" \| "csv" \| "png"\)/);
-assert.match(app, /<UniversalFilterBar lang=\{lang\} onExport=\{exportDashboard\} facility=\{null\} upsGroupNames=\{upsGroupNames\}/);
+assert.match(app, /const exportDashboard = \(format: "pdf" \| "excel" \| "csv"\)/);
+assert.match(app, /<UniversalFilterBar lang=\{lang\} onExport=\{exportDashboard\} exportFormats=\{\["pdf", "excel", "csv"\]\} facility=\{null\} upsGroupNames=\{upsGroupNames\}/);
+assert.doesNotMatch(app, /Dashboard PNG export requires the Desktop app/);
 
 console.log("web-clean-v1 dashboard: exposes Desktop Benchmark and Forecast tabs from API-backed monthly logs");

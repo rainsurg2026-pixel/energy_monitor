@@ -563,7 +563,7 @@ function DashboardView({ logs, month, displayPeriod, siteName = "Facility", site
   const inferredSiteCode = siteCode || (siteName !== "Facility" ? siteName : (typeof document !== "undefined" ? document.querySelector<HTMLSelectElement>("#facility-selector option:checked")?.textContent ?? "" : ""));
   const upsMapping = useMemo(() => buildDashboardUpsMapping(upsGroupHistory, activeMonth, sourceDashboardMapping(inferredSiteCode, dashboardMapping).mapping), [activeMonth, dashboardMapping, inferredSiteCode, upsGroupHistory]);
   const upsGroupNames = useMemo(() => Array.from(new Set((upsGroupHistory?.rows ?? []).map(row => row.group))), [upsGroupHistory]);
-  const exportDashboard = (format: "pdf" | "excel" | "csv" | "png") => {
+  const exportDashboard = (format: "pdf" | "excel" | "csv") => {
     const selector = typeof document !== "undefined" ? document.getElementById("facility-selector") as HTMLSelectElement | null : null;
     const activeSiteName = selector?.selectedOptions[0]?.textContent?.trim() || siteName;
     const baseName = `Energy_Report_${activeSiteName.replace(/[^a-z0-9]+/giu, "-")}_${activeMonth}`;
@@ -581,14 +581,12 @@ function DashboardView({ logs, month, displayPeriod, siteName = "Facility", site
         void exportDesktopPdfFile(logs, activeSiteName, activeMonth, baseName, null, [], [], logs, ["dashboard"], { upsGroupHistory })
           .then(() => notify("PDF download started."))
           .catch(error => notify(readError(error)));
-      } else {
-        notify(lang === "th" ? "การส่งออก PNG ต้องใช้ Desktop app" : "Dashboard PNG export requires the Desktop app.");
       }
     } catch (error) { notify(readError(error)); }
   };
   return (
     <div className="space-y-5">
-      <UniversalFilterBar lang={lang} onExport={exportDashboard} facility={null} upsGroupNames={upsGroupNames} reportViews={DASHBOARD_REPORT_VIEWS} />
+      <UniversalFilterBar lang={lang} onExport={exportDashboard} exportFormats={["pdf", "excel", "csv"]} facility={null} upsGroupNames={upsGroupNames} reportViews={DASHBOARD_REPORT_VIEWS} />
       {exportNotice && <p role="status" className="text-sm text-teal-300">{exportNotice}</p>}
       {selectedReportView === "dashboard" && <DashboardSummary logs={logs} selectedMonth={activeMonth} lang={lang} dataSourceLabel={lang === "th" ? "Production API" : "Source: Production API"} upsMapping={upsMapping} />}
       {selectedReportView === "executive" && <><ExecutiveDashboard logs={logs} lang={lang} /><SmartInsightPanel logs={logs} lang={lang} /></>}
