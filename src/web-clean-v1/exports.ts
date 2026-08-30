@@ -14,7 +14,7 @@ import type { DashboardUpsMappingReport } from "../reports/reportTypes";
 import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
 import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
 import type { ReportSectionId } from "../reporting/reportingTypes";
-import { addInteractiveDashboard, injectInteractiveDashboardCharts, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
+import { addDashboardDataSheet, addInteractiveDashboard, injectInteractiveDashboardCharts, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
 
 const workbookDashboardPlans = new WeakMap<object, ExcelDashboardPlan[]>();
 
@@ -170,6 +170,19 @@ function sheetName(prefix: string, name: string): string {
   return `${prefix.slice(0, prefixLength)}-${title}`.slice(0, 31);
 }
 
+export function sheetOrderName(facilityCode: string | undefined, order: number, title: string): string {
+  const code = (facilityCode ?? "").replace(/[^a-z0-9]+/giu, "").toUpperCase().slice(0, 6);
+  const clean = title.replace(/[\\/*?:\[\]]/g, "-").trim();
+  const prefix = `${code ? code + " " : ""}${String(order).padStart(2, "0")} `;
+  return `${prefix}${clean}`.slice(0, 31).trim();
+}
+
+const RAW_SHEET_ORDER: Record<string, number> = {
+  UPS_Loads: 20, Air_Inputs: 21, DC_Inputs: 22, Energy_Cost_Inputs: 23, Saved_Records: 24, Saved_Values: 25, Raw_Inputs: 26, Calculated_Energy: 27,
+  "Dashboard-FAC": 28, "Dashboard-FAC UPS": 29, "Dashboard-FAC Details": 30, "Dashboard-FAC Air": 31, "Dashboard-FAC DC": 32,
+  "Rack Unit Capacity": 33, "Rack Capacity History": 34, "UPS Group History": 35, "Rack Capacity Raw": 36
+};
+
 function configureTableSheet(sheet: any, headers: unknown[], rows: unknown[][]): void {
   sheet.addRow(headers);
   rows.forEach(values => sheet.addRow(values));
@@ -184,8 +197,20 @@ function configureTableSheet(sheet: any, headers: unknown[], rows: unknown[][]):
 }
 
 function addTableSheet(workbook: any, prefix: string, title: string, headers: unknown[], rows: unknown[][]): any {
-  const sheet = workbook.addWorksheet(sheetName(prefix, title));
+  const order = RAW_SHEET_ORDER[title];
+  const name = order ? sheetOrderName(prefix || undefined, order, title) : sheetName(prefix || "sheet", title);
+  const sheet = workbook.addWorksheet(name);
   configureTableSheet(sheet, headers, rows);
+  return sheet;
+}
+
+function addPresentationSheet(workbook: any, name: string, title: string): any {
+  const sheet = workbook.addWorksheet(name);
+  sheet.mergeCells("A1:H1");
+  sheet.getCell("A1").value = title;
+  sheet.getCell("A1").font = { name: "Aptos Display", size: 16, bold: true, color: { argb: "FFFFFFFF" } };
+  sheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+  sheet.views = [{ state: "frozen", ySplit: 2 }];
   return sheet;
 }
 
@@ -286,8 +311,12 @@ export async function workbookForFacilities(facilities: ExportFacility[], compar
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
   const dashboardPlans: ExcelDashboardPlan[] = [];
+  const deferredDashboardData: Array<{ name: string; metrics: ExcelDashboardMetric[] }> = [];
+  const multiFacility = facilities.length > 1;
   for (const facility of facilities) {
-    const prefix = facility.siteName.replace(/[^a-z0-9]+/giu, "-").slice(0, 10) || "facility";
+    const code = multiFacility ? (facility.siteCode || facility.siteName.replace(/[^a-z0-9]+/giu, "").slice(0, 6)) : undefined;
+    const prefix = code ?? "";
+    const dashboardDataName = `${code ? code + " " : ""}Dashboard_Data`.slice(0, 31);
     const logs = [...facility.logs].sort((a, b) => a.month.localeCompare(b.month));
     const calculationLogs = [...(facility.calculationLogs ?? logs)].sort((a, b) => a.month.localeCompare(b.month));
     const months = new Set(facility.reportingMonths ?? [
@@ -299,7 +328,33 @@ export async function workbookForFacilities(facilities: ExportFacility[], compar
     const airFields = [...new Set(logs.flatMap(log => Object.keys(log.air.meters ?? {}).concat(["eb41a", "eb41b", "eb42a", "eb42b"])))].sort();
 
     const dashboardModel = buildExcelDashboardModel(logs, calculationLogs, facility);
-    dashboardPlans.push(addInteractiveDashboard(workbook, prefix, facility.siteName, dashboardModel.metrics));
+    dashboardPlans.push(addInteractiveDashboard(workbook, prefix, facility.siteName, dashboardModel.metrics, { dashboardSheetName: sheetOrderName(code, 1, "Dashboard"), dataSheetName: dashboardDataName, includeDataSheet: false }));
+    deferredDashboardData.push({ name: dashboardDataName, metrics: dashboardModel.metrics });
+    const selectedMonth = facility.reportingMonths?.at(-1) ?? logs.at(-1)?.month ?? facility.rack?.sourceSnapshot ?? "";
+    const report = reportDataFromFacility(facility, selectedMonth);
+    const executive = addPresentationSheet(workbook, sheetOrderName(code, 2, "Executive"), `${facility.siteName} — Executive Summary`);
+    configureTableSheet(executive, ["Reporting Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)", "Status"], [[selectedMonth, report.currentRow?.buildingEnergyKwh ?? null, report.currentRow?.buildingCostThb ?? null, report.currentRow?.floorEnergyKwh ?? null, report.currentRow?.floorCostThb ?? null, report.currentRow?.averageRateThbPerKwh ?? null, report.currentRow?.floorSharePercent == null ? null : report.currentRow.floorSharePercent / 100, report.currentRow?.status ?? "Partial"]]);
+    executive.getColumn(7).numFmt = "0.0%";
+    const engineering = addPresentationSheet(workbook, sheetOrderName(code, 3, "Engineering"), `${facility.siteName} — Engineering Analysis`);
+    engineering.addRow(["Selected Month", selectedMonth]);
+    engineering.addRow(["UPS Energy (kWh)", report.engineeringDashboard?.totalUpsEnergyKwh ?? null]);
+    engineering.addRow(["Air Energy (kWh)", report.engineeringDashboard?.airEnergyKwh ?? null]);
+    engineering.addRow(["DC Energy (kWh)", report.engineeringDashboard?.totalDcEnergyKwh ?? null]);
+    engineering.addRow(["Building Energy (kWh)", report.engineeringDashboard?.buildingEnergyKwh ?? null]);
+    engineering.addRow(["Building Cost (THB)", report.engineeringDashboard?.buildingCostThb ?? null]);
+    const sections = facilityExportSections(facility);
+    const rack = addPresentationSheet(workbook, sheetOrderName(code, 4, "Rack Capacity"), `${facility.siteName} — Rack Capacity`);
+    sections.filter(section => ["RACK_CAPACITY_SUMMARY", "RACK_CAPACITY_DETAILS", "RACK_POSITIONS"].includes(section.name)).forEach(section => { rack.addRow([section.name]); rack.addRow(section.headers); section.rows.forEach(row => rack.addRow(row)); });
+    const rackUnit = addPresentationSheet(workbook, sheetOrderName(code, 5, "Rack Unit Capacity"), `${facility.siteName} — Rack Unit Capacity`);
+    sections.filter(section => section.name.startsWith("RACK_UNIT_")).forEach(section => { rackUnit.addRow([section.name]); rackUnit.addRow(section.headers); section.rows.forEach(row => rackUnit.addRow(row)); });
+    rackUnit.getColumn(6).numFmt = "0.0%";
+    rackUnit.getColumn(7).numFmt = "0.0%";
+    const history = addPresentationSheet(workbook, sheetOrderName(code, 6, "History"), `${facility.siteName} — History`);
+    history.addRow(["Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)"]);
+    report.monthlyRows.forEach(row => history.addRow([row.month, row.buildingEnergyKwh, row.buildingCostThb, row.floorEnergyKwh, row.floorCostThb, row.upsEnergyKwh, row.airEnergyKwh, row.dcEnergyKwh]));
+    const trends = addPresentationSheet(workbook, sheetOrderName(code, 7, "Trends"), `${facility.siteName} — Trends`);
+    trends.addRow(["Month", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)"]);
+    report.monthlyRows.forEach(row => trends.addRow([row.month, row.floorEnergyKwh, row.floorCostThb, row.upsEnergyKwh, row.airEnergyKwh, row.dcEnergyKwh]));
 
     addTableSheet(workbook, prefix, "UPS_Loads", ["Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Raw phases JSON", "Last Saved"], logs.flatMap(log => log.ups.map(row => [log.month, row.upsId, row.voltage, row.current, row.loadKw, row.loadKva, JSON.stringify(row.phases ?? {}), log.lastSavedUps])));
     addTableSheet(workbook, prefix, "Air_Inputs", ["Month", ...airFields.map(field => `${field.toUpperCase()} (GWh)`), "Raw meters JSON", "Last Saved"], logs.map(log => [log.month, ...airFields.map(field => (log.air as unknown as Record<string, number | null | undefined>)[field] ?? log.air.meters?.[field] ?? null), JSON.stringify(log.air.meters ?? {}), log.lastSavedAir]));
@@ -341,16 +396,22 @@ export async function workbookForFacilities(facilities: ExportFacility[], compar
     addTableSheet(workbook, prefix, "UPS Group History", ["Month", "Facility", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)", "Generated At", "Data Version"], upsHistoryRows.map(row => [row.month, row.facility, row.group, row.totalLoadKw, row.totalLoadKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh, row.generatedAt, row.dataVersion]));
     const rackRecords = facility.rack?.records ?? [];
     addTableSheet(workbook, prefix, "Rack Capacity Raw", ["Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], rackRecords.map(row => [facility.rack?.sourceSnapshot ?? null, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
-    for (const section of facilityExportSections(facility)) {
-      const sheet = addTableSheet(workbook, prefix, section.name, section.headers, section.rows);
-      section.headers.forEach((header, index) => {
-        if (String(header).includes("Usage (%)") || String(header).includes("Availability (%)")) sheet.getColumn(index + 1).numFmt = "0.0%";
-      });
-    }
   }
   if (comparison) {
-    for (const section of siteComparisonSectionsFromModel(comparison)) addTableSheet(workbook, "Comparison", section.name, section.headers, section.rows);
+    const energy = addPresentationSheet(workbook, sheetOrderName(undefined, 90, "Site Energy Comparison"), "Site Energy & Cost Comparison");
+    energy.addRow(["Facility", "Site code", "Reporting month", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "Estimated 4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"]);
+    comparison.sites.forEach(site => energy.addRow([site.label, site.siteCode, comparison.referenceMonth, site.metrics?.buildingEnergy ?? null, site.metrics?.buildingCost ?? null, site.metrics?.floorEnergy ?? null, site.metrics?.floorCost ?? null, site.metrics?.avgRate ?? null, site.metrics?.floorShare == null ? null : site.metrics.floorShare / 100]));
+    energy.getColumn(9).numFmt = "0.0%";
+    for (const [title, pick] of [["Total Building Energy", "buildingEnergy"], ["4th Floor Energy", "floorEnergy"], ["Total Building Cost", "buildingCost"], ["Estimated 4th Floor Cost", "floorCost"]] as const) {
+      energy.addRow([]); energy.addRow([title, ...comparison.sites.map(site => site.label)]);
+      comparison.months.forEach(month => energy.addRow([month, ...comparison.sites.map(site => site.metricsByMonth[month]?.[pick] ?? null)]));
+    }
+    const rack = addPresentationSheet(workbook, sheetOrderName(undefined, 91, "Site Rack Comparison"), "Site Rack Capacity & Availability Comparison");
+    for (const section of siteComparisonSectionsFromModel(comparison).filter(section => section.name !== "SITE_COMPARISON")) {
+      rack.addRow([section.name]); rack.addRow(section.headers); section.rows.forEach(row => rack.addRow(comparisonWorksheetRows({ ...section, rows: [row] })[0])); rack.addRow([]);
+    }
   }
+  deferredDashboardData.forEach(item => addDashboardDataSheet(workbook, item.name, item.metrics));
   workbookDashboardPlans.set(workbook, dashboardPlans);
   return workbook;
 }
@@ -586,7 +647,9 @@ function comparisonRackUnitTrendRows(site: SiteComparisonExport["sites"][number]
     .map(row => [site.site.name, row.month, row.totalU, row.usedU, row.availableU, comparisonRackUsageRatio(row), exportRatio(row.availabilityPct ?? (row.totalU > 0 ? row.availableU / row.totalU : null))]);
 }
 
-export function siteComparisonExportSections(data: SiteComparisonExport, referenceMonth: string): ExportTableSection[] {
+export function siteComparisonExportSections(model: SiteComparisonReportModel): ExportTableSection[] {
+  const data = modelAsSiteComparisonExport(model);
+  const referenceMonth = model.referenceMonth;
   const sections: ExportTableSection[] = [{
     name: "SITE_COMPARISON",
     headers: ["Facility", "Site code", "Reporting month", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"],
@@ -642,7 +705,7 @@ function modelAsSiteComparisonExport(model: SiteComparisonReportModel): SiteComp
 }
 
 function siteComparisonSectionsFromModel(model: SiteComparisonReportModel): ExportTableSection[] {
-  return siteComparisonExportSections(modelAsSiteComparisonExport(model), model.referenceMonth);
+  return siteComparisonExportSections(model);
 }
 
 function comparisonWorksheetRows(section: ExportTableSection): unknown[][] {
@@ -652,8 +715,8 @@ function comparisonWorksheetRows(section: ExportTableSection): unknown[][] {
   }));
 }
 
-export function buildSiteComparisonCsv(data: SiteComparisonExport, referenceMonth: string): string {
-  return siteComparisonExportSections(data, referenceMonth).map(section => "# Section: " + section.name + "\n" + csvSection(section)).join("\n\n");
+export function buildSiteComparisonCsv(model: SiteComparisonReportModel): string {
+  return siteComparisonExportSections(model).map(section => "# Section: " + section.name + "\n" + csvSection(section)).join("\n\n");
 }
 
 

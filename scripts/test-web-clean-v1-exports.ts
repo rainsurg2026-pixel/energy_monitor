@@ -45,7 +45,8 @@ assert.match(allFacilities, /# Facility: Rangsit/);
 assert.match(allFacilities, /# Facility: Srinakarin/);
 assert.match(allFacilities, /# Energy_Cost/);
 
-const csv = buildSiteComparisonCsv(comparison, "2026-01");
+const comparisonModel = buildSiteComparisonReportModel(comparison, "2026-01");
+const csv = buildSiteComparisonCsv(comparisonModel);
 assert.match(csv, /Rangsit,rangsit,2026-01,100.00,500.00/);
 assert.match(csv, /Srinakarin,srinakarin,2026-01,200.00,900.00/);
 assert.doesNotMatch(csv, /undefined|NaN/);
@@ -372,7 +373,7 @@ check("Rack Positions status display mapping: Pending Dismantle renders as Pendi
   && positionStatusMappingRows.map(row => String(row[3])).join("|") === "P-AVAIL|P-RESV|P-PEND");
 check("facility CSV has no object serialization defect", !completeFacilityCsv.includes("[object Object]") && !completeFacilityCsv.includes("undefined"));
 const completeRackWorkbook = await workbookForFacilities([completeFacility]);
-const semanticUnitSheet = completeRackWorkbook.worksheets.find(sheet => sheet.name.includes("RACK_UNIT_CAPACITY"));
+const semanticUnitSheet = completeRackWorkbook.worksheets.find(sheet => sheet.name.startsWith("05 "));
 const semanticUnitValues = semanticUnitSheet?.getSheetValues() ?? [];
 const selectedUnitRow = semanticUnitValues.find(row => Array.isArray(row) && row[2] === "2026-06") as unknown[] | undefined;
 check("XLSX Rack Unit semantic sheet contains the selected row", Boolean(selectedUnitRow));
@@ -389,8 +390,9 @@ const completeComparison: SiteComparisonExport = {
     { ...comparison.sites[1], months: [{ month: "2026-06", metrics: { buildingEnergy: 200, buildingCost: 900, floorEnergy: 80, floorCost: 360, avgRate: 4.5, floorShare: 40 } }], rack: rackReport, rackUnitCapacity: rackUnitExportRows.map(row => ({ ...row, usagePercent: row.totalU > 0 ? row.usedU / row.totalU * 100 : null })) }
   ]
 };
-const comparisonSections = siteComparisonExportSections(completeComparison, "2026-06");
-const comparisonCompleteCsv = buildSiteComparisonCsv(completeComparison, "2026-06");
+const completeComparisonModel = buildSiteComparisonReportModel(completeComparison, "2026-06");
+const comparisonSections = siteComparisonExportSections(completeComparisonModel);
+const comparisonCompleteCsv = buildSiteComparisonCsv(completeComparisonModel);
 check("Site Comparison CSV includes Rack Capacity, Rack Positions, and Rack Unit sections", ["RACK_CAPACITY_SUMMARY", "RACK_CAPACITY_DETAILS", "RACK_POSITIONS", "RACK_UNIT_CAPACITY_COMPARISON", "RACK_UNIT_TREND_COMPARISON"].every(section => comparisonCompleteCsv.includes("# Section: " + section)));
 check("Site Comparison CSV reconciles both sites to the same Rack Unit source values", comparisonCompleteCsv.includes("Rangsit,2026-06,9963,7407,2556") && comparisonCompleteCsv.includes("Srinakarin,2026-06,9963,7407,2556") && comparisonCompleteCsv.includes(",Available,A-02,") && comparisonCompleteCsv.includes(",Reserved,B-01,"));
 check("Site Comparison Rack Positions section excludes In Use detailed racks", (() => { const section = comparisonSections.find(entry => entry.name === "RACK_POSITIONS"); return section !== undefined && section.rows.length > 0 && section.rows.every(row => String(row[2]) !== "In Use" && row[3] !== "A-01"); })());
@@ -418,12 +420,13 @@ const filterComparisonSites = (predicate: (entry: { month: string; metrics: unkn
 });
 const monthFieldFiltered = filterComparisonSites(entry => comparisonSelectedMonths.has(entry.month));
 const objectFiltered = filterComparisonSites(entry => (comparisonSelectedMonths as Set<unknown>).has(entry));
-const monthFieldRow = siteComparisonExportSections(monthFieldFiltered, "2026-06").find(section => section.name === "SITE_COMPARISON")!.rows[0];
-const objectFilteredRow = siteComparisonExportSections(objectFiltered, "2026-06").find(section => section.name === "SITE_COMPARISON")!.rows[0];
+const monthFieldModel = buildSiteComparisonReportModel(monthFieldFiltered, "2026-06");
+const monthFieldRow = siteComparisonExportSections(monthFieldModel).find(section => section.name === "SITE_COMPARISON")!.rows[0];
+const objectFilteredRow = siteComparisonExportSections(buildSiteComparisonReportModel(objectFiltered, "2026-06")).find(section => section.name === "SITE_COMPARISON")!.rows[0];
 check("Site Comparison keeps the selected month's energy/cost metrics when filtering on entry.month", monthFieldRow[3] === "100.00" && monthFieldRow[4] === "500.00" && monthFieldRow[5] === "50.00" && monthFieldRow[6] === "250.00" && monthFieldRow[7] === "5.00" && monthFieldRow[8] === "50.00");
-check("Site Comparison excludes non-selected months (2026-05 metrics never surface for a 2026-06 reference)", siteComparisonExportSections(monthFieldFiltered, "2026-05").find(section => section.name === "SITE_COMPARISON")!.rows.every(row => row[3] === "" && row[4] === ""));
+check("Site Comparison excludes non-selected months (2026-05 metrics never surface for a 2026-06 reference)", siteComparisonExportSections(buildSiteComparisonReportModel(monthFieldFiltered, "2026-05")).find(section => section.name === "SITE_COMPARISON")!.rows.every(row => row[3] === "" && row[4] === ""));
 check("filtering the { month, metrics } rows against the raw month-string set blanks every metric (documents the defect)", objectFilteredRow.slice(3).every(cell => cell === ""));
-const comparisonFixedCsv = buildSiteComparisonCsv(monthFieldFiltered, "2026-06");
+const comparisonFixedCsv = buildSiteComparisonCsv(monthFieldModel);
 check("Site Comparison CSV builder receives the selected month building-energy value", comparisonFixedCsv.includes("100.00") && comparisonFixedCsv.includes("500.00"));
 // ============================================================
 // Desktop-source acceptance gate: build the actual Web Excel export from the
@@ -453,7 +456,7 @@ for (const sourceCase of [
     ...(rackHistory ?? []).map(row => row.snapshotMonth)
   ])].sort();
   const workbook = await workbookForFacilities([{ siteName: sourceCase.site, logs: source.logs, rack, rackHistory: rackHistory ?? [], rackUnitCapacity, rackUnitCapacityImages: (source.rackUnitCapacityImages ?? []).map(image => ({ reportingMonth: image.reportingMonth, contentType: image.contentType, byteSize: image.byteSize, width: image.width, height: image.height })), upsGroupHistory, dashboardMapping, reportingMonths }]);
-  const sheet = (fragment: string) => workbook.worksheets.find(item => item.name.includes(fragment));
+  const sheet = (fragment: string) => workbook.worksheets.find(item => item.name.includes(fragment) && (fragment !== "Rack Unit Capacity" || item.name.includes("33 Rack Unit Capacity")));
   const arraySheetValues = (worksheet: ExcelJS.Worksheet | undefined): unknown[][] =>
     (worksheet?.getSheetValues() ?? []).map(row => Array.isArray(row) ? row : []);
   const requiredTables: Array<[string, number]> = [
@@ -503,7 +506,7 @@ for (const sourceCase of [
   check(`${sourceCase.site}: Dashboard-FAC Air table contains source rows`, (sheet("Dashboard-FAC Air")?.rowCount ?? 1) > 1);
   check(`${sourceCase.site}: Dashboard-FAC DC table contains source rows`, (sheet("Dashboard-FAC DC")?.rowCount ?? 1) > 1);
   check(`${sourceCase.site}: Rack Unit Capacity contains every Desktop row`, (sheet("Rack Unit Capacity")?.rowCount ?? 0) === source.rackUnitCapacityRows.length + 1);
-  const sourceImageSheet = sheet("RACK_UNIT_CAPACITY_IMAGES");
+  const sourceImageSheet = workbook.worksheets.find(item => item.name.includes("05 Rack Unit Capacity"));
   check(`${sourceCase.site}: Rack Unit export preserves image metadata even when no numeric row matches`, (source.rackUnitCapacityImages ?? []).length === 0 ? !Boolean(sourceImageSheet) : (sourceImageSheet?.rowCount ?? 0) >= (source.rackUnitCapacityImages?.length ?? 0) + 1);
   check(`${sourceCase.site}: Rack Capacity Raw contains the Desktop snapshot rows`, (sheet("Rack Capacity Raw")?.rowCount ?? 1) === (rack?.records.length ?? 0) + 1);
   check(`${sourceCase.site}: Rack Capacity History preserves source rows when present`, (sheet("Rack Capacity History")?.rowCount ?? 1) === (rackHistory?.length ?? 0) + 1);
@@ -598,6 +601,17 @@ for (const sourceCase of [
   const csvCmp = buildAllFacilitiesCsv(two, model);
   check("all-facilities csv appends SITE_COMPARISON section", csvCmp.includes("# Section: SITE_COMPARISON"));
   check("all-facilities csv keeps per-facility blocks", csvCmp.includes("# Facility: Rangsit") && csvCmp.includes("# Facility: Srinakarin"));
+  const singleWorkbook = await workbookForFacilities([{ siteName: "Rangsit", siteCode: "RST", logs: [log("2026-06")] }] as any);
+  const visibleNames = singleWorkbook.worksheets.filter((sheet: any) => sheet.state !== "hidden").map((sheet: any) => sheet.name);
+  check("single-facility first 7 visible sheets are presentation order 01..07", visibleNames.slice(0, 7).every((name: string, index: number) => name.startsWith(String(index + 1).padStart(2, "0") + " ")));
+  check("raw sheets follow presentation sheets", singleWorkbook.worksheets.findIndex((sheet: any) => sheet.name.includes("20 UPS_Loads")) >= 7);
+  const singleLast = singleWorkbook.worksheets.at(-1);
+  check("Dashboard_Data is hidden and last", Boolean(singleLast?.name.includes("Dashboard_Data")) && singleLast?.state === "hidden");
+  const multiWorkbook = await workbookForFacilities(two, model);
+  const multiNames = multiWorkbook.worksheets.map((sheet: any) => sheet.name);
+  check("All Facilities Excel has 90 Site Energy Comparison", multiNames.some((name: string) => name.startsWith("90 ")));
+  check("All Facilities Excel has 91 Site Rack Comparison", multiNames.some((name: string) => name.startsWith("91 ")));
+  check("comparison sheets follow facility raw sheets", multiNames.findIndex((name: string) => name.startsWith("90 ")) > multiNames.findIndex((name: string) => name.includes("36 Rack Capacity Raw")));
 }
 
 // Task 1.6: the web-only popup/print and download wrappers are orphaned now

@@ -117,7 +117,7 @@ function chartRange(sheetName: string, column: string, firstRow: number, lastRow
   return `${excelSheetRef(sheetName)}!$${column}$${firstRow}:$${column}$${lastRow}`;
 }
 
-function addDashboardDataSheet(workbook: any, dataSheetName: string, metrics: ExcelDashboardMetric[]): void {
+export function addDashboardDataSheet(workbook: any, dataSheetName: string, metrics: ExcelDashboardMetric[]): void {
   const sheet = workbook.addWorksheet(dataSheetName);
   sheet.state = "hidden";
   sheet.addRow(["Month", "Label", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "4th Floor Share (%)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "UPS Load (kW)", "UPS Load (%)", "Rack Total (U)", "Rack Used (U)", "Rack Available (U)", "Rack Usage (%)"]);
@@ -151,11 +151,11 @@ function addDashboardDataSheet(workbook: any, dataSheetName: string, metrics: Ex
   }
 }
 
-export function addInteractiveDashboard(workbook: any, prefix: string, siteName: string, metrics: ExcelDashboardMetric[]): ExcelDashboardPlan {
-  const dashboardSheetName = safeSheetName(prefix, "Dashboard");
-  const dataSheetName = safeSheetName(prefix, "Dashboard_Data");
+export function addInteractiveDashboard(workbook: any, prefix: string, siteName: string, metrics: ExcelDashboardMetric[], options: { dashboardSheetName?: string; dataSheetName?: string; includeDataSheet?: boolean } = {}): ExcelDashboardPlan {
+  const dashboardSheetName = options.dashboardSheetName ?? safeSheetName(prefix, "Dashboard");
+  const dataSheetName = options.dataSheetName ?? safeSheetName(prefix, "Dashboard_Data");
   const dashboard = workbook.addWorksheet(dashboardSheetName);
-  addDashboardDataSheet(workbook, dataSheetName, metrics);
+  if (options.includeDataSheet !== false) addDashboardDataSheet(workbook, dataSheetName, metrics);
   const dataRowEnd = Math.max(2, metrics.length + 1);
   const selectedMetric = metrics.at(-1);
   const data = excelSheetRef(dataSheetName);
