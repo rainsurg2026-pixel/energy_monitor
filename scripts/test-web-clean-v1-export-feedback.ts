@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
+const busyOverlay = readFileSync(new URL("../src/web-clean-v1/BusyOverlay.tsx", import.meta.url), "utf8");
 
 // ---------------------------------------------------------------------------
 // Explicit export selection + per-action feedback
@@ -45,6 +46,15 @@ assert.match(app, /const selected = scopeActive && exportFormat === id;/);
 assert.match(app, /function exportStageLabel\(stage: ExportStage, scope: ExportScope, format: ExportFormat, th: boolean\)/);
 assert.match(app, /return th \? "กำลังเรนเดอร์หน้า…" : "Rendering pages…";/); // All Facilities
 assert.doesNotMatch(app, /\$\{[^}]*\}%.*Preparing|progress.*percent/i);
+
+// Shared blocking overlay is used for long-running export/preview work and supports
+// real determinate progress without inventing percentages for indeterminate work.
+assert.match(app, /reportBusy && <BusyOverlay/);
+assert.match(app, /busy \|\| initialHistoryLoading \|\| facilityLoading/);
+assert.match(busyOverlay, /progress\?: number \| null/);
+assert.match(busyOverlay, /busy-overlay-indeterminate/);
+assert.match(busyOverlay, /prefers-reduced-motion: reduce/);
+assert.doesNotMatch(busyOverlay, /Math\.random|setInterval/);
 
 // ---------------------------------------------------------------------------
 // Live Preview follows SCOPE (content), not FORMAT (download type)
