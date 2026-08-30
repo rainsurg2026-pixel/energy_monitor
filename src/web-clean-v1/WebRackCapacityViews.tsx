@@ -113,14 +113,19 @@ function HealthGauge({ usage }: { usage: number | null }) {
 function RackUnitImage({ provider, facilityName, month }: { provider?: Pick<IDataProvider, "getRackUnitCapacityImage"> | null; facilityName: string | null; month: string }) {
   const [image, setImage] = useState<{ dataUri: string; meta: StoredImageMeta } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
   useEffect(() => {
     let cancelled = false;
+    setError(false);
     if (!provider?.getRackUnitCapacityImage) { setImage(null); return; }
     setLoading(true);
-    provider.getRackUnitCapacityImage(facilityName ?? "", month).then(result => { if (!cancelled) setImage(result ? { dataUri: result.dataUri, meta: result.meta } : null); }).catch(() => { if (!cancelled) setImage(null); }).finally(() => { if (!cancelled) setLoading(false); });
+    provider.getRackUnitCapacityImage(facilityName ?? "", month)
+      .then(result => { if (!cancelled) setImage(result ? { dataUri: result.dataUri, meta: result.meta } : null); })
+      .catch(() => { if (!cancelled) { setImage(null); setError(true); } })
+      .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [facilityName, month, provider]);
-  return <Section title="Monthly Rack Unit Capacity Image"><div className="min-h-[240px]">{loading ? <div className="flex h-60 items-center justify-center rounded-xl border border-dashed border-slate-700 text-sm text-slate-500">Loading image…</div> : image ? <figure className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950"><img src={image.dataUri} alt={`Monthly Rack Unit Capacity for ${monthLabelLong(month, "en")}`} className="max-h-[520px] w-full object-contain" /><figcaption className="flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-800 px-4 py-3 text-[11px] text-slate-400"><span>{monthLabelLong(month, "en")}</span><span>Last updated: {safeDate(image.meta.savedAt)}</span><span>Resolution: {image.meta.width}×{image.meta.height}px</span><span>Captured by: {image.meta.savedBy}</span></figcaption></figure> : <div className="flex h-60 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-slate-700 text-center text-slate-500"><ImagePlus className="h-7 w-7" /><p className="text-sm">No authorized Rack Unit Capacity image is available for this month.</p><p className="text-xs text-slate-600">Upload metadata is read from the existing Production storage path.</p></div>}</div></Section>;
+  return <Section title="Monthly Rack Unit Capacity Image"><div className="min-h-[240px]">{loading ? <div className="flex h-60 items-center justify-center rounded-xl border border-dashed border-slate-700 text-sm text-slate-500">Loading Monthly Rack Unit Capacity Image…</div> : error ? <div className="flex h-60 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-slate-700 text-center text-slate-500"><AlertTriangle className="h-7 w-7 text-amber-400" /><p className="text-sm">Unable to load Monthly Rack Unit Capacity Image.</p></div> : image ? <figure className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950"><img src={image.dataUri} alt={`Monthly Rack Unit Capacity for ${monthLabelLong(month, "en")}`} className="max-h-[520px] w-full object-contain" /><figcaption className="flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-800 px-4 py-3 text-[11px] text-slate-400"><span>{monthLabelLong(month, "en")}</span><span>Last updated: {safeDate(image.meta.savedAt)}</span><span>Resolution: {image.meta.width}×{image.meta.height}px</span><span>Captured by: {image.meta.savedBy}</span></figcaption></figure> : <div className="flex h-60 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-slate-700 text-center text-slate-500"><ImagePlus className="h-7 w-7" /><p className="text-sm">No Monthly Rack Unit Capacity Image is available for this reporting month.</p></div>}</div></Section>;
 }
 
 function RackUnitCapacityDashboardInner({ month, facilityName, imageProvider, history, lang }: { month: string; facilityName: string | null; imageProvider?: Pick<IDataProvider, "getRackUnitCapacityImage"> | null; history: RackCapacityHistoryRow[]; lang: AppLanguage }) {
