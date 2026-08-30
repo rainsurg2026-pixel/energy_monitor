@@ -36,7 +36,7 @@ screenshots, and the legacy report structure are **not** design authorities.
 | D2 | **Dashboard views in the full report:** only **Executive** and **Engineering** become report sections. **Benchmark** and **Forecast** stay screen-only (they are derived/projected, already blacklisted from the PDF by `scripts/test-all-report.ts`). |
 | D3 | **Current Facility depth:** *Current Facility* gains per-facility analytical sections (Executive + Engineering + Rack Capacity + Rack Unit Capacity + History/Trends + Energy). **No cross-site content** in Current Facility. |
 | D4 | **Nav label:** rename nav item `rack-comparison` and all report headings to **"Site Rack Capacity & Availability Comparison"** (English), with the Thai translation string updated for Thai-locale users. |
-| D5 | **Language init untouched:** do **not** change language initialization, default-locale logic, `normalizeLanguage`, the `localStorage` language-preference effect, or `document.documentElement.lang`. Only the two label strings (EN + TH) for `rack-comparison` and the report headings change. English remains the intended default; boot init code is left exactly as-is. |
+| D5 | **Default language = English (revised per PO review).** Today the app defaults to **Thai** at three points: `src/web-clean-v1/CleanWebApp.tsx:138` (`useState<AppLanguage>("th")`), `src/web-clean-v1/theme.ts:11` (`normalizeLanguage` returns `"th"` for null/unknown), and Desktop `src/App.tsx:193` + `src/electron/config.ts:49` (`language: "th"`). Change the default so that **when there is no saved preference, or the stored value is invalid, the app initializes to English**, while a preference the user explicitly saved as `"th"` is still honoured. Do **not** otherwise rework locale wiring, the `localStorage`/config restore effects, or `document.documentElement.lang` (which follows `lang` state automatically). Add an acceptance test (§16). Exact code points in §12a. |
 
 ---
 
@@ -201,13 +201,27 @@ copy, and the `site-comparison-<month>.<ext>` filename constants are removed.
 
 ### 6.2 Current Facility (Part 3, D3)
 
-Site-specific only. Sections (per selected facility, for the Reports-local Reporting
-Period): **Executive → Engineering → Facility Trend Analytics → Monthly Energy & Cost
-Table → Rack Capacity & Utilization → Rack Unit Capacity & Utilization (+ image, +
-6-month trend) → Capacity Health & Zone Heatmap → History tables**.
-**No** `comparisonPage`, **no** `rackComparisonPage`, **no** `rackUnitComparisonPage`
-— `data.comparison` / `data.rackComparison` / `data.rackUnitComparison` are passed
-`null` for this scope (already the behaviour today; keep it and add tests).
+Site-specific only.
+
+**PDF / HTML sections** (per selected facility, for the Reports-local Reporting
+Period): **Executive → Executive trend → Engineering (2 pages) → Facility Trend
+Analytics (6 pages) → Monthly Energy & Cost Table → Rack Capacity & Utilization →
+Rack Unit Capacity & Utilization (+ image) → Rack Unit Six-Month Trend → Capacity
+Health & Zone Heatmap.** This is the exact §7.1 list.
+
+**History detail tables are Excel-only** — the History page's five filtered tables
+(UPS Loads / Air Conditioning / DC Power Panels / Energy & Cost / Rack Capacity
+Monthly + Rack Unit Capacity History) are **not** added as PDF pages (the PDF
+already represents History through the 6 Facility Trend Analytics pages + the
+Monthly Energy & Cost Table, and `scripts/test-all-report.ts` blacklists standalone
+"Rack Capacity Monthly Trend" pages). They appear in Excel sheet `06 History`
+(§8.1). §7.1 is authoritative for the PDF; there is no "History tables" PDF page —
+this resolves the earlier §6.2/§7.1 contradiction.
+
+**No cross-site content:** no `comparisonPage`, no `rackComparisonPage`, no
+`rackUnitComparisonPage` — `data.comparison` / `data.rackComparison` /
+`data.rackUnitComparison` are `null` for this scope (already the behaviour today;
+keep it and add explicit tests).
 
 ### 6.3 All Facilities (Part 4)
 
@@ -224,13 +238,16 @@ Cross-site comparisons
   Site Rack Capacity & Availability Comparison
 ```
 
-- One `buildReportHtml(facilityReportData(f), sections)` per facility (already how
-  `buildAllFacilitiesReportHtml` works), joined by `page-break-before`.
+- **One cover for the whole report** (not one per facility — see §7.4 for the
+  cover/model boundary and the `buildReportBodyPages` extraction).
+- Per facility: a facility band header page + that facility's §7.1 body pages.
 - **Then** a single "Cross-site comparisons" block appended **once** (not per
   facility): the Site Energy & Cost Comparison pages + the Site Rack Capacity &
-  Availability Comparison pages, built from `loadComparison()` data via the
-  comparison report builder.
+  Availability Comparison pages, built from **one shared N-site comparison model**
+  (§7.5) derived from `loadComparison()` output.
 - Excel: per-facility sheet groups, then **both** comparison sheets once (see §8).
+- Cross-site block is **omitted** when there is only one site in scope (no
+  comparison to draw) — not an error.
 
 ---
 
@@ -258,6 +275,10 @@ Section ids are the registry ids (see §9).
 `comparisonPage`, `rackUnitComparisonPage`, `rackComparisonPage` are **omitted**
 (their `data.*` inputs are null).
 
+There are **no History-detail-table pages** in the PDF (see §6.2) — History is
+represented by rows 5–6 (trend pages + Monthly Energy & Cost Table). The History
+detail tables live in Excel sheet `06 History` only.
+
 ### 7.2 All Facilities PDF
 
 ```
@@ -272,9 +293,13 @@ Cover — "All Facilities" · reporting month · period
 
 ── Cross-site comparisons ─────────────────────
   C1  Site Energy & Cost Comparison
-      - Monthly Energy Consumption Trend (all sites, one series/site)   data-report-section="site-energy-comparison"
+      (4 charts — one series per site — matching the live WebSiteComparison UI,
+       WebSiteComparison.tsx:143-148)
+      - Total Building Energy Consumption Trend (all sites)             data-report-section="site-energy-comparison"
+      - 4th Floor Energy Consumption Trend (all sites)                  "
       - Total Building Electricity Cost Trend (all sites)               "
       - Estimated 4th Floor Electricity Cost Trend (all sites)          "
+      (no chart for Average Rate or Floor Share — matches the live UI)
       - Site Energy & Cost Comparison table (one row/site for the
         reference month): Facility | Building Energy (kWh) | Building
         Cost (THB) | 4th Floor Energy (kWh) | Estimated 4th Floor Cost
@@ -300,10 +325,12 @@ Cover — "All Facilities" · reporting month · period
   pages.
 - Today only the **first two** sites appear in the comparison HTML/PDF
   (`siteComparisonReportForDownload` uses `data.sites[0]`/`[1]`). The redesign
-  renders **all** sites in the Site Energy & Cost table + the Rack tables (charts
-  keep one series per site). The 2-site self/sibling donut layout
-  (`rackComparisonPage`) is generalised to N sites or replaced by the per-site
-  summary-card row that the live `WebSiteRackCapacityComparison` uses.
+  renders **all** sites — see §7.5 for the N-site model. The 2-site self/sibling
+  donut layout (`rackComparisonPage`) is **not reused** for the web All-Facilities
+  block; the cross-site rack section uses the per-site summary-card row + per-site
+  zone/details/positions tables that the live `WebSiteRackCapacityComparison` uses.
+  The existing 2-site `comparisonPage` / `rackComparisonPage` / `rackUnitComparisonPage`
+  in `reportHtml.ts` stay **as-is for the Desktop** `reportDataBuilder` path only.
 - Terminology: **"Pending Decommission"** everywhere in comparison output (stored
   `Pending Dismantle`), matching the live comparison UI.
 
@@ -314,6 +341,108 @@ Order is derived from app nav: Dashboard (Executive, Engineering) → History (T
 position is #6/#7, immediately before Exports). Within All Facilities the per-site
 blocks come first (nav #1–#5 content) and the two comparison pages form the trailing
 "Cross-site comparisons" block (nav #6–#7).
+
+### 7.4 Cover / model boundary — `buildReportBodyPages`
+
+`buildReportHtml(data, sections?)` today emits a full HTML document:
+`<!doctype><html><head><style>…</style></head><body><main class="cover">…</main>
+{body pages}<script>…reportReady…</script></body></html>` (`reportHtml.ts:704-707`).
+`buildAllFacilitiesReportHtml` (`exports.ts:1109`) calls it **once per facility**, so
+today's All-Facilities output has one `<head>`+`<style>` (from the first report) and
+**one cover per facility**.
+
+**Change:** extract an internal `buildReportBodyPages(data, sections?): string` in
+`reportHtml.ts` that returns only the `<section class="page" data-report-section="…">…
+</section>` sequence (no doctype/head/cover/`reportReady` script).
+
+- `buildReportHtml(data, opts?)` — signature becomes
+  `buildReportHtml(data, opts?: { sections?: ReportSectionId[]; includeCover?: boolean })`.
+  Back-compat: a bare `ReportSectionId[]` second arg is still accepted (normalised to
+  `{ sections }`); `includeCover` defaults to `true`. Desktop and Current-Facility
+  callers are unchanged in behaviour.
+  Implementation = `<!doctype>…<head>` + (`includeCover` ? cover : "") +
+  `buildReportBodyPages(data, sections)` + `reportReady` script + `</body></html>`.
+- `buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections?)` —
+  emits **one** `<!doctype>…<head><style>` (shared), **one** All-Facilities cover
+  (`facility: "All Facilities"`, reference month, period, site list), then per
+  facility: `<section class="page facility-band" data-report-section="facility-header">
+  <h2>Facility: <name></h2></section>` + `buildReportBodyPages(facilityData, sections)`,
+  then the cross-site block (`buildCrossSiteComparisonPages(comparisonModel, sections)`),
+  then the `reportReady` script.
+- **Section filtering:** `filterReportHtmlBySections` is replaced by
+  `filterReportBodySections(html, sections)` operating on `data-report-section`
+  attributes. The cover and `facility-band` pages are **never** filtered out. The
+  cross-site pages are kept iff `site-energy-comparison` / `site-rack-comparison`
+  are selected. Select-all / Select-none / search continue to work on
+  `ReportRegistry.all()`.
+- CSV/XLSX still ignore section selection.
+
+### 7.5 N-site comparison model (single shared input for HTML / PDF / Excel / CSV)
+
+Today `ReportData.comparison` and `ReportData.rackComparison` are `{ self, other }`
+2-site shapes, `ExportFacility` has no `siteCode`, and the All-Facilities
+CSV/Excel builders take only `facilities: ExportFacility[]` (`exports.ts:269`,
+`:528-537`). The redesign introduces one N-site model consumed identically by every
+format.
+
+```ts
+// new, in src/web-clean-v1/exports.ts
+export interface SiteComparisonReportSite {
+  label: string;               // site.name
+  siteCode: string;            // site.code  (source below)
+  /** reference-month energy metrics, null when the site has no data that month */
+  metrics: ComparisonMetric | null;
+  /** every month in `months`, for the trend charts; missing months → null */
+  metricsByMonth: Record<string, ComparisonMetric | null>;
+  /** exact reference-month rack snapshot, null when no confirmed snapshot */
+  rack: RackCapacityReport | null;
+  /** reference-month + up-to-6-month-trailing rack-unit rows */
+  rackUnit: Array<{ month: string; totalU: number; usedU: number;
+                    availableU: number; usagePercent: number | null;
+                    availabilityPct: number | null }>;
+}
+export interface SiteComparisonReportModel {
+  referenceMonth: string;
+  months: string[];            // sorted, ≤ referenceMonth window
+  sites: SiteComparisonReportSite[];   // ALL sites, sorted name then id
+}
+```
+
+- **Built once** from `loadComparison()` output (`SiteComparisonExport`) by a new
+  `buildSiteComparisonReportModel(data, referenceMonth)`. This is the *only* place
+  the comparison shape is assembled; HTML/PDF (`buildCrossSiteComparisonPages`),
+  Excel (`sheets 90/91`), and CSV (`siteComparisonExportSections`) all consume it.
+- **`siteCode` sources:**
+  - comparison path: `SiteComparisonExport.sites[].site.code` (server already sends
+    `site: { id, code, name }` — verified).
+  - per-facility path: add optional `siteCode?: string` to `ExportFacility`,
+    populated in `CleanWebApp.loadAll` from `bootstrap.sites[].code`. Absent →
+    fall back to a slug of `siteName` (never blank, never fabricated data).
+- **null / no-data semantics (no fabrication):**
+  - site with no reference-month `metrics` → energy row cells render `—`; the site
+    is still listed. Trend series carries `null` for that month (gap, `connectNulls={false}`).
+  - site with no confirmed rack snapshot → summary card shows **"Unavailable"**,
+    the site is **excluded from reconciliation totals**, and its zone/details/
+    positions tables are omitted (matches `WebSiteRackCapacityComparison`).
+  - site with invalid rack-unit values (`usedU > totalU`, negatives) → excluded
+    from the Rack Unit Capacity Comparison, listed in an "excluded" note.
+  - `Availability %` for rack-unit = `row.availabilityPct ?? (totalU>0 ? availableU/totalU : null)`
+    (0–1 ratio), identical to `CleanWebApp.tsx:770` and `exports.ts:559`.
+- **Builder signatures** (all gain the model; all `facilities`-only signatures are
+  updated, and the standalone site-comparison exports are removed):
+  - `buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections?)`
+  - `exportAllFacilitiesHtml(facilities, comparison, selectedMonth, fileName?, sections?)`
+  - `exportAllFacilitiesPdf(facilities, comparison, selectedMonth, fileName?, sections?)`
+  - `exportAllFacilitiesCsv(facilities, comparison)`
+  - `exportAllFacilitiesExcel(facilities, comparison)` /
+    `workbookForFacilities(facilities, comparison?)`
+  - `comparison` is `SiteComparisonReportModel | null`; `null` → cross-site block/
+    sheets omitted (single-site tenant).
+  - **Removed:** `buildSiteComparisonReportHtml`, `exportSiteComparisonCsv/Excel/Html/Pdf`,
+    `printSiteComparisonPdf`, `workbookForSiteComparison`, `siteComparisonReportForDownload`.
+    `siteComparisonExportSections` / `buildSiteComparisonCsv` are **kept** but
+    re-typed to take `SiteComparisonReportModel` and are called from the
+    All-Facilities CSV/Excel builders.
 
 ---
 
@@ -327,7 +456,7 @@ Sheet-name prefix `NN ` fixes ordering and is stable for tests.
 | Order | Sheet | Kind | Content |
 |---|---|---|---|
 | `01 Dashboard` | presentation | Interactive dashboard (B3 reporting-month dropdown, 10 KPI cards via INDEX/MATCH, mini engineering table, 4 native charts) — the existing `<prefix>-Dashboard`. |
-| `02 Executive` | presentation | Executive KPI block (Building vs 4th Floor energy & cost, 4th-floor share) + the 6 Facility Trend series as a table. |
+| `02 Executive` | presentation | Executive KPI block only: Building vs 4th Floor energy & cost, 4th-floor share (the trend series live on `07 Trends`). |
 | `03 Engineering` | presentation | Selected-month engineering analysis: UPS Load Status (Overall + group + detail mapping), Air Conditioning (per-meter GWh + monthly diff), DC Power Panel, Overall Energy & Cost. |
 | `04 Rack Capacity` | presentation | Summary KPIs (Total / In Use / Available / Reserved / Pending Decommission / Other / Usage % / Availability %) + Rack Zone Breakdown + Rack Positions (Available / Reserved / Pending Decommission). |
 | `05 Rack Unit Capacity` | presentation | Total U / Used U / Available U / Usage % / Availability % + 6-month trend + Trend Note + image-metadata row (no bytes). |
@@ -349,7 +478,7 @@ short names (the full titles appear in each sheet's title row):
 
 | Order | Sheet name (≤31 chars) | Title row | Content |
 |---|---|---|---|
-| `90 Site Energy Comparison` | "Site Energy & Cost Comparison" | One row per site for the reference month: Facility · Site code · Reporting month · Whole Building Energy (kWh) · Whole Building Cost (THB) · 4th Floor Energy (kWh) · Estimated 4th Floor Cost (THB) · Average Rate (THB/kWh) · 4th Floor Share (%). Numeric cells numeric; `%` columns `0.0%`. Plus a trend block (all sites × months). |
+| `90 Site Energy Comparison` | "Site Energy & Cost Comparison" | **Summary block:** one row per site for the reference month — Facility · Site code · Reporting month · Whole Building Energy (kWh) · Whole Building Cost (THB) · 4th Floor Energy (kWh) · Estimated 4th Floor Cost (THB) · Average Rate (THB/kWh) · 4th Floor Share (%). **Trend block:** four month-indexed tables (all sites × months) — Total Building Energy, 4th Floor Energy, Total Building Cost, Estimated 4th Floor Cost — the same four series the live UI and the PDF charts use. Numeric cells numeric; `%` columns `0.0%`; missing months blank (not zero). |
 | `91 Site Rack Comparison` | "Site Rack Capacity & Availability Comparison" | `RACK_CAPACITY_SUMMARY` (Site · Snapshot Month · Total · In Use · Available · Reserved · Pending Decommission · Other · Usage % · Availability %), `RACK_CAPACITY_DETAILS` (per zone), `RACK_POSITIONS` (Site · Snapshot Month · Status · Rack ID · Cabinet Size (cm) · Detail), `RACK_UNIT_CAPACITY_COMPARISON`, `RACK_UNIT_TREND_COMPARISON`, `RACK_UNIT_TREND_NOTE`. `%` columns as `0.0%` with 0–1 ratio inputs (matches `exportRatio`). |
 | then per-facility raw sheets (`RST 20 Raw — …`, `SRN 20 Raw — …`) | — | Existing raw sheets, after all presentation + comparison sheets. |
 
@@ -359,8 +488,12 @@ Per-facility presentation sheet names must also fit 31 chars — use the facilit
 is abbreviated (`Rack Unit Cap`, `Engineering`) and the sheet's title row carries the
 full name.
 
-`workbookForSiteComparison` is retired as a standalone export; its sheet builders
-are reused to produce sheets `90`/`91` inside the All Facilities workbook.
+Sheets `90`/`91` are built from the shared `SiteComparisonReportModel` (§7.5), not
+from a separate DTO. `workbookForSiteComparison` and the standalone
+`exportSiteComparison*` functions are removed; `workbookForFacilities` gains an
+optional `comparison` param and emits `90`/`91` when it is non-null.
+`ExportFacility` gains `siteCode?: string` (§7.5) so per-facility sheet prefixes and
+the `90` "Site code" column resolve from real data.
 
 ### 8.3 Excel quality (Part 9)
 
@@ -389,8 +522,10 @@ are reused to produce sheets `90`/`91` inside the All Facilities workbook.
 - Both new sections are **only meaningful for the All Facilities scope**. The
   section picker still lists them; for Current Facility they produce nothing
   (no comparison data), which is acceptable and tested.
-- `reportHtml.ts`: `filterReportHtmlBySections` rewritten to read
-  `data-report-section` attributes instead of text matching. Mapping:
+- `reportHtml.ts`: `filterReportHtmlBySections` replaced by
+  `filterReportBodySections` operating on `data-report-section` attributes (see
+  §7.4 for the `buildReportBodyPages` split). Cover / `facility-band` pages are
+  never filtered. Mapping:
   - `executive` → Executive page + Executive trend page
   - `dashboard` (and legacy `ups` / `air-conditioning` / `dc`) → both engineering pages
   - `historical` → the 6 Facility Trend Analytics pages
@@ -412,10 +547,12 @@ are reused to produce sheets `90`/`91` inside the All Facilities workbook.
 - Remove the `comparison` branch of the scoped-preview effect (`:859-892`),
   `previewContextLabel` comparison case, and the `loadComparison`-only preview path.
 - **All Facilities preview** must render facility reports **plus** both cross-site
-  comparison pages — i.e. `buildAllFacilitiesReportHtml` gains the cross-site block
-  (built from `loadComparison()` output). `previewIdentity` for `all` already keys
-  on the full site set + `contextMonth` + `periodIdentity` + sections; extend it to
-  cover the comparison data too (same `periodIdentity`, so no new key needed).
+  comparison pages. The preview effect's `all` branch calls `loadAll(...)` **and**
+  `loadComparison()` → `buildSiteComparisonReportModel(...)` →
+  `buildAllFacilitiesReportHtml(facilities, model, contextMonth, selectedReportSections)`
+  (§7.4/§7.5). `previewIdentity` for `all` already keys on the full site set +
+  `contextMonth` + `periodIdentity` + sections; the comparison model shares
+  `periodIdentity` + `contextMonth`, so no new cache key is needed.
 - `WebReportPreview.tsx` itself changes minimally — it already switches on
   `overrideHtml ?? currentFacilityHtml`. `overrideHtml` is non-null only for `all`.
 - Preview always reflects what the selected export will contain.
@@ -463,24 +600,67 @@ test infra.
 **Result:** Dashboard toolbar = **PDF · EXCEL · CSV**, three actions, no ghost
 spacing, responsive layout unchanged.
 
+### 12a. Default language = English (D5)
+
+Own commit, **before** the export commits so it can be reviewed/reverted in
+isolation: `fix(i18n): default UI language to English when no saved preference`.
+
+| Code point | Today | Change |
+|---|---|---|
+| `src/web-clean-v1/CleanWebApp.tsx:138` | `useState<AppLanguage>("th")` | `useState<AppLanguage>("en")` |
+| `src/web-clean-v1/theme.ts:11` `normalizeLanguage` | `value === "en" ? "en" : "th"` | `value === "th" ? "th" : "en"` — a saved `"th"` still returns `"th"`; null / unknown → `"en"` |
+| Desktop `src/App.tsx:193` | `useState<"th" \| "en">("th")` | `useState<"th" \| "en">("en")` |
+| Desktop `src/electron/config.ts:49` `DEFAULT_CONFIG.language` | `"th"` | `"en"` |
+
+- **A preference the user saved as `"th"` is still honoured**: web restore effect
+  (`CleanWebApp.tsx:276`) calls `setLang(normalizeLanguage(saved))` only when
+  `saved !== null`; with the new `normalizeLanguage` a stored `"th"` → `"th"`.
+  Desktop restores `cfg.language` from the portable config file
+  (`App.tsx:1111`, `:1964`), which is untouched for existing installs; only a
+  *new* config file (or a missing `language` key filled from `DEFAULT_CONFIG`)
+  now starts English.
+- Nothing else in the locale wiring changes — `document.documentElement.lang`
+  follows `lang` state via the existing effect; the `languageStorageKey` /
+  `config.update({language})` write paths are unchanged.
+- **Tests to update / add:**
+  - `scripts/test-web-clean-v1-theme.ts` and
+    `scripts/test-web-clean-v1-settings-recovery.ts` — any assertion that
+    `normalizeLanguage(null)` / unknown returns `"th"` flips to `"en"`; a stored
+    `"th"` still returns `"th"`.
+  - New acceptance test: fresh state (no `energy-monitor:language:*` key) →
+    `lang === "en"`; stored `"th"` → `lang === "th"`; stored garbage → `"en"`.
+  - Desktop parity: `DEFAULT_CONFIG.language === "en"`; a config with
+    `language: "th"` still restores Thai.
+- The D4 label-string rename (`rack-comparison` EN + TH) is unaffected by this and
+  still lands in the registry/nav commit.
+
 ---
 
 ## 13. Report context, not controls (Part 24)
 
-The Dashboard `UniversalFilterBar` controls **TREND / CATEGORY / UPS GROUP / COMPARE
-are inert on web** (verified — no web component or export reads them). Only **YEAR +
-PERIOD** resolve to `activeMonth`, and `selectedReportView` is screen-only.
+The Dashboard `UniversalFilterBar` controls **TREND / CATEGORY / UPS GROUP /
+COMPARE do affect the on-screen views** — TREND sets the Executive
+`EngineeringTrendCharts` window (`UniversalFilterBar.tsx:218-279`,
+`EngineeringTrendCharts.tsx`); CATEGORY toggles which `DashboardSummary` sections
+render; UPS GROUP filters the `DashboardSummary` UPS tables; COMPARE adds a
+comparison-reference row (`DashboardSummary.tsx:124-350`). What is true is that
+**none of them is carried into any export**: the Dashboard-toolbar export passes
+only the resolved `activeMonth` and a hard-fixed `["dashboard"]` section with the
+full `logs` (`CleanWebApp.tsx:581`), and the Reports-page export does not read
+`UniversalFilterBar` state at all (it has its own Reporting Period). Only **YEAR +
+PERIOD** resolve to `activeMonth`; `selectedReportView` is screen-only.
 
-Report/Excel output shows **resolved context**, never interactive controls:
-- Reporting Month (resolved from YEAR + PERIOD)
+Report / Excel output therefore shows **resolved context**, never interactive
+controls:
+- Reporting Month (resolved from YEAR + PERIOD, or the Reports-local period)
 - Reporting Period / window (Reports-local period, or Global Display Period for the
   Dashboard toolbar export)
 - Facility / scope
 - (Optionally) Report View label for a Dashboard-toolbar snapshot
 
 No "Reporting Year / Trend Window / Category Scope / UPS Group Scope / Comparison
-Scope" lines unless they materially affect the exported data — on web today they do
-not, so they are **omitted**.
+Scope" lines are added — on web they change on-screen filtering but not the
+exported dataset, so surfacing them as report context would be misleading. Omit.
 
 ---
 
@@ -525,9 +705,45 @@ mask) — otherwise UAT fails (Part 31).
 
 ## 16. Tests (Part 27)
 
-New / updated, added to `scripts/test-web-clean-v1-*.ts` (registered in
-`package.json` `test:phase3` list) and `scripts/test-web-clean-v1-exports.ts` /
-`scripts/test-all-report.ts` for deep content.
+### 16.0 Desktop vs Web test split (test migration plan)
+
+`scripts/test-all-report.ts` and `scripts/test-all-report-pdf.ts` test the
+**Desktop** single-facility report (`buildReportData` from a `.xlsm`, 2-site
+`siblingFacility` comparison, `printToPDF`). They **stay Desktop-only and keep
+their current assertions**. The redesign must not change the *rendered text* those
+tests match:
+
+- Adding `data-report-section="…"` to the wrapping `<section class="page">` is
+  additive markup; the `<h2>`/text those tests `.includes()` is unchanged. Run
+  `npm run test:all-report` after every `reportHtml.ts` edit.
+- The Desktop path keeps calling `buildReportHtml(data, sections?)` with the
+  2-member array form (normalised to `{ sections }`, `includeCover: true`) — no
+  behavioural change.
+- The 2-site `comparisonPage` / `rackComparisonPage` / `rackUnitComparisonPage`
+  functions and `filterReportBodySections`' handling of them stay wired for
+  Desktop.
+
+The **Web** Current-Facility + All-Facilities structure gets its own suite —
+extend `scripts/test-web-clean-v1-exports.ts` and add
+`scripts/test-web-clean-v1-report-structure.ts` (registered in `test:phase3`).
+Web tests drive the real production builders (`facilityReportData`,
+`buildAllFacilitiesReportHtml`, `buildSiteComparisonReportModel`,
+`workbookForFacilities`, `siteComparisonExportSections`), never a predicate
+re-implemented inside the test.
+
+**Comparison regression — positive, through the production path:** the current
+`test-web-clean-v1-exports.ts:~402-437` block asserts the *defective* predicate
+(`Set.has(object)`) would blank cells. Keep that as documentation, and **add a
+positive assertion**: build a `SiteComparisonReportModel` from a fixture
+`SiteComparisonExport` where `selectedReportMonthSet` contains the reference
+month, run it through `buildSiteComparisonReportModel` →
+`siteComparisonExportSections` / `buildSiteComparisonCsv` /
+`buildAllFacilitiesReportHtml`, and assert Building/Floor Energy & Cost, Average
+Rate, Floor Share are the fixture values (not `—`) for that month, and that a
+non-selected month's row is absent. This exercises the real `entry.month` filter
+at `CleanWebApp.tsx:769` semantics via the shared model builder.
+
+### 16.1 Assertions
 
 **Export scope**
 1. Only `current` + `all` export cards exist; `ExportScope` union has 2 members;
@@ -545,31 +761,53 @@ New / updated, added to `scripts/test-web-clean-v1-*.ts` (registered in
 8. Excel presentation sheet order matches §8 (`01`–`07`, then `90`/`91`, then raw).
 9. Raw sheets come after all presentation + comparison sheets.
 10. Recent Reports is the last persistent child of the Reports section.
-11. Report sections picker sits **below** Live Preview (`d2a331a` order preserved).
+11. Report sections picker sits **below** Live Preview (`d2a301a` order preserved).
+    Also add `site-energy-comparison` / `site-rack-comparison` appear in
+    `ReportRegistry.all()` and toggle via Select all / Select none / search.
 
 **Data**
-12. Site Energy & Cost selected-month metrics stay populated (regression on
-    `entry.month` filter; keep/extend `test-web-clean-v1-exports.ts:~402-437`).
+12. Site Energy & Cost selected-month metrics stay populated — the positive
+    production-path regression from §16.0 (Building/Floor Energy & Cost, Average
+    Rate, Floor Share) plus the retained negative documentation assertion.
 13. Rack Capacity values reconcile UI ↔ PDF ↔ Excel for a fixture snapshot.
 14. Rack Positions filtered contract preserved (no In Use rows; 6-column CSV;
     Pending Dismantle→Pending Decommission).
 15. Rack Unit values reconcile UI ↔ PDF ↔ Excel.
-16. Rack Unit percentage formatting = exactly 1 decimal in every format.
-17. Missing data stays missing/null — no fabricated zeros / filled months / trends.
+16. Rack Unit percentage formatting = exactly **1** decimal in report/CSV/XLSX
+    analytics output. **Do not touch** the existing `30.0%` report assertions or
+    the persisted-XLSM `0.00%` contract (`RackUnitCapacityWriter` /
+    `RackCapacityHistoryWriter`) — those are separate and stay as-is.
+17. Missing data stays missing/null — no fabricated zeros / filled months / trends
+    (cross-site charts carry `null` gaps; a site with no month metrics renders `—`).
+18. Cross-site energy report has **4** charts (Total Building Energy, 4th Floor
+    Energy, Total Building Cost, Estimated 4th Floor Cost) — matches
+    `WebSiteComparison`; no Average-Rate / Floor-Share chart.
+19. All Facilities report has exactly **one** cover (`facility: "All Facilities"`),
+    one `facility-band` per site, and the cross-site block appears **once**.
+20. N-site: with ≥3 sites in the fixture, every site appears in the `90` summary
+    rows / energy table and (where it has a snapshot) the `91` rack tables.
+21. Single-site scope → cross-site block/sheets omitted, not an error.
 
 **Dashboard**
-18. Production Dashboard toolbar exposes PDF / Excel / CSV.
-19. Production Dashboard does **not** expose PNG (`exportDashboard` param, filter-bar
-    `exportFormats`, no "requires the Desktop app" string).
-20. No dead web PNG handler branch remains.
+22. Production Dashboard toolbar exposes PDF / Excel / CSV.
+23. Production Dashboard does **not** expose PNG (`exportDashboard` param, filter-bar
+    `exportFormats`, no "requires the Desktop app" string); update
+    `test-web-clean-v1-dashboard-parity.ts:18` regex.
+24. No dead web PNG handler branch remains.
 
 **Image**
-21. Rack Unit image export path intact (`data:image/png` embed still asserted).
-22. Dashboard PNG removal doesn't break image MIME handling (`imageValidation`,
+25. Rack Unit image export path intact (`data:image/png` embed still asserted).
+26. Dashboard PNG removal doesn't break image MIME handling (`imageValidation`,
     `reportSafety` allowlist, server storage content-types unchanged).
 
-**Also:** run `validateReportHtml` over the redesigned web All-Facilities + Current-Facility
-HTML in a new test (currently only Desktop output is validated).
+**Language (D5 / §12a)**
+27. Fresh state (no language key) → `lang === "en"`; stored `"th"` → `"th"`;
+    stored garbage → `"en"`. Desktop `DEFAULT_CONFIG.language === "en"`, a config
+    with `language: "th"` still restores Thai. Update the `normalizeLanguage`
+    assertions in `test-web-clean-v1-theme.ts` / `-settings-recovery.ts`.
+
+**Also:** run `validateReportHtml` over the redesigned web All-Facilities +
+Current-Facility HTML in a new test (currently only the Desktop output is validated).
 
 ---
 
@@ -616,10 +854,14 @@ formatting-only reason or UAT fails.
   `previewCacheRef` (key `previewIdentity`).
 - The All Facilities preview/export builds **one** report model per facility + one
   comparison model, reused across HTML/PDF/preview. Do not add a fetch per section.
-- `loadComparison` currently awaits `/racks` sequentially per site inside `.map`
-  — parallelise with `Promise.all` while here (small, safe).
+- `loadComparison` **already** fans out the per-site `/racks` fetches with
+  `Promise.all(result.sites.map(...))` (`CleanWebApp.tsx:764`) — no change needed;
+  do not re-touch it.
 - Verify no refetch loop from the removed `comparison` preview branch; memo/effect
   deps updated so `exportScope` change to `"all"` does not thrash caches.
+- The All Facilities preview now also calls `loadComparison()`; it shares
+  `comparisonCacheRef` with (previously) the comparison scope, so the added call is
+  cache-served after the first build for a given `periodIdentity:contextMonth`.
 
 ---
 
@@ -629,18 +871,21 @@ One branch, focused commits, **no merge**.
 
 | # | Commit (Conventional Commits) | Contents |
 |---|---|---|
-| 1 | `refactor(exports): consolidate report scopes to current + all` | `ExportScope` 2-member; remove `comparison` card/copy/filenames; Live Preview simplification; move `loadComparison` output into the All Facilities path; delete orphaned popup/`print*` family + dead helpers (`parseCsvLine`, `monthSet`) + their tests; parallelise per-site rack fetch. |
-| 2 | `feat(reports): split site-comparison registry section in two` | `site-energy-comparison` + `site-rack-comparison` ids; registry titles; `data-report-section` attributes on every report page; rewrite `filterReportHtmlBySections` to attribute-based. |
-| 3 | `feat(exports): rebuild PDF template for app UI parity` | Dedicated cross-site comparison layout (no empty placeholder pages); all-sites Site Energy & Cost table; N-site rack comparison; terminology alignment ("Site Rack Capacity & Availability Comparison", "Pending Decommission"); All Facilities = per-facility blocks + trailing Cross-site block once. |
-| 4 | `feat(exports): rebuild Excel workbook for app UI parity` | `01`–`07` presentation sheets in app order; `90`/`91` comparison sheets in All Facilities; raw sheets after; titles / freeze panes / widths / number formats; retire standalone `workbookForSiteComparison` export, reuse its builders for `90`/`91`. |
+| 0 | `fix(i18n): default UI language to English when no saved preference` | §12a: `CleanWebApp.tsx:138`, `theme.ts:11` `normalizeLanguage`, Desktop `App.tsx:193`, `config.ts:49`. `normalizeLanguage` assertion updates in `test-web-clean-v1-theme.ts` / `-settings-recovery.ts` + new acceptance test. Isolated so it can be reviewed/reverted alone. |
+| 1 | `refactor(exports): consolidate report scopes to current + all` | `ExportScope` 2-member; remove `comparison` card/copy/filenames; Live Preview simplification (`all` branch also builds the comparison model); introduce `SiteComparisonReportModel` + `buildSiteComparisonReportModel`; add `ExportFacility.siteCode`; delete orphaned popup/`print*` family + dead helpers (`parseCsvLine`, `monthSet`) + their tests. **No visual redesign yet** — `buildAllFacilitiesReportHtml` still emits per-facility covers here; cross-site block wired but rendered via a thin adapter over existing 2-site pages. |
+| 2 | `feat(reports): split site-comparison registry section in two` | `site-energy-comparison` + `site-rack-comparison` ids + titles; `data-report-section` attributes on every report page; `buildReportBodyPages` extraction + `buildReportHtml({sections, includeCover})`; replace `filterReportHtmlBySections` with `filterReportBodySections`. Run `test:all-report` — rendered text unchanged. |
+| 3 | `feat(exports): rebuild PDF template for app UI parity` | One All-Facilities cover + `facility-band` pages; dedicated `buildCrossSiteComparisonPages(model, sections)` (4 energy charts, all-sites energy table, per-site summary cards + zone/details/positions + rack-unit cards, Trend Note) — **no empty placeholder pages**; terminology alignment ("Site Rack Capacity & Availability Comparison", "Pending Decommission"). |
+| 4 | `feat(exports): rebuild Excel workbook for app UI parity` | `01`–`07` presentation sheets in app order; `workbookForFacilities(facilities, comparison?)` emits `90`/`91` from the shared model; raw sheets after; titles / freeze panes / widths / number formats; remove `workbookForSiteComparison` + standalone `exportSiteComparison*`. |
 | 5 | `fix(dashboard): remove PNG web export` | `UniversalFilterBar` `exportFormats` prop; `CleanWebApp` `exportDashboard` narrowing + branch + message removal; parity test update. |
-| 6 | `test(exports): scope, order, reconciliation, PNG-removal coverage` | All new/updated tests from §16; register new scripts in `test:phase3`. |
-| 7 | `docs(exports): sync report/export docs` | Update `docs/web-clean-v1/DESKTOP_WEB_PARITY_AUDIT.md` and any doc describing the 3-scope model / dashboard PNG parity. `PROJECT_STATE.md` / `CHANGELOG.md` as applicable. |
+| 6 | `test(exports): scope, order, reconciliation, PNG-removal, N-site coverage` | All new/updated tests from §16 (incl. §16.0 split + positive comparison regression + N-site + language acceptance); register new scripts in `test:phase3`. |
+| 7 | `docs(exports): sync report/export docs` | Update `docs/web-clean-v1/DESKTOP_WEB_PARITY_AUDIT.md` and any doc describing the 3-scope model / dashboard PNG parity / default language. `PROJECT_STATE.md` / `CHANGELOG.md` as applicable. |
 
-(Split may be adjusted if a different grouping is cleaner; commits stay focused.)
+(Split may be adjusted if a different grouping is cleaner; commits stay focused.
+The design doc's own follow-up revision commit is `docs(exports): revise design per
+PO review`.)
 
-Nav label rename (D4/D5) lands in commit 2 (it is a registry/heading change) plus
-the `CleanWebApp.tsx:492` nav array.
+Nav label rename (D4) lands in commit 2 (registry/headings) plus the
+`CleanWebApp.tsx:492` nav array. Language default (D5) is commit 0.
 
 ---
 
@@ -677,10 +922,13 @@ completeness). Resolve real blocking findings before commit.
 | Risk | Mitigation |
 |---|---|
 | `scripts/test-all-report.ts` pins the **Desktop** single-facility PDF order very tightly (trend-page counts, blacklist). Adding `data-report-section` attributes must not change rendered text those assertions match. | Attributes are additive on the wrapping `<section>`; text content unchanged. Run `test:all-report` after every reportHtml edit. |
-| All-sites rack comparison generalises a today-2-site layout (`rackComparisonPage` self/sibling donuts). | Prefer the per-site summary-card row (matches live `WebSiteRackCapacityComparison`); keep donuts only if ≤2 sites, else omit. Documented in §7.2. |
+| All-sites rack comparison generalises a today-2-site layout (`rackComparisonPage` self/sibling donuts). | Web All-Facilities uses a **new** `buildCrossSiteComparisonPages` (per-site summary cards + zone/details/positions + rack-unit cards, N sites) built from `SiteComparisonReportModel` (§7.5). The 2-site `rackComparisonPage`/`comparisonPage`/`rackUnitComparisonPage` stay untouched for the Desktop path. No shared-behaviour drift because the model is the single input. |
+| **N-site model duplication** — energy/rack metric shaping could get re-implemented in the HTML builder, the Excel builder, and the CSV builder. | One `buildSiteComparisonReportModel` produces `SiteComparisonReportModel`; HTML/PDF, Excel `90`/`91`, and `siteComparisonExportSections`/`buildSiteComparisonCsv` all consume it. `ponytail` review gate checks for duplication. |
 | Excel sheet renames break tests asserting exact sheet names (`test-web-clean-v1-exports.ts:85`). | Update those assertions in commit 4/6; keep the underlying section names (`RACK_CAPACITY_SUMMARY` …) stable, only add the `NN ` ordering prefix + presentation sheets. |
 | `printToPDF` harness is Desktop-only (`buildReportData` from `.xlsm`); web PDF is html2canvas. | Sample web artifacts via the web `exportReportPdfFromHtml` path in a headless context, or accept HTML-structure review + `validateReportHtml` as the automated gate and do the visual pass on the html2canvas output. |
 | Benchmark/Forecast excluded — a stakeholder may expect them. | D2 is explicit and matches the existing PDF blacklist. Documented in §4.2 / §24. |
+| **Default-language flip** (§12a) changes `normalizeLanguage` semantics — `test-web-clean-v1-theme.ts` / `-settings-recovery.ts` assert the old `→ "th"` default. | Commit 0 is isolated and updates those assertions + adds an acceptance test; a stored `"th"` preference is still honoured so real users who chose Thai are unaffected. Desktop existing config files unchanged. |
+| `test-all-report.ts` counts `class="page trend-page"` (`= 7 + comparisonEligible*2`) — a `data-report-section` on `<section class="page trend-page">` is fine, but adding a class or reordering is not. | Only add the attribute; never touch `class` or page order on the Desktop path. |
 
 ---
 
@@ -694,7 +942,7 @@ completeness). Resolve real blocking findings before commit.
 | Dashboard → Benchmark View | Derived PUE benchmarking + hard-coded advice; `PUE` is forbidden in report HTML (`reportSafety.ts`); already blacklisted by `test-all-report.ts`. (D2) |
 | Dashboard → Forecast View | Statistical projection (linear regression + confidence band); not source-of-truth data; already blacklisted. (D2) |
 | SmartInsightPanel / Benchmark "Actionable Insights" | Advisory narrative prose, not tabular/analytical data. |
-| Dashboard `UniversalFilterBar` controls TREND / CATEGORY / UPS GROUP / COMPARE | Inert on web (nothing reads them); shown as resolved context only, not reproduced as controls. |
+| Dashboard `UniversalFilterBar` controls TREND / CATEGORY / UPS GROUP / COMPARE | They filter the on-screen Executive/Engineering views but are **not carried into any export** (Dashboard-toolbar export uses only `activeMonth` + fixed `["dashboard"]`; Reports export ignores them). Shown as resolved context only — see §13. |
 | CRUD controls anywhere (Save / Edit / Delete / uploaders / nav / admin) | Report is a representation of analytical/display UI only. |
 
 ---
