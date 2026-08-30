@@ -9,7 +9,8 @@ const sections: ReportSection[] = [
   { id: "air-conditioning", title: "Air Conditioning", reportTypes: ["dashboard", "monthly-energy", "all"] },
   { id: "dc", title: "DC", reportTypes: ["dashboard", "monthly-energy", "all"] },
   { id: "historical", title: "Historical", reportTypes: ["historical", "all"] },
-  { id: "site-comparison", title: "Site Comparison", reportTypes: ["site-comparison", "all"] },
+  { id: "site-energy-comparison", title: "Site Energy & Cost Comparison", reportTypes: ["site-comparison", "all"] },
+  { id: "site-rack-comparison", title: "Site Rack Capacity & Availability Comparison", reportTypes: ["site-comparison", "all"] },
   { id: "appendix", title: "Appendix", reportTypes: ["all"] }
 ];
 

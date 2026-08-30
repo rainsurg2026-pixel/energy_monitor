@@ -671,11 +671,11 @@ function filterReportBodySections(body: string, selectedSections: readonly Repor
     if (page.includes("Executive Dashboard")) return keep("executive");
     if (page.includes("Building Energy Dashboard")) return keep("executive") || keep("dashboard") || keep("ups") || keep("air-conditioning") || keep("dc");
     if (page.includes("Monthly Energy &amp; Cost Table")) return keep("executive") || keep("appendix");
-    if (page.includes("Rack Unit Capacity Comparison")) return keep("site-comparison");
+    if (page.includes("Rack Unit Capacity Comparison")) return keep("site-energy-comparison") || keep("site-rack-comparison");
     if (page.includes("Rack Unit Capacity Six-Month Trend")) return keep("rack-unit-capacity");
     if (page.includes("Rack Unit Capacity and Utilization")) return keep("rack-unit-capacity");
     if (page.includes("Capacity Health and Zone Heatmap")) return keep("rack-capacity") || keep("rack-unit-capacity");
-    if (page.includes("Rack Capacity Site Comparison") || page.includes("<h2>Site Comparison</h2>")) return keep("site-comparison");
+    if (page.includes("Rack Capacity Site Comparison") || page.includes("<h2>Site Comparison</h2>")) return keep("site-energy-comparison") || keep("site-rack-comparison");
     if (page.includes("Rack Capacity and Utilization")) return keep("rack-capacity");
     return false;
   });
