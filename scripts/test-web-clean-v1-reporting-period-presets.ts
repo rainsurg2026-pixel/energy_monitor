@@ -72,6 +72,5 @@ assert.ok(app.includes("logs={history.logs}") && app.includes("selectedMonth={di
 assert.ok(app.includes("<WebSiteComparison lang={lang} />"), "Site Comparison is not scoped by the Reports Quick Range");
 assert.match(app, /WebReportPreview[\s\S]*month=\{contextMonth\}/);
 assert.match(app, /exportAllFacilitiesHtml[\s\S]*contextMonth/);
-assert.ok(app.includes("exportSiteComparisonHtml(comparison, contextMonth"), "site comparison export uses the active period");
 
 console.log("web-clean-v1 Reporting Period presets: default, presets, rollover, sparse data, custom range, cache identity, and export synchronization passed");

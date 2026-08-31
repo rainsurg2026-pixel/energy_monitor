@@ -1,6 +1,6 @@
 import type { EngineeringDashboardSnapshot, ReportComparisonFacility, ReportData, ReportMonthlyRow } from "../reportTypes";
-import { RACK_UNIT_CAPACITY_TREND_NOTE } from "../reportTypes";
-import { formatNumber } from "../../utils/numberFormatBridge";
+import { RACK_UNIT_CAPACITY_TREND_NOTE, type ComparisonMetric, type SiteComparisonReportModel } from "../reportTypes";
+import { formatGWh, formatNumber } from "../../utils/numberFormatBridge";
 import { formatTimestamp } from "../../utils";
 import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics, rackPositionExportRows } from "../../utils/rackCapacity";
 import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
@@ -10,6 +10,7 @@ import { getAccessibleTextColor } from "../../utils/colorContrast";
 import { findPreviousRackUnitCapacityRow, usagePercent } from "../../utils/rackUnitCapacity";
 import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
 import type { ReportSectionId } from "../../reporting/reportingTypes";
+import { isValidRackUnitCapacity, rackAvailabilityStatus } from "../../domain/rackComparison";
 
 const FONT_STACK = '"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif';
 
@@ -36,6 +37,22 @@ const REPORT_PALETTE = {
   siteSrinakarin: "#c2410c",
   siteOther: "#475569"
 } as const;
+
+/** The complete report stylesheet, extracted verbatim from the Desktop
+ *  `buildReportHtml` document so the DOM-free All Facilities builder can
+ *  embed a character-identical `<style>` body. Keeps its
+ *  `${REPORT_PALETTE.*}` / `${FONT_STACK}` interpolations. */
+export const REPORT_CSS = `
+@page{size:A4 landscape;margin:0}*{box-sizing:border-box}html,body{margin:0;color:#243247;background:#fff;font:12px/1.3 ${FONT_STACK}}.cover,.page{width:1123px;min-height:794px;margin:0;background:#fff}.cover{padding:64px 72px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:34px;margin:0;color:#29415d}.cover h2{font-size:20px;font-weight:400;color:#7c6a68}.meta{margin-top:16px;border-top:1px solid #e6d9d2;padding-top:12px;color:#5f6f82}.page{page-break-before:always;padding:34px 40px 38px}.page h2{font-size:23px;margin:0 0 7px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:5px}.page h3{font-size:16px;color:#3e5874;margin:0 0 6px}.dashboard-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #e8d7d0;padding-bottom:8px}.dashboard-head h2{border:0;padding:0;margin:0}.dashboard-head p{margin:3px 0;color:#5f6f82}.eyebrow{font-size:9px!important;font-weight:bold;letter-spacing:1px;color:#a25e4c!important}.dashboard-tag{font-size:10px;text-align:right;color:#52687f;border-left:1px solid #e7d9d2;padding-left:12px}.continuation{font-size:10px;font-weight:bold;color:#68798a;border-bottom:1px solid #e7d9d2;padding-bottom:4px;margin-bottom:7px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:9px 0}.kpi{min-height:74px;padding:9px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:6px;break-inside:avoid}.kpi-label{font-size:10px;color:#67788b;text-transform:uppercase;font-weight:bold}.kpi-value{font-size:21px;font-weight:700;margin-top:5px;color:#29415d}.kpi-unit,.kpi-note,.note{font-size:10px;color:#64758a}.kpi-note{margin-top:3px}.block{margin:9px 0;padding:9px;border:1px solid #e7dcd6;border-radius:6px;break-inside:avoid}.capacity-health-page .block{margin:10px 0;padding:12px}.capacity-health-page .gauge-row{min-height:165px;gap:28px;align-items:center}.capacity-health-page .gauge-row svg{flex:0 0 auto}.capacity-health-page .heatmap-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.note{margin:6px 0 0}.table-wrap{margin:4px 0;overflow:hidden}table{border-collapse:collapse;width:100%;font-size:10px}th,td{padding:4px;border:1px solid #eadfda;text-align:right;vertical-align:top}td.left,th:first-child{text-align:left}th{background:#eee3dd;color:#40566e;font-weight:bold}.dense table{font-size:8.5px}.dense th,.dense td{padding:3px}.ups-comparison{display:grid;gap:7px;margin-top:8px}.ups-bar-row{display:grid;grid-template-columns:90px 1fr 52px;gap:8px;align-items:center;font-size:11px}.ups-bar-row strong{text-align:right}.ups-track{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden}.ups-track i{display:block;height:100%;border-radius:99px;background:${REPORT_PALETTE.ups}}.ups-track i.medium{background:${REPORT_PALETTE.rate}}.ups-track i.high{background:${REPORT_PALETTE.pue}}.trend-page{height:183mm;display:flex;flex-direction:column}.trend-page h2{font-size:26px;margin-bottom:2px}.chart-unit{margin:0 0 5px;color:#657488;font-size:12px}.trend-svg{width:100%;height:142mm;flex:1;overflow:visible}.grid{stroke:#dce4ea;stroke-width:1}.axis-tick,.month-label,.point-value{fill:#44566b;font-family:${FONT_STACK}}.axis-tick{font-size:20px}.month-label{font-size:19px}.point-value{font-size:19px;font-weight:bold}.chart-explanation{margin:2px 5mm 0;font-size:12px;color:#52687f;text-align:center}.trend-legend{display:flex;gap:18px;margin:0 0 4px}.trend-legend span{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#3e5874;font-weight:600}.trend-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}.rack-donut-row{display:flex;gap:16px;align-items:flex-start;margin-top:8px}.rack-comparison-donuts{display:flex;gap:32px;justify-content:center;margin:10px 0 16px}.rack-comparison-donut{text-align:center}.rack-comparison-donut h3{margin-bottom:4px}.rack-comparison-legend{display:flex;flex-direction:column;gap:3px;margin-top:8px;text-align:left}.legend-row{display:flex;align-items:center;gap:6px;font-size:10px;color:#3e5874}.legend-row i{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}.legend-row strong{margin-left:auto;font-weight:700}.rack-unit-capacity-image-figure{margin:8px 0 0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;max-width:100%}.rack-unit-capacity-image{display:block;width:auto;height:auto;max-width:100%;max-height:150px;object-fit:contain;border:1px solid #e7dcd6;border-radius:8px;box-shadow:0 1px 3px rgba(41,65,93,.12)}.rack-unit-capacity-image-caption{display:flex;flex-direction:column;gap:1px;margin-top:5px;font-size:9px;color:#657488}.rack-unit-capacity-image-placeholder{margin-top:8px;width:260px;height:150px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;border:1px dashed #cfc0b8;border-radius:8px;background:#f8f3f0;color:#8a7d78;font-size:10px}.gauge-row{display:flex;align-items:center;gap:20px;margin-top:6px}.gauge-caption{flex:1}.gauge-health-label{font-size:20px;font-weight:700;margin:0 0 4px}.heatmap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}.heatmap-tile{border-radius:8px;padding:8px}.heatmap-zone{font-size:12px;font-weight:700;margin:0}.heatmap-pct{font-size:18px;font-weight:700;margin:2px 0}.heatmap-detail{font-size:9px;margin:0;opacity:.9}.kpis-3col{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:9px 0}.rack-unit-capacity-layout{display:flex;gap:16px;align-items:stretch;margin-top:4px}.rack-unit-capacity-layout .ruc-left{flex:3;min-width:0}.rack-unit-capacity-layout .ruc-right{flex:2;min-width:0;display:flex;align-items:center;justify-content:center}.rack-unit-capacity-layout .rack-unit-capacity-image-figure,.rack-unit-capacity-layout .rack-unit-capacity-image-placeholder{width:100%;max-width:100%;height:auto;min-height:90mm}.rack-unit-capacity-layout .rack-unit-capacity-image{max-width:100%;max-height:82mm;width:auto;height:auto}.facility-band{display:flex;align-items:center;justify-content:center;text-align:center}.facility-band h2{font-size:34px;border:0;margin:0;color:#29415d}
+.facility-trends-page{padding-top:28px}.facility-trends-grid{display:grid;grid-template-columns:1fr;gap:8px}.mini-trend{border:1px solid #e7dcd6;border-radius:7px;padding:8px 10px;break-inside:avoid}.mini-trend h2{font-size:20px;border:0;padding:0;margin:0 0 2px}.mini-trend .chart-unit{font-size:11.5px;margin-bottom:2px}.mini-trend .trend-svg{height:70mm;display:block}.mini-trend .axis-tick{font-size:26px}.mini-trend .month-label,.mini-trend .point-value{font-size:24px}.mini-trend .chart-explanation{font-size:11.5px;line-height:1.35;margin-top:2px}.mini-trend .trend-legend span{font-size:11.5px}
+.appendix-page table{font-size:11px}.appendix-page th,.appendix-page td{padding:6px 5px}.appendix-intro{display:flex;justify-content:space-between;gap:16px;margin:10px 0 14px;padding:12px 14px;background:#f7f2ee;border:1px solid #e7d9d2;border-radius:7px}.appendix-intro strong{font-size:14px;color:#29415d}.appendix-intro span{color:#657488}
+.positions table{font-size:10.5px}.positions th,.positions td{padding:5px}.rack-position-page .continuation{margin-top:-2px}.rack-unit-capacity-layout .rack-unit-capacity-image-placeholder{min-height:48mm;height:48mm}.rack-unit-capacity-layout .ruc-right:has(.rack-unit-capacity-image-placeholder){align-items:flex-start;padding-top:12px}.rack-unit-capacity-image-page-content{height:150mm;display:flex;align-items:center;justify-content:center;padding:8mm 12mm}.rack-unit-capacity-image-page-content .rack-unit-capacity-image-figure{width:100%;height:100%;margin:0}.rack-unit-capacity-image-page-content .rack-unit-capacity-image{max-width:100%;max-height:138mm;width:auto;height:auto}.rack-unit-capacity-image-page-content .rack-unit-capacity-image-placeholder{width:75%;height:90mm;font-size:13px}.rack-unit-capacity-image-page-content .rack-unit-capacity-image-caption{font-size:11px;margin-top:7px}
+.capacity-health-page .zone-summary table{font-size:10.5px}.capacity-health-page .zone-summary th,.capacity-health-page .zone-summary td{padding:5px}
+`;
+
+export function facilityBandPage(facilityName: string): string {
+  return `<section class="page facility-band" data-report-section="facility-header"><h2>Facility: ${escapeHtml(facilityName)}</h2></section>`;
+}
 
 function escapeHtml(value: unknown): string {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -100,7 +117,7 @@ function rackUnitTrendPage(data: ReportData): string {
     formatUsagePercent1(usagePercent(row)),
     formatRatioPercent1(row.availabilityPct)
   ]);
-  return '<section class="page"><h2>Rack Unit Capacity Six-Month Trend</h2><p class="note">' +
+  return '<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity Six-Month Trend</h2><p class="note">' +
     escapeHtml(data.facility) + ' · ' + escapeHtml(formatMonth(data.reportingMonth)) +
     '</p>' + table(["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], renderedRows) +
     '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p>' +
@@ -133,7 +150,7 @@ function rackUnitComparisonPage(data: ReportData): string {
       formatUsagePercent1(usagePercent(row)),
       formatRatioPercent1(row.availabilityPct)
     ]));
-  return '<section class="page"><h2>Rack Unit Capacity Comparison</h2><p class="note">Reference month: ' +
+  return '<section class="page" data-report-section="site-rack-comparison"><h2>Rack Unit Capacity Comparison</h2><p class="note">Reference month: ' +
     escapeHtml(formatMonth(data.reportingMonth)) + '</p>' +
     table(["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], selectedRows) +
     '<h3>Six-Month Trend</h3>' +
@@ -192,11 +209,11 @@ export function trendChartXPosition(index: number, rowCount: number, width = 160
   return left + (index + 1) * categorySlot;
 }
 
-function trendPage(title: string, unit: string, series: TrendSeries[], rows: ReportMonthlyRow[], explanation: string, sectionLabel?: string): string {
+function trendPage(title: string, unit: string, series: TrendSeries[], rows: ReportMonthlyRow[], explanation: string, sectionLabel?: string, reportSection: ReportSectionId = "historical"): string {
   const eyebrow = sectionLabel ? `<p class="eyebrow">${escapeHtml(sectionLabel)}</p>` : "";
   const allValues = series.flatMap(s => s.values);
   const defined = allValues.filter((value): value is number => value !== null && Number.isFinite(value));
-  if (!defined.length) return `<section class="page trend-page">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)}</p><p>No valid values are available for this selected reporting window.</p></section>`;
+  if (!defined.length) return `<section class="page trend-page" data-report-section="${reportSection}">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)}</p><p>No valid values are available for this selected reporting window.</p></section>`;
   const width = 1600, height = 810, left = 140, right = 80, top = 82, bottom = 110;
   const actualMin = Math.min(...defined), actualMax = Math.max(...defined), rawRange = actualMax - actualMin || Math.max(Math.abs(actualMax) * 0.2, 1);
   const domainMin = Math.min(0, actualMin - rawRange * 0.16), domainMax = actualMax + Math.max(rawRange * 0.28, Math.abs(actualMax) * 0.04);
@@ -228,7 +245,21 @@ function trendPage(title: string, unit: string, series: TrendSeries[], rows: Rep
   const details = multi
     ? series.map(s => `${escapeHtml(s.name)} — ${escapeHtml(trendSeriesDetails(unit, s.values, rows))}`).join(" ")
     : escapeHtml(trendSeriesDetails(unit, series[0]?.values ?? [], rows));
-  return `<section class="page trend-page">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)} · latest ${rows.length}-month window ending at ${escapeHtml(formatMonth(rows.at(-1)?.month ?? null))}</p>${legend}<svg class="trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}">${grid}${seriesSvg}${labels}</svg><p class="chart-explanation">${escapeHtml(explanation)} ${details}</p></section>`;
+  return `<section class="page trend-page" data-report-section="${reportSection}">${eyebrow}<h2>${escapeHtml(title)}</h2><p class="chart-unit">${escapeHtml(unit)} · latest ${rows.length}-month window ending at ${escapeHtml(formatMonth(rows.at(-1)?.month ?? null))}</p>${legend}<svg class="trend-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(title)}">${grid}${seriesSvg}${labels}</svg><p class="chart-explanation">${escapeHtml(explanation)} ${details}</p></section>`;
+}
+
+function facilityTrendPages(data: ReportData): string {
+  const charts: Array<[string, string, string, Array<number | null>, string]> = [
+    ["Total 4th Floor Energy Trend", "kWh", REPORT_PALETTE.energy, data.monthlyRows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy for the selected reporting window."],
+    ["UPS System Energy Trend", "kWh", REPORT_PALETTE.ups, data.monthlyRows.map(row => row.upsEnergyKwh), "Monthly UPS system energy utilization."],
+    ["Air Conditioning Energy Trend", "kWh", REPORT_PALETTE.air, data.monthlyRows.map(row => row.airEnergyKwh), "Meter-difference energy; gaps indicate an unavailable prior reading."],
+    ["DC Power Panel Energy Trend", "kWh", REPORT_PALETTE.dc, data.monthlyRows.map(row => row.dcEnergyKwh), "Monthly DC panel energy estimate."],
+    ["Estimated 4th Floor Cost Trend", "THB", REPORT_PALETTE.cost, data.monthlyRows.map(row => row.floorCostThb), "Estimated cost at the building average electricity rate."],
+    ["Building Average Electricity Rate Trend", "THB/kWh", REPORT_PALETTE.rate, data.monthlyRows.map(row => row.averageRateThbPerKwh), "Building electricity cost divided by building energy."],
+  ];
+  return charts.map(([title, unit, color, values, explanation]) =>
+    trendPage(title, unit, [{ name: title, color, values }], data.monthlyRows, explanation, "FACILITY TREND ANALYTICS", "historical")
+  ).join("");
 }
 
 function monthlyTable(rows: ReportMonthlyRow[]): string {
@@ -246,7 +277,7 @@ function upsComparison(title: string, groups: EngineeringDashboardSnapshot["upsG
 
 function executiveDashboardPage(data: ReportData): string {
   const rows = data.monthlyRows;
-  if (rows.length === 0) return `<section class="page executive-dashboard-page"><p class="eyebrow">EXECUTIVE DASHBOARD</p><h2>Executive Dashboard</h2><p class="note">No monthly records are available for the selected reporting window.</p></section>`;
+  if (rows.length === 0) return `<section class="page executive-dashboard-page" data-report-section="executive"><p class="eyebrow">EXECUTIVE DASHBOARD</p><h2>Executive Dashboard</h2><p class="note">No monthly records are available for the selected reporting window.</p></section>`;
   const sum = (selector: (row: ReportMonthlyRow) => number | null): number => rows.reduce((total, row) => {
     const value = selector(row);
     return typeof value === "number" && Number.isFinite(value) ? total + value : total;
@@ -269,10 +300,10 @@ function executiveDashboardPage(data: ReportData): string {
     latest?.status === "Complete" ? "Selected month passed the report completeness check." : "Selected month is partial; review missing source readings before making operational decisions.",
     upsGroups.length === 0 ? "UPS group status is unavailable for the selected month." : `UPS status loaded from Dashboard-FAC group history for ${formatMonth(data.reportingMonth)}.`
   ];
-  return `<section class="page executive-dashboard-page"><div class="dashboard-head"><div><p class="eyebrow">EXECUTIVE DASHBOARD</p><h2>Executive Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${rows.length} reporting month(s)</p></div><div class="dashboard-tag">Management summary<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis-3col">${kpi("Total Building Energy", format2(buildingEnergy), "kWh", `${rows.length} reporting month(s)`)}${kpi("Total 4th Floor Energy", format2(floorEnergy), "kWh", "UPS + AC + DC power panels")}${kpi("Total Building Cost", format2(buildingCost), "THB", "Stored/calculated building cost")}${kpi("Total 4th Floor Cost", format2(floorCost), "THB", "Calculated at building average rate")}${kpi("4th Floor Energy Share", `${format2(floorShare)}%`, "of building energy", "Selected reporting window")}${kpi("UPS Status", upsStatus, "Dashboard-FAC", "Persisted group status for selected month")}</div><article class="block"><h3>Management insights</h3><ul class="insight-list">${insights.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></article></section>`;
+  return `<section class="page executive-dashboard-page" data-report-section="executive"><div class="dashboard-head"><div><p class="eyebrow">EXECUTIVE DASHBOARD</p><h2>Executive Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${rows.length} reporting month(s)</p></div><div class="dashboard-tag">Management summary<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis-3col">${kpi("Total Building Energy", format2(buildingEnergy), "kWh", `${rows.length} reporting month(s)`)}${kpi("Total 4th Floor Energy", format2(floorEnergy), "kWh", "UPS + AC + DC power panels")}${kpi("Total Building Cost", format2(buildingCost), "THB", "Stored/calculated building cost")}${kpi("Total 4th Floor Cost", format2(floorCost), "THB", "Calculated at building average rate")}${kpi("4th Floor Energy Share", `${format2(floorShare)}%`, "of building energy", "Selected reporting window")}${kpi("UPS Status", upsStatus, "Dashboard-FAC", "Persisted group status for selected month")}</div><article class="block"><h3>Management insights</h3><ul class="insight-list">${insights.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></article></section>`;
 }
 
-function engineeringDashboard(data: ReportData, dashboard: EngineeringDashboardSnapshot): string {
+function engineeringDashboard(data: ReportData, dashboard: EngineeringDashboardSnapshot, includeViewTitle = false): string {
   const upsRows = dashboard.upsGroups.map((row, index) => [String(index + 1), escapeHtml(row.name), format2(row.totalKw), format2(row.totalKva), format2(row.capacity), `${format2(row.loadPercent)}%`, `${format2(row.availablePercent)}%`, format2(row.monthlyEnergyKwh)]);
   const showAcPowerPanel = dashboard.upsDetails.some(row => row.acPowerPanel !== "—" && row.acPowerPanel !== "-");
   const upsDetails = dashboard.upsDetails.map(row => [String(row.no), escapeHtml(row.umdb), escapeHtml(row.upsId), ...(showAcPowerPanel ? [escapeHtml(row.acPowerPanel)] : []), escapeHtml(row.sts), escapeHtml(row.oudb), format2(row.voltage), format2(row.current), format2(row.loadKw), format2(row.loadKva), format2(row.capacity), `${format2(row.loadPercent)}%`]);
@@ -281,10 +312,10 @@ function engineeringDashboard(data: ReportData, dashboard: EngineeringDashboardS
   const srinakarinOverall = hasOverallUps ? `<h3>1. UPS Load Status</h3><article class="block"><h3>1.1 UPS Load Status - Overall</h3>${table(["No.", "UPS", "Total Load (kW)", "Total Load (kVA)", "UPS Capacity (kVA)", "Load (%)", "Available (%)"], dashboard.upsOverallGroups.map((row, index) => [String(index + 1), escapeHtml(row.name), format2(row.totalKw), format2(row.totalKva), format2(row.capacity), `${format2(row.loadPercent)}%`, `${format2(row.availablePercent)}%`]))}</article>${upsComparison("UPS Loads Comparison (%) - Overall", dashboard.upsOverallGroups)}` : "";
   const detailedUpsTitle = hasOverallUps ? "1.2 UPS and PPC Load Status – DCM 4th Floor" : "1. UPS Load Status — DCM 4th Floor";
   const detailedComparisonTitle = hasOverallUps ? "UPS and PPC Loads Comparison (%) – DCM 4th Floor" : "UPS Loads Comparison (%)";
-  const airRows = [[formatMonth(dashboard.previousMonth), ...dashboard.airFields.map(field => format2(dashboard.airPrevious[field])), "—"], [formatMonth(data.reportingMonth), ...dashboard.airFields.map(field => format2(dashboard.airCurrent[field])), "—"], ["Monthly Difference", ...dashboard.airFields.map(field => format2(dashboard.airDifference[field])), dashboard.airEnergyKwh === null ? "—" : `${format2(dashboard.airEnergyKwh)} kWh`]];
+  const airRows = [[formatMonth(dashboard.previousMonth), ...dashboard.airFields.map(field => formatGWh(dashboard.airPrevious[field])), "—"], [formatMonth(data.reportingMonth), ...dashboard.airFields.map(field => formatGWh(dashboard.airCurrent[field])), "—"], ["Monthly Difference", ...dashboard.airFields.map(field => formatGWh(dashboard.airDifference[field])), dashboard.airEnergyKwh === null ? "—" : `${format2(dashboard.airEnergyKwh)} kWh`]];
   const dcRows = dashboard.dcPanels.map((row, index) => [String(index + 1), escapeHtml(row.panelId), format2(row.voltage), format2(row.current), format2(row.dcPowerW), format2(row.acCurrentA), format2(row.acPowerW), format2(row.monthlyEnergyKwh)]);
   const overall = table(["Reporting Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Avg Rate (THB/kWh)", "4th Floor Share (%)"], [[formatMonth(data.reportingMonth), format2(dashboard.buildingEnergyKwh), format2(dashboard.buildingCostThb), format2(dashboard.floorEnergyKwh), format2(dashboard.floorCostThb), format2(dashboard.averageRateThbPerKwh), `${format2(dashboard.floorSharePercent)}%`]]);
-  return `<section class="page dashboard-page"><div class="dashboard-head"><div><p class="eyebrow">SELECTED-MONTH ENGINEERING ANALYSIS</p><h2>Building Energy Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${dashboard.daysInMonth} days in selected month</p></div><div class="dashboard-tag">Engineering analysis<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis">${kpi("Total 4th Floor Energy", format2(dashboard.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Estimated 4th Floor Electricity Cost", format2(dashboard.floorCostThb), "THB", "Calculated from building average rate")}${kpi("4th Floor Energy Share", `${format2(dashboard.floorSharePercent)}%`, "of building energy", `Building total: ${format2(dashboard.buildingEnergyKwh)} kWh`)}${kpi("Building Average Electricity Rate", format2(dashboard.averageRateThbPerKwh), "THB/kWh", `Building cost: ${format2(dashboard.buildingCostThb)} THB`)}</div>${srinakarinOverall}<article class="block"><h3>${detailedUpsTitle}</h3>${table(["No.", "UPS Group", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %", "Monthly Energy kWh"], upsRows)}<p class="note">UPS group capacity and mapping values are read directly from Dashboard-FAC. Monthly energy uses load × 24 hours × selected-month days.</p></article>${upsComparison(detailedComparisonTitle, dashboard.upsGroups)}</section><section class="page dashboard-page"><div class="continuation">Building Energy Dashboard · ${escapeHtml(formatMonth(data.reportingMonth))}</div><article class="block"><h3>${showAcPowerPanel ? "UPS / PPC Detailed Configuration Mapping" : "UPS Detailed Configuration Mapping"}</h3>${table(detailedHeaders, upsDetails, "dense")}<p class="note">Detail total: ${format2(dashboard.detailedVoltageAvg)} V average · ${format2(dashboard.detailedCurrentSum)} A · ${format2(dashboard.totalUpsKw)} kW · ${format2(dashboard.totalUpsKva)} kVA.</p></article><article class="block"><h3>2. Air Conditioning Energy Consumption — 4th Floor</h3>${table(["Reporting Month", ...dashboard.airFields.map(field => `${field.toUpperCase()} (GWh)`), "Total AC Energy"], airRows)}<p class="note">Air-conditioning energy is the complete GWh meter difference × 1,000,000. Missing readings remain unavailable, rather than being treated as zero.</p></article><article class="block"><h3>3. DC Power Panel Load Status</h3>${table(["No.", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current @220V (A)", "AC Power (W)", "Monthly Energy (kWh)"], dcRows)}<p class="note">DC total: ${format2(dashboard.totalDcPowerW)} W DC · ${format2(dashboard.totalDcAcCurrentA)} A AC · ${format2(dashboard.totalDcAcPowerW)} W AC · ${format2(dashboard.totalDcEnergyKwh)} kWh.</p></article><article class="block"><h3>4. Overall Energy Consumption & Electricity Cost</h3>${overall}</article></section>`;
+  return `<section class="page dashboard-page" data-report-section="dashboard">${includeViewTitle ? "<h2>Engineering View</h2>" : ""}<div class="dashboard-head"><div><p class="eyebrow">SELECTED-MONTH ENGINEERING ANALYSIS</p><h2>Building Energy Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${dashboard.daysInMonth} days in selected month</p></div><div class="dashboard-tag">Engineering analysis<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis">${kpi("Total 4th Floor Energy", format2(dashboard.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Estimated 4th Floor Electricity Cost", format2(dashboard.floorCostThb), "THB", "Calculated from building average rate")}${kpi("4th Floor Energy Share", `${format2(dashboard.floorSharePercent)}%`, "of building energy", `Building total: ${format2(dashboard.buildingEnergyKwh)} kWh`)}${kpi("Building Average Electricity Rate", format2(dashboard.averageRateThbPerKwh), "THB/kWh", `Building cost: ${format2(dashboard.buildingCostThb)} THB`)}</div>${srinakarinOverall}<article class="block"><h3>${detailedUpsTitle}</h3>${table(["No.", "UPS Group", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %", "Monthly Energy kWh"], upsRows)}<p class="note">UPS group capacity and mapping values are read directly from Dashboard-FAC. Monthly energy uses load × 24 hours × selected-month days.</p></article>${upsComparison(detailedComparisonTitle, dashboard.upsGroups)}</section><section class="page dashboard-page" data-report-section="dashboard"><div class="continuation">Building Energy Dashboard · ${escapeHtml(formatMonth(data.reportingMonth))}</div><article class="block"><h3>${showAcPowerPanel ? "UPS / PPC Detailed Configuration Mapping" : "UPS Detailed Configuration Mapping"}</h3>${table(detailedHeaders, upsDetails, "dense")}<p class="note">Detail total: ${format2(dashboard.detailedVoltageAvg)} V average · ${format2(dashboard.detailedCurrentSum)} A · ${format2(dashboard.totalUpsKw)} kW · ${format2(dashboard.totalUpsKva)} kVA.</p></article><article class="block"><h3>2. Air Conditioning Energy Consumption — 4th Floor</h3>${table(["Reporting Month", ...dashboard.airFields.map(field => `${field.toUpperCase()} (GWh)`), "Total AC Energy"], airRows)}<p class="note">Air-conditioning energy is the complete GWh meter difference × 1,000,000. Missing readings remain unavailable, rather than being treated as zero.</p></article><article class="block"><h3>3. DC Power Panel Load Status</h3>${table(["No.", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current @220V (A)", "AC Power (W)", "Monthly Energy (kWh)"], dcRows)}<p class="note">DC total: ${format2(dashboard.totalDcPowerW)} W DC · ${format2(dashboard.totalDcAcCurrentA)} A AC · ${format2(dashboard.totalDcAcPowerW)} W AC · ${format2(dashboard.totalDcEnergyKwh)} kWh.</p></article><article class="block"><h3>4. Overall Energy Consumption & Electricity Cost</h3>${overall}</article></section>`;
 }
 
 function reportRackStatusColor(status: string): string {
@@ -363,11 +394,11 @@ function rackUnitCapacityImageFigure(data: ReportData, row: RackUnitCapacityRow)
 function renderRackUnitCapacityExecutivePage(data: ReportData): string {
   const subtitle = `${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))}`;
   if (data.rackUnitCapacity.length === 0) {
-    return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">Rack Unit Capacity data is not yet available in this workbook.</p></section>`;
+    return `<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">Rack Unit Capacity data is not yet available in this workbook.</p></section>`;
   }
   const row = unitCapacityRowForReportingMonth(data);
   if (!row) {
-    return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">No Rack Unit Capacity data is available for the selected reporting month (${escapeHtml(formatMonth(data.reportingMonth))}).</p></section>`;
+    return `<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">No Rack Unit Capacity data is available for the selected reporting month (${escapeHtml(formatMonth(data.reportingMonth))}).</p></section>`;
   }
   const previousRow = findPreviousRackUnitCapacityRow(data.rackUnitCapacity, row.month);
   const usagePctNow = usagePercent(row);
@@ -398,7 +429,8 @@ function renderRackUnitCapacityExecutivePage(data: ReportData): string {
   const legend = `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackInUse}"></i><span>Used (U)</span><strong>${row.usedU}</strong></div>` +
     `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackAvailable}"></i><span>Available (U)</span><strong>${row.availableU}</strong></div>` +
     `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackTotal}"></i><span>Total (U)</span><strong>${row.totalU}</strong></div>`;
-  return `<section class="page"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><div class="kpis-3col">${kpis}</div><div class="rack-unit-capacity-layout"><div class="ruc-left"><div class="block gauge-row">${donut}<div class="gauge-caption">${legend}</div></div></div><div class="ruc-right">${rackUnitCapacityImageFigure(data, row)}</div></div></section>${rackUnitTrendPage(data)}`;
+  const imagePage = `<section class="page rack-unit-capacity-image-page" data-report-section="rack-unit-capacity"><h2>Monthly Rack Unit Capacity Image</h2><p class="note">${subtitle}</p><div class="rack-unit-capacity-image-page-content">${rackUnitCapacityImageFigure(data, row)}</div></section>`;
+  return `<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><div class="kpis-3col">${kpis}</div><div class="rack-unit-capacity-layout"><div class="ruc-left"><div class="block gauge-row">${donut}<div class="gauge-caption">${legend}</div></div></div></div></section>${imagePage}${rackUnitTrendPage(data)}`;
 }
 
 /** Half-donut gauge arc: a track path drawn once in a neutral color, then
@@ -460,7 +492,10 @@ function capacityHealthPage(data: ReportData): string {
   const gauge = capacityGaugeBlock(data);
   const heatmap = zoneHeatmapBlock(data);
   if (!gauge && !heatmap) return "";
-  return `<section class="page capacity-health-page"><h2>Capacity Health and Zone Heatmap</h2>${gauge}${heatmap}</section>`;
+  const metrics = data.rack ? calculateRackCapacityMetrics(data.rack.records) : null;
+  const zoneRows = metrics?.zoneMetrics.map(zone => [escapeHtml(zone.zone), formatInteger(zone.total), formatInteger(zone.inUse.count), formatInteger(zone.available.count), formatInteger(zone.reserved.count), formatInteger(zone.pendingDismantle.count), formatRatioPercent1(zone.inUse.ratio)]) ?? [];
+  const zoneSummary = zoneRows.length ? `<article class="block zone-summary"><h3>Zone Capacity Breakdown</h3>${table(["Zone", "Total", "In Use", "Available", "Reserved", "Pending Decommission", "Usage %"], zoneRows)}</article>` : "";
+  return `<section class="page capacity-health-page" data-report-section="rack-capacity"><h2>Capacity Health and Zone Heatmap</h2>${gauge}${heatmap}${zoneSummary}</section>`;
 }
 
 function rackComparisonRow(label: string, m: RackCapacityMetrics): string[] {
@@ -536,13 +571,13 @@ function rackComparisonPage(data: ReportData): string {
     details.push(rackComparisonDetailBlock(other.label, other.records));
   }
   const note = other ? "" : '<p class="note">Only ' + escapeHtml(comparisonFacilityLabel(self.label)) + ' is shown — the sibling facility\'s Rack Capacity data was unavailable for this export.</p>';
-  return '<section class="page"><h2>Rack Capacity Site Comparison</h2><div class="rack-comparison-donuts">' + donuts.join("") + '</div>' +
+  return '<section class="page" data-report-section="site-rack-comparison"><h2>Rack Capacity Site Comparison</h2><div class="rack-comparison-donuts">' + donuts.join("") + '</div>' +
     table(["Facility", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle"], rows) + details.join("") + note + '</section>';
 }
 
 function rackCapacityPage(data: ReportData): string {
   if (!data.rack || data.rack.records.length === 0) {
-    return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">Rack capacity data is unavailable in this workbook.</p></section>`;
+    return `<section class="page" data-report-section="rack-capacity"><h2>Rack Capacity and Utilization</h2><p class="note">Rack capacity data is unavailable in this workbook.</p></section>`;
   }
   const metrics = calculateRackCapacityMetrics(data.rack.records);
   const cards = [
@@ -579,7 +614,23 @@ function rackCapacityPage(data: ReportData): string {
     `${metrics.pendingDismantle.count} (${formatRatioPercent(metrics.pendingDismantle.ratio, 1)})`,
     String(metrics.total)
   ]);
-  return `<section class="page"><h2>Rack Capacity and Utilization</h2><p class="note">${escapeHtml(data.facility)} · Usage ${formatRatioPercent(metrics.inUse.ratio)} · Availability ${formatRatioPercent(metrics.available.ratio)}</p><div class="kpis">${kpis}</div><div class="rack-donut-row"><div>${donut}</div><div class="table-wrap" style="flex:1"><h3>Rack Capacity Details</h3><table><thead><tr><th class="left">Rack Zone</th><th>In Use</th><th>Available</th><th>Reserved</th><th>Pending Dismantle</th><th>Total</th></tr></thead><tbody>${zoneRows.map(row => `<tr>${row.map((cell, i) => `<td${i === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div><div class="block"><h3>Rack Positions</h3>${rackPositionsTable(data.rack.records)}</div></section>`;
+  return `<section class="page" data-report-section="rack-capacity"><h2>Rack Capacity and Utilization</h2><p class="note">${escapeHtml(data.facility)} · Usage ${formatRatioPercent(metrics.inUse.ratio)} · Availability ${formatRatioPercent(metrics.available.ratio)}</p><div class="kpis">${kpis}</div><div class="rack-donut-row"><div>${donut}</div><div class="table-wrap" style="flex:1"><h3>Rack Capacity Details</h3><table><thead><tr><th class="left">Rack Zone</th><th>In Use</th><th>Available</th><th>Reserved</th><th>Pending Dismantle</th><th>Total</th></tr></thead><tbody>${zoneRows.map(row => `<tr>${row.map((cell, i) => `<td${i === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div><p class="note">Detailed Available, Reserved, and Pending Decommission rack positions continue on the following page(s) at a larger readable size.</p></section>${rackPositionPages(data)}`;
+}
+
+function rackPositionPages(data: ReportData): string {
+  if (!data.rack) return "";
+  const headers = ["Status", "Rack ID", "Cabinet Size (cm)", "Detail"];
+  const rows = rackPositionExportRows(data.rack.records).map(row => [escapeHtml(row.status), escapeHtml(row.rackId ?? "-"), escapeHtml(row.cabinetSize ?? "-"), escapeHtml(row.detail ?? "-")]);
+  const pageSize = 24;
+  if (rows.length === 0) return `<section class="page rack-position-page" data-report-section="rack-capacity"><h2>Rack Positions</h2><p class="note">${escapeHtml(data.facility)} - ${escapeHtml(formatMonth(data.reportingMonth))}</p>${table(headers, [["-", "-", "-", "No Available, Reserved, or Pending Decommission rack positions in the confirmed snapshot."]], "positions")}</section>`;
+  const pages: string[] = [];
+  for (let start = 0; start < rows.length; start += pageSize) {
+    const chunk = rows.slice(start, start + pageSize);
+    const pageNo = Math.floor(start / pageSize) + 1;
+    const pageCount = Math.ceil(rows.length / pageSize);
+    pages.push(`<section class="page rack-position-page" data-report-section="rack-capacity"><h2>Rack Positions</h2><p class="continuation">${escapeHtml(data.facility)} - ${escapeHtml(formatMonth(data.reportingMonth))} - Page ${pageNo} of ${pageCount} - ${rows.length} deployable / exception positions</p>${table(headers, chunk, "positions")}</section>`);
+  }
+  return pages.join("");
 }
 
 /** Stable export-only facility colors. Match by name so long display labels
@@ -619,7 +670,8 @@ function comparisonTrendPages(data: ReportData): string {
       buildSeries("buildingEnergyKwh"),
       selfTrend,
       "Whole-building monthly energy for the selected reporting window, self vs. sibling facility.",
-      "SITE COMPARISON"
+      "SITE COMPARISON",
+      "site-energy-comparison"
     ) +
     trendPage(
       "Floor 4 Electricity Cost Trend",
@@ -627,7 +679,8 @@ function comparisonTrendPages(data: ReportData): string {
       buildSeries("floorCostThb"),
       selfTrend,
       "Estimated 4th Floor electricity cost for the selected reporting window, self vs. sibling facility.",
-      "SITE COMPARISON"
+      "SITE COMPARISON",
+      "site-energy-comparison"
     )
   );
 }
@@ -640,7 +693,7 @@ function comparisonPage(data: ReportData): string {
   const note = other
     ? ""
     : `<p class="note">Only ${escapeHtml(comparisonFacilityLabel(self.label))} is shown — the sibling facility's workbook was unavailable for this export.</p>`;
-  return `${comparisonTrendPages(data)}<section class="page"><h2>Site Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(self.month))}</p>${table(["Facility", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], rows)}${note}</section>`;
+  return `${comparisonTrendPages(data)}<section class="page" data-report-section="site-energy-comparison"><h2>Site Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(self.month))}</p>${table(["Facility", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], rows)}${note}</section>`;
 }
 function comparisonRow(facility: ReportComparisonFacility): string[] {
   return [
@@ -654,32 +707,187 @@ function comparisonRow(facility: ReportComparisonFacility): string[] {
   ];
 }
 
-function filterReportHtmlBySections(html: string, selectedSections: readonly ReportSectionId[]): string {
-  const selected = new Set(selectedSections);
-  const keep = (section: ReportSectionId) => selected.has(section);
-  const bodyStart = html.indexOf("</main>") + "</main>".length;
-  const scriptStart = html.indexOf("<script>document.body.dataset.reportReady=\"true\";</script>");
-  const body = scriptStart >= bodyStart ? html.slice(bodyStart, scriptStart) : "";
-  const pages = body.split(/(?=<section class="page)/).filter(page => page.startsWith('<section class="page'));
-  const selectedPages = pages.filter(page => {
-    if (page.includes('class="page trend-page"')) return keep("historical") || keep("executive");
-    if (page.includes("Executive Dashboard")) return keep("executive");
-    if (page.includes("Building Energy Dashboard")) return keep("executive") || keep("dashboard") || keep("ups") || keep("air-conditioning") || keep("dc");
-    if (page.includes("Monthly Energy &amp; Cost Table")) return keep("executive") || keep("appendix");
-    if (page.includes("Rack Unit Capacity Comparison")) return keep("site-comparison");
-    if (page.includes("Rack Unit Capacity Six-Month Trend")) return keep("rack-unit-capacity");
-    if (page.includes("Rack Unit Capacity and Utilization")) return keep("rack-unit-capacity");
-    if (page.includes("Capacity Health and Zone Heatmap")) return keep("rack-capacity") || keep("rack-unit-capacity");
-    if (page.includes("Rack Capacity Site Comparison") || page.includes("<h2>Site Comparison</h2>")) return keep("site-comparison");
-    if (page.includes("Rack Capacity and Utilization")) return keep("rack-capacity");
-    return false;
+
+function crossSiteEnergyPages(model: SiteComparisonReportModel): string {
+  const rows = model.months.map(month => ({ month } as ReportMonthlyRow));
+  const seriesFor = (pick: (metric: ComparisonMetric) => number | null): TrendSeries[] => model.sites.map(site => ({
+    name: comparisonFacilityLabel(site.label),
+    color: siteColour(site.label),
+    values: model.months.map(month => {
+      const metric = site.metricsByMonth[month];
+      return metric ? pick(metric) : null;
+    })
+  }));
+  const charts =
+    trendPage("Total Building Energy Consumption Trend", "kWh", seriesFor(metric => metric.buildingEnergy), rows, "Whole-building monthly energy per site for the selected window.", "SITE COMPARISON", "site-energy-comparison") +
+    trendPage("4th Floor Energy Consumption Trend", "kWh", seriesFor(metric => metric.floorEnergy), rows, "4th Floor monthly energy per site.", "SITE COMPARISON", "site-energy-comparison") +
+    trendPage("Total Building Electricity Cost Trend", "THB", seriesFor(metric => metric.buildingCost), rows, "Whole-building monthly electricity cost per site.", "SITE COMPARISON", "site-energy-comparison") +
+    trendPage("Estimated 4th Floor Electricity Cost Trend", "THB", seriesFor(metric => metric.floorCost), rows, "Estimated 4th Floor electricity cost per site.", "SITE COMPARISON", "site-energy-comparison");
+  const tableRows = model.sites.map(site => {
+    const metric = site.metrics;
+    return [escapeHtml(comparisonFacilityLabel(site.label)), format2(metric?.buildingEnergy), format2(metric?.buildingCost), format2(metric?.floorEnergy), format2(metric?.floorCost), format2(metric?.avgRate), metric?.floorShare == null ? "—" : `${format2(metric.floorShare)}%`];
   });
-  return html.slice(0, bodyStart) + selectedPages.join("") + html.slice(scriptStart);
+  return charts + `<section class="page" data-report-section="site-energy-comparison"><h2>Site Energy &amp; Cost Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(model.referenceMonth))}</p>${table(["Facility", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "Estimated 4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], tableRows)}</section>`;
 }
 
-export function buildReportHtml(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
-  if (selectedSections !== undefined) return filterReportHtmlBySections(buildReportHtml(data), selectedSections);
-  const range = `${formatMonth(data.historicalStart)} – ${formatMonth(data.historicalEnd)}`;
+function crossSiteRackSummaryPage(model: SiteComparisonReportModel): string {
+  const rows = model.sites.map(site => {
+    if (!site.rack) return [escapeHtml(comparisonFacilityLabel(site.label)), "Unavailable", "—", "—", "—", "—", "—", "Unavailable"];
+    const metrics = calculateRackCapacityMetrics(site.rack.records);
+    return [escapeHtml(comparisonFacilityLabel(site.label)), formatInteger(metrics.available.count), formatInteger(metrics.total), formatInteger(metrics.inUse.count), formatInteger(metrics.reserved.count), formatInteger(metrics.pendingDismantle.count), formatRatioPercent1(metrics.available.ratio), rackAvailabilityStatus(metrics.available.count, metrics.total)];
+  });
+  return `<section class="page" data-report-section="site-rack-comparison"><h2>Site Rack Capacity &amp; Availability Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(model.referenceMonth))}. Missing confirmed snapshots are shown as Unavailable and are never treated as zero capacity.</p>${table(["Facility", "Available Now", "Total Racks", "In Use", "Reserved", "Pending Decommission", "Availability %", "Status"], rows)}</section>`;
+}
+
+function crossSiteRackZonePage(model: SiteComparisonReportModel): string {
+  const availableSites = model.sites.filter(site => site.rack !== null);
+  if (availableSites.length === 0) return "";
+  const metricsBySite = availableSites.map(site => ({ site, metrics: calculateRackCapacityMetrics(site.rack!.records) }));
+  const maxZoneTotal = Math.max(1, ...metricsBySite.flatMap(item => item.metrics.zoneMetrics.map(zone => zone.total)));
+  const blocks = metricsBySite.map(({ site, metrics }) => {
+    const zones = metrics.zoneMetrics.map(zone => {
+      const outerWidth = Math.max(5, zone.total / maxZoneTotal * 100);
+      const segment = (count: number, color: string) => `<i style="display:block;height:100%;width:${zone.total > 0 ? count / zone.total * 100 : 0}%;background:${color}"></i>`;
+      const bar = `<div style="height:14px;width:${outerWidth}%;min-width:80px;display:flex;overflow:hidden;border-radius:7px;background:#edf1f5">${segment(zone.inUse.count, REPORT_PALETTE.rackInUse)}${segment(zone.available.count, REPORT_PALETTE.rackAvailable)}${segment(zone.reserved.count, REPORT_PALETTE.rackReserved)}${segment(zone.pendingDismantle.count, REPORT_PALETTE.rackPending)}</div>`;
+      return `<div style="display:grid;grid-template-columns:120px 1fr 70px;gap:10px;align-items:center;margin:7px 0"><strong>${escapeHtml(zone.zone)}</strong>${bar}<span>${formatInteger(zone.total)} racks</span></div>`;
+    }).join("");
+    return `<article class="block"><h3>${escapeHtml(comparisonFacilityLabel(site.label))}</h3>${zones || '<p class="note">No rack zones are available.</p>'}</article>`;
+  }).join("");
+  return `<section class="page" data-report-section="site-rack-comparison"><h2>Rack Capacity by Zone</h2><p class="note">Bar width uses one shared scale across sites; segments show In Use, Available, Reserved, and Pending Decommission.</p>${blocks}</section>`;
+}
+
+function crossSiteRackDetailPages(model: SiteComparisonReportModel): string {
+  return model.sites.filter(site => site.rack !== null).map(site => {
+    const metrics = calculateRackCapacityMetrics(site.rack!.records);
+    const rows = metrics.zoneMetrics.map(zone => [escapeHtml(zone.zone), formatInteger(zone.total), formatInteger(zone.inUse.count), formatInteger(zone.available.count), formatInteger(zone.reserved.count), formatInteger(zone.pendingDismantle.count)]);
+    return `<section class="page" data-report-section="site-rack-comparison"><h2>Rack Capacity Details — ${escapeHtml(comparisonFacilityLabel(site.label))}</h2>${table(["Zone", "Total", "In Use", "Available", "Reserved", "Pending Decommission"], rows)}</section>`;
+  }).join("");
+}
+
+function crossSiteRackPositionPages(model: SiteComparisonReportModel): string {
+  const statuses = ["Available", "Reserved", "Pending Decommission"] as const;
+  return model.sites.filter(site => site.rack !== null).map(site => {
+    const rows = rackPositionExportRows(site.rack!.records);
+    const groups = statuses.map(status => {
+      const tableRows = rows.filter(row => row.status === status).map(row => [escapeHtml(row.rackId ?? "—"), escapeHtml(row.cabinetSize ?? "—"), escapeHtml(row.detail ?? "—")]);
+      return `<article class="block"><h3>${status}</h3>${tableRows.length ? table(["Rack ID", "Cabinet Size (cm)", "Detail"], tableRows) : '<p class="note">No positions.</p>'}</article>`;
+    }).join("");
+    return `<section class="page" data-report-section="site-rack-comparison"><h2>Rack Positions — ${escapeHtml(comparisonFacilityLabel(site.label))}</h2>${groups}</section>`;
+  }).join("");
+}
+
+function crossSiteRackUnitPage(model: SiteComparisonReportModel): string {
+  const currentRows: string[][] = [];
+  const trendRows: string[][] = [];
+  const excluded: string[] = [];
+  for (const site of model.sites) {
+    const validRows = [...site.rackUnit]
+      .filter(row => row.month <= model.referenceMonth)
+      .sort((left, right) => left.month.localeCompare(right.month))
+      .filter(row => {
+        const valid = isValidRackUnitCapacity(row.totalU, row.usedU) && Number.isFinite(row.availableU) && row.availableU >= 0;
+        if (!valid) excluded.push(`${comparisonFacilityLabel(site.label)} ${row.month}`);
+        return valid;
+      });
+    const current = validRows.find(row => row.month === model.referenceMonth);
+    if (current) {
+      const usage = current.totalU > 0 ? current.usedU / current.totalU * 100 : null;
+      const availability = current.totalU > 0 ? current.availableU / current.totalU : null;
+      currentRows.push([escapeHtml(comparisonFacilityLabel(site.label)), formatInteger(current.totalU), formatInteger(current.usedU), formatInteger(current.availableU), formatUsagePercent1(usage), formatRatioPercent1(availability)]);
+    }
+    for (const row of validRows.slice(-6)) {
+      const usage = row.totalU > 0 ? row.usedU / row.totalU * 100 : null;
+      const availability = row.totalU > 0 ? row.availableU / row.totalU : null;
+      trendRows.push([escapeHtml(comparisonFacilityLabel(site.label)), escapeHtml(formatMonth(row.month)), formatInteger(row.totalU), formatInteger(row.usedU), formatInteger(row.availableU), formatUsagePercent1(usage), formatRatioPercent1(availability)]);
+    }
+  }
+  if (currentRows.length === 0 && trendRows.length === 0 && excluded.length === 0) return "";
+  const excludedNote = excluded.length ? `<p class="note">Excluded invalid Rack Unit rows: ${escapeHtml(excluded.join(", "))}.</p>` : "";
+  return `<section class="page" data-report-section="site-rack-comparison"><h2>Rack Unit Capacity Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(model.referenceMonth))}</p>${currentRows.length ? table(["Facility", "Total U", "Used U", "Available U", "Usage %", "Availability %"], currentRows) : '<p class="note">No valid Rack Unit Capacity row is available for the reference month.</p>'}<h3>Six-Month Trend</h3>${trendRows.length ? table(["Site", "Month", "Total U", "Used U", "Available U", "Usage %", "Availability %"], trendRows) : '<p class="note">No valid Rack Unit Capacity trend rows are available.</p>'}${excludedNote}<p class="note">${escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE)}</p></section>`;
+}
+
+function crossSiteRackPages(model: SiteComparisonReportModel): string {
+  return crossSiteRackSummaryPage(model) + crossSiteRackZonePage(model) + crossSiteRackDetailPages(model) + crossSiteRackPositionPages(model) + crossSiteRackUnitPage(model);
+}
+
+export function buildCrossSiteComparisonPages(model: SiteComparisonReportModel, sections?: readonly ReportSectionId[]): string {
+  const body = crossSiteEnergyPages(model) + crossSiteRackPages(model);
+  return sections !== undefined ? filterReportBodySections(body, sections) : body;
+}
+
+function filterReportBodySections(body: string, selectedSections: readonly ReportSectionId[]): string {
+  const selected = new Set<string>(selectedSections);
+  return body
+    .split(/(?=<section class="page)/)
+    .filter(page => page.startsWith('<section class="page'))
+    .filter(page => {
+      const match = page.match(/data-report-section="([a-z-]+)"/);
+      return !match || selected.has(match[1]);
+    })
+    .join("");
+}
+
+function currentExecutiveDashboardPage(data: ReportData): string {
+  const current = data.currentRow;
+  if (!current) {
+    return `<section class="page executive-dashboard-page" data-report-section="executive"><p class="eyebrow">EXECUTIVE VIEW</p><h2>Executive View</h2><p class="note">No monthly record is available for the selected reporting month.</p></section>`;
+  }
+  const trendRows = data.executiveTrendRows ?? data.monthlyRows;
+  const previous = trendRows.filter(row => row.month < current.month).at(-1) ?? null;
+  const latestDelta = current.floorEnergyKwh !== null && previous?.floorEnergyKwh !== null && previous
+    ? current.floorEnergyKwh - previous.floorEnergyKwh
+    : null;
+  const upsGroups = data.engineeringDashboard?.upsGroups ?? [];
+  const maxUpsLoad = upsGroups.reduce<number | null>((maximum, group) => group.loadPercent === null ? maximum : maximum === null ? group.loadPercent : Math.max(maximum, group.loadPercent), null);
+  const upsStatus = upsGroups.length === 0 ? "No UPS status" : `${upsGroups.length} group(s) · max ${format2(maxUpsLoad)}% load`;
+  const insights = [
+    latestDelta === null ? "Month-over-month floor energy comparison is unavailable." : `Selected month 4th Floor energy ${latestDelta >= 0 ? "increased" : "decreased"} by ${format2(Math.abs(latestDelta))} kWh versus the previous month.`,
+    current.status === "Complete" ? "Selected month passed the report completeness check." : "Selected month is partial; review missing source readings before making operational decisions.",
+    upsGroups.length === 0 ? "UPS group status is unavailable for the selected month." : `UPS status loaded from Dashboard-FAC group history for ${formatMonth(current.month)}.`
+  ];
+  return `<section class="page executive-dashboard-page" data-report-section="executive"><div class="dashboard-head"><div><p class="eyebrow">EXECUTIVE VIEW</p><h2>Executive View</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(current.month))} · selected month only</p></div><div class="dashboard-tag">Management summary<br>${escapeHtml(formatMonth(current.month))}</div></div><div class="kpis-3col">${kpi("Building Energy · Selected Month", format2(current.buildingEnergyKwh), "kWh", "Selected reporting month only")}${kpi("4th Floor Energy · Selected Month", format2(current.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Building Cost · Selected Month", format2(current.buildingCostThb), "THB", "Stored/calculated building cost")}${kpi("4th Floor Cost · Selected Month", format2(current.floorCostThb), "THB", "Calculated at building average rate")}${kpi("4th Floor Energy Share", `${format2(current.floorSharePercent)}%`, "of building energy", "Selected reporting month")}${kpi("UPS Status", upsStatus, "Dashboard-FAC", "Persisted group status for selected month")}</div><article class="block"><h3>Management insights</h3><ul class="insight-list">${insights.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></article></section>`;
+}
+
+function currentExecutiveTrendPages(data: ReportData): string {
+  const rows = data.executiveTrendRows ?? data.monthlyRows;
+  const charts: Array<[string, string, string, Array<number | null>, string]> = [
+    ["4th Floor Estimated Cost Trend (THB)", "THB", REPORT_PALETTE.cost, rows.map(row => row.floorCostThb), "Estimated 4th Floor cost at the shared building electricity rate."],
+    ["4th Floor Total Energy Trend (kWh)", "kWh", REPORT_PALETTE.energy, rows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy consumption."],
+    ["4th Floor Average Electricity Rate Trend (THB/kWh)", "THB/kWh", REPORT_PALETTE.rate, rows.map(row => row.averageRateThbPerKwh), "Building electricity cost divided by building energy."],
+    ["4th Floor UPS Energy Trend (kWh)", "kWh", REPORT_PALETTE.ups, rows.map(row => row.upsEnergyKwh), "Monthly UPS system energy utilization."],
+    ["4th Floor Air Conditioning Energy Trend (kWh)", "kWh", REPORT_PALETTE.air, rows.map(row => row.airEnergyKwh), "Monthly air-conditioning meter-difference energy."],
+    ["4th Floor DC Power Energy Trend (kWh)", "kWh", REPORT_PALETTE.dc, rows.map(row => row.dcEnergyKwh), "Monthly DC power panel energy estimate."]
+  ];
+  return charts.map(([title, unit, color, values, explanation]) =>
+    trendPage(title, unit, [{ name: title, color, values }], rows, explanation, "EXECUTIVE VIEW · LAST 12 MONTHS", "executive")
+  ).join("");
+}
+
+function currentFacilitySelectedSections(selectedSections?: readonly ReportSectionId[]): readonly ReportSectionId[] | undefined {
+  if (selectedSections === undefined) return undefined;
+  const selected = new Set<ReportSectionId>(selectedSections);
+  if (selected.has("ups") || selected.has("air-conditioning") || selected.has("dc")) selected.add("dashboard");
+  return [...selected];
+}
+
+/** Current Facility PDF only: four deliberate major groups. Other formats
+ *  continue to use buildReportBodyPages/buildReportHtml unchanged. */
+export function buildCurrentFacilityPdfBody(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
+  const engineering = data.engineeringDashboard
+    ? engineeringDashboard(data, data.engineeringDashboard, true)
+    : `<section class="page dashboard-page" data-report-section="dashboard"><h2>Engineering View</h2><p class="note">Engineering data is unavailable for the selected month.</p></section>`;
+  const executive = currentExecutiveDashboardPage(data) + currentExecutiveTrendPages(data);
+  const rack = rackCapacityPage(data) + capacityHealthPage(data);
+  const rackUnit = renderRackUnitCapacityExecutivePage(data);
+  const body = `${engineering}${executive}${rack}${rackUnit}`;
+  const sections = currentFacilitySelectedSections(selectedSections);
+  return sections !== undefined ? filterReportBodySections(body, sections) : body;
+}
+
+export function buildCurrentFacilityPdfHtml(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(data.title)} · Current Facility PDF</title><style>${REPORT_CSS}</style></head><body>${reportCoverMain(data)}${buildCurrentFacilityPdfBody(data, selectedSections)}<script>document.body.dataset.reportReady="true";</script></body></html>`;
+}
+export function buildReportBodyPages(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
   const executive = executiveDashboardPage(data);
   const dashboard = data.engineeringDashboard ? engineeringDashboard(data, data.engineeringDashboard) : "";
   const executiveTrend = trendPage(
@@ -691,17 +899,33 @@ export function buildReportHtml(data: ReportData, selectedSections?: readonly Re
     ],
     data.monthlyRows,
     "Monthly whole-building and 4th-floor energy consumption for the selected reporting window.",
-    "EXECUTIVE DASHBOARD · TREND ANALYTICS"
+    "EXECUTIVE DASHBOARD · TREND ANALYTICS",
+    "executive"
   );
-  const trendPages: Array<[string, string, string, Array<number | null>, string]> = [
-    ["Total 4th Floor Energy Trend", "kWh", REPORT_PALETTE.energy, data.monthlyRows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy for the selected reporting window."],
-    ["UPS System Energy Trend", "kWh", REPORT_PALETTE.ups, data.monthlyRows.map(row => row.upsEnergyKwh), "Monthly UPS system energy utilization."],
-    ["Air Conditioning Energy Trend", "kWh", REPORT_PALETTE.air, data.monthlyRows.map(row => row.airEnergyKwh), "Meter-difference energy; gaps indicate an unavailable prior reading."],
-    ["DC Power Panel Energy Trend", "kWh", REPORT_PALETTE.dc, data.monthlyRows.map(row => row.dcEnergyKwh), "Monthly DC panel energy estimate."],
-    ["Estimated 4th Floor Cost Trend", "THB", REPORT_PALETTE.cost, data.monthlyRows.map(row => row.floorCostThb), "Estimated cost at the building average electricity rate."],
-    ["Building Average Electricity Rate Trend", "THB/kWh", REPORT_PALETTE.rate, data.monthlyRows.map(row => row.averageRateThbPerKwh), "Building electricity cost divided by building energy."],
-  ];
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(data.title)}</title><style>
-@page{size:A4 landscape;margin:0}*{box-sizing:border-box}html,body{margin:0;color:#243247;background:#fff;font:12px/1.3 ${FONT_STACK}}.cover,.page{width:1123px;min-height:794px;margin:0;background:#fff}.cover{padding:64px 72px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always}.cover h1{font-size:34px;margin:0;color:#29415d}.cover h2{font-size:20px;font-weight:400;color:#7c6a68}.meta{margin-top:16px;border-top:1px solid #e6d9d2;padding-top:12px;color:#5f6f82}.page{page-break-before:always;padding:34px 40px 38px}.page h2{font-size:23px;margin:0 0 7px;color:#29415d;border-bottom:2px solid #e8d7d0;padding-bottom:5px}.page h3{font-size:16px;color:#3e5874;margin:0 0 6px}.dashboard-head{display:flex;justify-content:space-between;gap:16px;border-bottom:2px solid #e8d7d0;padding-bottom:8px}.dashboard-head h2{border:0;padding:0;margin:0}.dashboard-head p{margin:3px 0;color:#5f6f82}.eyebrow{font-size:9px!important;font-weight:bold;letter-spacing:1px;color:#a25e4c!important}.dashboard-tag{font-size:10px;text-align:right;color:#52687f;border-left:1px solid #e7d9d2;padding-left:12px}.continuation{font-size:10px;font-weight:bold;color:#68798a;border-bottom:1px solid #e7d9d2;padding-bottom:4px;margin-bottom:7px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:9px 0}.kpi{min-height:74px;padding:9px;background:#f5eee9;border:1px solid #e7d9d2;border-radius:6px;break-inside:avoid}.kpi-label{font-size:10px;color:#67788b;text-transform:uppercase;font-weight:bold}.kpi-value{font-size:21px;font-weight:700;margin-top:5px;color:#29415d}.kpi-unit,.kpi-note,.note{font-size:10px;color:#64758a}.kpi-note{margin-top:3px}.block{margin:9px 0;padding:9px;border:1px solid #e7dcd6;border-radius:6px;break-inside:avoid}.capacity-health-page .block{margin:10px 0;padding:12px}.capacity-health-page .gauge-row{min-height:165px;gap:28px;align-items:center}.capacity-health-page .gauge-row svg{flex:0 0 auto}.capacity-health-page .heatmap-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:10px}.note{margin:6px 0 0}.table-wrap{margin:4px 0;overflow:hidden}table{border-collapse:collapse;width:100%;font-size:10px}th,td{padding:4px;border:1px solid #eadfda;text-align:right;vertical-align:top}td.left,th:first-child{text-align:left}th{background:#eee3dd;color:#40566e;font-weight:bold}.dense table{font-size:8.5px}.dense th,.dense td{padding:3px}.ups-comparison{display:grid;gap:7px;margin-top:8px}.ups-bar-row{display:grid;grid-template-columns:90px 1fr 52px;gap:8px;align-items:center;font-size:11px}.ups-bar-row strong{text-align:right}.ups-track{height:10px;background:#edf1f5;border-radius:99px;overflow:hidden}.ups-track i{display:block;height:100%;border-radius:99px;background:${REPORT_PALETTE.ups}}.ups-track i.medium{background:${REPORT_PALETTE.rate}}.ups-track i.high{background:${REPORT_PALETTE.pue}}.trend-page{height:183mm;display:flex;flex-direction:column}.trend-page h2{font-size:26px;margin-bottom:2px}.chart-unit{margin:0 0 5px;color:#657488;font-size:12px}.trend-svg{width:100%;height:142mm;flex:1;overflow:visible}.grid{stroke:#dce4ea;stroke-width:1}.axis-tick,.month-label,.point-value{fill:#44566b;font-family:${FONT_STACK}}.axis-tick{font-size:20px}.month-label{font-size:19px}.point-value{font-size:19px;font-weight:bold}.chart-explanation{margin:2px 5mm 0;font-size:12px;color:#52687f;text-align:center}.trend-legend{display:flex;gap:18px;margin:0 0 4px}.trend-legend span{display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#3e5874;font-weight:600}.trend-legend i{width:12px;height:12px;border-radius:3px;display:inline-block}.rack-donut-row{display:flex;gap:16px;align-items:flex-start;margin-top:8px}.rack-comparison-donuts{display:flex;gap:32px;justify-content:center;margin:10px 0 16px}.rack-comparison-donut{text-align:center}.rack-comparison-donut h3{margin-bottom:4px}.rack-comparison-legend{display:flex;flex-direction:column;gap:3px;margin-top:8px;text-align:left}.legend-row{display:flex;align-items:center;gap:6px;font-size:10px;color:#3e5874}.legend-row i{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0}.legend-row strong{margin-left:auto;font-weight:700}.rack-unit-capacity-image-figure{margin:8px 0 0;display:flex;flex-direction:column;align-items:center;justify-content:center;min-width:0;max-width:100%}.rack-unit-capacity-image{display:block;width:auto;height:auto;max-width:100%;max-height:150px;object-fit:contain;border:1px solid #e7dcd6;border-radius:8px;box-shadow:0 1px 3px rgba(41,65,93,.12)}.rack-unit-capacity-image-caption{display:flex;flex-direction:column;gap:1px;margin-top:5px;font-size:9px;color:#657488}.rack-unit-capacity-image-placeholder{margin-top:8px;width:260px;height:150px;display:flex;align-items:center;justify-content:center;text-align:center;padding:12px;border:1px dashed #cfc0b8;border-radius:8px;background:#f8f3f0;color:#8a7d78;font-size:10px}.gauge-row{display:flex;align-items:center;gap:20px;margin-top:6px}.gauge-caption{flex:1}.gauge-health-label{font-size:20px;font-weight:700;margin:0 0 4px}.heatmap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:8px}.heatmap-tile{border-radius:8px;padding:8px}.heatmap-zone{font-size:12px;font-weight:700;margin:0}.heatmap-pct{font-size:18px;font-weight:700;margin:2px 0}.heatmap-detail{font-size:9px;margin:0;opacity:.9}.kpis-3col{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:9px 0}.rack-unit-capacity-layout{display:flex;gap:16px;align-items:stretch;margin-top:4px}.rack-unit-capacity-layout .ruc-left{flex:3;min-width:0}.rack-unit-capacity-layout .ruc-right{flex:2;min-width:0;display:flex;align-items:center;justify-content:center}.rack-unit-capacity-layout .rack-unit-capacity-image-figure,.rack-unit-capacity-layout .rack-unit-capacity-image-placeholder{width:100%;max-width:100%;height:auto;min-height:90mm}.rack-unit-capacity-layout .rack-unit-capacity-image{max-width:100%;max-height:82mm;width:auto;height:auto}
-</style></head><body><main class="cover"><h1>${escapeHtml(data.title)}</h1><h2>${escapeHtml(data.thaiSubtitle)}</h2><div class="meta">Facility: ${escapeHtml(data.facility)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}</div></main>${executive}${executiveTrend}${dashboard}${trendPages.map(([title, unit, color, values, explanation]) => trendPage(title, unit, [{ name: title, color, values }], data.monthlyRows, explanation, "FACILITY TREND ANALYTICS")).join("")}<section class="page"><h2>Monthly Energy &amp; Cost Table</h2>${monthlyTable(data.monthlyRows)}</section>${comparisonPage(data)}${rackCapacityPage(data)}${renderRackUnitCapacityExecutivePage(data)}${rackUnitComparisonPage(data)}${capacityHealthPage(data)}${rackComparisonPage(data)}<script>document.body.dataset.reportReady="true";</script></body></html>`;
+  const trendPages = facilityTrendPages(data);
+  const appendixRange = `${escapeHtml(formatMonth(data.historicalStart))} - ${escapeHtml(formatMonth(data.historicalEnd))}`;
+  const appendix = `<section class="page appendix-page" data-report-section="appendix"><h2>Monthly Energy &amp; Cost Table</h2><div class="appendix-intro"><div><strong>Selected reporting window</strong><br><span>${appendixRange}</span></div><div><strong>${data.monthlyRows.length} month${data.monthlyRows.length === 1 ? "" : "s"}</strong><br><span>Facility: ${escapeHtml(data.facility)}</span></div></div>${monthlyTable(data.monthlyRows)}<p class="note">All values use the same shared report calculations as the Dashboard and exported workbook.</p></section>`;
+  const body =
+    `${executive}${executiveTrend}${dashboard}` +
+    trendPages +
+    appendix +
+    `${comparisonPage(data)}${rackCapacityPage(data)}${renderRackUnitCapacityExecutivePage(data)}` +
+    `${rackUnitComparisonPage(data)}${capacityHealthPage(data)}${rackComparisonPage(data)}`;
+  return selectedSections !== undefined ? filterReportBodySections(body, selectedSections) : body;
+}
+
+export function reportCoverMain(data: ReportData): string {
+  const range = `${formatMonth(data.historicalStart)} – ${formatMonth(data.historicalEnd)}`;
+  return `<main class="cover"><h1>${escapeHtml(data.title)}</h1><h2>${escapeHtml(data.thaiSubtitle)}</h2><div class="meta">Facility: ${escapeHtml(data.facility)}<br>Reporting month: ${escapeHtml(formatMonth(data.reportingMonth))}<br>Historical range: ${escapeHtml(range)}</div></main>`;
+}
+
+export function buildReportHtml(
+  data: ReportData,
+  opts?: readonly ReportSectionId[] | { sections?: readonly ReportSectionId[]; includeCover?: boolean },
+): string {
+  const norm: { sections?: readonly ReportSectionId[]; includeCover: boolean } = Array.isArray(opts)
+    ? { sections: opts as readonly ReportSectionId[], includeCover: true }
+    : { includeCover: true, ...((opts as { sections?: readonly ReportSectionId[]; includeCover?: boolean } | undefined) ?? {}) };
+  const cover = norm.includeCover ? reportCoverMain(data) : "";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(data.title)}</title><style>${REPORT_CSS}</style></head><body>${cover}${buildReportBodyPages(data, norm.sections)}<script>document.body.dataset.reportReady="true";</script></body></html>`;
 }

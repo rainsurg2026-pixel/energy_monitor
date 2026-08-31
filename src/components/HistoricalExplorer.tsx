@@ -2,7 +2,7 @@ import React, { useState, useMemo } from "react";
 import { MonthlyLog } from "../types";
 import { formatMonthYear, formatTimestampValue } from "../utils";
 import { calculateEnergyCostForMonth, getAirFields, getAirValue, normalizedMonth } from "../utils/energyCost";
-import { formatNumber2 } from "../utils/numberFormatBridge";
+import { formatGWh, formatNumber2 } from "../utils/numberFormatBridge";
 import { formatRatioPercent } from "../utils/rackCapacity";
 import type { UpsGroupHistoryReport } from "../reports/reportTypes";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
@@ -450,7 +450,7 @@ export default function HistoricalExplorer({ logs, lang, isGoogleConnected = fal
                     <td className="py-3.5 px-4 font-mono font-semibold text-slate-200">{formatMonthYear(log.month)}</td>
                     {airFields.map(field => {
                       const value = getAirValue(log, field);
-                      return <td key={field} className="py-3.5 px-4 text-right font-mono">{formatNumber2(value)}</td>;
+                      return <td key={field} className="py-3.5 px-4 text-right font-mono">{formatGWh(value)}</td>;
                     })}
                     <td className="py-3.5 px-4 text-right font-mono text-teal-400 font-bold">
                       {airEnergyKwh === null ? "—" : `${formatNumber2(airEnergyKwh)} kWh`}

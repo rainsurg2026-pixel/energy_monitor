@@ -9,7 +9,7 @@ export type ReportType =
   | "all";
 
 export type ReportingPeriod = "current" | "single" | "range" | "history";
-export type ReportSectionId = "executive" | "dashboard" | "rack-capacity" | "rack-unit-capacity" | "ups" | "air-conditioning" | "dc" | "historical" | "site-comparison" | "appendix";
+export type ReportSectionId = "executive" | "dashboard" | "rack-capacity" | "rack-unit-capacity" | "ups" | "air-conditioning" | "dc" | "historical" | "site-energy-comparison" | "site-rack-comparison" | "appendix";
 
 export interface ReportSection {
   id: ReportSectionId;

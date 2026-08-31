@@ -3,8 +3,9 @@ import { buildCombinedCsv } from "../utils/exportData";
 import { calculateEnergyCostForMonth } from "../domain/energyCost";
 import { calculateRackCapacityMetrics, rackPositionExportRows } from "../domain/rackCapacity";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
-import { buildReportHtml } from "../reports/pdf/reportHtml";
-import type { ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord, UpsGroupHistoryReport } from "../reports/reportTypes";
+import { buildCrossSiteComparisonPages, buildCurrentFacilityPdfHtml, buildReportHtml, buildReportBodyPages, facilityBandPage, REPORT_CSS } from "../reports/pdf/reportHtml";
+import type { ComparisonMetric, ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord, SiteComparisonReportModel, SiteComparisonReportSite, UpsGroupHistoryReport } from "../reports/reportTypes";
+export type { ComparisonMetric, SiteComparisonReportModel, SiteComparisonReportSite } from "../reports/reportTypes";
 import { RACK_UNIT_CAPACITY_TREND_NOTE } from "../reports/reportTypes";
 import { deriveRackCapacityReport } from "../reports/rackCapacityReportBuilder";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
@@ -13,9 +14,14 @@ import type { DashboardUpsMappingReport } from "../reports/reportTypes";
 import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
 import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
 import type { ReportSectionId } from "../reporting/reportingTypes";
-import { addInteractiveDashboard, injectInteractiveDashboardCharts, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
+import { recentMonthsThroughSelected } from "../utils/historyWindow";
+import { addDashboardDataSheet, addInteractiveDashboard, injectInteractiveDashboardCharts, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
 
 const workbookDashboardPlans = new WeakMap<object, ExcelDashboardPlan[]>();
+
+function escapeHtmlLocal(value: unknown): string {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 
 export interface ExportRackUnitImageMetadata {
   reportingMonth: string;
@@ -35,6 +41,9 @@ export interface ExportRackUnitCapacityRow extends RackUnitCapacityRow {
 
 export interface ExportFacility {
   siteName: string;
+  /** Facility short code (e.g. "RST"/"rangsit"), for Excel sheet prefixes and
+   *  the Site code column. Falls back to a slug of `siteName` when absent. */
+  siteCode?: string;
   logs: MonthlyLog[];
   /** Full history used as calculation context when `logs` is a filtered report scope. */
   calculationLogs?: MonthlyLog[];
@@ -87,15 +96,6 @@ export function rackReportFromSnapshot(response: RackSnapshotApiResponse | null)
   return deriveRackCapacityReport(records, "Rack Capacity", "Table7", snapshot.month, []);
 }
 
-export interface ComparisonMetric {
-  buildingEnergy: number | null;
-  buildingCost: number | null;
-  floorEnergy: number | null;
-  floorCost: number | null;
-  avgRate: number | null;
-  floorShare: number | null;
-}
-
 export interface ComparisonSite {
   site: { id: number; code: string; name: string };
   months: Array<{ month: string; metrics: ComparisonMetric | null }>;
@@ -108,6 +108,42 @@ export interface SiteComparisonExport {
     rack?: RackCapacityReport | null;
     rackUnitCapacity?: Array<{ month: string; totalU: number; usedU: number; availableU: number; usagePercent?: number | null; availabilityPct?: number | null; imageAttached?: boolean; imageContentType?: "image/png" | "image/jpeg" | null; imageSavedAt?: string | null }>;
   }>;
+}
+
+/** The single N-site comparison shape consumed identically by the HTML/PDF
+ *  renderer, the Excel `90`/`91` sheet builders, and the CSV section builder.
+ *  Built once from the `/site-comparison` DTO (already Global-Display-Period
+ *  scoped). No value is ever fabricated: a month a site has no metrics for
+ *  stays `null`; `availabilityPct` is the persisted ratio or `availableU/totalU`,
+ *  never a filled zero. */
+export function buildSiteComparisonReportModel(
+  data: SiteComparisonExport,
+  referenceMonth: string,
+): SiteComparisonReportModel {
+  const months = [...data.months].filter(m => m <= referenceMonth).sort();
+  const sites: SiteComparisonReportSite[] = data.sites.map(site => {
+    const byMonth: Record<string, ComparisonMetric | null> = {};
+    for (const m of months) {
+      byMonth[m] = site.months.find(entry => entry.month === m)?.metrics ?? null;
+    }
+    const rackUnit = (site.rackUnitCapacity ?? []).map(row => ({
+      month: row.month,
+      totalU: row.totalU,
+      usedU: row.usedU,
+      availableU: row.availableU,
+      usagePercent: row.usagePercent ?? (row.totalU > 0 ? (row.usedU / row.totalU) * 100 : null),
+      availabilityPct: row.availabilityPct ?? (row.totalU > 0 ? row.availableU / row.totalU : null),
+    }));
+    return {
+      label: site.site.name,
+      siteCode: site.site.code,
+      metrics: byMonth[referenceMonth] ?? null,
+      metricsByMonth: byMonth,
+      rack: (site as { rack?: RackCapacityReport | null }).rack ?? null,
+      rackUnit,
+    };
+  });
+  return { referenceMonth, months, sites };
 }
 
 function download(content: BlobPart, fileName: string, type: string): void {
@@ -129,27 +165,24 @@ export function exportCsv(logs: MonthlyLog[], siteName: string, fileName?: strin
   download(buildFacilityCsv({ siteName, logs, ...additional }), fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.csv`, "text/csv;charset=utf-8");
 }
 
-function parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let current = "";
-  let quoted = false;
-  for (let index = 0; index < line.length; index++) {
-    const character = line[index];
-    if (character === '"') {
-      if (quoted && line[index + 1] === '"') { current += '"'; index++; }
-      else quoted = !quoted;
-    } else if (character === "," && !quoted) { fields.push(current); current = ""; }
-    else current += character;
-  }
-  fields.push(current);
-  return fields;
-}
-
 function sheetName(prefix: string, name: string): string {
   const title = name.replace(".csv", "").replace(/[\\/*?:\[\]]/g, "-");
   const prefixLength = Math.max(1, 31 - title.length - 1);
   return `${prefix.slice(0, prefixLength)}-${title}`.slice(0, 31);
 }
+
+export function sheetOrderName(facilityCode: string | undefined, order: number, title: string): string {
+  const code = (facilityCode ?? "").replace(/[^a-z0-9]+/giu, "").toUpperCase().slice(0, 6);
+  const clean = title.replace(/[\\/*?:\[\]]/g, "-").trim();
+  const prefix = `${code ? code + " " : ""}${String(order).padStart(2, "0")} `;
+  return `${prefix}${clean}`.slice(0, 31).trim();
+}
+
+const RAW_SHEET_ORDER: Record<string, number> = {
+  UPS_Loads: 20, Air_Inputs: 21, DC_Inputs: 22, Energy_Cost_Inputs: 23, Saved_Records: 24, Saved_Values: 25, Raw_Inputs: 26, Calculated_Energy: 27,
+  "Dashboard-FAC": 28, "Dashboard-FAC UPS": 29, "Dashboard-FAC Details": 30, "Dashboard-FAC Air": 31, "Dashboard-FAC DC": 32,
+  "Rack Unit Capacity": 33, "Rack Capacity History": 34, "UPS Group History": 35, "Rack Capacity Raw": 36
+};
 
 function configureTableSheet(sheet: any, headers: unknown[], rows: unknown[][]): void {
   sheet.addRow(headers);
@@ -165,14 +198,23 @@ function configureTableSheet(sheet: any, headers: unknown[], rows: unknown[][]):
 }
 
 function addTableSheet(workbook: any, prefix: string, title: string, headers: unknown[], rows: unknown[][]): any {
-  const sheet = workbook.addWorksheet(sheetName(prefix, title));
+  const order = RAW_SHEET_ORDER[title];
+  const name = order ? sheetOrderName(prefix || undefined, order, title) : sheetName(prefix || "sheet", title);
+  const sheet = workbook.addWorksheet(name);
   configureTableSheet(sheet, headers, rows);
   return sheet;
 }
 
-function monthSet(logs: MonthlyLog[]): Set<string> {
-  return new Set(logs.map(log => log.month));
+function addPresentationSheet(workbook: any, name: string, title: string): any {
+  const sheet = workbook.addWorksheet(name);
+  sheet.mergeCells("A1:H1");
+  sheet.getCell("A1").value = title;
+  sheet.getCell("A1").font = { name: "Aptos Display", size: 16, bold: true, color: { argb: "FFFFFFFF" } };
+  sheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+  sheet.views = [{ state: "frozen", ySplit: 2 }];
+  return sheet;
 }
+
 
 function fallbackDashboardMapping(siteName: string): DashboardUpsMappingReport | null {
   const normalized = siteName.trim().toLowerCase();
@@ -266,12 +308,16 @@ function buildExcelDashboardModel(logs: MonthlyLog[], calculationLogs: MonthlyLo
  * reconciled back to the source instead of looking complete while losing
  * information.
  */
-export async function workbookForFacilities(facilities: ExportFacility[]) {
+export async function workbookForFacilities(facilities: ExportFacility[], comparison?: SiteComparisonReportModel | null) {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
   const dashboardPlans: ExcelDashboardPlan[] = [];
+  const deferredDashboardData: Array<{ name: string; metrics: ExcelDashboardMetric[] }> = [];
+  const multiFacility = facilities.length > 1;
   for (const facility of facilities) {
-    const prefix = facility.siteName.replace(/[^a-z0-9]+/giu, "-").slice(0, 10) || "facility";
+    const code = multiFacility ? (facility.siteCode || facility.siteName.replace(/[^a-z0-9]+/giu, "").slice(0, 6)) : undefined;
+    const prefix = code ?? "";
+    const dashboardDataName = `${code ? code + " " : ""}Dashboard_Data`.slice(0, 31);
     const logs = [...facility.logs].sort((a, b) => a.month.localeCompare(b.month));
     const calculationLogs = [...(facility.calculationLogs ?? logs)].sort((a, b) => a.month.localeCompare(b.month));
     const months = new Set(facility.reportingMonths ?? [
@@ -283,7 +329,33 @@ export async function workbookForFacilities(facilities: ExportFacility[]) {
     const airFields = [...new Set(logs.flatMap(log => Object.keys(log.air.meters ?? {}).concat(["eb41a", "eb41b", "eb42a", "eb42b"])))].sort();
 
     const dashboardModel = buildExcelDashboardModel(logs, calculationLogs, facility);
-    dashboardPlans.push(addInteractiveDashboard(workbook, prefix, facility.siteName, dashboardModel.metrics));
+    dashboardPlans.push(addInteractiveDashboard(workbook, prefix, facility.siteName, dashboardModel.metrics, { dashboardSheetName: sheetOrderName(code, 1, "Dashboard"), dataSheetName: dashboardDataName, includeDataSheet: false }));
+    deferredDashboardData.push({ name: dashboardDataName, metrics: dashboardModel.metrics });
+    const selectedMonth = facility.reportingMonths?.at(-1) ?? logs.at(-1)?.month ?? facility.rack?.sourceSnapshot ?? "";
+    const report = reportDataFromFacility(facility, selectedMonth);
+    const executive = addPresentationSheet(workbook, sheetOrderName(code, 2, "Executive"), `${facility.siteName} — Executive Summary`);
+    configureTableSheet(executive, ["Reporting Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)", "Status"], [[selectedMonth, report.currentRow?.buildingEnergyKwh ?? null, report.currentRow?.buildingCostThb ?? null, report.currentRow?.floorEnergyKwh ?? null, report.currentRow?.floorCostThb ?? null, report.currentRow?.averageRateThbPerKwh ?? null, report.currentRow?.floorSharePercent == null ? null : report.currentRow.floorSharePercent / 100, report.currentRow?.status ?? "Partial"]]);
+    executive.getColumn(7).numFmt = "0.0%";
+    const engineering = addPresentationSheet(workbook, sheetOrderName(code, 3, "Engineering"), `${facility.siteName} — Engineering Analysis`);
+    engineering.addRow(["Selected Month", selectedMonth]);
+    engineering.addRow(["UPS Energy (kWh)", report.engineeringDashboard?.totalUpsEnergyKwh ?? null]);
+    engineering.addRow(["Air Energy (kWh)", report.engineeringDashboard?.airEnergyKwh ?? null]);
+    engineering.addRow(["DC Energy (kWh)", report.engineeringDashboard?.totalDcEnergyKwh ?? null]);
+    engineering.addRow(["Building Energy (kWh)", report.engineeringDashboard?.buildingEnergyKwh ?? null]);
+    engineering.addRow(["Building Cost (THB)", report.engineeringDashboard?.buildingCostThb ?? null]);
+    const sections = facilityExportSections(facility);
+    const rack = addPresentationSheet(workbook, sheetOrderName(code, 4, "Rack Capacity"), `${facility.siteName} — Rack Capacity`);
+    sections.filter(section => ["RACK_CAPACITY_SUMMARY", "RACK_CAPACITY_DETAILS", "RACK_POSITIONS"].includes(section.name)).forEach(section => { rack.addRow([section.name]); rack.addRow(section.headers); section.rows.forEach(row => rack.addRow(row)); });
+    const rackUnit = addPresentationSheet(workbook, sheetOrderName(code, 5, "Rack Unit Capacity"), `${facility.siteName} — Rack Unit Capacity`);
+    sections.filter(section => section.name.startsWith("RACK_UNIT_")).forEach(section => { rackUnit.addRow([section.name]); rackUnit.addRow(section.headers); section.rows.forEach(row => rackUnit.addRow(row)); });
+    rackUnit.getColumn(6).numFmt = "0.0%";
+    rackUnit.getColumn(7).numFmt = "0.0%";
+    const history = addPresentationSheet(workbook, sheetOrderName(code, 6, "History"), `${facility.siteName} — History`);
+    history.addRow(["Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)"]);
+    report.monthlyRows.forEach(row => history.addRow([row.month, row.buildingEnergyKwh, row.buildingCostThb, row.floorEnergyKwh, row.floorCostThb, row.upsEnergyKwh, row.airEnergyKwh, row.dcEnergyKwh]));
+    const trends = addPresentationSheet(workbook, sheetOrderName(code, 7, "Trends"), `${facility.siteName} — Trends`);
+    trends.addRow(["Month", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)"]);
+    report.monthlyRows.forEach(row => trends.addRow([row.month, row.floorEnergyKwh, row.floorCostThb, row.upsEnergyKwh, row.airEnergyKwh, row.dcEnergyKwh]));
 
     addTableSheet(workbook, prefix, "UPS_Loads", ["Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Raw phases JSON", "Last Saved"], logs.flatMap(log => log.ups.map(row => [log.month, row.upsId, row.voltage, row.current, row.loadKw, row.loadKva, JSON.stringify(row.phases ?? {}), log.lastSavedUps])));
     addTableSheet(workbook, prefix, "Air_Inputs", ["Month", ...airFields.map(field => `${field.toUpperCase()} (GWh)`), "Raw meters JSON", "Last Saved"], logs.map(log => [log.month, ...airFields.map(field => (log.air as unknown as Record<string, number | null | undefined>)[field] ?? log.air.meters?.[field] ?? null), JSON.stringify(log.air.meters ?? {}), log.lastSavedAir]));
@@ -325,13 +397,22 @@ export async function workbookForFacilities(facilities: ExportFacility[]) {
     addTableSheet(workbook, prefix, "UPS Group History", ["Month", "Facility", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)", "Generated At", "Data Version"], upsHistoryRows.map(row => [row.month, row.facility, row.group, row.totalLoadKw, row.totalLoadKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh, row.generatedAt, row.dataVersion]));
     const rackRecords = facility.rack?.records ?? [];
     addTableSheet(workbook, prefix, "Rack Capacity Raw", ["Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], rackRecords.map(row => [facility.rack?.sourceSnapshot ?? null, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
-    for (const section of facilityExportSections(facility)) {
-      const sheet = addTableSheet(workbook, prefix, section.name, section.headers, section.rows);
-      section.headers.forEach((header, index) => {
-        if (String(header).includes("Usage (%)") || String(header).includes("Availability (%)")) sheet.getColumn(index + 1).numFmt = "0.0%";
-      });
+  }
+  if (comparison) {
+    const energy = addPresentationSheet(workbook, sheetOrderName(undefined, 90, "Site Energy Comparison"), "Site Energy & Cost Comparison");
+    energy.addRow(["Facility", "Site code", "Reporting month", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "Estimated 4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"]);
+    comparison.sites.forEach(site => energy.addRow([site.label, site.siteCode, comparison.referenceMonth, site.metrics?.buildingEnergy ?? null, site.metrics?.buildingCost ?? null, site.metrics?.floorEnergy ?? null, site.metrics?.floorCost ?? null, site.metrics?.avgRate ?? null, site.metrics?.floorShare == null ? null : site.metrics.floorShare / 100]));
+    energy.getColumn(9).numFmt = "0.0%";
+    for (const [title, pick] of [["Total Building Energy", "buildingEnergy"], ["4th Floor Energy", "floorEnergy"], ["Total Building Cost", "buildingCost"], ["Estimated 4th Floor Cost", "floorCost"]] as const) {
+      energy.addRow([]); energy.addRow([title, ...comparison.sites.map(site => site.label)]);
+      comparison.months.forEach(month => energy.addRow([month, ...comparison.sites.map(site => site.metricsByMonth[month]?.[pick] ?? null)]));
+    }
+    const rack = addPresentationSheet(workbook, sheetOrderName(undefined, 91, "Site Rack Comparison"), "Site Rack Capacity & Availability Comparison");
+    for (const section of siteComparisonSectionsFromModel(comparison).filter(section => section.name !== "SITE_COMPARISON")) {
+      rack.addRow([section.name]); rack.addRow(section.headers); section.rows.forEach(row => rack.addRow(comparisonWorksheetRows({ ...section, rows: [row] })[0])); rack.addRow([]);
     }
   }
+  deferredDashboardData.forEach(item => addDashboardDataSheet(workbook, item.name, item.metrics));
   workbookDashboardPlans.set(workbook, dashboardPlans);
   return workbook;
 }
@@ -525,16 +606,16 @@ export async function exportExcel(logs: MonthlyLog[], siteName: string, fileName
   download(data, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
-export function buildAllFacilitiesCsv(facilities: ExportFacility[]): string {
-  return facilities.map(buildFacilityCsv).join("\n\n");
+export function buildAllFacilitiesCsv(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null): string {
+  return facilities.map(buildFacilityCsv).join("\n\n") + (comparison ? "\n\n" + siteComparisonSectionsFromModel(comparison).map(section => "# Section: " + section.name + "\n" + csvSection(section)).join("\n\n") : "");
 }
 
-export function exportAllFacilitiesCsv(facilities: ExportFacility[]): void {
-  download(buildAllFacilitiesCsv(facilities), "all-facilities-energy-monitor.csv", "text/csv;charset=utf-8");
+export function exportAllFacilitiesCsv(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null): void {
+  download(buildAllFacilitiesCsv(facilities, comparison), "all-facilities-energy-monitor.csv", "text/csv;charset=utf-8");
 }
 
-export async function exportAllFacilitiesExcel(facilities: ExportFacility[]): Promise<void> {
-  const workbook = await workbookForFacilities(facilities);
+export async function exportAllFacilitiesExcel(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null): Promise<void> {
+  const workbook = await workbookForFacilities(facilities, comparison);
   const data = await writeInteractiveExcelWorkbook(workbook);
   download(data, "all-facilities-energy-monitor.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
@@ -567,7 +648,9 @@ function comparisonRackUnitTrendRows(site: SiteComparisonExport["sites"][number]
     .map(row => [site.site.name, row.month, row.totalU, row.usedU, row.availableU, comparisonRackUsageRatio(row), exportRatio(row.availabilityPct ?? (row.totalU > 0 ? row.availableU / row.totalU : null))]);
 }
 
-export function siteComparisonExportSections(data: SiteComparisonExport, referenceMonth: string): ExportTableSection[] {
+export function siteComparisonExportSections(model: SiteComparisonReportModel): ExportTableSection[] {
+  const data = modelAsSiteComparisonExport(model);
+  const referenceMonth = model.referenceMonth;
   const sections: ExportTableSection[] = [{
     name: "SITE_COMPARISON",
     headers: ["Facility", "Site code", "Reporting month", "Whole Building Energy (kWh)", "Whole Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"],
@@ -603,6 +686,29 @@ export function siteComparisonExportSections(data: SiteComparisonExport, referen
   return sections;
 }
 
+/** Phase-1 adapter: view the N-site model through the existing SiteComparisonExport
+ *  shape so the current section/HTML builders consume it unchanged. Phase 3/4
+ *  replace this with the real N-site layout. */
+function modelAsSiteComparisonExport(model: SiteComparisonReportModel): SiteComparisonExport {
+  return {
+    displayPeriod: { startMonth: model.months[0] ?? model.referenceMonth, endMonth: model.referenceMonth },
+    months: model.months,
+    sites: model.sites.map(site => ({
+      site: { id: 0, code: site.siteCode, name: site.label },
+      months: model.months.map(month => ({ month, metrics: site.metricsByMonth[month] ?? null })),
+      rack: site.rack ?? null,
+      rackUnitCapacity: site.rackUnit.map(row => ({
+        month: row.month, totalU: row.totalU, usedU: row.usedU, availableU: row.availableU,
+        usagePercent: row.usagePercent ?? undefined, availabilityPct: row.availabilityPct ?? undefined,
+      })),
+    })),
+  };
+}
+
+function siteComparisonSectionsFromModel(model: SiteComparisonReportModel): ExportTableSection[] {
+  return siteComparisonExportSections(model);
+}
+
 function comparisonWorksheetRows(section: ExportTableSection): unknown[][] {
   return section.rows.map(row => row.map((value, index) => {
     if (section.name === "SITE_COMPARISON" && index >= 3 && index <= 8 && typeof value === "string" && value !== "") return Number(value);
@@ -610,38 +716,12 @@ function comparisonWorksheetRows(section: ExportTableSection): unknown[][] {
   }));
 }
 
-export function buildSiteComparisonCsv(data: SiteComparisonExport, referenceMonth: string): string {
-  return siteComparisonExportSections(data, referenceMonth).map(section => "# Section: " + section.name + "\n" + csvSection(section)).join("\n\n");
-}
-
-export function exportSiteComparisonCsv(data: SiteComparisonExport, referenceMonth: string): void {
-  download(buildSiteComparisonCsv(data, referenceMonth), "site-comparison-" + referenceMonth + ".csv", "text/csv;charset=utf-8");
+export function buildSiteComparisonCsv(model: SiteComparisonReportModel): string {
+  return siteComparisonExportSections(model).map(section => "# Section: " + section.name + "\n" + csvSection(section)).join("\n\n");
 }
 
 
-export async function workbookForSiteComparison(data: SiteComparisonExport, referenceMonth: string): Promise<any> {
-  const ExcelJS = (await import("exceljs")).default;
-  const workbook = new ExcelJS.Workbook();
-  const sections = siteComparisonExportSections(data, referenceMonth);
-  const [energySection, ...additionalSections] = sections;
-  if (energySection) {
-    const sheet = workbook.addWorksheet("Site Comparison");
-    configureTableSheet(sheet, energySection.headers, comparisonWorksheetRows(energySection));
-  }
-  for (const section of additionalSections) {
-    const sheet = addTableSheet(workbook, "Comparison", section.name, section.headers, comparisonWorksheetRows(section));
-    section.headers.forEach((header, index) => {
-      if (String(header).includes("Usage (%)") || String(header).includes("Availability (%)")) sheet.getColumn(index + 1).numFmt = "0.0%";
-    });
-  }
-  return workbook;
-}
 
-export async function exportSiteComparisonExcel(data: SiteComparisonExport, referenceMonth: string): Promise<void> {
-  const workbook = await workbookForSiteComparison(data, referenceMonth);
-  const bytes = await workbook.xlsx.writeBuffer();
-  download(bytes, "site-comparison-" + referenceMonth + ".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-}
 function reportRows(logs: MonthlyLog[], calculationLogs: MonthlyLog[] = logs): ReportMonthlyRow[] {
   return [...logs].sort((left, right) => left.month.localeCompare(right.month)).map(log => {
     const calculation = calculateEnergyCostForMonth(calculationLogs, log.month);
@@ -667,6 +747,9 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
   // values. Keeping these separate makes a Month Range affect the actual
   // report pages instead of silently exporting the full calculation history.
   const rows = reportRows(logs, calculationLogs);
+  const calculationRows = logs === calculationLogs ? rows : reportRows(calculationLogs, calculationLogs);
+  const executiveTrendMonths = new Set(recentMonthsThroughSelected(calculationRows.map(row => row.month), selectedMonth, 12));
+  const executiveTrendRows = calculationRows.filter(row => executiveTrendMonths.has(row.month));
   const current = rows.find(row => row.month === selectedMonth) ?? null;
   const dashboardMapping = extras.dashboardMapping?.mapping?.length
     ? extras.dashboardMapping
@@ -685,6 +768,7 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
     status: current?.status === "Complete" ? "Complete" : "Partial",
     validationWarnings: current?.status === "Partial" ? ["The selected month has incomplete source readings."] : [],
     monthlyRows: rows,
+    executiveTrendRows,
     currentRow: current,
     engineeringDashboard: buildEngineeringDashboardSnapshot(calculationLogs, selectedMonth, upsMapping),
     rack,
@@ -870,269 +954,43 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
 
 export async function exportDesktopPdf(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[], extras: ReportDataExtras = {}): Promise<void> {
   const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs, extras);
-  await exportReportPdfFromHtml(buildReportHtml(data, sections), fileName ?? `Energy_Report_${siteName}_${selectedMonth}`);
-}
-
-/**
- * Opens the print popup - must be called synchronously, in the same event
- * loop turn as the triggering click, before any `await`. Browsers key
- * window.open()'s popup-blocker permission off the original user gesture;
- * once an async gap (e.g. an awaited API fetch for rack data) has elapsed,
- * that gesture has expired and window.open() gets silently blocked. The
- * caller opens the (initially blank) window immediately on click, then
- * writes the real report into it once any async data has loaded, via
- * printDesktopPdf/printSiteComparisonPdf/printAllFacilitiesPdf below.
- */
-const reportPopupStyle = "body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;margin:0;padding:32px;background:#f8fafc;color:#0f172a}main{max-width:720px;margin:10vh auto;padding:28px;border:1px solid #cbd5e1;border-radius:16px;background:#fff;box-shadow:0 12px 32px #0f172a1a}h1{font-size:20px;margin:0 0 10px}p{line-height:1.6;color:#475569}.spinner{display:inline-block;width:14px;height:14px;margin-right:8px;border:2px solid #cbd5e1;border-top-color:#0f766e;border-radius:50%;vertical-align:-2px;animation:spin .8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}";
-
-function popupStatusHtml(title: string, heading: string, message: string, loading: boolean): string {
-  const indicator = loading ? '<span class="spinner" aria-hidden="true"></span>' : "";
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>${reportPopupStyle}</style></head><body><main><h1>${indicator}${heading}</h1><p>${message}</p></main></body></html>`;
-}
-
-function writePopupDocument(popup: Window, html: string, title: string): void {
-  if (popup.closed) throw new Error("The report window was closed before the report was ready.");
-  popup.document.open();
-  popup.document.write(html);
-  popup.document.close();
-  popup.document.title = title;
-}
-
-export function openReportPopup(name: string): Window {
-  // `noopener`/`noreferrer` make window.open() return null in Chromium. That
-  // leaves a visible about:blank tab but removes the WindowProxy needed to
-  // write the report into it. Open the same-origin blank popup first, sever
-  // its opener immediately, then populate it below.
-  const popup = window.open("", name, "popup");
-  if (!popup) throw new Error("The report window was blocked by the browser.");
-  popup.opener = null;
-  // The report data may require an API request before it can be rendered. A
-  // real loading document prevents the browser from showing a blank tab while
-  // that request is in flight.
-  writePopupDocument(popup, popupStatusHtml("Preparing report…", "Preparing report", "The report is being assembled. This window will open the print dialog when it is ready.", true), "Preparing report…");
-  popup.document.title = "Preparing report…";
-  popup.setTimeout(() => { if (!popup.closed) popup.document.title = "Preparing report…"; }, 0);
-  return popup;
-}
-
-/** Replaces a stalled/failed report popup with a visible, non-sensitive error. */
-export function renderReportErrorPopup(popup: Window): void {
-  try {
-    writePopupDocument(popup, popupStatusHtml("Report export failed", "Report could not be generated", "The report data could not be prepared. Return to the application and try again.", false), "Report export failed");
-  } catch {
-    // The user may have closed the popup. The main application still receives
-    // the original error through the caller's promise and can show a notice.
-  }
-}
-
-/** Write the report before printing and handle both possible document-load
- * states. `document.close()` can complete before a listener is registered;
- * checking readyState and scheduling a fallback avoids a blank/stuck popup. */
-export function renderReportPopup(popup: Window, html: string, fileName?: string): void {
-  writePopupDocument(popup, html, fileName ?? "Energy Monitor report");
-  let printed = false;
-  const print = () => {
-    if (printed || popup.closed) return;
-    printed = true;
-    popup.focus();
-    popup.print();
-  };
-  popup.addEventListener("load", print, { once: true });
-  // `load` is the normal path. The timeout is a compatibility fallback for a
-  // document written with document.open/write/close where the load event can
-  // race the listener registration.
-  popup.setTimeout(print, popup.document.readyState !== "loading" ? 0 : 750);
-}
-
-/** Desktop's print HTML, populated only with the selected facility's API DTOs.
- *  fileName (without extension) becomes the print dialog's suggested "Save
- *  as PDF" name, via document.title - the browser convention for print-to-PDF.
- *  `popup` must come from openReportPopup(), called synchronously on click. */
-export function printDesktopPdf(popup: Window, logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly import("../reporting/reportingTypes").ReportSectionId[], extras: ReportDataExtras = {}): void {
-  const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs, extras);
-  renderReportPopup(popup, buildReportHtml(data, sections), fileName);
-}
-
-function comparisonRow(site: ComparisonSite, referenceMonth: string) {
-  const metrics = site.months.find(entry => entry.month === referenceMonth)?.metrics ?? null;
-  return {
-    label: site.site.name,
-    month: referenceMonth,
-    buildingEnergyKwh: metrics?.buildingEnergy ?? null,
-    buildingCostThb: metrics?.buildingCost ?? null,
-    floorEnergyKwh: metrics?.floorEnergy ?? null,
-    floorCostThb: metrics?.floorCost ?? null,
-    averageRateThbPerKwh: metrics?.avgRate ?? null,
-    floorSharePercent: metrics?.floorShare ?? null
-  };
-}
-
-function comparisonTrend(site: ComparisonSite, months: string[]): ReportMonthlyRow[] {
-  return months.map(month => {
-    const metrics = site.months.find(entry => entry.month === month)?.metrics ?? null;
-    return {
-      month,
-      buildingEnergyKwh: metrics?.buildingEnergy ?? null,
-      buildingCostThb: metrics?.buildingCost ?? null,
-      floorEnergyKwh: metrics?.floorEnergy ?? null,
-      floorCostThb: metrics?.floorCost ?? null,
-      averageRateThbPerKwh: metrics?.avgRate ?? null,
-      floorSharePercent: metrics?.floorShare ?? null,
-      upsEnergyKwh: null,
-      airEnergyKwh: null,
-      dcEnergyKwh: null,
-      status: metrics ? "Complete" : "Partial"
-    };
-  });
+  await exportReportPdfFromHtml(buildCurrentFacilityPdfHtml(data, sections), fileName ?? `Energy_Report_${siteName}_${selectedMonth}`);
 }
 
 
-function comparisonRackUnitRowsForReport(site: SiteComparisonExport["sites"][number]): RackUnitCapacityRow[] {
-  return (site.rackUnitCapacity ?? []).map(row => ({
-    month: row.month,
-    totalU: row.totalU,
-    usedU: row.usedU,
-    availableU: row.availableU,
-    availabilityPct: row.availabilityPct ?? (row.totalU > 0 ? row.availableU / row.totalU : null)
-  }));
-}
 
-function comparisonRackUnitReport(data: SiteComparisonExport): ReportData["rackUnitComparison"] {
-  return {
-    sites: data.sites.map(site => ({ label: site.site.name, rows: comparisonRackUnitRowsForReport(site) }))
-  };
-}
 
-function siteComparisonReportForDownload(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): ReportData {
-  const [primary, secondary] = data.sites;
-  if (!primary) throw new Error("No facilities are available for comparison.");
-  const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
-  return {
-    title: "Data Center Energy & Facility Monitor Site Comparison",
-    thaiSubtitle: "รายงานเปรียบเทียบการใช้พลังงานระหว่างไซต์",
-    facility: "All Facilities",
-    sourceWorkbook: "Supabase PostgreSQL",
-    generatedAt: new Date().toISOString(),
-    appVersion: "2.3.1 Web Clean v1",
-    reportingMonth: referenceMonth,
-    historicalStart: trendMonths[0] ?? null,
-    historicalEnd: trendMonths.at(-1) ?? null,
-    status: "Complete",
-    validationWarnings: [],
-    monthlyRows: comparisonTrend(primary, trendMonths),
-    currentRow: null,
-    engineeringDashboard: null,
-    rack: null,
-    rackHistory: [],
-    rackUnitCapacity: comparisonRackUnitRowsForReport(primary),
-    rackUnitCapacityImageDataUri: null,
-    rackUnitCapacityImageMeta: null,
-    comparison: {
-      self: comparisonRow(primary, referenceMonth),
-      other: secondary ? comparisonRow(secondary, referenceMonth) : null,
-      selfTrend: comparisonTrend(primary, trendMonths),
-      otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
-    },
-    rackComparison: (selfRack ?? primary.rack) ? { self: { label: primary.site.name, records: (selfRack ?? primary.rack)!.records }, other: secondary && (otherRack ?? secondary.rack) ? { label: secondary.site.name, records: (otherRack ?? secondary.rack)!.records } : null } : null,
-    rackUnitComparison: comparisonRackUnitReport(data)
-  };
-}
 
-/** Uses Desktop report renderer; comparison values come from the scoped API DTO.
- *  selfRack/otherRack feed the shared renderer's "Rack Capacity Site
- *  Comparison" page (rackComparisonPage in reportHtml.ts) - the same
- *  reused RackCapacityReport shape as the main facility report, never a
- *  second comparison calculation. */
-export function printSiteComparisonPdf(popup: Window, data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null): void {
-  const [primary, secondary] = data.sites;
-  if (!primary) throw new Error("No facilities are available for comparison.");
-  const trendMonths = data.months.filter(month => month <= referenceMonth).slice(-12);
-  const primaryRow = comparisonRow(primary, referenceMonth);
-  const report: ReportData = {
-    title: "Data Center Energy & Facility Monitor Site Comparison",
-    thaiSubtitle: "รายงานเปรียบเทียบการใช้พลังงานระหว่างไซต์",
-    facility: "All Facilities",
-    sourceWorkbook: "Supabase PostgreSQL",
-    generatedAt: new Date().toISOString(),
-    appVersion: "2.3.1 Web Clean v1",
-    reportingMonth: referenceMonth,
-    historicalStart: trendMonths[0] ?? null,
-    historicalEnd: trendMonths.at(-1) ?? null,
-    status: "Complete",
-    validationWarnings: [],
-    monthlyRows: comparisonTrend(primary, trendMonths),
-    currentRow: null,
-    engineeringDashboard: null,
-    rack: null,
-    rackHistory: [],
-    rackUnitCapacity: comparisonRackUnitRowsForReport(primary),
-    rackUnitCapacityImageDataUri: null,
-    rackUnitCapacityImageMeta: null,
-    comparison: {
-      self: primaryRow,
-      other: secondary ? comparisonRow(secondary, referenceMonth) : null,
-      selfTrend: comparisonTrend(primary, trendMonths),
-      otherTrend: secondary ? comparisonTrend(secondary, trendMonths) : []
-    },
-    rackComparison: (selfRack ?? primary.rack) ? { self: { label: primary.site.name, records: (selfRack ?? primary.rack)!.records }, other: secondary && (otherRack ?? secondary.rack) ? { label: secondary.site.name, records: (otherRack ?? secondary.rack)!.records } : null } : null,
-    rackUnitComparison: comparisonRackUnitReport(data)
-  };
-  renderReportPopup(popup, buildReportHtml(report));
-}
 
-/** Generates a real PDF download for the site-comparison report without
- * opening a popup or invoking the browser print dialog. */
-export async function exportSiteComparisonPdf(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): Promise<void> {
-  await exportReportPdfFromHtml(buildSiteComparisonReportHtml(data, referenceMonth, selfRack, otherRack, sections), fileName ?? `site-comparison-${referenceMonth}`);
-}
+
 
 export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[], extras: ReportDataExtras = {}): void {
   const html = buildReportHtml(facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs, extras), sections);
   download(html, fileName ?? `${siteName.replace(/[^a-z0-9]+/giu, "-")}-energy-monitor.html`, "text/html;charset=utf-8");
 }
 
-export function exportAllFacilitiesHtml(facilities: ExportFacility[], selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): void {
-  if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth), sections));
-  const html = reports.join("<div style=\"page-break-before:always\"></div>");
-  download(html, fileName ?? "all-facilities-energy-monitor.html", "text/html;charset=utf-8");
+export function exportAllFacilitiesHtml(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): void {
+  download(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor.html", "text/html;charset=utf-8");
 }
 
-export function exportSiteComparisonHtml(data: SiteComparisonExport, referenceMonth: string, fileName?: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): void {
-  download(buildSiteComparisonReportHtml(data, referenceMonth, selfRack, otherRack, sections), fileName ?? `site-comparison-${referenceMonth}.html`, "text/html;charset=utf-8");
-}
 
 /** One combined report document, one facility report per section. Exported so
  *  the Live Preview renders exactly the same content the All Facilities export
  *  produces (report model -> preview and the same model -> PDF-safe capture),
  *  never a duplicate table generation. */
-export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], selectedMonth: string, sections?: readonly ReportSectionId[]): string {
+export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, sections?: readonly ReportSectionId[]): string {
   if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth), sections));
-  const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
-  const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
-  const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
-  return `<!doctype html><html><head><meta charset=\"utf-8\"><title>Data Center Energy &amp; Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`;
-}
-
-/** Same-model source for the Site Energy & Cost Comparison Live Preview and the
- *  comparison HTML/PDF exports. */
-export function buildSiteComparisonReportHtml(data: SiteComparisonExport, referenceMonth: string, selfRack: RackCapacityReport | null = null, otherRack: RackCapacityReport | null = null, sections?: readonly ReportSectionId[]): string {
-  return buildReportHtml(siteComparisonReportForDownload(data, referenceMonth, selfRack, otherRack), sections);
+  const sites = facilities.map(facility => escapeHtmlLocal(facility.siteName)).join(", ");
+  const cover = `<main class="cover"><h1>Data Center Energy &amp; Facility Monitor</h1><h2>All Facilities Report</h2><div class="meta">Facility: All Facilities<br>Reporting month: ${escapeHtmlLocal(selectedMonth)}<br>Sites: ${sites}</div></main>`;
+  const perFacility = facilities.map(facility => {
+    const data = reportDataFromFacility(facility, selectedMonth);
+    return facilityBandPage(facility.siteName) + buildReportBodyPages(data, sections);
+  }).join("");
+  const cross = comparison ? buildCrossSiteComparisonPages(comparison, sections) : "";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>All Facilities Report</title><style>${REPORT_CSS}</style></head><body>${cover}${perFacility}${cross}<script>document.body.dataset.reportReady="true";</script></body></html>`;
 }
 
 /** Generates one real PDF download containing one report per facility. */
-export async function exportAllFacilitiesPdf(facilities: ExportFacility[], selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): Promise<void> {
-  await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
-}
-
-/** Prints one full Desktop-compatible report per facility in one document.
- *  `popup` must come from openReportPopup(), called synchronously on click. */
-export function printAllFacilitiesPdf(popup: Window, facilities: ExportFacility[], selectedMonth: string): void {
-  if (facilities.length === 0) throw new Error("No facilities are available for export.");
-  const reports = facilities.map(facility => buildReportHtml(reportDataFromFacility(facility, selectedMonth)));
-  const parsed = reports.map(html => new DOMParser().parseFromString(html, "text/html"));
-  const style = parsed[0]?.head.querySelector("style")?.textContent ?? "";
-  const body = parsed.map(document => document.body.innerHTML).join("<div style=\"page-break-before:always\"></div>");
-  renderReportPopup(popup, `<!doctype html><html><head><meta charset="utf-8"><title>Data Center Energy & Facility Monitor All Facilities</title><style>${style}</style></head><body>${body}</body></html>`);
+export async function exportAllFacilitiesPdf(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): Promise<void> {
+  await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
 }

@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { buildSiteComparisonReportHtml, type SiteComparisonExport } from "../src/web-clean-v1/exports";
 
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
+const busyOverlay = readFileSync(new URL("../src/web-clean-v1/BusyOverlay.tsx", import.meta.url), "utf8");
+const rackUnitImageSource = readFileSync(new URL("../src/web-clean-v1/rackUnitImage.ts", import.meta.url), "utf8");
 
 // ---------------------------------------------------------------------------
 // Explicit export selection + per-action feedback
 // ---------------------------------------------------------------------------
-assert.match(app, /type ExportScope = "current" \| "all" \| "comparison";/);
+assert.match(app, /type ExportScope = "current" \| "all";/);
 assert.match(app, /type ExportFormat = "csv" \| "excel" \| "html" \| "pdf";/);
 assert.match(app, /const \[exportScope, setExportScope\] = useState<ExportScope>\("current"\)/);
 assert.match(app, /const \[exportFormat, setExportFormat\] = useState<ExportFormat \| null>\(null\)/);
@@ -47,22 +48,45 @@ assert.match(app, /function exportStageLabel\(stage: ExportStage, scope: ExportS
 assert.match(app, /return th \? "กำลังเรนเดอร์หน้า…" : "Rendering pages…";/); // All Facilities
 assert.doesNotMatch(app, /\$\{[^}]*\}%.*Preparing|progress.*percent/i);
 
+// Shared blocking overlay is used for long-running export/preview work and supports
+// real determinate progress without inventing percentages for indeterminate work.
+assert.match(app, /reportBusy && <BusyOverlay/);
+assert.match(app, /busy \|\| initialHistoryLoading \|\| facilityLoading/);
+assert.match(busyOverlay, /progress\?: number \| null/);
+assert.match(busyOverlay, /busy-overlay-indeterminate/);
+assert.match(busyOverlay, /prefers-reduced-motion: reduce/);
+assert.doesNotMatch(busyOverlay, /Math\.random|setInterval/);
+
+// Current-facility PDF/HTML must resolve the selected month image at click time,
+// not rely only on an asynchronously-populated React state that can still be null.
+assert.match(app, /const resolveReportImageForExport = async \(\) => \{\s*const freshImage = await loadReportImage\(siteId, contextMonth\);\s*return freshImage \?\? reportImage;\s*\};/);
+assert.match(app, /const exportHtml = async \(\.\.\.args:[\s\S]*?const image = await resolveReportImageForExport\(\)/);
+assert.match(app, /const exportDesktopPdf = async \(\.\.\.args:[\s\S]*?const image = await resolveReportImageForExport\(\)/);
+assert.match(app, /html: \(\) => \(async \(\) => \{[\s\S]*?await exportHtml\(/);
+assert.match(app, /pdf: \(\) => \(async \(\) => \{[\s\S]*?await exportDesktopPdf\(/);
+
+// Rack Unit report images use DB image presence + authoritative GET bytes.
+// Missing optional dimensions/checksum must not suppress a real saved image.
+assert.match(rackUnitImageSource, /if \(!image\) return null;/);
+assert.doesNotMatch(rackUnitImageSource, /image\.width === null \|\| image\.height === null \|\| !image\.sha256/);
+assert.match(rackUnitImageSource, /await readBlobDimensions\(blob\)/);
+
 // ---------------------------------------------------------------------------
 // Live Preview follows SCOPE (content), not FORMAT (download type)
 // ---------------------------------------------------------------------------
-// (6) current -> single-facility path; (7) all -> all-facilities model;
-// (8) comparison -> comparison model. Same model as the export, not a
-// duplicate table build.
-assert.match(app, /if \(exportScope === "all"\) \{\s*const facilities = await loadAll\(\{ includeRack: true, includeImage: true \}\);\s*html = buildAllFacilitiesReportHtml\(facilities, contextMonth, selectedReportSections\);/);
-assert.match(app, /html = buildSiteComparisonReportHtml\(comparisonData, contextMonth, rackReportFromSnapshot\(selfRack\), rackReportFromSnapshot\(otherRack\), selectedReportSections\);/);
+// (6) current -> single-facility path; (7) all -> all-facilities model with
+// the cross-site data carried by the same N-site model as the export.
+assert.match(app, /const facilities = await loadAll\(\{ includeRack: true, includeImage: true \}\);\s*const model = buildSiteComparisonReportModel\(await loadComparison\(\), contextMonth\);\s*html = buildAllFacilitiesReportHtml\(facilities, model, contextMonth, selectedReportSections\);/);
+assert.doesNotMatch(app, /cards\("comparison"/);
+assert.doesNotMatch(app, /reportCopy\.comparison/);
 assert.match(app, /overrideHtml=\{exportScope === "current" \? null : scopedPreview\?\.html \?\? null\}/);
 assert.match(preview, /const html = overrideHtml \?\? currentFacilityHtml;/);
 
 // (9) Format change never changes the preview content: the preview identity
 // and effect key on exportScope + data identity, NOT exportFormat.
-assert.ok(app.includes('const previewIdentity = [exportScope, exportScope === "current" ? String(siteId) : exportScope === "all" ? sites.map(item => item.id).join(",") : "all-sites", contextMonth, periodIdentity, selectedReportSections.join(",")].join(" | ");'), "preview identity is scope + site set + month + period + sections");
+assert.ok(app.includes('const previewIdentity = [exportScope, exportScope === "current" ? String(siteId) : sites.map(item => item.id).join(","), contextMonth, periodIdentity, selectedReportSections.join(",")].join(" | ");'), "preview identity is scope + site set + month + period + sections");
 assert.ok(!/previewIdentity = \[[^\]]*exportFormat/.test(app), "preview identity does not depend on the download format");
-assert.ok(app.includes("}, [contextMonth, exportScope, loadAll, loadComparison, loadRack, previewIdentity, selectedReportSections]);"), "the scoped-preview effect keys on scope + data identity, not format");
+assert.ok(app.includes("}, [contextMonth, exportScope, loadAll, loadComparison, previewIdentity, selectedReportSections]);"), "the scoped-preview effect keys on scope + data identity, not format");
 
 // (10) site / month / period changes invalidate the scoped preview cache.
 assert.match(app, /useEffect\(\(\) => \{ previewCacheRef\.current\.clear\(\); \}, \[sites, periodIdentity\]\);/);
@@ -84,30 +108,20 @@ assert.match(preview, /\$\{pageCount\} pages/);
 // ---------------------------------------------------------------------------
 const exportsSource = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
 assert.match(exportsSource, /export function buildAllFacilitiesReportHtml\(/);
-assert.match(exportsSource, /export function buildSiteComparisonReportHtml\(/);
-assert.match(exportsSource, /await exportReportPdfFromHtml\(buildAllFacilitiesReportHtml\(facilities, selectedMonth, sections\)/);
-assert.match(exportsSource, /download\(buildSiteComparisonReportHtml\(data, referenceMonth, selfRack, otherRack, sections\)/);
-assert.match(exportsSource, /await exportReportPdfFromHtml\(buildSiteComparisonReportHtml\(data, referenceMonth, selfRack, otherRack, sections\)/);
+assert.match(exportsSource, /await exportReportPdfFromHtml\(buildAllFacilitiesReportHtml\(facilities, comparison, selectedMonth, sections\)/);
 // CSV builders are still the plain data path.
 assert.match(exportsSource, /export function buildAllFacilitiesCsv\(/);
 assert.match(exportsSource, /export function buildSiteComparisonCsv\(/);
 
-// buildAllFacilitiesReportHtml needs a DOM (DOMParser) so it can only be
-// source-checked here: one buildReportHtml() per facility, page-break-joined.
-assert.match(exportsSource, /export function buildAllFacilitiesReportHtml\([\s\S]*?facilities\.map\(facility => buildReportHtml\(reportDataFromFacility\(facility, selectedMonth\), sections\)\)/);
-assert.match(exportsSource, /page-break-before:always/);
-
-// Functional: the Site Comparison preview model (no DOM needed) covers both
-// sites - the same model the comparison HTML/PDF export uses.
-const comparison: SiteComparisonExport = {
-  displayPeriod: { startMonth: "2026-06", endMonth: "2026-07" },
-  months: ["2026-06", "2026-07"],
-  sites: [
-    { site: { id: 1, code: "rangsit", name: "Rangsit" }, months: [{ month: "2026-07", metrics: { buildingEnergy: 100, buildingCost: 500, floorEnergy: 50, floorCost: 250, avgRate: 5, floorShare: 50 } }] },
-    { site: { id: 2, code: "srinakarin", name: "Srinakarin" }, months: [{ month: "2026-07", metrics: { buildingEnergy: 200, buildingCost: 900, floorEnergy: 80, floorCost: 360, avgRate: 4.5, floorShare: 40 } }] }
-  ]
-};
-const comparisonHtml = buildSiteComparisonReportHtml(comparison, "2026-07");
-assert.ok(comparisonHtml.includes("Rangsit") && comparisonHtml.includes("Srinakarin"), "comparison preview names both sites");
+// buildAllFacilitiesReportHtml is now DOM-free (no DOMParser): one shared
+// REPORT_CSS block, one shared cover, a facility-band + body-page sequence, and one N-site cross-site block.
+const allFacilitiesFn = exportsSource.slice(
+  exportsSource.indexOf("export function buildAllFacilitiesReportHtml("),
+  exportsSource.indexOf("export async function exportAllFacilitiesPdf("),
+);
+assert.match(allFacilitiesFn, /facilityBandPage\(facility\.siteName\) \+ buildReportBodyPages\(data, sections\)/);
+assert.match(allFacilitiesFn, /buildCrossSiteComparisonPages\(comparison, sections\)/);
+assert.match(allFacilitiesFn, /<style>\$\{REPORT_CSS\}<\/style>/);
+assert.doesNotMatch(allFacilitiesFn, /new DOMParser\(\)/);
 
 console.log("web-clean-v1 export feedback: per-action busy/success/error, scope-driven Live Preview, and shared report model verified");

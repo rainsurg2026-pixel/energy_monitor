@@ -93,7 +93,7 @@ assert.doesNotMatch(exportSource, /setTimeout\([^)]*\d{3,}\)[^;]*html2canvas/s);
 //    glyphs); the report model / renderer is shared with the preview, not
 //    duplicated.
 assert.match(exportSource, /canvas\.toDataURL\("image\/png"\), "PNG"/);
-assert.match(exportSource, /buildReportHtml\(data, sections\)/);
+assert.match(exportSource, /buildCurrentFacilityPdfHtml\(data, sections\)/);
 
 // 8. index.css still carries the override this fix neutralises (guards against
 //    the app rule silently changing shape and the scoped fix drifting).

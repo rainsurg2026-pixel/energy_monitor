@@ -25,6 +25,7 @@ const REPORT_VIEW_TABS: ReadonlyArray<{ id: ReportViewId; labelEn: string; label
 
 interface UniversalFilterBarProps {
   onExport?: (format: "pdf" | "excel" | "csv" | "png") => void;
+  exportFormats?: readonly ("pdf" | "excel" | "csv" | "png")[];
   lang: "th" | "en";
   facility?: FacilityEntry | null;
   /** Web hosts can provide server-derived UPS group names when no desktop
@@ -38,7 +39,7 @@ interface UniversalFilterBarProps {
   reportViews?: readonly ReportViewId[];
 }
 
-export default function UniversalFilterBar({ onExport, lang, facility = null, upsGroupNames = [], reportViews = ALL_REPORT_VIEWS }: UniversalFilterBarProps) {
+export default function UniversalFilterBar({ onExport, exportFormats = ["pdf", "excel", "csv", "png"], lang, facility = null, upsGroupNames = [], reportViews = ALL_REPORT_VIEWS }: UniversalFilterBarProps) {
   const {
     selectedYear,
     selectedPeriod,
@@ -160,9 +161,9 @@ export default function UniversalFilterBar({ onExport, lang, facility = null, up
   ];
 
   return (
-    <section className="bg-slate-900/90 border border-slate-800 p-4 rounded-2xl shadow-xl flex flex-col gap-4 animate-fadeIn">
+    <section className="bg-slate-900/90 border border-slate-800 p-3 sm:p-4 rounded-2xl shadow-xl flex flex-col gap-3 sm:gap-4 animate-fadeIn">
       {/* Upper Filter Bar with Dropdowns */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-1 min-[430px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
         
         {/* Year Select */}
         <div className="space-y-1">
@@ -292,9 +293,9 @@ export default function UniversalFilterBar({ onExport, lang, facility = null, up
       </div>
 
       {/* Action buttons (Export, Refresh) */}
-      <div className="flex flex-wrap items-center justify-between border-t border-slate-800/80 pt-3 gap-2">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between border-t border-slate-800/80 pt-3 gap-2">
         {/* Sub-view Segmented Tabs - only the views this host actually implements */}
-        <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-850">
+        <div className="grid w-full grid-cols-2 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-850 sm:flex sm:w-auto">
           {REPORT_VIEW_TABS.filter(tab => reportViews.includes(tab.id)).map(tab => (
             <button
               key={tab.id}
@@ -311,7 +312,7 @@ export default function UniversalFilterBar({ onExport, lang, facility = null, up
         </div>
 
         {/* Refresh & Exports */}
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           {/* Refresh Button */}
           <button
             onClick={triggerRefresh}
@@ -324,9 +325,9 @@ export default function UniversalFilterBar({ onExport, lang, facility = null, up
 
           {/* Export Dropdown Options */}
           {onExport && (
-            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 sm:flex-none">
               <span className="text-[10px] text-slate-400 font-bold px-2 uppercase tracking-wide">{t.export}:</span>
-              {["pdf", "excel", "csv", "png"].map((fmt) => (
+              {exportFormats.map((fmt) => (
                 <button
                   key={fmt}
                   onClick={() => onExport(fmt as any)}

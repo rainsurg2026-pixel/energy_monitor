@@ -2,7 +2,7 @@ import { RotateCcw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
-import { buildReportHtml } from "../reports/pdf/reportHtml";
+import { buildCurrentFacilityPdfHtml, buildReportHtml } from "../reports/pdf/reportHtml";
 import type { MonthlyLog } from "../types";
 import type { UpsGroupHistoryReport } from "../reports/reportTypes";
 import type { ReportSectionId } from "../reporting/reportingTypes";
@@ -13,7 +13,7 @@ import { loadWebRackUnitCapacityImage, type WebRackUnitCapacityImage } from "./r
 /** Browser counterpart of Desktop's report preview. It deliberately uses the
  * same ReportData builder and HTML renderer as PDF export, so preview cannot
  * display calculations different from the generated report. */
-export default function WebReportPreview({ lang, siteId, siteName, logs, month, rackCapacityHistory, rackUnitCapacity, calculationLogs, upsGroupHistory, sections, onRefresh, contextLabel, selectedFormatLabel, overrideHtml, pending }: {
+export default function WebReportPreview({ lang, siteId, siteName, logs, month, rackCapacityHistory, rackUnitCapacity, calculationLogs, upsGroupHistory, sections, onRefresh, contextLabel, selectedFormatLabel, overrideHtml, currentFacilityPdf, pending }: {
   lang: "th" | "en";
   siteId: number | null;
   siteName: string;
@@ -37,6 +37,8 @@ export default function WebReportPreview({ lang, siteId, siteName, logs, month, 
    *  (same model as the export). When null the single-facility preview below
    *  is used. */
   overrideHtml?: string | null;
+  /** Current Facility uses the exact PDF-only structure in its preview. */
+  currentFacilityPdf?: boolean;
   /** The scoped preview HTML is still being assembled. */
   pending?: boolean;
 }) {
@@ -82,12 +84,12 @@ export default function WebReportPreview({ lang, siteId, siteName, logs, month, 
   useEffect(() => { void loadRack(); }, [loadRack]);
 
   const currentFacilityHtml = useMemo(
-    () => buildReportHtml(facilityReportData(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs ?? logs, {
+    () => (currentFacilityPdf ? buildCurrentFacilityPdfHtml : buildReportHtml)(facilityReportData(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs ?? logs, {
       upsGroupHistory,
       rackUnitCapacityImageDataUri: rackUnitImage?.dataUri ?? null,
       rackUnitCapacityImageMeta: rackUnitImage?.meta ?? null
     }), sections),
-    [calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, rackUnitImage, refreshKey, sections, siteName, upsGroupHistory]
+    [calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, rackUnitImage, refreshKey, sections, siteName, upsGroupHistory, currentFacilityPdf]
   );
   const html = overrideHtml ?? currentFacilityHtml;
   const pageCount = (html.match(/page-break-(before|after)/g)?.length ?? 0) + 1;

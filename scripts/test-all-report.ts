@@ -3,6 +3,7 @@ import path from "path";
 import { buildReportData } from "../src/reports/reportDataBuilder";
 import { buildReportHtml } from "../src/reports/pdf/reportHtml";
 import { validateReportHtml } from "../src/reports/pdf/reportSafety";
+import { rackPositionExportRows } from "../src/utils/rackCapacity";
 
 const workbookPath = path.resolve(process.env.ENERGY_MONITOR_WORKBOOK ?? "DC_Rangsit.xlsm");
 const before = await fs.stat(workbookPath);
@@ -46,7 +47,7 @@ if (facilityId === "rangsit" && !report.engineeringDashboard?.upsGroups.every(gr
 if (facilityId === "srinakarin") {
   const expectedIds = ["UPS 41A", "UPS 41B", "UPS 11A", "UPS 11B", "UPS 13A", "UPS 13B", "UPS 12A", "UPS 12B", "UPS 12A", "UPS 12B"];
   if (JSON.stringify(report.engineeringDashboard?.upsDetails.map(row => row.upsId)) !== JSON.stringify(expectedIds)) throw new Error("Srinakarin dashboard UPS IDs do not match the workbook mapping sequence.");
-  for (const required of ["1. UPS Load Status", "1.1 UPS Load Status - Overall", "1.2 UPS and PPC Load Status – DCM 4th Floor", "UPS Loads Comparison (%) - Overall", "UPS and PPC Loads Comparison (%) – DCM 4th Floor"]) {
+  for (const required of ["1. UPS Load Status", "1.1 UPS Load Status - Overall", "1.2 UPS and PPC Load Status â€“ DCM 4th Floor", "UPS Loads Comparison (%) - Overall", "UPS and PPC Loads Comparison (%) â€“ DCM 4th Floor"]) {
     if (!html.includes(required)) throw new Error(`Srinakarin UPS dashboard section is missing: ${required}`);
   }
   if (report.engineeringDashboard?.upsOverallGroups.length !== 3) throw new Error("Srinakarin UPS Load Status - Overall is missing.");
@@ -117,6 +118,10 @@ if (report.rackUnitCapacity.length === 0) {
 // present" content (KPIs/donut/image); this asserts its existence, page
 // order, and facility/reporting-month subtitle against the real workbook.
 if (!html.includes("<h2>Rack Unit Capacity and Utilization</h2>")) throw new Error("Rack Unit Capacity and Utilization page is missing from Export All Report.");
+const rucSummaryOrder = html.indexOf("<h2>Rack Unit Capacity and Utilization</h2>");
+const rucImageOrder = html.indexOf("<h2>Monthly Rack Unit Capacity Image</h2>");
+const rucTrendOrder = html.indexOf("<h2>Rack Unit Capacity Six-Month Trend</h2>");
+if (rucImageOrder !== -1 && !(rucImageOrder > rucSummaryOrder && (rucTrendOrder === -1 || rucTrendOrder > rucImageOrder))) throw new Error("Monthly Rack Unit Capacity Image must appear after the summary and before the six-month trend.");
 {
   const rackHeadingIndex = html.indexOf("<h2>Rack Capacity and Utilization</h2>");
   const unitHeadingIndex = html.indexOf("<h2>Rack Unit Capacity and Utilization</h2>");
@@ -143,7 +148,16 @@ const trendAnalyticsIndex = html.indexOf("FACILITY TREND ANALYTICS");
 const monthlyTableIndex = html.indexOf("<h2>Monthly Energy &amp; Cost Table</h2>");
 if (trendAnalyticsIndex === -1) throw new Error("'Facility Trend Analytics' label is missing from the trend pages.");
 if (trendAnalyticsIndex >= monthlyTableIndex) throw new Error("Facility Trend Analytics must appear above the Monthly Energy & Cost Table.");
-if ((html.match(/FACILITY TREND ANALYTICS/g) ?? []).length !== 6) throw new Error("Every one of the 6 facility trend pages must carry the Facility Trend Analytics label.");
+if ((html.match(/FACILITY TREND ANALYTICS/g) ?? []).length !== 6) throw new Error("Each of the 6 facility trend charts must render on its own readable Facility Trend Analytics page.");
+if ((html.match(/class="page trend-page" data-report-section="historical"/g) ?? []).length < 6) throw new Error("Facility trends must use full-size trend pages for PDF readability.");
+if (html.includes('class="mini-trend"')) throw new Error("Compact two-up facility trend blocks must not be used in the PDF.");
+if (!html.includes('class="page appendix-page"')) throw new Error("Monthly Energy & Cost appendix must use the readable appendix layout.");
+if (report.rack) {
+  const deployablePositions = rackPositionExportRows(report.rack.records).length;
+  const expectedPositionPages = Math.max(1, Math.ceil(deployablePositions / 24));
+  if ((html.match(/class="page rack-position-page"/g) ?? []).length !== expectedPositionPages) throw new Error(`Rack Positions must paginate at 24 rows per page (expected ${expectedPositionPages}).`);
+  if (!html.includes("Zone Capacity Breakdown")) throw new Error("Capacity Health page must include Zone Capacity Breakdown.");
+}
 // v2.2.6 Feature 4: Monthly Energy Consumption Trend + Floor 4 Electricity
 // Cost Trend render above the Site Comparison table whenever self has >=2
 // months of trend data (comparisonTrendPages' own gate).
@@ -157,12 +171,9 @@ if (comparisonEligible) {
   if (siteComparisonLabelIndex === -1) throw new Error("'Site Comparison' trend label is missing.");
   if (siteComparisonLabelIndex >= siteComparisonTableIndex) throw new Error("Site Comparison trend charts must appear above the Site Comparison table.");
 }
-// v2.2.6 Feature 5: only the 6 facility energy/cost trend pages remain from
-// the original set - Capacity Trend and Forecast, Rack Capacity Usage/
-// Availability % Trend, and Rack Unit Capacity Availability % Trend were
-// all removed. Feature 4 adds 2 more (Site Comparison) when eligible.
+// Full-page trend charts include the executive trend, all 6 facility analytical trends, and optional Site Comparison trends.
 const expectedTrendPages = 7 + (comparisonEligible ? 2 : 0);
-if ((html.match(/class="page trend-page"/g) ?? []).length !== expectedTrendPages) throw new Error(`Each trend must occupy one full report page (expected ${expectedTrendPages}).`);
+if ((html.match(/class="page trend-page"/g) ?? []).length !== expectedTrendPages) throw new Error(`Unexpected number of full-page trend charts (expected ${expectedTrendPages}).`);
 const expectedPointLabels = [
   ...report.monthlyRows.map(row => row.buildingEnergyKwh),
   ...report.monthlyRows.map(row => row.floorEnergyKwh),

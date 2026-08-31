@@ -6,7 +6,7 @@ import type { FacilityEntry } from "../desktop";
 import { formatMonthYear } from "../utils";
 import { calculateEnergyCostForMonth, getAirValue } from "../utils/energyCost";
 import { buildEngineeringDashboardSnapshot, getDaysInMonth, getPreviousMonth } from "../utils/engineeringDashboard";
-import { formatNumber2 } from "../utils/numberFormatBridge";
+import { formatFixedNumber, formatNumber2 } from "../utils/numberFormatBridge";
 import { 
   TrendingUp, 
   Zap, 
@@ -670,7 +670,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                       <td className="py-3 px-3 font-semibold text-slate-500">{calcs.prevMonthDisplay || (lang === "th" ? "เดือนก่อนหน้า" : "Previous Month")}</td>
                       {calcs.airFields.map(field => {
                         const value = prevMonthLog ? getAirValue(prevMonthLog, field) : null;
-                        return <td key={field} className="py-3 px-3 text-right font-mono">{formatNumber2(value)}</td>;
+                        return <td key={field} className="py-3 px-3 text-right font-mono">{formatFixedNumber(value, 6)}</td>;
                       })}
                       <td className="py-3 px-3 text-right font-mono text-slate-600">—</td>
                     </tr>
@@ -679,7 +679,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                       <td className="py-3 px-3 font-semibold text-teal-400">{formatMonthYear(selectedMonth)}</td>
                       {calcs.airFields.map(field => {
                         const value = getAirValue(activeLog, field);
-                        return <td key={field} className="py-3 px-3 text-right font-mono">{formatNumber2(value)}</td>;
+                        return <td key={field} className="py-3 px-3 text-right font-mono">{formatFixedNumber(value, 6)}</td>;
                       })}
                       <td className="py-3 px-3 text-right font-mono text-slate-500">—</td>
                     </tr>
@@ -688,7 +688,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
                       <td className="py-3 px-3">{t.monthlyDiff}</td>
                       {calcs.airFields.map(field => {
                         const value = calcs.airDiff[field];
-                        return <td key={field} className="py-3 px-3 text-right font-mono">{formatNumber2(value)}</td>;
+                        return <td key={field} className="py-3 px-3 text-right font-mono">{formatFixedNumber(value, 6)}</td>;
                       })}
                       <td className="py-3 px-3 text-right font-mono text-emerald-400">{calcs.airEnergyKwh === null ? "—" : `${formatNumber2(calcs.airEnergyKwh)} kWh`}</td>
                     </tr>

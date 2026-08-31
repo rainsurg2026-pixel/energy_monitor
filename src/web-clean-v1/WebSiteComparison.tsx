@@ -6,6 +6,7 @@ import { formatNumber2 } from "../utils/numberFormatBridge";
 import { monthLabelLong } from "../utils/monthUtils";
 import { api } from "./api";
 import type { ComparisonMetric, SiteComparisonExport } from "./exports";
+import BusyOverlay from "./BusyOverlay";
 
 type ComparisonChartSuffix = "building-energy" | "floor-energy" | "building-cost" | "floor-cost";
 
@@ -90,8 +91,10 @@ export default function WebSiteComparison({ lang = "th" }: { lang?: "th" | "en" 
   const [referenceMonth, setReferenceMonth] = useState("");
   const [range, setRange] = useState<3 | 6 | 12>(12);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    setLoading(true);
     try {
       // The server response is already scoped to the Global Display Period.
       // This page has its own reference-month + 3/6/12 range controls; it is
@@ -103,6 +106,8 @@ export default function WebSiteComparison({ lang = "th" }: { lang?: "th" | "en" 
       setError(null);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Site Energy & Cost Comparison could not be loaded.");
+    } finally {
+      setLoading(false);
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -123,9 +128,10 @@ export default function WebSiteComparison({ lang = "th" }: { lang?: "th" | "en" 
   const hasChartData = chartData.some(row => Object.entries(row).some(([key, value]) => key !== "month" && typeof value === "number" && Number.isFinite(value)));
 
   if (error) return <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-4 text-rose-200">{error}</section>;
-  if (!data) return <p role="status" className="text-sm text-slate-400">{copy.loading}</p>;
+  if (!data) return <BusyOverlay title={copy.loading} progressLabel={th ? "กำลังโหลด" : "Loading"} />;
 
   return <section className="space-y-5" data-testid="web-site-comparison" data-page="site-energy-cost-comparison">
+    {loading && <BusyOverlay title={copy.loading} progressLabel={th ? "กำลังโหลด" : "Loading"} />}
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div><h2 className="font-display text-2xl font-bold">{th ? "เปรียบเทียบพลังงานและค่าใช้จ่ายของไซต์" : "Site Energy & Cost Comparison"}</h2><p className="mt-1 text-sm text-slate-400">Compare facilities using the same reporting period and calculation method.</p><p className="mt-2 text-xs uppercase tracking-wide text-slate-500">Reporting period: <span className="font-mono text-slate-300" data-testid="comparison-reporting-period">{referenceMonth ? monthLabelLong(referenceMonth, "en") : "—"}</span></p></div>
       <button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:border-teal-500"><RefreshCw className="h-4 w-4" />{th ? "โหลดใหม่" : "Refresh"}</button>

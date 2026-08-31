@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { normalizeTheme, themeStorageKey } from "../src/web-clean-v1/theme";
+import { normalizeTheme, normalizeLanguage, themeStorageKey } from "../src/web-clean-v1/theme";
 
 assert.equal(normalizeTheme("light"), "light");
 assert.equal(normalizeTheme("dark"), "dark");
@@ -57,4 +57,11 @@ assert.match(css, /recharts-cartesian-axis-line/);
 const dashboard = readFileSync(new URL("../src/components/DashboardSummary.tsx", import.meta.url), "utf8");
 assert.match(dashboard, /text-orange-200/);
 assert.doesNotMatch(dashboard, /text-slate-650/);
+
+// Language: English is the default for null/unknown; stored Thai is preserved.
+assert.equal(normalizeLanguage(null), "en");
+assert.equal(normalizeLanguage("xx"), "en");
+assert.equal(normalizeLanguage("th"), "th");
+assert.equal(normalizeLanguage("en"), "en");
+
 console.log("web-clean-v1 theme: semantic token and readability assertions passed");

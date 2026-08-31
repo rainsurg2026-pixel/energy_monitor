@@ -72,6 +72,30 @@ export interface RackCapacityReport {
 
 /** UPS Summary row - Dashboard-FAC's group-level table (e.g. "UPS 11",
  *  "PPC 41"), read directly from the workbook, not recalculated. */
+export interface ComparisonMetric {
+  buildingEnergy: number | null;
+  buildingCost: number | null;
+  floorEnergy: number | null;
+  floorCost: number | null;
+  avgRate: number | null;
+  floorShare: number | null;
+}
+
+export interface SiteComparisonReportSite {
+  label: string;
+  siteCode: string;
+  metrics: ComparisonMetric | null;
+  metricsByMonth: Record<string, ComparisonMetric | null>;
+  rack: RackCapacityReport | null;
+  rackUnit: Array<{ month: string; totalU: number; usedU: number; availableU: number; usagePercent: number | null; availabilityPct: number | null }>;
+}
+
+export interface SiteComparisonReportModel {
+  referenceMonth: string;
+  months: string[];
+  sites: SiteComparisonReportSite[];
+}
+
 export interface DashboardUpsSummaryRow {
   no: number;
   name: string;
@@ -186,6 +210,8 @@ export interface ReportData {
   status: ReportStatus;
   validationWarnings: string[];
   monthlyRows: ReportMonthlyRow[];
+  /** Web-defined trailing 12-month rows for the Current Facility PDF only. */
+  executiveTrendRows?: ReportMonthlyRow[];
   currentRow: ReportMonthlyRow | null;
   engineeringDashboard: EngineeringDashboardSnapshot | null;
   rack: RackCapacityReport | null;

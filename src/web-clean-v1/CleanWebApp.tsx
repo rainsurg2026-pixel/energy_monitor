@@ -15,7 +15,7 @@ import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter"
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import type { EntryWorkspaceActions } from "./WebEntryWorkspace";
 import { api, setUnauthorizedHandler, type SessionUser, type Role } from "./api";
-import { buildAllFacilitiesReportHtml, buildSiteComparisonReportHtml, exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportAllFacilitiesHtml as exportAllFacilitiesHtmlFile, exportAllFacilitiesPdf as exportAllFacilitiesPdfFile, exportCsv, exportDesktopPdf as exportDesktopPdfFile, exportExcel, exportHtml as exportHtmlFile, exportSiteComparisonCsv, exportSiteComparisonExcel, exportSiteComparisonHtml, exportSiteComparisonPdf as exportSiteComparisonPdfFile, rackReportFromSnapshot, type ExportFacility, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
+import { buildAllFacilitiesReportHtml, buildSiteComparisonReportModel, exportAllFacilitiesCsv, exportAllFacilitiesExcel, exportAllFacilitiesHtml, exportAllFacilitiesPdf, exportCsv, exportDesktopPdf as exportDesktopPdfFile, exportExcel, exportHtml as exportHtmlFile, rackReportFromSnapshot, type ExportFacility, type SiteComparisonExport, type RackSnapshotApiResponse } from "./exports";
 import { defaultReportFilename, resolveFilename, withExtension } from "./reportFilename";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, matchingReportingPeriodPreset, monthsForReportingPeriod, reportingPeriodForPreset, reportingPeriodLabel, type ReportingPeriodMode, type ReportingPeriodPreset, type ReportingPeriodSelection } from "./reportPeriod";
 import { clampMonthToDisplayPeriod, facilityStorageKey, latestEnergyMonth, normalizeBootstrap, selectedFacility, type BootstrapState, type FacilitySite } from "./facilityContext";
@@ -27,6 +27,7 @@ import type { ReportHistoryItem, ReportSectionId } from "../reporting/reportingT
 import { loadWebRackUnitCapacityImage, type WebRackUnitCapacityImage } from "./rackUnitImage";
 import { WebRackCapacityDashboard, WebRackUnitCapacityDashboard } from "./WebRackCapacityViews";
 import { clearRackCapacitySnapshotCache, useRackCapacitySnapshot } from "./rackCapacityData";
+import BusyOverlay from "./BusyOverlay";
 
 const DashboardSummary = lazy(() => import("../components/DashboardSummary"));
 const ExecutiveDashboard = lazy(() => import("../components/ExecutiveDashboard"));
@@ -114,7 +115,7 @@ export default function CleanWebApp() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const [siteId, setSiteId] = useState<number | null>(null);
-  const [view, setViewState] = useState<View>("entry");
+  const [view, setViewState] = useState<View>("dashboard");
   const [history, setHistory] = useState<HistoryData>({ months: [], logs: [] });
   // B. SELECTED REPORTING MONTH - the top-of-page month picker. Global user
   // context; every non-Reports view renders this month. The Reports view's
@@ -135,7 +136,7 @@ export default function CleanWebApp() {
   // Match src/electron/config.ts DEFAULT_CONFIG.theme. A stored dark choice
   // is still restored by the user-scoped preference effect below.
   const [theme, setTheme] = useState<Theme>("light");
-  const [lang, setLang] = useState<AppLanguage>("th");
+  const [lang, setLang] = useState<AppLanguage>("en");
   const activeSiteIdRef = useRef<number | null>(null);
   const allowBrowserBackRef = useRef(false);
   const historyCacheRef = useRef(new Map<string, HistoryData>());
@@ -489,7 +490,7 @@ export default function CleanWebApp() {
     reportingMonth: "Reporting month", displayPeriod: "Display period", completion: "Completion", working: "Working…"
   };
   const nav: Array<{ id: View; label: string; icon: typeof BarChart3; admin?: boolean }> = [
-    { id: "dashboard", label: lang === "th" ? "แดชบอร์ด" : "Dashboard", icon: BarChart3 }, { id: "entry", label: lang === "th" ? "กรอกข้อมูล" : "Data Entry", icon: ClipboardPenLine }, { id: "racks", label: lang === "th" ? "ความจุแร็ค" : "Rack Capacity", icon: Server }, { id: "rack-units", label: lang === "th" ? "ความจุ U" : "Rack Unit Capacity", icon: Boxes }, { id: "history", label: lang === "th" ? "ประวัติ" : "History", icon: History }, { id: "comparison", label: lang === "th" ? "เปรียบเทียบพลังงานและค่าใช้จ่าย" : "Site Energy & Cost Comparison", icon: ChartNoAxesCombined }, { id: "rack-comparison", label: lang === "th" ? "เปรียบเทียบความจุแร็คระหว่างไซต์" : "Site Rack Capacity Comparison", icon: Building2 }, { id: "reports", label: lang === "th" ? "ส่งออกและรายงาน" : "Exports & Report", icon: FileSpreadsheet }, { id: "settings", label: lang === "th" ? "ตั้งค่า" : "Settings", icon: Settings }, { id: "admin", label: lang === "th" ? "จัดการผู้ใช้" : "User Management", icon: UsersRound, admin: true }
+    { id: "dashboard", label: lang === "th" ? "แดชบอร์ด" : "Dashboard", icon: BarChart3 }, { id: "entry", label: lang === "th" ? "กรอกข้อมูล" : "Data Entry", icon: ClipboardPenLine }, { id: "racks", label: lang === "th" ? "ความจุแร็ค" : "Rack Capacity", icon: Server }, { id: "rack-units", label: lang === "th" ? "ความจุ U" : "Rack Unit Capacity", icon: Boxes }, { id: "history", label: lang === "th" ? "ประวัติ" : "History", icon: History }, { id: "comparison", label: lang === "th" ? "เปรียบเทียบพลังงานและค่าใช้จ่าย" : "Site Energy & Cost Comparison", icon: ChartNoAxesCombined }, { id: "rack-comparison", label: lang === "th" ? "เปรียบเทียบความจุและพื้นที่ว่างของแร็คระหว่างไซต์" : "Site Rack Capacity & Availability Comparison", icon: Building2 }, { id: "reports", label: lang === "th" ? "ส่งออกและรายงาน" : "Exports & Report", icon: FileSpreadsheet }, { id: "settings", label: lang === "th" ? "ตั้งค่า" : "Settings", icon: Settings }, { id: "admin", label: lang === "th" ? "จัดการผู้ใช้" : "User Management", icon: UsersRound, admin: true }
   ];
   // Shared navigation proportion tokens (both bars build items from one `nav`
   // array, so every item stays in step). Rebalanced so the enlarged icons no
@@ -498,16 +499,15 @@ export default function CleanWebApp() {
   const navIconClassName = "h-8 w-8 shrink-0";
   const mobileNavIconClassName = "h-6 w-6 shrink-0";
   const navTextClassName = "text-sm";
-  const mobileNavTextClassName = "text-xs";
+  const mobileNavTextClassName = "text-[11px] leading-tight text-center";
   const navItemClassName = "flex items-center justify-center gap-2 rounded-xl px-4 py-3";
   const reportAvailableMonths = [...new Set((bootstrap?.sites ?? []).flatMap(item => item.availableMonths ?? []))].sort();
   return <ReportProvider syncedLogs={history.logs} availableMonths={reportAvailableMonths} onYearChange={loadHistoricalYear} displayPeriod={bootstrap?.displayPeriod.startMonth.slice(0, 4)}>
     <div className="em-shell min-h-screen bg-slate-950 text-slate-100">
-      <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 backdrop-blur"><div className="mx-auto flex max-w-[1600px] items-center gap-4 px-4 py-3"><div className="min-w-0 flex-1"><h1 className="break-words font-display text-lg font-bold tracking-tight">Data Center Energy & Facility Monitor</h1><p className="truncate text-xs text-slate-400">{facilityLoading ? shellCopy.loadingFacilities : site?.name ?? shellCopy.noFacility} · {user.displayName}</p></div><label className="sr-only" htmlFor="facility-selector">{shellCopy.facility}</label><select id="facility-selector" aria-label={shellCopy.facility} disabled={facilityLoading || !bootstrap || bootstrap.sites.length === 0} value={siteId ?? ""} onChange={event => void selectSite(Number(event.target.value))} className="min-w-44 rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm disabled:opacity-60"><option value="">{facilityLoading ? shellCopy.loadingFacilities : bootstrap?.sites.length ? shellCopy.selectFacility : shellCopy.noFacility}</option>{bootstrap?.sites.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => changeLanguage(lang === "th" ? "en" : "th")} className="rounded-lg border border-slate-700 px-2.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800" aria-label={lang === "th" ? "เปลี่ยนภาษาเป็นภาษาอังกฤษ" : "Switch language to Thai"}>{lang === "th" ? "EN" : "ไทย"}</button><button type="button" onClick={() => void logout()} className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800" title={shellCopy.logout} aria-label={shellCopy.logout}><LogOut className="h-4 w-4" /></button></div></header>
-      <div className="mx-auto max-w-[1600px] px-4 py-4 md:px-6 md:py-6"><nav aria-label={lang === "th" ? "à¸™à¸³à¸—à¸²à¸‡à¸«à¸¥à¸±à¸" : "Primary application navigation"} className="mb-5 hidden gap-2 rounded-2xl border border-slate-800 bg-slate-900 p-1.5 shadow-md sm:grid sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? "page" : undefined} className={`${navItemClassName} ${navTextClassName} font-bold transition-all ${view === item.id ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/15" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"}`}><Icon className={navIconClassName} />{item.label}</button>; })}</nav>
+      <header className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/95 backdrop-blur"><div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-2 px-3 py-3 sm:flex-nowrap sm:gap-4 sm:px-4"><div className="min-w-0 flex-1"><h1 className="font-display text-base font-bold tracking-tight sm:text-lg"><span className="sm:hidden">Energy Monitor</span><span className="hidden sm:inline">Data Center Energy & Facility Monitor</span></h1><p className="truncate text-xs text-slate-400">{facilityLoading ? shellCopy.loadingFacilities : site?.name ?? shellCopy.noFacility} · {user.displayName}</p></div><label className="sr-only" htmlFor="facility-selector">{shellCopy.facility}</label><select id="facility-selector" aria-label={shellCopy.facility} disabled={facilityLoading || !bootstrap || bootstrap.sites.length === 0} value={siteId ?? ""} onChange={event => void selectSite(Number(event.target.value))} className="min-w-0 w-32 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-2 text-sm disabled:opacity-60 sm:min-w-44 sm:w-auto sm:px-3"><option value="">{facilityLoading ? shellCopy.loadingFacilities : bootstrap?.sites.length ? shellCopy.selectFacility : shellCopy.noFacility}</option>{bootstrap?.sites.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" onClick={() => changeLanguage(lang === "th" ? "en" : "th")} className="rounded-lg border border-slate-700 px-2.5 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800" aria-label={lang === "th" ? "เปลี่ยนภาษาเป็นภาษาอังกฤษ" : "Switch language to Thai"}>{lang === "th" ? "EN" : "ไทย"}</button><button type="button" onClick={() => void logout()} className="rounded-lg border border-slate-700 p-2 text-slate-300 hover:bg-slate-800" title={shellCopy.logout} aria-label={shellCopy.logout}><LogOut className="h-4 w-4" /></button></div></header>
+      <div className="mx-auto max-w-[1600px] px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-6"><nav aria-label={lang === "th" ? "à¸™à¸³à¸—à¸²à¸‡à¸«à¸¥à¸±à¸" : "Primary application navigation"} className="mb-5 hidden gap-2 rounded-2xl border border-slate-800 bg-slate-900 p-1.5 shadow-md sm:grid sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? "page" : undefined} className={`${navItemClassName} ${navTextClassName} font-bold transition-all ${view === item.id ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/15" : "text-slate-400 hover:bg-slate-800/60 hover:text-slate-200"}`}><Icon className={navIconClassName} />{item.label}</button>; })}</nav>
         <main className="min-w-0 pb-20 md:pb-6">{view !== "dashboard" && <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"><div><span className="text-xs uppercase tracking-wide text-slate-500">{shellCopy.reportingMonth}</span><div className="text-lg font-semibold">{month}</div></div><input aria-label={shellCopy.reportingMonth} type="month" value={month} min={bootstrap?.displayPeriod.startMonth} max={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : todayMonth()} onChange={event => void selectMonth(event.target.value, history.months.includes(event.target.value))} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm" /><div className="text-right text-xs text-slate-400">{shellCopy.displayPeriod} {bootstrap?.displayPeriod.startMonth} to {bootstrap?.displayPeriod.endMonth}<br />{shellCopy.completion} <b className="text-teal-300">{completion.overall.percent}%</b></div></div>}
            <Suspense fallback={<ViewLoading lang={lang} />}>
-           {(busy || initialHistoryLoading) && <div className="mb-4 text-sm text-teal-300">{shellCopy.working}</div>}
           {view === "settings" ? <SettingsPage lang={lang} displayPeriod={settingsDisplayPeriod} isAdmin={user.role === "admin"} theme={theme} onThemeChange={changeTheme} onSaved={async () => { try { await refreshAfterSettings(); setNotice(lang === "th" ? "บันทึกช่วงข้อมูลแล้ว ข้อมูลย้อนหลังไม่ได้ถูกแก้ไข" : "Global Display Period saved. Historical records were not changed."); } catch (error) { setNotice(readError(error)); } }} onMessage={setNotice} /> : view === "admin" && user.role === "admin" ? <Admin lang={lang} /> : facilityError ? <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100"><h2 className="font-semibold">{lang === "th" ? "ไม่สามารถโหลดบริบทไซต์ได้" : "Facility context unavailable"}</h2><p className="mt-2 text-sm">{facilityError}</p><button onClick={() => void initialize().catch(() => undefined)} className="mt-4 rounded-lg border border-rose-300/50 px-3 py-2 text-sm">{lang === "th" ? "ลองโหลดใหม่" : "Retry facility load"}</button></section> : facilityLoading || !site ? <section className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">{lang === "th" ? "กำลังโหลดข้อมูลไซต์…" : "Loading facility context…"}</section> : <>{view === "dashboard" && <DashboardView logs={history.logs} month={displayMonth} displayPeriod={globalDisplayPeriodRange} siteName={site.name} siteCode={site.code} lang={lang} upsGroupHistory={historyUpsGroupHistory} onNotice={setNotice} />}
           {view === "entry" && draft && <WebEntryWorkspace lang={lang} siteId={siteId!} siteName={site.name} siteCode={site.code} months={history.months} month={month} draft={draft} rackUnitInitialRow={history.rackUnitCapacity?.find(row => row.month === month) ?? null} busy={busy} readOnly={bootstrap?.readOnlyMode ?? false} allowedStartMonth={bootstrap?.displayPeriod.startMonth ?? month} allowedEndMonth={bootstrap ? (bootstrap.displayPeriod.endMonth < todayMonth() ? bootstrap.displayPeriod.endMonth : todayMonth()) : month} onSave={save} onSelectMonth={(selected, exists) => void selectMonth(selected, exists)} onRackUnitSaved={async () => { if (!siteId) return; const records = await loadHistory(siteId, { force: true, scope: "dashboard" }); await loadMonth(siteId, month, records); }} onRackCapacitySaved={async () => { if (!siteId) return; historyCacheRef.current.delete(String(siteId) + ":full"); await loadHistory(siteId, { force: true, scope: "rack", prefetch: true }); }} onNotice={setNotice} onDirtyChange={setEntryDirty} onRegisterActions={registerEntryActions} />}
           {view === "racks" && siteId && <RackCapacityView siteId={siteId} siteName={site?.name ?? null} month={displayMonth} rackCapacityHistory={historyRackCapacityHistory} rackUnitCapacity={historyRackUnitCapacity} onGoToEntry={() => setView("entry")} />}
@@ -519,7 +519,12 @@ export default function CleanWebApp() {
           </>}
            </Suspense>
          </main></div>
-      <nav aria-label={lang === "th" ? "เมนูนำทางบนมือถือ" : "Mobile application navigation"} className="fixed bottom-0 left-0 right-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-800 bg-slate-950 px-1 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? "page" : undefined} className={`min-w-[4.75rem] shrink-0 flex flex-col items-center gap-1 py-2 ${mobileNavTextClassName} ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className={mobileNavIconClassName} />{item.label}</button>; })}</nav>
+      <nav aria-label={lang === "th" ? "เมนูนำทางบนมือถือ" : "Mobile application navigation"} className="fixed bottom-0 left-0 right-0 z-30 flex gap-1 overflow-x-auto border-t border-slate-800 bg-slate-950 px-1 md:hidden">{nav.filter(item => !item.admin || user.role === "admin").map(item => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? "page" : undefined} className={`min-w-[5.75rem] shrink-0 flex flex-col items-center justify-start gap-1 py-2 ${mobileNavTextClassName} ${view === item.id ? "text-teal-300" : "text-slate-500"}`}><Icon className={mobileNavIconClassName} />{item.label}</button>; })}</nav>
+      {(busy || initialHistoryLoading || facilityLoading) && <BusyOverlay
+        title={lang === "th" ? "กำลังโหลด…" : "Loading…"}
+        detail={lang === "th" ? "ระบบกำลังประมวลผล กรุณารอสักครู่" : "The system is processing your request. Please wait."}
+        progressLabel={lang === "th" ? "กำลังดำเนินการ" : "Working"}
+      />}
       {pendingCreateMonth && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/85 px-4 backdrop-blur-sm"><section role="dialog" aria-modal="true" aria-labelledby="create-month-title" className="w-full max-w-sm overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl"><div className="space-y-4 p-6"><div className="flex items-center gap-3"><div className="rounded-xl border border-indigo-500/20 bg-indigo-500/10 p-2.5 text-indigo-400"><Calendar className="h-5 w-5" /></div><div><h2 id="create-month-title" className="font-display text-base font-bold text-slate-100">{lang === "th" ? "สร้างบันทึกรายเดือน" : "Create Monthly Record"}</h2><p className="mt-0.5 font-mono text-[10px] font-semibold uppercase tracking-wider text-slate-400">{pendingCreateMonth}</p></div></div><p className="rounded-xl border border-slate-800 bg-slate-950/50 p-4 text-xs leading-relaxed text-slate-300">{lang === "th" ? "ยังไม่มีบันทึกของเดือนนี้ในฐานข้อมูล ต้องการสร้างบันทึกใหม่เพื่อเริ่มกรอกข้อมูลหรือไม่" : "No record exists for this month yet. Create a new monthly record to start entering data?"}</p><div className="flex gap-2.5"><button type="button" onClick={() => setPendingCreateMonth(null)} className="flex-1 rounded-xl border border-slate-700/50 bg-slate-800 px-3 py-2.5 text-xs font-semibold text-slate-300 hover:bg-slate-700">{lang === "th" ? "ยกเลิก" : "Cancel"}</button><button type="button" onClick={() => void confirmCreateMonth()} className="flex-1 rounded-xl bg-indigo-600 px-3 py-2.5 text-xs font-bold text-white shadow-lg shadow-indigo-600/15 hover:bg-indigo-500">{lang === "th" ? "สร้างบันทึก" : "Create"}</button></div></div></section></div>}
       {pendingNavigation && <div role="dialog" aria-modal="true" aria-labelledby="unsaved-entry-title" className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/75 px-4 backdrop-blur-sm"><section className="w-full max-w-md rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl"><h2 id="unsaved-entry-title" className="font-display text-lg font-bold text-slate-100">{lang === "th" ? "มีข้อมูลที่ยังไม่ได้บันทึก" : "Unsaved Data Entry changes"}</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">{lang === "th" ? "ต้องการบันทึกข้อมูลก่อนออกจากหน้านี้ หรือละทิ้งการแก้ไข?" : "Save your current entries before continuing, discard them, or stay on this page."}</p><div className="mt-6 flex flex-wrap justify-end gap-2"><button type="button" onClick={stayOnPage} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300">{lang === "th" ? "ยกเลิก" : "Cancel"}</button><button type="button" onClick={discardPendingNavigation} className="rounded-lg border border-rose-500/50 px-3 py-2 text-sm text-rose-300">{lang === "th" ? "ละทิ้ง" : "Discard"}</button><button type="button" onClick={() => void savePendingNavigation()} className="rounded-lg bg-teal-500 px-3 py-2 text-sm font-semibold text-slate-950">{lang === "th" ? "บันทึกและดำเนินการต่อ" : "Save & Continue"}</button></div></section></div>}
       <AppNotice message={notice} />
@@ -563,7 +568,7 @@ function DashboardView({ logs, month, displayPeriod, siteName = "Facility", site
   const inferredSiteCode = siteCode || (siteName !== "Facility" ? siteName : (typeof document !== "undefined" ? document.querySelector<HTMLSelectElement>("#facility-selector option:checked")?.textContent ?? "" : ""));
   const upsMapping = useMemo(() => buildDashboardUpsMapping(upsGroupHistory, activeMonth, sourceDashboardMapping(inferredSiteCode, dashboardMapping).mapping), [activeMonth, dashboardMapping, inferredSiteCode, upsGroupHistory]);
   const upsGroupNames = useMemo(() => Array.from(new Set((upsGroupHistory?.rows ?? []).map(row => row.group))), [upsGroupHistory]);
-  const exportDashboard = (format: "pdf" | "excel" | "csv" | "png") => {
+  const exportDashboard = (format: "pdf" | "excel" | "csv") => {
     const selector = typeof document !== "undefined" ? document.getElementById("facility-selector") as HTMLSelectElement | null : null;
     const activeSiteName = selector?.selectedOptions[0]?.textContent?.trim() || siteName;
     const baseName = `Energy_Report_${activeSiteName.replace(/[^a-z0-9]+/giu, "-")}_${activeMonth}`;
@@ -581,14 +586,12 @@ function DashboardView({ logs, month, displayPeriod, siteName = "Facility", site
         void exportDesktopPdfFile(logs, activeSiteName, activeMonth, baseName, null, [], [], logs, ["dashboard"], { upsGroupHistory })
           .then(() => notify("PDF download started."))
           .catch(error => notify(readError(error)));
-      } else {
-        notify(lang === "th" ? "การส่งออก PNG ต้องใช้ Desktop app" : "Dashboard PNG export requires the Desktop app.");
       }
     } catch (error) { notify(readError(error)); }
   };
   return (
     <div className="space-y-5">
-      <UniversalFilterBar lang={lang} onExport={exportDashboard} facility={null} upsGroupNames={upsGroupNames} reportViews={DASHBOARD_REPORT_VIEWS} />
+      <UniversalFilterBar lang={lang} onExport={exportDashboard} exportFormats={["pdf", "excel", "csv"]} facility={null} upsGroupNames={upsGroupNames} reportViews={DASHBOARD_REPORT_VIEWS} />
       {exportNotice && <p role="status" className="text-sm text-teal-300">{exportNotice}</p>}
       {selectedReportView === "dashboard" && <DashboardSummary logs={logs} selectedMonth={activeMonth} lang={lang} dataSourceLabel={lang === "th" ? "Production API" : "Source: Production API"} upsMapping={upsMapping} />}
       {selectedReportView === "executive" && <><ExecutiveDashboard logs={logs} lang={lang} /><SmartInsightPanel logs={logs} lang={lang} /></>}
@@ -627,7 +630,7 @@ const PERIOD_MODE_OPTIONS: Array<{ value: ReportingPeriodMode; label: string }> 
   { value: "full", label: "Full History" }
 ];
 
-type ExportScope = "current" | "all" | "comparison";
+type ExportScope = "current" | "all";
 type ExportFormat = "csv" | "excel" | "html" | "pdf";
 /** Coarse, honest stages - never a fabricated percentage. */
 type ExportStage = "preparing" | "working" | "packaging";
@@ -690,10 +693,10 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
   }, [monthsAvailable, periodEndMonth, reportPreset, siteId]);
   const reportCopy = th ? {
     title: "รายงานและการส่งออก", intro: "Excel เก็บค่าที่กรอก ค่าวันที่บันทึก และค่าคำนวณของ Desktop เป็นเซลล์ชนิดข้อมูล ตัวเลขมีทศนิยม 2 ตำแหน่ง และวันที่ใช้รูปแบบ dd-Mmm-yy",
-    context: "บริบทการรายงาน", applies: "ใช้กับการส่งออกของไซต์ปัจจุบัน", period: "ช่วงเวลารายงาน", month: "เดือนรายงาน", from: "ตั้งแต่", to: "ถึง", fileName: "ชื่อไฟล์", reset: "คืนค่าเริ่มต้น", scope: "ขอบเขต", current: "ไซต์ปัจจุบัน", all: "ทุกไซต์", comparison: "เปรียบเทียบพลังงานและค่าใช้จ่ายของไซต์", currentDesc: "ส่งออกข้อมูลของไซต์ปัจจุบันตามช่วงที่เลือก", allDesc: "แยกข้อมูลแต่ละไซต์ใน CSV, ชีต Excel และส่วนรายงาน PDF", comparisonDesc: "เปรียบเทียบพลังงานและค่าใช้จ่ายของทุกไซต์ตามเดือนที่เลือก โดยไม่สร้างค่าทดแทนข้อมูลที่หายไป", csvStarted: "เริ่มดาวน์โหลด CSV แล้ว", excelStarted: "เริ่มดาวน์โหลด Excel แล้ว", pdfStarted: "เปิดหน้าต่างพิมพ์ PDF แล้ว"
+    context: "บริบทการรายงาน", applies: "ใช้กับการส่งออกของไซต์ปัจจุบัน", period: "ช่วงเวลารายงาน", month: "เดือนรายงาน", from: "ตั้งแต่", to: "ถึง", fileName: "ชื่อไฟล์", reset: "คืนค่าเริ่มต้น", scope: "ขอบเขต", current: "ไซต์ปัจจุบัน", all: "ทุกไซต์", currentDesc: "ส่งออกข้อมูลของไซต์ปัจจุบันตามช่วงที่เลือก", allDesc: "แยกข้อมูลแต่ละไซต์ใน CSV, ชีต Excel และส่วนรายงาน PDF", csvStarted: "เริ่มดาวน์โหลด CSV แล้ว", excelStarted: "เริ่มดาวน์โหลด Excel แล้ว", pdfStarted: "เปิดหน้าต่างพิมพ์ PDF แล้ว"
   } : {
     title: "Exports & PDF Report", intro: "Excel keeps stored entry values, saved dates, and Desktop calculations as typed cells: numbers use two decimals and dates use dd-Mmm-yy",
-    context: "Report Context", applies: "Applies to the Current Facility export below", period: "Reporting Period", month: "Reporting Month", from: "From", to: "To", fileName: "File name", reset: "Reset", scope: "Scope", current: "Current Facility", all: "All Facilities", comparison: "Site Energy & Cost Comparison", currentDesc: "Export the selected facility for the chosen reporting period", allDesc: "Each facility stays isolated in its own CSV block, Excel sheets, HTML, and full PDF section", comparisonDesc: "Energy and cost comparison for the selected month; no values are fabricated for missing records", csvStarted: "CSV download started.", excelStarted: "Excel download started.", pdfStarted: "PDF download started."
+    context: "Report Context", applies: "Applies to the Current Facility export below", period: "Reporting Period", month: "Reporting Month", from: "From", to: "To", fileName: "File name", reset: "Reset", scope: "Scope", current: "Current Facility", all: "All Facilities", currentDesc: "Export the selected facility for the chosen reporting period", allDesc: "Each facility stays isolated in its own CSV block, Excel sheets, HTML, and full PDF section", csvStarted: "CSV download started.", excelStarted: "Excel download started.", pdfStarted: "PDF download started."
   };
   const [message, setMessage] = useState<string | null>(null);
   // Explicit export selection. `scope` drives the Live Preview CONTENT
@@ -748,7 +751,7 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
       const scopedRackHistory = (siteHistory.rackCapacityHistory ?? []).filter(row => selectedReportMonthSet.has(row.snapshotMonth));
       const scopedRackUnitCapacity = (siteHistory.rackUnitCapacity ?? []).filter(row => selectedReportMonthSet.has(row.month));
       const scopedUpsGroupHistory = siteHistory.upsGroupHistory ? { ...siteHistory.upsGroupHistory, rows: siteHistory.upsGroupHistory.rows.filter(row => selectedReportMonthSet.has(row.month)) } : null;
-      return { siteName: site.name, logs: scopedLogs, calculationLogs: siteHistory.logs, rack: rackReportFromSnapshot(rackResponse), rackHistory: scopedRackHistory, rackUnitCapacity: scopedRackUnitCapacity, upsGroupHistory: scopedUpsGroupHistory, dashboardMapping: { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping(site.name) }, rackUnitCapacityImageDataUri: rackUnitImage?.dataUri ?? null, rackUnitCapacityImageMeta: rackUnitImage?.meta ?? null, reportingMonths: selectedReportMonths };
+      return { siteName: site.name, siteCode: site.code, logs: scopedLogs, calculationLogs: siteHistory.logs, rack: rackReportFromSnapshot(rackResponse), rackHistory: scopedRackHistory, rackUnitCapacity: scopedRackUnitCapacity, upsGroupHistory: scopedUpsGroupHistory, dashboardMapping: { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping(site.name) }, rackUnitCapacityImageDataUri: rackUnitImage?.dataUri ?? null, rackUnitCapacityImageMeta: rackUnitImage?.meta ?? null, reportingMonths: selectedReportMonths };
     }));
     allFacilitiesCacheRef.current.set(cacheKey, request);
     void request.catch(() => { if (allFacilitiesCacheRef.current.get(cacheKey) === request) allFacilitiesCacheRef.current.delete(cacheKey); });
@@ -845,12 +848,12 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
   const availableMonths = availableReportMonths.length > 0 ? availableReportMonths : [...new Set(logs.map(log => log.month))].sort();
 
   // Live Preview follows the selected export SCOPE (never the download format).
-  // For "all"/"comparison" the preview renders the SAME report model the export
-  // uses (buildAllFacilitiesReportHtml / buildSiteComparisonReportHtml), cached
+  // For "all" the preview renders the SAME report model the export uses
+  // (buildAllFacilitiesReportHtml), cached
   // by exact identity (scope + site set + reporting month + resolved period +
   // sections) and guarded so a stale async response can't overwrite a newer
   // selection.
-  const previewIdentity = [exportScope, exportScope === "current" ? String(siteId) : exportScope === "all" ? sites.map(item => item.id).join(",") : "all-sites", contextMonth, periodIdentity, selectedReportSections.join(",")].join(" | ");
+  const previewIdentity = [exportScope, exportScope === "current" ? String(siteId) : sites.map(item => item.id).join(","), contextMonth, periodIdentity, selectedReportSections.join(",")].join(" | ");
   const previewCacheRef = useRef(new Map<string, string>());
   const previewGenRef = useRef(0);
   const [scopedPreview, setScopedPreview] = useState<{ id: string; html: string } | null>(null);
@@ -866,18 +869,9 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
     void (async () => {
       try {
         let html: string;
-        if (exportScope === "all") {
-          const facilities = await loadAll({ includeRack: true, includeImage: true });
-          html = buildAllFacilitiesReportHtml(facilities, contextMonth, selectedReportSections);
-        } else {
-          const comparisonData = await loadComparison();
-          const [primary, secondary] = comparisonData.sites;
-          const [selfRack, otherRack] = await Promise.all([
-            primary ? loadRack(primary.site.id, contextMonth) : Promise.resolve(null),
-            secondary ? loadRack(secondary.site.id, contextMonth) : Promise.resolve(null)
-          ]);
-          html = buildSiteComparisonReportHtml(comparisonData, contextMonth, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack), selectedReportSections);
-        }
+        const facilities = await loadAll({ includeRack: true, includeImage: true });
+        const model = buildSiteComparisonReportModel(await loadComparison(), contextMonth);
+        html = buildAllFacilitiesReportHtml(facilities, model, contextMonth, selectedReportSections);
         if (previewGenRef.current !== generation) return;
         previewCacheRef.current.set(id, html);
         setScopedPreview({ id, html });
@@ -889,35 +883,36 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
         if (previewGenRef.current === generation) setPreviewBuilding(false);
       }
     })();
-  }, [contextMonth, exportScope, loadAll, loadComparison, loadRack, previewIdentity, selectedReportSections]);
+  }, [contextMonth, exportScope, loadAll, loadComparison, previewIdentity, selectedReportSections]);
   const previewContextLabel = exportScope === "current"
     ? `${reportCopy.current} · ${siteName} · ${reportingPeriodLabel(period, lang)}`
-    : exportScope === "all"
-      ? `${reportCopy.all} · ${reportingPeriodLabel(period, lang)}`
-      : `${reportCopy.comparison} · ${contextMonth}`;
-  const exportHtml = (...args: Parameters<typeof exportHtmlFile>) => {
+    : `${reportCopy.all} · ${reportingPeriodLabel(period, lang)}`;
+  const resolveReportImageForExport = async () => {
+    const freshImage = await loadReportImage(siteId, contextMonth);
+    return freshImage ?? reportImage;
+  };
+  const exportHtml = async (...args: Parameters<typeof exportHtmlFile>) => {
+    const image = await resolveReportImageForExport();
     const nextArgs = [...args] as unknown as Parameters<typeof exportHtmlFile>;
     const extras = nextArgs[9] ?? {};
     nextArgs[9] = {
       ...extras,
-      rackUnitCapacityImageDataUri: reportImage?.dataUri ?? null,
-      rackUnitCapacityImageMeta: reportImage?.meta ?? null
+      rackUnitCapacityImageDataUri: image?.dataUri ?? null,
+      rackUnitCapacityImageMeta: image?.meta ?? null
     };
-    return exportHtmlFile(...nextArgs);
+    exportHtmlFile(...nextArgs);
   };
-  const exportDesktopPdf = (...args: Parameters<typeof exportDesktopPdfFile>) => {
+  const exportDesktopPdf = async (...args: Parameters<typeof exportDesktopPdfFile>) => {
+    const image = await resolveReportImageForExport();
     const nextArgs = [...args] as unknown as Parameters<typeof exportDesktopPdfFile>;
     const extras = nextArgs[9] ?? {};
     nextArgs[9] = {
       ...extras,
-      rackUnitCapacityImageDataUri: reportImage?.dataUri ?? null,
-      rackUnitCapacityImageMeta: reportImage?.meta ?? null
+      rackUnitCapacityImageDataUri: image?.dataUri ?? null,
+      rackUnitCapacityImageMeta: image?.meta ?? null
     };
     return exportDesktopPdfFile(...nextArgs);
   };
-  const exportAllFacilitiesHtml = (facilities: Parameters<typeof exportAllFacilitiesHtmlFile>[0], selectedMonth: string) => exportAllFacilitiesHtmlFile(facilities, selectedMonth, undefined, selectedReportSections);
-  const exportAllFacilitiesPdf = (facilities: Parameters<typeof exportAllFacilitiesPdfFile>[0], selectedMonth: string) => exportAllFacilitiesPdfFile(facilities, selectedMonth, undefined, selectedReportSections);
-  const exportSiteComparisonPdf = (...args: Parameters<typeof exportSiteComparisonPdfFile>) => exportSiteComparisonPdfFile(...(args.concat([selectedReportSections]) as Parameters<typeof exportSiteComparisonPdfFile>));
 
   const EXPORT_CARD_FORMATS: Array<{ id: ExportFormat; label: string; Icon: typeof Download; tone: string }> = [
     { id: "csv", label: "CSV", Icon: Download, tone: "text-teal-400" },
@@ -943,8 +938,22 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
     </div>;
   };
 
+  const reportBusy = exportAction !== null || (exportScope !== "current" && previewBuilding);
+  const reportBusyTitle = exportAction
+    ? exportStageLabel(exportAction.stage, exportScope, exportFormat ?? "pdf", th)
+    : (th ? "กำลังสร้างตัวอย่างรายงาน…" : "Generating report preview…");
+  const reportBusyDetail = exportAction
+    ? (th ? `กำลังเตรียม ${EXPORT_FORMAT_LABELS[exportFormat ?? "pdf"]} สำหรับ ${exportScope === "current" ? reportCopy.current : reportCopy.all}` : `Preparing ${EXPORT_FORMAT_LABELS[exportFormat ?? "pdf"]} for ${exportScope === "current" ? reportCopy.current : reportCopy.all}.`)
+    : (th ? "กำลังรวมข้อมูลทุกไซต์และส่วนเปรียบเทียบ" : "Combining all facilities and cross-site comparison sections.");
+
   const sectionPicker = <div className="mt-4 rounded-xl border border-slate-800 bg-slate-900 p-5"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{th ? "ส่วนของรายงาน" : "Report sections"}</h3><span className="text-xs text-slate-500">{selectedReportSections.length} selected</span></div><p className="mt-1 text-sm text-slate-400">{th ? "เลือกส่วนที่ต้องการสำหรับตัวอย่างและ PDF/HTML; Excel และ CSV ยังคงเก็บข้อมูลดิบครบทุกค่า" : "Choose sections for the preview and PDF/HTML; Excel and CSV remain complete raw exports."}</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => setSelectedReportSections(ReportRegistry.all().map(section => section.id))} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-teal-300">{th ? "เลือกทั้งหมด" : "Select all"}</button><button type="button" onClick={() => setSelectedReportSections([])} className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs text-slate-300">{th ? "ล้างทั้งหมด" : "Select none"}</button><input aria-label={th ? "ค้นหาส่วนรายงาน" : "Search report sections"} value={reportSectionSearch} onChange={event => setReportSectionSearch(event.target.value)} placeholder={th ? "ค้นหา" : "Search"} className="min-w-44 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-xs" /></div><div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{visibleReportSections.map(section => <label key={section.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-slate-300 hover:bg-slate-800"><input type="checkbox" checked={selectedReportSections.includes(section.id)} onChange={() => toggleReportSection(section.id)} />{section.title}</label>)}</div></div>;
-  return <section><h2 className="font-display text-2xl font-bold">{reportCopy.title}</h2><p className="mt-1 text-sm text-slate-400">{reportCopy.intro}</p>
+  return <section>
+    {reportBusy && <BusyOverlay
+      title={reportBusyTitle}
+      detail={reportBusyDetail}
+      progressLabel={exportAction ? (th ? "กำลังส่งออก" : "Exporting") : (th ? "กำลังสร้างตัวอย่าง" : "Building preview")}
+    />}
+    <h2 className="font-display text-2xl font-bold">{reportCopy.title}</h2><p className="mt-1 text-sm text-slate-400">{reportCopy.intro}</p>
 
     <div className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-5">
       <h3 className="font-semibold">{reportCopy.context}</h3>
@@ -964,8 +973,8 @@ function Reports({ lang, siteId, siteName, logs, month, sites, monthsAvailable, 
       <p className="mt-3 text-xs text-slate-500">{reportCopy.scope}: {reportingPeriodLabel(period, lang)}. {th ? "ไฟล์" : "Files"}: <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "csv")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "xlsx")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "html")}</span> · <span className="font-mono text-slate-300">{withExtension(resolvedFileName, "pdf")}</span></p>
     </div>
 
-    <div className="mt-4 grid gap-4 xl:grid-cols-3">{cards("current", reportCopy.current, `${siteName}, ${reportingPeriodLabel(period, lang)}.`, { csv: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv"), { calculationLogs: logs, rack, rackHistory: scopedRackCapacityHistory, rackUnitCapacity: scopedRackUnitCapacity, upsGroupHistory: scopedUpsGroupHistory }); })(), excel: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx"), logs, rack, scopedRackCapacityHistory, scopedRackUnitCapacity, scopedUpsGroupHistory); })(), html: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; exportHtml(scopedLogs, siteName, contextMonth, withExtension(resolvedFileName, "html"), rack, scopedRackCapacityHistory, scopedRackUnitCapacity, logs, selectedReportSections, { upsGroupHistory: scopedUpsGroupHistory }); })(), pdf: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportDesktopPdf(scopedLogs, siteName, contextMonth, resolvedFileName, rack, scopedRackCapacityHistory, scopedRackUnitCapacity, logs, selectedReportSections, { upsGroupHistory: scopedUpsGroupHistory }); })() }, { csv: withExtension(resolvedFileName, "csv"), excel: withExtension(resolvedFileName, "xlsx"), html: withExtension(resolvedFileName, "html"), pdf: withExtension(resolvedFileName, "pdf") })}{cards("all", reportCopy.all, reportCopy.allDesc, { csv: async () => exportAllFacilitiesCsv(await loadAll({ includeRack: true, includeImage: false })), excel: async () => exportAllFacilitiesExcel(await loadAll({ includeRack: true, includeImage: false })), html: async () => exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true }), contextMonth), pdf: async () => exportAllFacilitiesPdf(await loadAll({ includeRack: true, includeImage: true }), contextMonth) }, { csv: "all-facilities-energy-monitor.csv", excel: "all-facilities-energy-monitor.xlsx", html: "all-facilities-energy-monitor.html", pdf: "all-facilities-energy-monitor.pdf" })}{cards("comparison", reportCopy.comparison, reportCopy.comparisonDesc, { csv: async () => exportSiteComparisonCsv(await loadComparison(), contextMonth), excel: async () => exportSiteComparisonExcel(await loadComparison(), contextMonth), html: async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, contextMonth) : null, secondary ? loadRack(secondary.site.id, contextMonth) : null]); exportSiteComparisonHtml(comparison, contextMonth, `site-comparison-${contextMonth}.html`, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack), selectedReportSections); }, pdf: async () => { const comparison = await loadComparison(); const [primary, secondary] = comparison.sites; const [selfRack, otherRack] = await Promise.all([primary ? loadRack(primary.site.id, contextMonth) : null, secondary ? loadRack(secondary.site.id, contextMonth) : null]); await exportSiteComparisonPdf(comparison, contextMonth, `site-comparison-${contextMonth}`, rackReportFromSnapshot(selfRack), rackReportFromSnapshot(otherRack)); } }, { csv: `site-comparison-${contextMonth}.csv`, excel: `site-comparison-${contextMonth}.xlsx`, html: `site-comparison-${contextMonth}.html`, pdf: `site-comparison-${contextMonth}.pdf` })}</div>
-    <WebReportPreview lang={lang} siteId={siteId} siteName={siteName} logs={scopedLogs} calculationLogs={logs} month={contextMonth} rackCapacityHistory={scopedRackCapacityHistory} rackUnitCapacity={scopedRackUnitCapacity} upsGroupHistory={scopedUpsGroupHistory} onRefresh={handleRefresh} sections={selectedReportSections} contextLabel={previewContextLabel} selectedFormatLabel={exportFormat ? EXPORT_FORMAT_LABELS[exportFormat] : null} overrideHtml={exportScope === "current" ? null : scopedPreview?.html ?? null} pending={exportScope !== "current" && previewBuilding} />
+    <div className="mt-4 grid gap-4 xl:grid-cols-2">{cards("current", reportCopy.current, `${siteName}, ${reportingPeriodLabel(period, lang)}.`, { csv: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; exportCsv(scopedLogs, siteName, withExtension(resolvedFileName, "csv"), { calculationLogs: logs, rack, rackHistory: scopedRackCapacityHistory, rackUnitCapacity: scopedRackUnitCapacity, upsGroupHistory: scopedUpsGroupHistory }); })(), excel: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportExcel(scopedLogs, siteName, withExtension(resolvedFileName, "xlsx"), logs, rack, scopedRackCapacityHistory, scopedRackUnitCapacity, scopedUpsGroupHistory); })(), html: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportHtml(scopedLogs, siteName, contextMonth, withExtension(resolvedFileName, "html"), rack, scopedRackCapacityHistory, scopedRackUnitCapacity, logs, selectedReportSections, { upsGroupHistory: scopedUpsGroupHistory }); })(), pdf: () => (async () => { const rack = siteId !== null ? rackReportFromSnapshot(await loadRack(siteId, contextMonth)) : null; await exportDesktopPdf(scopedLogs, siteName, contextMonth, resolvedFileName, rack, rackCapacityHistory, rackUnitCapacity, logs, selectedReportSections, { upsGroupHistory: scopedUpsGroupHistory }); })() }, { csv: withExtension(resolvedFileName, "csv"), excel: withExtension(resolvedFileName, "xlsx"), html: withExtension(resolvedFileName, "html"), pdf: withExtension(resolvedFileName, "pdf") })}{cards("all", reportCopy.all, reportCopy.allDesc, { csv: async () => exportAllFacilitiesCsv(await loadAll({ includeRack: true, includeImage: false }), buildSiteComparisonReportModel(await loadComparison(), contextMonth)), excel: async () => exportAllFacilitiesExcel(await loadAll({ includeRack: true, includeImage: false }), buildSiteComparisonReportModel(await loadComparison(), contextMonth)), html: async () => exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true }), buildSiteComparisonReportModel(await loadComparison(), contextMonth), contextMonth), pdf: async () => exportAllFacilitiesPdf(await loadAll({ includeRack: true, includeImage: true }), buildSiteComparisonReportModel(await loadComparison(), contextMonth), contextMonth) }, { csv: "all-facilities-energy-monitor.csv", excel: "all-facilities-energy-monitor.xlsx", html: "all-facilities-energy-monitor.html", pdf: "all-facilities-energy-monitor.pdf" })}</div>
+    <WebReportPreview lang={lang} siteId={siteId} siteName={siteName} logs={scopedLogs} calculationLogs={logs} month={contextMonth} rackCapacityHistory={exportScope === "current" ? rackCapacityHistory : scopedRackCapacityHistory} rackUnitCapacity={exportScope === "current" ? rackUnitCapacity : scopedRackUnitCapacity} upsGroupHistory={scopedUpsGroupHistory} onRefresh={handleRefresh} sections={selectedReportSections} contextLabel={previewContextLabel} selectedFormatLabel={exportFormat ? EXPORT_FORMAT_LABELS[exportFormat] : null} currentFacilityPdf={exportScope === "current"} overrideHtml={exportScope === "current" ? null : scopedPreview?.html ?? null} pending={exportScope !== "current" && previewBuilding} />
     {sectionPicker}
     {message && <p className="mt-4 text-sm text-teal-300">{message}</p>}
     {recentReports.length > 0 && <section className="mt-5 rounded-xl border border-slate-800 bg-slate-900 p-5"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{th ? "รายงานล่าสุด" : "Recent Reports"}</h3><span className="text-xs text-slate-500">{th ? "บันทึกในเบราว์เซอร์นี้" : "Saved on this browser"}</span></div><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[640px] text-left text-xs"><thead className="text-[10px] uppercase tracking-wider text-slate-500"><tr><th className="pb-2">{th ? "ไฟล์" : "Filename"}</th><th>{th ? "ไซต์" : "Facility"}</th><th>{th ? "ช่วงเวลา" : "Period"}</th><th>{th ? "สร้างเมื่อ" : "Created"}</th><th /></tr></thead><tbody>{recentReports.slice(0, 20).map(item => <tr key={item.id} className="border-t border-slate-800 text-slate-300"><td className="py-2 font-medium">{item.filename}</td><td>{item.facility}</td><td>{item.month}</td><td>{formatWebSavedTimestamp(item.createdAt) ?? item.createdAt}</td><td className="text-right"><button type="button" onClick={() => { try { setRecentReports(HistoryProvider.remove(item.id)); } catch { setRecentReports(current => current.filter(entry => entry.id !== item.id)); } }} className="text-slate-500 hover:text-rose-300">{th ? "ลบ" : "Remove"}</button></td></tr>)}</tbody></table></div></section>}</section>;

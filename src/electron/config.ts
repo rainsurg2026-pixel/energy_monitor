@@ -46,7 +46,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   lastWorkbookPath: null,
   startupBehavior: "last",
   theme: "light",
-  language: "th",
+  language: "en",
   globalDataDisplayPeriod: "2026",
   backupFolder: null,
   backupKeep: 20,

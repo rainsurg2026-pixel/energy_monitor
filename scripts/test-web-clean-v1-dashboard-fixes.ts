@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { reportYearsFromMonths, resolveReportYear } from "../src/ReportContext";
-import { openReportPopup, renderReportErrorPopup, renderReportPopup } from "../src/web-clean-v1/exports";
 
 assert.equal(resolveReportYear("2024", ["2025", "2024"], "2025"), "2024");
 assert.equal(resolveReportYear("not-a-year", ["2025", "2024"], "2025"), "2025");
@@ -9,57 +8,19 @@ assert.equal(resolveReportYear("2026", ["2025", "2024"], "2025"), "2025");
 assert.equal(resolveReportYear("not-a-year", ["2026"], "2025"), "2026");
 assert.deepEqual(reportYearsFromMonths(["2026-02", "2026-07"], ["2025-01", "2025-12", "2026-07"]), ["2026", "2025"], "year selector includes years available outside the initial six-month log window");
 
-let printed = 0;
-let written = "";
-const popupDocument = {
-  readyState: "complete",
-  title: "",
-  open: () => undefined,
-  write: (html: string) => { written = html; },
-  close: () => undefined
-};
-const popup = {
-  document: popupDocument,
-  closed: false,
-  addEventListener: () => undefined,
-  setTimeout: (callback: () => void) => { callback(); return 0; },
-  focus: () => undefined,
-  print: () => { printed += 1; }
-} as unknown as Window;
-
-renderReportPopup(popup, "<html><body>report</body></html>", "energy-report");
-assert.equal(written, "<html><body>report</body></html>");
-assert.equal(popup.document.title, "energy-report");
-assert.equal(printed, 1);
-
-// A report popup must never be visually blank while asynchronous report data
-// is loading, and a rejected data request must leave a useful visible error
-// instead of an empty window that appears to have stalled.
-const previousWindow = (globalThis as { window?: unknown }).window;
-(popup as unknown as { opener: unknown }).opener = {};
-let popupFeatures = "";
-(globalThis as { window?: unknown }).window = {
-  open: (_url: string, _name: string, features: string) => {
-    popupFeatures = features;
-    return popup;
-  }
-};
-const loadingPopup = openReportPopup("energy-report-loading");
-assert.equal(loadingPopup, popup);
-assert.equal(popupFeatures, "popup");
-assert.equal((popup as unknown as { opener: unknown }).opener, null);
-assert.match(written, /Preparing report/);
-assert.equal(popup.document.title, "Preparing report…");
-renderReportErrorPopup(popup);
-assert.match(written, /Report could not be generated/);
-if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window;
-else (globalThis as { window?: unknown }).window = previousWindow;
 
 const appSource = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const rackUnitSummarySource = readFileSync(new URL("../src/components/rack/RackUnitCapacitySummary.tsx", import.meta.url), "utf8");
 const rackViewsSource = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityViews.tsx", import.meta.url), "utf8");
 const exportSource = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
 const browserE2eSource = readFileSync(new URL("./e2e-web-cdp.mjs", import.meta.url), "utf8");
+const dashboardSummarySource = readFileSync(new URL("../src/components/DashboardSummary.tsx", import.meta.url), "utf8");
+// Engineering View > Air Conditioning Energy Consumption: every EB meter GWh
+// display cell uses fixed six-decimal formatting, while the derived kWh total
+// keeps its own existing formatter.
+assert.match(dashboardSummarySource, /formatFixedNumber, formatNumber2/);
+assert.equal((dashboardSummarySource.match(/formatFixedNumber\(value, 6\)/g) ?? []).length, 3);
+assert.match(dashboardSummarySource, /airEnergyKwh[^\n]*formatNumber2\(calcs\.airEnergyKwh\)/);
 assert.match(appSource, /HISTORY_DATA_VIEWS/);
 assert.match(appSource, /loadedPageKeyRef/);
 assert.match(appSource, /const DashboardSummary = lazy\(\(\) => import\("\.\.\/components\/DashboardSummary"\)\)/);

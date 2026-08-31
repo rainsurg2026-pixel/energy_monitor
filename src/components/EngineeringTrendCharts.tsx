@@ -4,6 +4,7 @@ import type { MonthlyLog } from "../types";
 import { formatMonthYear } from "../utils";
 import { calculateEnergyCostForMonth } from "../utils/energyCost";
 import { selectedDashboardMonth } from "../utils/reportPeriodSelection";
+import { recentMonthsThroughSelected } from "../utils/historyWindow";
 import TrendLineChart from "./TrendLineChart";
 
 interface EngineeringTrendChartsProps {
@@ -67,7 +68,12 @@ export default function EngineeringTrendCharts({ logs, lang }: EngineeringTrendC
     const anchorIndex = processed.findIndex(row => row.month === anchorMonth);
     const effectiveAnchor = anchorIndex >= 0 ? anchorIndex : processed.length - 1;
     const windowSize = TREND_WINDOW_SIZE[selectedTrend] ?? 3;
-    return processed.slice(Math.max(0, effectiveAnchor - windowSize + 1), effectiveAnchor + 1);
+    const windowMonths = new Set(recentMonthsThroughSelected(
+      processed.map(row => row.month),
+      processed[effectiveAnchor]!.month,
+      windowSize,
+    ));
+    return processed.filter(row => windowMonths.has(row.month));
   }, [logs, selectedPeriod, selectedTrend, selectedYear]);
 
   if (trendData.length === 0) {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FC } from "react";
 import { BarChart3, Building2, RefreshCw, Search, Server, ShieldCheck, X } from "lucide-react";
+import BusyOverlay from "./BusyOverlay";
 import { calculateRackCapacityMetrics, rackUtilizationLevel } from "../domain/rackCapacity";
 import { isValidRackUnitCapacity, rackAvailabilityStatus, rackCountsReconcile, type RackAvailabilityStatus } from "../domain/rackComparison";
 import { usagePercent } from "../domain/rackUnitCapacity";
@@ -269,10 +270,11 @@ export default function WebSiteRackCapacityComparison({ month, activePeriodLabel
   const reconciliationMetrics = rackMetrics.flatMap(({ metrics }) => metrics ? [metrics] : []);
   const allRackSnapshotsReconcile = reconciliationMetrics.every(rackCountsReconcile);
   const currentMonthLoaded = loadedMonth === month;
-  if (loading && !currentMonthLoaded) return <section role="status" className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">Loading Site Rack Capacity Comparison…</section>;
+  if (loading && !currentMonthLoaded) return <BusyOverlay title="Loading Site Rack Capacity Comparison…" progressLabel="Loading" />;
   if (error && !currentMonthLoaded) return <section role="alert" className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-5 text-rose-100">{error}</section>;
   const sites = currentMonthLoaded ? states ?? [] : [];
   return <section className="space-y-5" data-testid="web-site-rack-capacity-comparison">
+    {loading && <BusyOverlay title="Loading Site Rack Capacity Comparison…" progressLabel="Loading" />}
     <header className="rounded-2xl border border-slate-800 bg-slate-900 p-4 sm:p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-start gap-3"><div className="rounded-xl bg-indigo-500/10 p-2.5 text-indigo-300"><Server className="h-5 w-5" /></div><div><h2 className="font-display text-2xl font-bold tracking-tight text-slate-100">Site Rack Capacity &amp; Availability Comparison</h2><p className="mt-1 text-sm text-slate-400">Compare site rack capacity by zone and status for deployment planning.</p><p className="mt-2 text-xs uppercase tracking-wide text-slate-500">Reporting Month: <span className="font-mono text-slate-300">{monthLabelLong(month, "en")}</span></p></div></div><button type="button" onClick={() => void load()} className="inline-flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:border-teal-500"><RefreshCw className="h-4 w-4" />Refresh</button></div></header>
     <div className="grid gap-4 lg:grid-cols-2">{sites.map(state => <SiteSummaryCard key={state.site.id} state={state} month={month} />)}</div>
     <RackCapacityByZone states={sites} month={month} />
