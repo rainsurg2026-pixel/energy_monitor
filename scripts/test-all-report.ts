@@ -1,4 +1,4 @@
-﻿import { promises as fs } from "fs";
+import { promises as fs } from "fs";
 import path from "path";
 import { buildReportData } from "../src/reports/reportDataBuilder";
 import { buildReportHtml } from "../src/reports/pdf/reportHtml";
@@ -144,9 +144,9 @@ const trendAnalyticsIndex = html.indexOf("FACILITY TREND ANALYTICS");
 const monthlyTableIndex = html.indexOf("<h2>Monthly Energy &amp; Cost Table</h2>");
 if (trendAnalyticsIndex === -1) throw new Error("'Facility Trend Analytics' label is missing from the trend pages.");
 if (trendAnalyticsIndex >= monthlyTableIndex) throw new Error("Facility Trend Analytics must appear above the Monthly Energy & Cost Table.");
-if ((html.match(/FACILITY TREND ANALYTICS/g) ?? []).length !== 3) throw new Error("The 6 facility trend charts must be paired across exactly 3 Facility Trend Analytics pages.");
-if ((html.match(/class="page facility-trends-page"/g) ?? []).length !== 3) throw new Error("Facility trends must render as exactly 3 compact pages.");
-if ((html.match(/class="mini-trend"/g) ?? []).length !== 6) throw new Error("All 6 facility trend charts must remain present after compact pairing.");
+if ((html.match(/FACILITY TREND ANALYTICS/g) ?? []).length !== 6) throw new Error("Each of the 6 facility trend charts must render on its own readable Facility Trend Analytics page.");
+if ((html.match(/class="page trend-page" data-report-section="historical"/g) ?? []).length < 6) throw new Error("Facility trends must use full-size trend pages for PDF readability.");
+if (html.includes('class="mini-trend"')) throw new Error("Compact two-up facility trend blocks must not be used in the PDF.");
 if (!html.includes('class="page appendix-page"')) throw new Error("Monthly Energy & Cost appendix must use the readable appendix layout.");
 if (report.rack) {
   const deployablePositions = rackPositionExportRows(report.rack.records).length;
@@ -167,9 +167,8 @@ if (comparisonEligible) {
   if (siteComparisonLabelIndex === -1) throw new Error("'Site Comparison' trend label is missing.");
   if (siteComparisonLabelIndex >= siteComparisonTableIndex) throw new Error("Site Comparison trend charts must appear above the Site Comparison table.");
 }
-// Full-page trend charts are limited to the executive trend plus optional Site Comparison trends.
-// The 6 facility analytical trends render as 3 compact two-chart pages.
-const expectedTrendPages = 1 + (comparisonEligible ? 2 : 0);
+// Full-page trend charts include the executive trend, all 6 facility analytical trends, and optional Site Comparison trends.
+const expectedTrendPages = 7 + (comparisonEligible ? 2 : 0);
 if ((html.match(/class="page trend-page"/g) ?? []).length !== expectedTrendPages) throw new Error(`Unexpected number of full-page trend charts (expected ${expectedTrendPages}).`);
 const expectedPointLabels = [
   ...report.monthlyRows.map(row => row.buildingEnergyKwh),

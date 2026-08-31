@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
 const busyOverlay = readFileSync(new URL("../src/web-clean-v1/BusyOverlay.tsx", import.meta.url), "utf8");
+const rackUnitImageSource = readFileSync(new URL("../src/web-clean-v1/rackUnitImage.ts", import.meta.url), "utf8");
 
 // ---------------------------------------------------------------------------
 // Explicit export selection + per-action feedback
@@ -63,6 +64,12 @@ assert.match(app, /const exportHtml = async \(\.\.\.args:[\s\S]*?const image = a
 assert.match(app, /const exportDesktopPdf = async \(\.\.\.args:[\s\S]*?const image = await resolveReportImageForExport\(\)/);
 assert.match(app, /html: \(\) => \(async \(\) => \{[\s\S]*?await exportHtml\(/);
 assert.match(app, /pdf: \(\) => \(async \(\) => \{[\s\S]*?await exportDesktopPdf\(/);
+
+// Rack Unit report images use DB image presence + authoritative GET bytes.
+// Missing optional dimensions/checksum must not suppress a real saved image.
+assert.match(rackUnitImageSource, /if \(!image\) return null;/);
+assert.doesNotMatch(rackUnitImageSource, /image\.width === null \|\| image\.height === null \|\| !image\.sha256/);
+assert.match(rackUnitImageSource, /await readBlobDimensions\(blob\)/);
 
 // ---------------------------------------------------------------------------
 // Live Preview follows SCOPE (content), not FORMAT (download type)
