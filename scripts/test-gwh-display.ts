@@ -13,7 +13,7 @@ const dashboard = readFileSync(new URL("../src/components/DashboardSummary.tsx",
 const history = readFileSync(new URL("../src/components/HistoricalExplorer.tsx", import.meta.url), "utf8");
 const pdf = readFileSync(new URL("../src/reports/pdf/reportHtml.ts", import.meta.url), "utf8");
 const dc = readFileSync(new URL("../src/components/DcTable.tsx", import.meta.url), "utf8");
-assert.ok(dashboard.includes("formatGWh(value)"));
+assert.equal((dashboard.match(/formatFixedNumber\(value, 6\)/g) ?? []).length, 3);
 assert.ok(history.includes("formatGWh(value)"));
 assert.ok(pdf.includes("formatGWh(dashboard.airPrevious[field])") && pdf.includes("formatGWh(dashboard.airDifference[field])"));
 assert.ok(!/isVoltageAbnormal && \([\s\S]*?animate-ping/.test(dc));

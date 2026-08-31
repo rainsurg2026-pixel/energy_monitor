@@ -14,6 +14,13 @@ const rackUnitSummarySource = readFileSync(new URL("../src/components/rack/RackU
 const rackViewsSource = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityViews.tsx", import.meta.url), "utf8");
 const exportSource = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
 const browserE2eSource = readFileSync(new URL("./e2e-web-cdp.mjs", import.meta.url), "utf8");
+const dashboardSummarySource = readFileSync(new URL("../src/components/DashboardSummary.tsx", import.meta.url), "utf8");
+// Engineering View > Air Conditioning Energy Consumption: every EB meter GWh
+// display cell uses fixed six-decimal formatting, while the derived kWh total
+// keeps its own existing formatter.
+assert.match(dashboardSummarySource, /formatFixedNumber, formatNumber2/);
+assert.equal((dashboardSummarySource.match(/formatFixedNumber\(value, 6\)/g) ?? []).length, 3);
+assert.match(dashboardSummarySource, /airEnergyKwh[^\n]*formatNumber2\(calcs\.airEnergyKwh\)/);
 assert.match(appSource, /HISTORY_DATA_VIEWS/);
 assert.match(appSource, /loadedPageKeyRef/);
 assert.match(appSource, /const DashboardSummary = lazy\(\(\) => import\("\.\.\/components\/DashboardSummary"\)\)/);
