@@ -16,6 +16,7 @@ import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
 import type { ReportSectionId } from "../reporting/reportingTypes";
 import { recentMonthsThroughSelected } from "../utils/historyWindow";
 import { addDashboardDataSheet, addCurrentFacilityDashboard, addInteractiveDashboard, injectInteractiveDashboardCharts, type CurrentFacilityDashboardOptions, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
+import { defaultAllFacilitiesReportFilename } from "./reportFilename";
 
 const workbookDashboardPlans = new WeakMap<object, ExcelDashboardPlan[]>();
 
@@ -509,6 +510,7 @@ export async function workbookForFacilities(facilities: ExportFacility[], compar
     sections.filter(section => ["RACK_CAPACITY_SUMMARY", "RACK_CAPACITY_DETAILS", "RACK_POSITIONS"].includes(section.name)).forEach(section => { rack.addRow([section.name]); rack.addRow(section.headers); section.rows.forEach(row => rack.addRow(row)); });
     const rackUnit = addPresentationSheet(workbook, sheetOrderName(code, 5, "Rack Unit Capacity"), `${facility.siteName} — Rack Unit Capacity`);
     sections.filter(section => section.name.startsWith("RACK_UNIT_")).forEach(section => { rackUnit.addRow([section.name]); rackUnit.addRow(section.headers); section.rows.forEach(row => rackUnit.addRow(row)); });
+    addRackUnitImageToSavedSheet(workbook, rackUnit, facility.rackUnitCapacityImageDataUri ?? null, facility.rackUnitCapacityImageMeta ?? null);
     rackUnit.getColumn(6).numFmt = "0.0%";
     rackUnit.getColumn(7).numFmt = "0.0%";
     const history = addPresentationSheet(workbook, sheetOrderName(code, 6, "History"), `${facility.siteName} — History`);
@@ -771,14 +773,22 @@ export function buildAllFacilitiesCsv(facilities: ExportFacility[], comparison: 
   return facilities.map(buildFacilityCsv).join("\n\n") + (comparison ? "\n\n" + siteComparisonSectionsFromModel(comparison).map(section => "# Section: " + section.name + "\n" + csvSection(section)).join("\n\n") : "");
 }
 
-export function exportAllFacilitiesCsv(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null): void {
-  download(buildAllFacilitiesCsv(facilities, comparison), "all-facilities-energy-monitor.csv", "text/csv;charset=utf-8");
+function allFacilitiesDefaultFileName(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null): string {
+  const month = comparison?.referenceMonth ?? facilities[0]?.selectedMonth ?? facilities[0]?.reportingMonths?.at(-1) ?? "";
+  return defaultAllFacilitiesReportFilename(month);
 }
 
-export async function exportAllFacilitiesExcel(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null): Promise<void> {
-  const workbook = await workbookForFacilities(facilities, comparison);
+export function exportAllFacilitiesCsv(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, fileName?: string): void {
+  download(buildAllFacilitiesCsv(facilities, comparison), fileName ?? `${allFacilitiesDefaultFileName(facilities, comparison)}.csv`, "text/csv;charset=utf-8");
+}
+
+export async function exportAllFacilitiesExcel(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, fileName?: string): Promise<void> {
+  // Keep the report-period scope for PDF/HTML; Excel receives complete history
+  // already carried as calculationLogs for month-selector interaction.
+  const workbookFacilities = facilities.map(facility => ({ ...facility, logs: facility.calculationLogs ?? facility.logs }));
+  const workbook = await workbookForFacilities(workbookFacilities, comparison);
   const data = await writeInteractiveExcelWorkbook(workbook);
-  download(data, "all-facilities-energy-monitor.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  download(data, fileName ?? `${allFacilitiesDefaultFileName(facilities, comparison)}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
 
 
@@ -1131,7 +1141,7 @@ export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: 
 }
 
 export function exportAllFacilitiesHtml(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): void {
-  download(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor.html", "text/html;charset=utf-8");
+  download(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? `${defaultAllFacilitiesReportFilename(selectedMonth)}.html`, "text/html;charset=utf-8");
 }
 
 
@@ -1153,5 +1163,5 @@ export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], compa
 
 /** Generates one real PDF download containing one report per facility. */
 export async function exportAllFacilitiesPdf(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): Promise<void> {
-  await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? "all-facilities-energy-monitor");
+  await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? defaultAllFacilitiesReportFilename(selectedMonth));
 }

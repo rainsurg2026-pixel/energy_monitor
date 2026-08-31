@@ -10,7 +10,7 @@ import { buildReportHtml, buildReportBodyPages } from "../src/reports/pdf/report
 import { trendChartXPosition } from "../src/reports/pdf/reportHtml";
 import { calculateRackCapacityMetrics } from "../src/domain/rackCapacity";
 import { defaultReportingPeriod, effectiveMonth, filterLogsByPeriod, type ReportingPeriodSelection } from "../src/web-clean-v1/reportPeriod";
-import { defaultReportFilename, withExtension } from "../src/web-clean-v1/reportFilename";
+import { defaultAllFacilitiesReportFilename, defaultReportFilename, withExtension } from "../src/web-clean-v1/reportFilename";
 import type { MonthlyLog } from "../src/types";
 import { readWorkbookSource } from "../server/migration/workbookSource";
 import { readUpsGroupHistoryFromBuffer } from "../src/reports/upsGroupHistoryReader";
@@ -632,6 +632,18 @@ for (const sourceCase of [
   const singleLast = singleWorkbook.worksheets.at(-1);
   check("Dashboard_Data is hidden and last", Boolean(singleLast?.name.includes("Dashboard_Data")) && singleLast?.state === "hidden");
   const multiWorkbook = await workbookForFacilities(two, model);
+  const allFacilitiesWithImages = two.map((facility: any) => ({ ...facility, rackUnitCapacity: [{ month: "2026-06", totalU: 9963, usedU: 7407, availableU: 2556, availabilityPct: 2556 / 9963, imageAttached: true, imageContentType: "image/png", imageSavedAt: "2026-06-30T01:00:00.000Z" }], rackUnitCapacityImageDataUri: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", rackUnitCapacityImageMeta: { savedAt: "2026-06-30T01:00:00.000Z", savedBy: facility.siteName, width: 1, height: 1 } }));
+  const allWorkbookWithImages = await workbookForFacilities(allFacilitiesWithImages, model);
+  const multiRackUnitSheets = allWorkbookWithImages.worksheets.filter((sheet: any) => sheet.name.includes("05 Rack Unit Capacity"));
+  check("All Facilities Excel has one Rack Unit sheet per facility", multiRackUnitSheets.length === 2);
+  check("All Facilities Excel Rack Unit sheets retain numeric capacity values", multiRackUnitSheets.every((sheet: any) => sheet.getSheetValues().flat().includes(9963) && sheet.getSheetValues().flat().includes(7407) && sheet.getSheetValues().flat().includes(2556)));
+  const allWorkbookBytes = await writeInteractiveExcelWorkbook(allWorkbookWithImages);
+  const allWorkbookZip = await JSZip.loadAsync(allWorkbookBytes);
+  const allWorkbookMedia = Object.keys(allWorkbookZip.files).filter(name => name.startsWith("xl/media/image") && /\.(png|jpe?g)$/.test(name));
+  check("All Facilities Excel embeds Rack Unit image binaries", allWorkbookMedia.length >= 2);
+  const allFacilitiesHtmlWithImages = buildAllFacilitiesReportHtml(allFacilitiesWithImages, null, "2026-06");
+  check("All Facilities PDF/HTML includes the selected-month image for every facility", (allFacilitiesHtmlWithImages.split("data:image/png;base64,").length - 1) === 2);
+  check("All Facilities default filename uses YYYY-Mmm", defaultAllFacilitiesReportFilename("2026-07") === "All_Facilities_Energy_Report_2026-Jul");
   const multiNames = multiWorkbook.worksheets.map((sheet: any) => sheet.name);
   check("All Facilities Excel has 90 Site Energy Comparison", multiNames.some((name: string) => name.startsWith("90 ")));
   check("All Facilities Excel has 91 Site Rack Comparison", multiNames.some((name: string) => name.startsWith("91 ")));

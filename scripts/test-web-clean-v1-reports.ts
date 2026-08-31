@@ -24,7 +24,8 @@ assert.match(app, /\[3, 6, 12\]\.map\(count =>/);
 assert.match(app, /const contextMonth = effectiveMonth\(period, periodEndMonth\)/);
 assert.match(app, /Recent Reports/);
 assert.match(app, /HistoryProvider\.remove\(item\.id\)/);
-assert.match(app, /all-facilities-energy-monitor\.xlsx/);
+assert.match(app, /defaultAllFacilitiesReportFilename/);
+assert.match(app, /includeImage: true/);
 
 assert.match(app, /exportAllFacilitiesHtml/);
 
@@ -41,7 +42,7 @@ const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx",
 assert.match(preview, /calculationLogs\?: MonthlyLog\[\]/);
 assert.match(preview, /facilityReportData\(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs \?\? logs,\s*\{/);
 assert.match(preview, /sections\?: readonly ReportSectionId\[\]/);
-assert.match(preview, /buildReportHtml\(facilityReportData\(logs, siteName, month, rack, rackCapacityHistory, rackUnitCapacity, calculationLogs \?\? logs,\s*\{/);
+assert.match(preview, /currentFacilityPdf \? buildCurrentFacilityPdfHtml : buildReportHtml/);
 const reportHtml = readFileSync(new URL("../src/reports/pdf/reportHtml.ts", import.meta.url), "utf8");
 assert.match(reportHtml, /selectedSections\?: readonly ReportSectionId\[\]/);
 assert.match(reportHtml, /filterReportBodySections/);

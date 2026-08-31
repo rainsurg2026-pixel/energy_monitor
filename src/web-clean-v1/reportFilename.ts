@@ -7,6 +7,7 @@
 
 const INVALID_WINDOWS_CHARS = /[<>:"/\\|?*\x00-\x1F]/g;
 const KNOWN_EXTENSIONS = ["xlsx", "csv", "html", "pdf"] as const;
+const MONTH_ABBREVIATIONS_EN = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 export type ExportExtension = (typeof KNOWN_EXTENSIONS)[number];
 
 /** Strips characters invalid in a Windows filename, normalizing rather than
@@ -31,6 +32,16 @@ export function withExtension(name: string, ext: ExportExtension): string {
 export function defaultReportFilename(facilityName: string, month: string): string {
   const safeFacility = sanitizeFilename(facilityName).replace(/\s+/g, "");
   return `Energy_Report_${safeFacility}_${month}`;
+}
+
+/** All Facilities stable default basename using the requested YYYY-Mmm token. */
+export function defaultAllFacilitiesReportFilename(month: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  const monthNumber = match ? Number(match[2]) : NaN;
+  const token = match && monthNumber >= 1 && monthNumber <= 12
+    ? `${match[1]}-${MONTH_ABBREVIATIONS_EN[monthNumber - 1]}`
+    : sanitizeFilename(month);
+  return `All_Facilities_Energy_Report_${token}`;
 }
 
 /** The name actually used at export time: sanitized, and never empty -

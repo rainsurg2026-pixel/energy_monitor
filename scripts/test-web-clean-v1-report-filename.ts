@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { defaultReportFilename, resolveFilename, sanitizeFilename, withExtension } from "../src/web-clean-v1/reportFilename";
+import { defaultAllFacilitiesReportFilename, defaultReportFilename, resolveFilename, sanitizeFilename, withExtension } from "../src/web-clean-v1/reportFilename";
 
 let checks = 0;
 function check(name: string, condition: unknown): void { assert.equal(Boolean(condition), true, name); checks++; }
@@ -9,6 +9,7 @@ function check(name: string, condition: unknown): void { assert.equal(Boolean(co
 // not assumed.
 check("default filename matches the Desktop convention", defaultReportFilename("Rangsit", "2026-06") === "Energy_Report_Rangsit_2026-06");
 check("default filename strips spaces from a multi-word facility name", defaultReportFilename("Data Center One", "2026-06") === "Energy_Report_DataCenterOne_2026-06");
+check("All Facilities filename uses YYYY-Mmm", defaultAllFacilitiesReportFilename("2026-07") === "All_Facilities_Energy_Report_2026-Jul");
 
 // Extension safety: no duplicate extensions, case-insensitive detection.
 check("Excel gets .xlsx", withExtension("Energy_Report_Rangsit_2026-06", "xlsx") === "Energy_Report_Rangsit_2026-06.xlsx");
