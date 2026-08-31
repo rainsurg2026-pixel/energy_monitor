@@ -3,7 +3,7 @@ import { buildCombinedCsv } from "../utils/exportData";
 import { calculateEnergyCostForMonth } from "../domain/energyCost";
 import { calculateRackCapacityMetrics, rackPositionExportRows } from "../domain/rackCapacity";
 import { buildEngineeringDashboardSnapshot } from "../domain/engineeringDashboard";
-import { buildCrossSiteComparisonPages, buildReportHtml, buildReportBodyPages, facilityBandPage, REPORT_CSS } from "../reports/pdf/reportHtml";
+import { buildCrossSiteComparisonPages, buildCurrentFacilityPdfHtml, buildReportHtml, buildReportBodyPages, facilityBandPage, REPORT_CSS } from "../reports/pdf/reportHtml";
 import type { ComparisonMetric, ReportData, ReportMonthlyRow, RackCapacityReport, RackRecord, SiteComparisonReportModel, SiteComparisonReportSite, UpsGroupHistoryReport } from "../reports/reportTypes";
 export type { ComparisonMetric, SiteComparisonReportModel, SiteComparisonReportSite } from "../reports/reportTypes";
 import { RACK_UNIT_CAPACITY_TREND_NOTE } from "../reports/reportTypes";
@@ -14,6 +14,7 @@ import type { DashboardUpsMappingReport } from "../reports/reportTypes";
 import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
 import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
 import type { ReportSectionId } from "../reporting/reportingTypes";
+import { recentMonthsThroughSelected } from "../utils/historyWindow";
 import { addDashboardDataSheet, addInteractiveDashboard, injectInteractiveDashboardCharts, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
 
 const workbookDashboardPlans = new WeakMap<object, ExcelDashboardPlan[]>();
@@ -746,6 +747,9 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
   // values. Keeping these separate makes a Month Range affect the actual
   // report pages instead of silently exporting the full calculation history.
   const rows = reportRows(logs, calculationLogs);
+  const calculationRows = logs === calculationLogs ? rows : reportRows(calculationLogs, calculationLogs);
+  const executiveTrendMonths = new Set(recentMonthsThroughSelected(calculationRows.map(row => row.month), selectedMonth, 12));
+  const executiveTrendRows = calculationRows.filter(row => executiveTrendMonths.has(row.month));
   const current = rows.find(row => row.month === selectedMonth) ?? null;
   const dashboardMapping = extras.dashboardMapping?.mapping?.length
     ? extras.dashboardMapping
@@ -764,6 +768,7 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
     status: current?.status === "Complete" ? "Complete" : "Partial",
     validationWarnings: current?.status === "Partial" ? ["The selected month has incomplete source readings."] : [],
     monthlyRows: rows,
+    executiveTrendRows,
     currentRow: current,
     engineeringDashboard: buildEngineeringDashboardSnapshot(calculationLogs, selectedMonth, upsMapping),
     rack,
@@ -949,7 +954,7 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
 
 export async function exportDesktopPdf(logs: MonthlyLog[], siteName: string, selectedMonth: string, fileName?: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, sections?: readonly ReportSectionId[], extras: ReportDataExtras = {}): Promise<void> {
   const data = facilityReportData(logs, siteName, selectedMonth, rack, rackHistory, rackUnitCapacity, calculationLogs, extras);
-  await exportReportPdfFromHtml(buildReportHtml(data, sections), fileName ?? `Energy_Report_${siteName}_${selectedMonth}`);
+  await exportReportPdfFromHtml(buildCurrentFacilityPdfHtml(data, sections), fileName ?? `Energy_Report_${siteName}_${selectedMonth}`);
 }
 
 

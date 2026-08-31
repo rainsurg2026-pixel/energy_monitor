@@ -73,3 +73,8 @@ export function formatCompactLabel(value: number | null | undefined): string {
   if (abs >= 1_000) return parseFloat((value / 1_000).toFixed(2)) + "K";
   return value.toFixed(2).replace(/\.00$/, "");
 }
+
+/** Presentation-only formatting for configured Air/EB meter readings in GWh. */
+export function formatGWh(value: number | null | undefined): string {
+  return formatFixedNumber(value, 6);
+}

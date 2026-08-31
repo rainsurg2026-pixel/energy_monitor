@@ -1,6 +1,6 @@
 import type { EngineeringDashboardSnapshot, ReportComparisonFacility, ReportData, ReportMonthlyRow } from "../reportTypes";
 import { RACK_UNIT_CAPACITY_TREND_NOTE, type ComparisonMetric, type SiteComparisonReportModel } from "../reportTypes";
-import { formatNumber } from "../../utils/numberFormatBridge";
+import { formatGWh, formatNumber } from "../../utils/numberFormatBridge";
 import { formatTimestamp } from "../../utils";
 import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics, rackPositionExportRows } from "../../utils/rackCapacity";
 import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
@@ -303,7 +303,7 @@ function executiveDashboardPage(data: ReportData): string {
   return `<section class="page executive-dashboard-page" data-report-section="executive"><div class="dashboard-head"><div><p class="eyebrow">EXECUTIVE DASHBOARD</p><h2>Executive Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${rows.length} reporting month(s)</p></div><div class="dashboard-tag">Management summary<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis-3col">${kpi("Total Building Energy", format2(buildingEnergy), "kWh", `${rows.length} reporting month(s)`)}${kpi("Total 4th Floor Energy", format2(floorEnergy), "kWh", "UPS + AC + DC power panels")}${kpi("Total Building Cost", format2(buildingCost), "THB", "Stored/calculated building cost")}${kpi("Total 4th Floor Cost", format2(floorCost), "THB", "Calculated at building average rate")}${kpi("4th Floor Energy Share", `${format2(floorShare)}%`, "of building energy", "Selected reporting window")}${kpi("UPS Status", upsStatus, "Dashboard-FAC", "Persisted group status for selected month")}</div><article class="block"><h3>Management insights</h3><ul class="insight-list">${insights.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></article></section>`;
 }
 
-function engineeringDashboard(data: ReportData, dashboard: EngineeringDashboardSnapshot): string {
+function engineeringDashboard(data: ReportData, dashboard: EngineeringDashboardSnapshot, includeViewTitle = false): string {
   const upsRows = dashboard.upsGroups.map((row, index) => [String(index + 1), escapeHtml(row.name), format2(row.totalKw), format2(row.totalKva), format2(row.capacity), `${format2(row.loadPercent)}%`, `${format2(row.availablePercent)}%`, format2(row.monthlyEnergyKwh)]);
   const showAcPowerPanel = dashboard.upsDetails.some(row => row.acPowerPanel !== "—" && row.acPowerPanel !== "-");
   const upsDetails = dashboard.upsDetails.map(row => [String(row.no), escapeHtml(row.umdb), escapeHtml(row.upsId), ...(showAcPowerPanel ? [escapeHtml(row.acPowerPanel)] : []), escapeHtml(row.sts), escapeHtml(row.oudb), format2(row.voltage), format2(row.current), format2(row.loadKw), format2(row.loadKva), format2(row.capacity), `${format2(row.loadPercent)}%`]);
@@ -312,10 +312,10 @@ function engineeringDashboard(data: ReportData, dashboard: EngineeringDashboardS
   const srinakarinOverall = hasOverallUps ? `<h3>1. UPS Load Status</h3><article class="block"><h3>1.1 UPS Load Status - Overall</h3>${table(["No.", "UPS", "Total Load (kW)", "Total Load (kVA)", "UPS Capacity (kVA)", "Load (%)", "Available (%)"], dashboard.upsOverallGroups.map((row, index) => [String(index + 1), escapeHtml(row.name), format2(row.totalKw), format2(row.totalKva), format2(row.capacity), `${format2(row.loadPercent)}%`, `${format2(row.availablePercent)}%`]))}</article>${upsComparison("UPS Loads Comparison (%) - Overall", dashboard.upsOverallGroups)}` : "";
   const detailedUpsTitle = hasOverallUps ? "1.2 UPS and PPC Load Status – DCM 4th Floor" : "1. UPS Load Status — DCM 4th Floor";
   const detailedComparisonTitle = hasOverallUps ? "UPS and PPC Loads Comparison (%) – DCM 4th Floor" : "UPS Loads Comparison (%)";
-  const airRows = [[formatMonth(dashboard.previousMonth), ...dashboard.airFields.map(field => format2(dashboard.airPrevious[field])), "—"], [formatMonth(data.reportingMonth), ...dashboard.airFields.map(field => format2(dashboard.airCurrent[field])), "—"], ["Monthly Difference", ...dashboard.airFields.map(field => format2(dashboard.airDifference[field])), dashboard.airEnergyKwh === null ? "—" : `${format2(dashboard.airEnergyKwh)} kWh`]];
+  const airRows = [[formatMonth(dashboard.previousMonth), ...dashboard.airFields.map(field => formatGWh(dashboard.airPrevious[field])), "—"], [formatMonth(data.reportingMonth), ...dashboard.airFields.map(field => formatGWh(dashboard.airCurrent[field])), "—"], ["Monthly Difference", ...dashboard.airFields.map(field => formatGWh(dashboard.airDifference[field])), dashboard.airEnergyKwh === null ? "—" : `${format2(dashboard.airEnergyKwh)} kWh`]];
   const dcRows = dashboard.dcPanels.map((row, index) => [String(index + 1), escapeHtml(row.panelId), format2(row.voltage), format2(row.current), format2(row.dcPowerW), format2(row.acCurrentA), format2(row.acPowerW), format2(row.monthlyEnergyKwh)]);
   const overall = table(["Reporting Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Avg Rate (THB/kWh)", "4th Floor Share (%)"], [[formatMonth(data.reportingMonth), format2(dashboard.buildingEnergyKwh), format2(dashboard.buildingCostThb), format2(dashboard.floorEnergyKwh), format2(dashboard.floorCostThb), format2(dashboard.averageRateThbPerKwh), `${format2(dashboard.floorSharePercent)}%`]]);
-  return `<section class="page dashboard-page" data-report-section="dashboard"><div class="dashboard-head"><div><p class="eyebrow">SELECTED-MONTH ENGINEERING ANALYSIS</p><h2>Building Energy Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${dashboard.daysInMonth} days in selected month</p></div><div class="dashboard-tag">Engineering analysis<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis">${kpi("Total 4th Floor Energy", format2(dashboard.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Estimated 4th Floor Electricity Cost", format2(dashboard.floorCostThb), "THB", "Calculated from building average rate")}${kpi("4th Floor Energy Share", `${format2(dashboard.floorSharePercent)}%`, "of building energy", `Building total: ${format2(dashboard.buildingEnergyKwh)} kWh`)}${kpi("Building Average Electricity Rate", format2(dashboard.averageRateThbPerKwh), "THB/kWh", `Building cost: ${format2(dashboard.buildingCostThb)} THB`)}</div>${srinakarinOverall}<article class="block"><h3>${detailedUpsTitle}</h3>${table(["No.", "UPS Group", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %", "Monthly Energy kWh"], upsRows)}<p class="note">UPS group capacity and mapping values are read directly from Dashboard-FAC. Monthly energy uses load × 24 hours × selected-month days.</p></article>${upsComparison(detailedComparisonTitle, dashboard.upsGroups)}</section><section class="page dashboard-page" data-report-section="dashboard"><div class="continuation">Building Energy Dashboard · ${escapeHtml(formatMonth(data.reportingMonth))}</div><article class="block"><h3>${showAcPowerPanel ? "UPS / PPC Detailed Configuration Mapping" : "UPS Detailed Configuration Mapping"}</h3>${table(detailedHeaders, upsDetails, "dense")}<p class="note">Detail total: ${format2(dashboard.detailedVoltageAvg)} V average · ${format2(dashboard.detailedCurrentSum)} A · ${format2(dashboard.totalUpsKw)} kW · ${format2(dashboard.totalUpsKva)} kVA.</p></article><article class="block"><h3>2. Air Conditioning Energy Consumption — 4th Floor</h3>${table(["Reporting Month", ...dashboard.airFields.map(field => `${field.toUpperCase()} (GWh)`), "Total AC Energy"], airRows)}<p class="note">Air-conditioning energy is the complete GWh meter difference × 1,000,000. Missing readings remain unavailable, rather than being treated as zero.</p></article><article class="block"><h3>3. DC Power Panel Load Status</h3>${table(["No.", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current @220V (A)", "AC Power (W)", "Monthly Energy (kWh)"], dcRows)}<p class="note">DC total: ${format2(dashboard.totalDcPowerW)} W DC · ${format2(dashboard.totalDcAcCurrentA)} A AC · ${format2(dashboard.totalDcAcPowerW)} W AC · ${format2(dashboard.totalDcEnergyKwh)} kWh.</p></article><article class="block"><h3>4. Overall Energy Consumption & Electricity Cost</h3>${overall}</article></section>`;
+  return `<section class="page dashboard-page" data-report-section="dashboard">${includeViewTitle ? "<h2>Engineering View</h2>" : ""}<div class="dashboard-head"><div><p class="eyebrow">SELECTED-MONTH ENGINEERING ANALYSIS</p><h2>Building Energy Dashboard</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))} · ${dashboard.daysInMonth} days in selected month</p></div><div class="dashboard-tag">Engineering analysis<br>${escapeHtml(formatMonth(data.reportingMonth))}</div></div><div class="kpis">${kpi("Total 4th Floor Energy", format2(dashboard.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Estimated 4th Floor Electricity Cost", format2(dashboard.floorCostThb), "THB", "Calculated from building average rate")}${kpi("4th Floor Energy Share", `${format2(dashboard.floorSharePercent)}%`, "of building energy", `Building total: ${format2(dashboard.buildingEnergyKwh)} kWh`)}${kpi("Building Average Electricity Rate", format2(dashboard.averageRateThbPerKwh), "THB/kWh", `Building cost: ${format2(dashboard.buildingCostThb)} THB`)}</div>${srinakarinOverall}<article class="block"><h3>${detailedUpsTitle}</h3>${table(["No.", "UPS Group", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %", "Monthly Energy kWh"], upsRows)}<p class="note">UPS group capacity and mapping values are read directly from Dashboard-FAC. Monthly energy uses load × 24 hours × selected-month days.</p></article>${upsComparison(detailedComparisonTitle, dashboard.upsGroups)}</section><section class="page dashboard-page" data-report-section="dashboard"><div class="continuation">Building Energy Dashboard · ${escapeHtml(formatMonth(data.reportingMonth))}</div><article class="block"><h3>${showAcPowerPanel ? "UPS / PPC Detailed Configuration Mapping" : "UPS Detailed Configuration Mapping"}</h3>${table(detailedHeaders, upsDetails, "dense")}<p class="note">Detail total: ${format2(dashboard.detailedVoltageAvg)} V average · ${format2(dashboard.detailedCurrentSum)} A · ${format2(dashboard.totalUpsKw)} kW · ${format2(dashboard.totalUpsKva)} kVA.</p></article><article class="block"><h3>2. Air Conditioning Energy Consumption — 4th Floor</h3>${table(["Reporting Month", ...dashboard.airFields.map(field => `${field.toUpperCase()} (GWh)`), "Total AC Energy"], airRows)}<p class="note">Air-conditioning energy is the complete GWh meter difference × 1,000,000. Missing readings remain unavailable, rather than being treated as zero.</p></article><article class="block"><h3>3. DC Power Panel Load Status</h3>${table(["No.", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current @220V (A)", "AC Power (W)", "Monthly Energy (kWh)"], dcRows)}<p class="note">DC total: ${format2(dashboard.totalDcPowerW)} W DC · ${format2(dashboard.totalDcAcCurrentA)} A AC · ${format2(dashboard.totalDcAcPowerW)} W AC · ${format2(dashboard.totalDcEnergyKwh)} kWh.</p></article><article class="block"><h3>4. Overall Energy Consumption & Electricity Cost</h3>${overall}</article></section>`;
 }
 
 function reportRackStatusColor(status: string): string {
@@ -827,6 +827,66 @@ function filterReportBodySections(body: string, selectedSections: readonly Repor
     .join("");
 }
 
+function currentExecutiveDashboardPage(data: ReportData): string {
+  const current = data.currentRow;
+  if (!current) {
+    return `<section class="page executive-dashboard-page" data-report-section="executive"><p class="eyebrow">EXECUTIVE VIEW</p><h2>Executive View</h2><p class="note">No monthly record is available for the selected reporting month.</p></section>`;
+  }
+  const trendRows = data.executiveTrendRows ?? data.monthlyRows;
+  const previous = trendRows.filter(row => row.month < current.month).at(-1) ?? null;
+  const latestDelta = current.floorEnergyKwh !== null && previous?.floorEnergyKwh !== null && previous
+    ? current.floorEnergyKwh - previous.floorEnergyKwh
+    : null;
+  const upsGroups = data.engineeringDashboard?.upsGroups ?? [];
+  const maxUpsLoad = upsGroups.reduce<number | null>((maximum, group) => group.loadPercent === null ? maximum : maximum === null ? group.loadPercent : Math.max(maximum, group.loadPercent), null);
+  const upsStatus = upsGroups.length === 0 ? "No UPS status" : `${upsGroups.length} group(s) · max ${format2(maxUpsLoad)}% load`;
+  const insights = [
+    latestDelta === null ? "Month-over-month floor energy comparison is unavailable." : `Selected month 4th Floor energy ${latestDelta >= 0 ? "increased" : "decreased"} by ${format2(Math.abs(latestDelta))} kWh versus the previous month.`,
+    current.status === "Complete" ? "Selected month passed the report completeness check." : "Selected month is partial; review missing source readings before making operational decisions.",
+    upsGroups.length === 0 ? "UPS group status is unavailable for the selected month." : `UPS status loaded from Dashboard-FAC group history for ${formatMonth(current.month)}.`
+  ];
+  return `<section class="page executive-dashboard-page" data-report-section="executive"><div class="dashboard-head"><div><p class="eyebrow">EXECUTIVE VIEW</p><h2>Executive View</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(current.month))} · selected month only</p></div><div class="dashboard-tag">Management summary<br>${escapeHtml(formatMonth(current.month))}</div></div><div class="kpis-3col">${kpi("Building Energy · Selected Month", format2(current.buildingEnergyKwh), "kWh", "Selected reporting month only")}${kpi("4th Floor Energy · Selected Month", format2(current.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Building Cost · Selected Month", format2(current.buildingCostThb), "THB", "Stored/calculated building cost")}${kpi("4th Floor Cost · Selected Month", format2(current.floorCostThb), "THB", "Calculated at building average rate")}${kpi("4th Floor Energy Share", `${format2(current.floorSharePercent)}%`, "of building energy", "Selected reporting month")}${kpi("UPS Status", upsStatus, "Dashboard-FAC", "Persisted group status for selected month")}</div><article class="block"><h3>Management insights</h3><ul class="insight-list">${insights.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></article></section>`;
+}
+
+function currentExecutiveTrendPages(data: ReportData): string {
+  const rows = data.executiveTrendRows ?? data.monthlyRows;
+  const charts: Array<[string, string, string, Array<number | null>, string]> = [
+    ["4th Floor Estimated Cost Trend (THB)", "THB", REPORT_PALETTE.cost, rows.map(row => row.floorCostThb), "Estimated 4th Floor cost at the shared building electricity rate."],
+    ["4th Floor Total Energy Trend (kWh)", "kWh", REPORT_PALETTE.energy, rows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy consumption."],
+    ["4th Floor Average Electricity Rate Trend (THB/kWh)", "THB/kWh", REPORT_PALETTE.rate, rows.map(row => row.averageRateThbPerKwh), "Building electricity cost divided by building energy."],
+    ["4th Floor UPS Energy Trend (kWh)", "kWh", REPORT_PALETTE.ups, rows.map(row => row.upsEnergyKwh), "Monthly UPS system energy utilization."],
+    ["4th Floor Air Conditioning Energy Trend (kWh)", "kWh", REPORT_PALETTE.air, rows.map(row => row.airEnergyKwh), "Monthly air-conditioning meter-difference energy."],
+    ["4th Floor DC Power Energy Trend (kWh)", "kWh", REPORT_PALETTE.dc, rows.map(row => row.dcEnergyKwh), "Monthly DC power panel energy estimate."]
+  ];
+  return charts.map(([title, unit, color, values, explanation]) =>
+    trendPage(title, unit, [{ name: title, color, values }], rows, explanation, "EXECUTIVE VIEW · LAST 12 MONTHS", "executive")
+  ).join("");
+}
+
+function currentFacilitySelectedSections(selectedSections?: readonly ReportSectionId[]): readonly ReportSectionId[] | undefined {
+  if (selectedSections === undefined) return undefined;
+  const selected = new Set<ReportSectionId>(selectedSections);
+  if (selected.has("ups") || selected.has("air-conditioning") || selected.has("dc")) selected.add("dashboard");
+  return [...selected];
+}
+
+/** Current Facility PDF only: four deliberate major groups. Other formats
+ *  continue to use buildReportBodyPages/buildReportHtml unchanged. */
+export function buildCurrentFacilityPdfBody(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
+  const engineering = data.engineeringDashboard
+    ? engineeringDashboard(data, data.engineeringDashboard, true)
+    : `<section class="page dashboard-page" data-report-section="dashboard"><h2>Engineering View</h2><p class="note">Engineering data is unavailable for the selected month.</p></section>`;
+  const executive = currentExecutiveDashboardPage(data) + currentExecutiveTrendPages(data);
+  const rack = rackCapacityPage(data) + capacityHealthPage(data);
+  const rackUnit = renderRackUnitCapacityExecutivePage(data);
+  const body = `${engineering}${executive}${rack}${rackUnit}`;
+  const sections = currentFacilitySelectedSections(selectedSections);
+  return sections !== undefined ? filterReportBodySections(body, sections) : body;
+}
+
+export function buildCurrentFacilityPdfHtml(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(data.title)} · Current Facility PDF</title><style>${REPORT_CSS}</style></head><body>${reportCoverMain(data)}${buildCurrentFacilityPdfBody(data, selectedSections)}<script>document.body.dataset.reportReady="true";</script></body></html>`;
+}
 export function buildReportBodyPages(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
   const executive = executiveDashboardPage(data);
   const dashboard = data.engineeringDashboard ? engineeringDashboard(data, data.engineeringDashboard) : "";

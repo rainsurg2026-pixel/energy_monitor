@@ -210,6 +210,8 @@ export interface ReportData {
   status: ReportStatus;
   validationWarnings: string[];
   monthlyRows: ReportMonthlyRow[];
+  /** Web-defined trailing 12-month rows for the Current Facility PDF only. */
+  executiveTrendRows?: ReportMonthlyRow[];
   currentRow: ReportMonthlyRow | null;
   engineeringDashboard: EngineeringDashboardSnapshot | null;
   rack: RackCapacityReport | null;

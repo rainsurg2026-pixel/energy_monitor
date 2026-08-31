@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 const preview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 
-assert.match(preview, /buildReportHtml\(facilityReportData\(/);
+assert.match(preview, /currentFacilityPdf \? buildCurrentFacilityPdfHtml : buildReportHtml/);
+assert.match(preview, /facilityReportData\(/);
 assert.match(preview, /calculationLogs, logs, month, rack, rackCapacityHistory, rackUnitCapacity, rackUnitImage, refreshKey, sections, siteName/);
 assert.match(preview, /\/racks\?siteId=\$\{siteId\}&month=\$\{month\}/);
 assert.match(preview, /sandbox=""/);
