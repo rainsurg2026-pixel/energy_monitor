@@ -118,6 +118,10 @@ if (report.rackUnitCapacity.length === 0) {
 // present" content (KPIs/donut/image); this asserts its existence, page
 // order, and facility/reporting-month subtitle against the real workbook.
 if (!html.includes("<h2>Rack Unit Capacity and Utilization</h2>")) throw new Error("Rack Unit Capacity and Utilization page is missing from Export All Report.");
+const rucSummaryOrder = html.indexOf("<h2>Rack Unit Capacity and Utilization</h2>");
+const rucImageOrder = html.indexOf("<h2>Monthly Rack Unit Capacity Image</h2>");
+const rucTrendOrder = html.indexOf("<h2>Rack Unit Capacity Six-Month Trend</h2>");
+if (rucImageOrder !== -1 && !(rucImageOrder > rucSummaryOrder && (rucTrendOrder === -1 || rucTrendOrder > rucImageOrder))) throw new Error("Monthly Rack Unit Capacity Image must appear after the summary and before the six-month trend.");
 {
   const rackHeadingIndex = html.indexOf("<h2>Rack Capacity and Utilization</h2>");
   const unitHeadingIndex = html.indexOf("<h2>Rack Unit Capacity and Utilization</h2>");
