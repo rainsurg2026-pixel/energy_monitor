@@ -45,7 +45,7 @@ assert.match(editors, /Confirm Monthly Snapshot/);
 assert.match(editors, /onRegisterActions/);
 assert.match(editors, /onDraftChange/);
 assert.match(editors, /initialize: canInitialize/);
-assert.match(editors, /carry_forward_source_month/);
+assert.match(editors, /buildRackCapacitySavePayload/);
 assert.match(editors, /activeSaveKeyRef/);
 assert.match(editors, /activeSaveKeyRef\.current !== requestKey/);
 assert.match(editors, /return \(\) => \{ activeSaveKeyRef\.current = null; \}/);

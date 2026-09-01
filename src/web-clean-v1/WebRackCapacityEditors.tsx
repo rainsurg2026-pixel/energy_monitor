@@ -7,6 +7,7 @@ import { RackCapacityProvider, useRackCapacity } from "../components/rack/RackCa
 import { applyRackEditorPartialSave, applyRackEditorSaveFailure, applyRackEditorSaveSuccess, beginRackEditorSave, createRackEditorState, discardRackEditorChanges, rackEditorSourceKey, stageRackEditorField, type RackEditorRecord, type RackEditorState } from "./rackEditorState";
 import { api } from "./api";
 import { cacheRackCapacitySnapshot, useRackCapacitySnapshot } from "./rackCapacityData";
+import { buildRackCapacitySavePayload } from "./rackCapacitySavePayload";
 import { rackSummaryFromSnapshot } from "./rackCapacityPresentation";
 import { calculateRackCapacityMetrics } from "../utils/rackCapacity";
 import { formatFixedNumber } from "../utils/numberFormat";
@@ -102,7 +103,7 @@ export function WebRackCapacityEditor({ siteId, month, snapshot, snapshotPersist
     activeSaveKeyRef.current = requestKey;
     setState(beginRackEditorSave(state));
     try {
-      const result = await api<{ snapshot: RackApiSnapshot; outcomes: Array<{ rowNumber: number; applied: boolean }>; rackCapacityHistory: ApiRackHistoryRow[] }>("/racks?siteId=" + siteId + "&month=" + encodeURIComponent(month), { method: "PUT", body: JSON.stringify({ changes, expected_row_version: snapshotPersisted ? snapshot.rowVersion : null, initialize: canInitialize, carry_forward_source_month: carryForwardSourceMonth, carry_forward_source_row_version: carryForwardSourceRowVersion, force_snapshot: true }) });
+      const result = await api<{ snapshot: RackApiSnapshot; outcomes: Array<{ rowNumber: number; applied: boolean }>; rackCapacityHistory: ApiRackHistoryRow[] }>("/racks?siteId=" + siteId + "&month=" + encodeURIComponent(month), { method: "PUT", body: JSON.stringify(buildRackCapacitySavePayload({ changes, expectedRowVersion: snapshotPersisted ? snapshot.rowVersion : null, initialize: canInitialize, carryForwardSourceMonth, carryForwardSourceRowVersion })) });
       if (activeSaveKeyRef.current !== requestKey) return false;
       const nextHistory = historyRows(result.rackCapacityHistory);
       setState(previous => previous ? (result.outcomes.every(outcome => outcome.applied) ? applyRackEditorSaveSuccess(previous, editorRecords(result.snapshot), result.snapshot.rowVersion) : mergePartialRackSave(previous, result.snapshot, result.outcomes)) : previous);
