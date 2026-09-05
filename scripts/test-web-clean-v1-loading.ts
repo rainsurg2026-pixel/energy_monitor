@@ -43,9 +43,9 @@ assert.ok(app.includes("const allFacilitiesCacheRef = useRef(new Map<string, Pro
 assert.ok(app.includes("includeRack ? loadRack(site.id, selectedMonth) : Promise.resolve(null)"), "All Facilities loader uses the selected reporting month and skips rack requests when not needed");
 assert.ok(app.includes("includeImage ? loadReportImage(site.id, selectedMonth) : Promise.resolve(null)"), "All Facilities loader uses the selected reporting month and skips image requests when not needed");
 assert.ok(app.includes("exportAllFacilitiesCsv(await loadAll({ includeRack: true, includeImage: false })"), "CSV export requests Rack Capacity and Rack Positions data with the cross-site model");
-assert.ok(app.includes("exportAllFacilitiesExcel(await loadAll({ includeRack: true, includeImage: true })"), "Excel export loads Rack Unit images and carries the cross-site model");
+assert.ok(app.includes("const facilities = (await loadAll({ includeRack: true, includeImage: true })).map") && app.includes("return exportAllFacilitiesExcel(facilities,"), "Excel export loads Rack Unit images, attaches audit metadata, and carries the cross-site model");
 assert.ok(app.includes("exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true })"), "HTML export requests report assets with the cross-site model");
-assert.ok(app.includes("exportAllFacilitiesPdf(await loadAll({ includeRack: true, includeImage: true })"), "PDF export requests report assets with the cross-site model");
+assert.ok(app.includes("return exportAllFacilitiesPdf(facilities,") && app.includes("const audit = exportAudit()"), "PDF export requests report assets with audit metadata and the cross-site model");
 assert.ok(app.includes("Site Rack Capacity & Availability Comparison\", icon: Building2"), "site rack comparison has a distinct navigation icon");
 assert.ok(app.includes("displayPeriod={globalDisplayPeriodRange}"), "history views are bounded by the Global Display Period, not the Reports Quick Range");
 assert.match(historicalCharts, /selectedMonth: string/);

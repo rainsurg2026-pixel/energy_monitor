@@ -156,7 +156,8 @@ await Promise.all([
 assert.equal(delayedBySite.get(siteB.id)[0].rackId, "B01");
 assert.equal(delayedBySite.get(siteA.id)[0].rackId, "A01");
 assert.match(apiService, /previousCalculationMonth/);
-assert.match(apiService, /usedU > totalU/);
+assert.match(apiService, /availableU > totalU/);
+assert.match(apiService, /usedU = totalU - availableU/);
 
 assert.equal(rackUtilizationLevel(79.99), "Normal");
 assert.equal(rackUtilizationLevel(80), "Attention");

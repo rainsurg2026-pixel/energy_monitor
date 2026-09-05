@@ -64,9 +64,14 @@ assert.notEqual(comparison.sites[0]?.months.find(entry => entry.month === "2026-
 
 const invalidRackUnit = new ApiService(repository(), now);
 await assert.rejects(
-  () => invalidRackUnit.saveRackUnit(2, "2026-07", { total_u: 10, used_u: 11, expected_row_version: 1 }, "test-correlation"),
+  () => invalidRackUnit.saveRackUnit(2, "2026-07", { total_u: 10, available_u: 11, expected_row_version: 1 }, "test-correlation"),
   (error: unknown) => error instanceof HttpError && error.status === 400 && error.code === "INVALID_RACK_UNIT_VALUES"
 );
+const sourceImageExample = await invalidRackUnit.saveRackUnit(2, "2026-07", { total_u: 14121, available_u: 1777, expected_row_version: 1 }, "source-image-example") as { totalU: number; usedU: number; availableU: number; availabilityPercent: number | null };
+assert.equal(sourceImageExample.totalU, 14121);
+assert.equal(sourceImageExample.availableU, 1777);
+assert.equal(sourceImageExample.usedU, 12344, "Used U is derived from Total U minus Available U");
+assert.ok(sourceImageExample.availabilityPercent !== null && Math.abs(sourceImageExample.availabilityPercent - (1777 / 14121 * 100)) < 1e-9);
 
 console.log("api service: Rack Unit image availability is fail-closed and storage failures are sanitized");
 

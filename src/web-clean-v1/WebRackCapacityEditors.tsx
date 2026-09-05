@@ -186,7 +186,7 @@ export function WebRackCapacityEntrySection({ siteId, siteName, month, readOnly 
   </RackCapacityProvider>;
 }
 
-/** Web equivalent of Desktop's Total/Used Rack Unit Capacity workflow.
+/** Web Rack Unit Capacity workflow using Total + Available as authoritative inputs.
  * It uses the selected global reporting month (instead of a second month
  * selector) and keeps an optimistic row version, so a stale browser cannot
  * overwrite another operator's saved capacity values. */
@@ -194,24 +194,24 @@ export function WebRackUnitCapacityEditor({ siteId, month, initialSnapshot, onSa
   const th = lang === "th";
   const copy = th ? {
     title: "ความจุหน่วยแร็ก",
-    description: "บันทึกจำนวน U ทั้งหมดและ U ที่ใช้งานของเดือน {month}; ค่าคงเหลือและเปอร์เซ็นต์คำนวณอัตโนมัติ",
+    description: "กรอก Total (U) และ Available (U) ของเดือน {month}; Used (U) และ Availability (%) คำนวณอัตโนมัติ",
     total: "ทั้งหมด (U)",
-    used: "ใช้งาน (U)",
     available: "คงเหลือ (U)",
-    usage: "การใช้งาน %",
-    invalid: "ค่า Total (U) และ Used (U) ต้องเป็นตัวเลขที่ไม่ติดลบ",
+    used: "ใช้งาน (U)",
+    availability: "คงเหลือ %",
+    invalid: "ค่า Total (U) และ Available (U) ต้องเป็นตัวเลขที่ไม่ติดลบ และ Available ต้องไม่มากกว่า Total",
     loadingError: "ไม่สามารถโหลดความจุหน่วยแร็กได้",
     save: "บันทึกความจุหน่วยแร็ก",
     saving: "กำลังบันทึก…",
     snapshot: "บันทึก snapshot ประจำเดือน"
   } : {
     title: "Rack Unit Capacity",
-    description: "Record Total and Used rack units for {month}; Available and percentage values are derived.",
+    description: "Record Total (U) and Available (U) for {month}; Used (U) and Availability (%) are derived automatically.",
     total: "Total (U)",
-    used: "Used (U)",
     available: "Available (U)",
-    usage: "Usage %",
-    invalid: "Total (U) and Used (U) must be non-negative numbers, with Used no greater than Total.",
+    used: "Used (U)",
+    availability: "Availability (%)",
+    invalid: "Total (U) and Available (U) must be non-negative numbers, with Available no greater than Total.",
     loadingError: "Unable to load Rack Unit Capacity.",
     save: "Save Rack Unit Capacity",
     saving: "Saving…",
@@ -219,7 +219,7 @@ export function WebRackUnitCapacityEditor({ siteId, month, initialSnapshot, onSa
   };
   const [snapshot, setSnapshot] = useState<RackUnitApiSnapshot | null>(initialSnapshot);
   const [totalU, setTotalU] = useState("");
-  const [usedU, setUsedU] = useState("");
+  const [availableU, setAvailableU] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -232,7 +232,7 @@ export function WebRackUnitCapacityEditor({ siteId, month, initialSnapshot, onSa
         if (cancelled) return;
         setSnapshot(result.snapshot);
         setTotalU(result.snapshot ? String(result.snapshot.totalU) : "");
-        setUsedU(result.snapshot ? String(result.snapshot.usedU) : "");
+        setAvailableU(result.snapshot ? String(result.snapshot.availableU) : "");
       })
       .catch(reason => { if (!cancelled) setError(reason instanceof Error ? reason.message : copy.loadingError); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -240,21 +240,21 @@ export function WebRackUnitCapacityEditor({ siteId, month, initialSnapshot, onSa
   }, [siteId, month]);
 
   const save = async (forceSnapshot: boolean) => {
-    const total = Number(totalU); const used = Number(usedU);
-    if (!Number.isFinite(total) || !Number.isFinite(used) || total < 0 || used < 0 || used > total) { setError(copy.invalid); return; }
+    const total = Number(totalU); const available = Number(availableU);
+    if (!Number.isFinite(total) || !Number.isFinite(available) || total < 0 || available < 0 || available > total) { setError(copy.invalid); return; }
     setSaving(true); setError(null);
     try {
-      const result = await api<{ snapshot: RackUnitApiSnapshot }>(`/rack-unit-capacity?siteId=${siteId}&month=${month}`, { method: "PUT", body: JSON.stringify({ month, total_u: total, used_u: used, expected_row_version: snapshot?.rowVersion ?? null, force_snapshot: forceSnapshot }) });
-      setSnapshot(result.snapshot); setTotalU(String(result.snapshot.totalU)); setUsedU(String(result.snapshot.usedU)); onSaved(result.snapshot);
+      const result = await api<{ snapshot: RackUnitApiSnapshot }>(`/rack-unit-capacity?siteId=${siteId}&month=${month}`, { method: "PUT", body: JSON.stringify({ month, total_u: total, available_u: available, expected_row_version: snapshot?.rowVersion ?? null, force_snapshot: forceSnapshot }) });
+      setSnapshot(result.snapshot); setTotalU(String(result.snapshot.totalU)); setAvailableU(String(result.snapshot.availableU)); onSaved(result.snapshot);
     } catch (reason) { setError(reason instanceof Error ? reason.message : copy.loadingError); }
     finally { setSaving(false); }
   };
 
-  const total = Number(totalU); const used = Number(usedU); const available = Number.isFinite(total) && Number.isFinite(used) ? total - used : null;
+  const total = Number(totalU); const available = Number(availableU); const validCapacity = Number.isFinite(total) && total >= 0 && Number.isFinite(available) && available >= 0 && available <= total; const used = validCapacity ? total - available : null;
   return <section className="rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm space-y-4">
     <div className="flex items-start gap-3"><div className="rounded-xl bg-emerald-500/10 p-2.5 text-emerald-400"><Boxes className="h-5 w-5" /></div><div><h3 className="text-base text-slate-100">{copy.title}</h3><p className="mt-1 text-xs text-slate-400">{copy.description.replace("{month}", month)}</p></div></div>
     {error && <p role="alert" className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">{error}</p>}
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><label className="text-xs text-slate-400">{copy.total}<input disabled={loading || saving} type="number" min="0" value={totalU} onChange={event => setTotalU(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:opacity-60" /></label><label className="text-xs text-slate-400">{copy.used}<input disabled={loading || saving} type="number" min="0" value={usedU} onChange={event => setUsedU(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:opacity-60" /></label><div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3"><p className="text-[11px] text-slate-500">{copy.available}</p><p className="mt-1 font-mono text-lg text-slate-100">{available ?? "—"}</p></div><div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3"><p className="text-[11px] text-slate-500">{copy.usage}</p><p className="mt-1 font-mono text-lg text-slate-100">{Number.isFinite(total) && total > 0 && Number.isFinite(used) ? formatRatioPercent(used / total) : "—"}</p></div></div>
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><label className="text-xs text-slate-400">{copy.total}<input disabled={loading || saving} type="number" min="0" value={totalU} onChange={event => setTotalU(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:opacity-60" /></label><label className="text-xs text-slate-400">{copy.available}<input disabled={loading || saving} type="number" min="0" max={Number.isFinite(total) && total >= 0 ? total : undefined} value={availableU} onChange={event => setAvailableU(event.target.value)} className="mt-1.5 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 disabled:opacity-60" /></label><div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3"><p className="text-[11px] text-slate-500">{copy.used}</p><p className="mt-1 font-mono text-lg text-slate-100">{used !== null && Number.isFinite(used) ? used : "—"}</p></div><div className="rounded-lg border border-slate-800 bg-slate-950/50 p-3"><p className="text-[11px] text-slate-500">{copy.availability}</p><p className="mt-1 font-mono text-lg text-slate-100">{Number.isFinite(total) && total > 0 && Number.isFinite(available) ? formatRatioPercent(available / total) : "—"}</p></div></div>
     <div className="flex flex-wrap gap-2"><button type="button" disabled={loading || saving} onClick={() => void save(false)} className="inline-flex items-center gap-2 rounded-lg bg-teal-500 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-60"><Save className="h-4 w-4" />{saving ? copy.saving : copy.save}</button><button type="button" disabled={loading || saving} onClick={() => void save(true)} className="rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-200 disabled:opacity-60">{copy.snapshot}</button></div>
   </section>;
 }

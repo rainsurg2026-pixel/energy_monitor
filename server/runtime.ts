@@ -9,6 +9,7 @@ import { createPool } from "./db/pool";
 import { createApp } from "./http/app";
 import { PostgresRateLimitStore } from "./http/security/rateLimit";
 import { SupabaseRackUnitImageStorage } from "./storage/rackUnitImageStorage";
+import { PostgresLogicalBackupExporter } from "./backup/logicalBackupExporter";
 
 export interface ConfiguredRuntime {
   readonly app: Express;
@@ -41,7 +42,8 @@ export async function createConfiguredRuntime(environment: NodeJS.ProcessEnv = p
       repository: new PostgresRepository(pool),
       authService,
       rateLimitStore: new PostgresRateLimitStore(pool),
-      imageStorage
+      imageStorage,
+      backupExporter: new PostgresLogicalBackupExporter(pool)
     });
     return { app, config, pool };
   } catch (error) {

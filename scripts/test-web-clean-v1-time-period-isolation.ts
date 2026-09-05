@@ -19,7 +19,7 @@ const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.m
 // ---------------------------------------------------------------------------
 
 // --- C is Reports-LOCAL, never lifted to the app shell -----------------------
-const reportsBody = app.slice(app.indexOf("function Reports("), app.indexOf("function SettingsPage("));
+const reportsBody = app.slice(app.indexOf("function Reports("));
 assert.match(reportsBody, /const \[reportPeriod, setReportPeriod\] = useState<ReportingPeriodSelection>\(\(\) => defaultReportingPeriod\(month\)\)/);
 assert.match(reportsBody, /const \[reportPreset, setReportPreset\] = useState<ReportingPeriodPreset \| null>\(3\)/);
 assert.match(reportsBody, /const updatePeriod = \(next: ReportingPeriodSelection, preset: ReportingPeriodPreset \| null = null\) => \{/);
@@ -95,7 +95,8 @@ assert.match(app, /target === "racks" \|\| target === "rack-units" \? "rack" : t
 const trend = readFileSync(new URL("../src/components/EngineeringTrendCharts.tsx", import.meta.url), "utf8");
 assert.doesNotMatch(trend, /processed\.filter\(row => row\.month\.startsWith\(`\$\{selectedYear\}-`\)\)/);
 assert.match(trend, /const anchorMonth = selectedDashboardMonth\(processed, selectedYear, selectedPeriod, processed\[processed\.length - 1\]!\.month\)/);
-assert.match(trend, /return processed\.slice\(Math\.max\(0, effectiveAnchor - windowSize \+ 1\), effectiveAnchor \+ 1\)/);
+assert.match(trend, /recentMonthsThroughSelected/);
+assert.match(trend, /return processed\.filter\(row => windowMonths\.has\(row\.month\)\)/);
 // missing metric stays null (a per-series gap), the month row is never dropped:
 assert.match(trend, /values: trendData\.map\(point => point\[chart\.key\]\)/);
 

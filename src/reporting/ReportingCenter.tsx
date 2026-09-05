@@ -29,8 +29,11 @@ function reportSiteCode(facility: string): string {
 }
 
 function defaultReportFilename(facility: string, month: string): string {
-  const yearMonth = /^\d{4}-\d{2}$/.test(month) ? month.replace("-", "") : "202601";
-  return `DC_Status_MonthlyReport of ${reportSiteCode(facility)}_${yearMonth}`;
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const monthNumber = match ? Number(match[2]) : NaN;
+  const token = match && monthNumber >= 1 && monthNumber <= 12 ? `${months[monthNumber - 1]}-${match[1]}` : month;
+  return `DC_Status_MonthlyReport of ${reportSiteCode(facility)}_${token}`;
 }
 
 function displayMonth(month: string) { return month ? new Intl.DateTimeFormat("en", { month: "short", year: "numeric" }).format(new Date(`${month}-01T00:00:00`)) : "No data"; }

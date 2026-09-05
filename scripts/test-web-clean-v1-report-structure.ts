@@ -29,7 +29,7 @@ check("filter drops executive when not selected", !onlyRack.includes('data-repor
   ] as any;
   const html = buildAllFacilitiesReportHtml(facilities, null, "2026-06");
   check("exactly one cover for All Facilities", (html.match(/<main class="cover">/g) ?? []).length === 1);
-  check("cover names All Facilities", /<main class="cover">[\s\S]*Facility: All Facilities/.test(html));
+  check("cover names All Facilities", html.includes("All Facilities Report") && html.includes("cover-meta-grid") && html.includes("All Facilities"));
   check("one facility band per site", (html.match(/data-report-section="facility-header"/g) ?? []).length === 2);
   check("bands name each site", html.includes("Facility: Rangsit") && html.includes("Facility: Srinakarin"));
   check("single <head>/<style>", (html.match(/<style>/g) ?? []).length === 1);

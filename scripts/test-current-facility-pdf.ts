@@ -64,7 +64,7 @@ const body = html.slice(html.indexOf("<body>"), html.indexOf("</body>"));
 const headingIndex = (value: string): number => body.indexOf(value);
 
 assert.equal(data.monthlyRows.length, 2);
-assert.equal(data.executiveTrendRows?.length, 12);
+assert.equal(data.executiveTrendRows?.length, 2);
 assert.ok(headingIndex("Engineering View") < headingIndex("Executive View"));
 assert.ok(headingIndex("Executive View") < headingIndex("Rack Capacity and Utilization"));
 assert.ok(headingIndex("Rack Capacity and Utilization") < headingIndex("Rack Unit Capacity and Utilization"));
@@ -84,7 +84,8 @@ for (const title of trendTitles) {
   assert.ok(body.split(title).length - 1 >= 1, "Current PDF renders trend title: " + title);
   previous = position;
 }
-assert.equal((body.match(/latest 12-month window ending at Jul 2026/g) ?? []).length, 6);
+assert.equal((body.match(/latest 2-month window ending at Jul 2026/g) ?? []).length, 6);
+assert.ok(body.includes("SELECTED QUICK PERIOD"));
 assert.match(body, /selected month only/);
 assert.ok(body.includes("Rack Capacity Details"));
 assert.ok(body.includes("Rack Positions"));
@@ -100,6 +101,18 @@ const executivePage = body.slice(body.indexOf('data-report-section="executive"')
 assert.ok(executivePage.includes("Building Energy · Selected Month"));
 assert.ok(executivePage.includes("Selected reporting month only"));
 assert.ok(!executivePage.includes("2,500.00"), "Executive summary must not sum the quick-range rows.");
+
+// One-month reports are the deliberate exception: report data stays on the
+// selected month while charts receive the trailing 12 available months.
+const singleVisibleLogs = fullLogs.filter(item => item.month === "2026-07");
+const singleData = facilityReportData(singleVisibleLogs, "Rangsit", "2026-07", rack, [], rackUnitCapacity.filter(row => row.month === "2026-07"), fullLogs);
+const singleHtml = buildCurrentFacilityPdfHtml(singleData);
+const singleBody = singleHtml.slice(singleHtml.indexOf("<body>"), singleHtml.indexOf("</body>"));
+assert.equal(singleData.monthlyRows.length, 1);
+assert.equal(singleData.executiveTrendRows?.length, 12);
+assert.ok(singleBody.includes("TRAILING 12 MONTHS"));
+assert.equal((singleBody.match(/latest 12-month window ending at Jul 2026/g) ?? []).length, 6);
+assert.ok(!singleBody.includes("Monthly Energy &amp; Cost Table"), "Current Facility PDF keeps its deliberate four-group layout.");
 
 const legacyHtml = buildReportHtml(data);
 assert.ok(legacyHtml.includes("Monthly Energy Consumption Trend"));

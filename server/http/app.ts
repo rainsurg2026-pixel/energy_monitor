@@ -7,6 +7,7 @@ import type { BackendRepository } from "../repositories/contracts";
 import { AuthService } from "../auth/authService";
 import { PasswordPolicyError } from "../auth/passwordPolicy";
 import type { RackUnitImageStorage } from "../storage/rackUnitImageStorage";
+import type { LogicalBackupExporter } from "../backup/logicalBackupExporter";
 import { authContext, createAuthContextMiddleware } from "../auth/http";
 import { PERMISSIONS } from "../authz/permissions";
 import { requirePermission, type AuthenticatedPrincipal, isAuthorizationError, type Role } from "../authz";
@@ -19,6 +20,8 @@ export interface AppDependencies {
   rateLimitStore?: RateLimitStore;
   imageStorage?: RackUnitImageStorage;
   service?: ApiService;
+  pdfRenderer?: (html: string) => Promise<Buffer>;
+  backupExporter?: LogicalBackupExporter;
 }
 
 function requestId(req: Request, res: Response, next: NextFunction): void {
@@ -31,7 +34,7 @@ function requestId(req: Request, res: Response, next: NextFunction): void {
 
 function readOnlyMutationGuard(config: ServerConfig, req: Request, res: Response, next: NextFunction): void {
   const mutation = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
-  const securityExceptions = req.path === "/auth/login" || req.path === "/auth/logout";
+  const securityExceptions = req.path === "/auth/login" || req.path === "/auth/logout" || req.path === "/reports/render-pdf" || req.path === "/admin/database-backup";
   if (config.readOnlyMode && mutation && !securityExceptions) {
     res.status(423).json({ ok: false, error: { code: "READ_ONLY_MODE", message: "Mutations are disabled while READ_ONLY_MODE is enabled.", requestId: res.locals.requestId } });
     return;
@@ -49,6 +52,11 @@ function principal(res: Response): AuthenticatedPrincipal { return requirePermis
 function withPermission(res: Response, permission: (typeof PERMISSIONS)[keyof typeof PERMISSIONS]): AuthenticatedPrincipal { return requirePermission(authContext(res).principal, permission); }
 function actorNumber(userId: string): number { const value = Number(userId); if (!Number.isSafeInteger(value) || value < 1) throw new HttpError(500, "INVALID_ACTOR", "Authenticated actor identity is invalid."); return value; }
 function parseRole(value: unknown): Role { if (value !== "admin" && value !== "user") throw new HttpError(400, "INVALID_ROLE", "role must be admin or user."); return value; }
+function pdfAttachmentFilename(value: unknown): string {
+  const raw = typeof value === "string" ? value : "report.pdf";
+  const cleaned = raw.replace(/[^A-Za-z0-9 _().-]+/g, "_").trim().slice(0, 180) || "report.pdf";
+  return /\.pdf$/i.test(cleaned) ? cleaned : `${cleaned}.pdf`;
+}
 
 /** Classify transport/database failures without exposing driver details. */
 export function databaseFailureCode(error: unknown): string | null {
@@ -63,6 +71,7 @@ export function createApp(dependencies: AppDependencies) {
   const app = express();
   const service = dependencies.service ?? new ApiService(dependencies.repository, undefined, dependencies.imageStorage);
   const auth = dependencies.authService;
+  const renderPdf = dependencies.pdfRenderer ?? (async (html: string) => (await import("../reports/pdfRenderer")).renderReportPdf(html));
   const originPolicy = createOriginPolicy({ allowedOrigins: dependencies.config.allowedOrigins, allowedPreviewOrigins: dependencies.config.allowedPreviewOrigins });
   if (dependencies.config.nodeEnv === "production" && !dependencies.rateLimitStore) throw new Error("A durable rate-limit store is required in production.");
   const rateLimitStore = dependencies.rateLimitStore ?? new InMemoryRateLimitStore();
@@ -116,6 +125,18 @@ export function createApp(dependencies: AppDependencies) {
     sendOk(res, { loggedOut: true });
   }));
 
+  app.post("/api/v1/reports/render-pdf", express.text({ type: "text/html", limit: "12mb" }), asyncRoute(async (req, res) => {
+    withPermission(res, PERMISSIONS.dashboardRead);
+    if (typeof req.body !== "string" || req.body.length === 0) throw new HttpError(400, "INVALID_REPORT_HTML", "Report HTML is required.");
+    const filename = pdfAttachmentFilename(req.query.filename);
+    const pdf = await renderPdf(req.body);
+    res.status(200);
+    res.setHeader("content-type", "application/pdf");
+    res.setHeader("content-disposition", `attachment; filename="${filename}"`);
+    res.setHeader("cache-control", "no-store");
+    res.send(pdf);
+  }));
+
   app.get("/api/v1/auth/session", asyncRoute(async (_req, res) => {
     const context = authContext(res);
     if (!context.principal || !context.user) { sendOk(res, { authenticated: false, user: null }); return; }
@@ -167,6 +188,20 @@ export function createApp(dependencies: AppDependencies) {
     const requestedScope = req.query.scope;
     const scope: HistoryScope = requestedScope === undefined ? "full" : requestedScope === "dashboard" || requestedScope === "rack" || requestedScope === "full" ? requestedScope : (() => { throw new HttpError(400, "INVALID_HISTORY_SCOPE", "scope must be dashboard, rack, or full."); })();
     sendOk(res, await service.getHistory(parseSiteId(req.params.siteId), scope));
+  }));
+
+  app.post("/api/v1/admin/database-backup", asyncRoute(async (_req, res) => {
+    const actor = withPermission(res, PERMISSIONS.migrationManage);
+    if (!dependencies.backupExporter) throw new HttpError(503, "BACKUP_UNAVAILABLE", "Database backup is not available in this runtime.");
+    const currentUser = authContext(res).user;
+    const artifact = await dependencies.backupExporter.exportAllDatabase({ generatedBy: currentUser?.displayName ?? actor.userId, environment: dependencies.config.nodeEnv });
+    res.status(200);
+    res.setHeader("content-type", "application/zip");
+    res.setHeader("content-disposition", `attachment; filename="${artifact.filename}"`);
+    res.setHeader("cache-control", "no-store");
+    res.setHeader("x-energy-backup-tables", String(artifact.tableCount));
+    res.setHeader("x-energy-backup-rows", String(artifact.rowCount));
+    res.send(artifact.bytes);
   }));
 
   app.get("/api/v1/admin/users", asyncRoute(async (_req, res) => { const actor = withPermission(res, PERMISSIONS.usersList); sendOk(res, await auth.listUsers(actor)); }));

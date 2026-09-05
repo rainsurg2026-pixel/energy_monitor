@@ -203,6 +203,8 @@ export interface ReportData {
   facility: string;
   sourceWorkbook: string;
   generatedAt: string;
+  /** Authenticated display name that initiated the export, when available. */
+  generatedBy?: string | null;
   appVersion: string;
   reportingMonth: string | null;
   historicalStart: string | null;

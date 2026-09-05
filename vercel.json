@@ -1,6 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run vercel-build",
+  "functions": {
+    "api/[...path].js": {
+      "maxDuration": 60,
+      "includeFiles": "{node_modules/@sparticuz/chromium/bin/**,node_modules/@fontsource/noto-sans-thai/files/*.woff2}"
+    }
+  },
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api/[...path]" },
     { "source": "/((?!api/|api$|assets/|assets$).*)", "destination": "/index.html" }

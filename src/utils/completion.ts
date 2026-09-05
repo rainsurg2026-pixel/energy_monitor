@@ -83,10 +83,10 @@ export function computeCompletion(log: MonthlyLog | null, configuredAirFields?: 
   return { ups, air, dc, energy, rackUnit: section(0, 0), overall };
 }
 
-/** Rack Unit Capacity has two entered values (Total and Used). Available and
+/** Rack Unit Capacity has two entered values (Total and Available). Used and
  * percentage are derived, so they are not counted as additional inputs. */
-export function computeRackUnitCompletion(totalU: unknown, usedU: unknown): SectionCompletion {
-  const values = [totalU, usedU].map(value => parseSafeNumber(value));
+export function computeRackUnitCompletion(totalU: unknown, availableU: unknown): SectionCompletion {
+  const values = [totalU, availableU].map(value => parseSafeNumber(value));
   return section(values.filter(value => value !== null).length, values.length);
 }
 
