@@ -3,6 +3,7 @@ import type { DomainDashboardUpsMappingReport, DomainEngineeringDashboardSnapsho
 import { calculateEnergyCostForMonth, getAirFields, getAirValue } from "./energyCost";
 import { computeUpsGroupSummary, type UpsGroupConfig } from "./upsGroupAggregation";
 import { daysInLocalMonthOr30, previousMonthOrEmpty } from "./dates";
+import { calculateSrinakarinAggregate } from "./srinakarinPower";
 
 export interface DashboardUpsTopology {
   upsGroups: UpsGroupConfig[];
@@ -17,6 +18,13 @@ const SRINAKARIN_OVERALL_GROUPS: UpsGroupConfig[] = [
 ];
 
 function normalizedUpsId(value: string): string { return value.replace(/\s+/g, "").toLowerCase(); }
+
+function withDerivedSrinakarinUps(log: MonthlyLog): MonthlyLog {
+  if (!log.srinakarinInputs) return log;
+  const rows = new Map(log.ups.map(row => [normalizedUpsId(row.upsId), row] as const));
+  for (const row of calculateSrinakarinAggregate(log)) rows.set(normalizedUpsId(row.upsId), row);
+  return { ...log, ups: [...rows.values()] };
+}
 
 export function getDaysInMonth(month: string): number { return daysInLocalMonthOr30(month); }
 export function getPreviousMonth(month: string): string { return previousMonthOrEmpty(month); }
@@ -34,12 +42,13 @@ export function buildEngineeringDashboardSnapshot(
 ): EngineeringDashboardSnapshot | null {
   const activeLog = logs.find(log => log.month === selectedMonth);
   if (!activeLog) return null;
+  const effectiveLog = withDerivedSrinakarinUps(activeLog);
   const previousMonth = getPreviousMonth(selectedMonth);
   const previousLog = logs.find(log => log.month === previousMonth) ?? null;
   const daysInMonth = getDaysInMonth(selectedMonth);
   const upsGroups = topology?.upsGroups?.length
-    ? computeUpsGroupSummary(activeLog, topology.upsGroups).map(mapGroup)
-    : (upsMapping?.summary?.length ? upsMapping.summary : activeLog.ups.map(record => ({
+    ? computeUpsGroupSummary(effectiveLog, topology.upsGroups).map(mapGroup)
+    : (upsMapping?.summary?.length ? upsMapping.summary : effectiveLog.ups.map(record => ({
       no: 0,
       name: record.upsId,
       totalLoadKw: record.loadKw,
@@ -61,12 +70,12 @@ export function buildEngineeringDashboardSnapshot(
       : activeLog.ups.map((record, index) => ({ no: index + 1, umdb: "—", upsId: record.upsId, acPowerPanel: "—", sts: "—", oudb: "—", voltage: record.voltage, current: record.current, loadKw: record.loadKw, loadKva: record.loadKva, capacity: null, loadPercent: null }));
   const hasAcPowerPanel = detailRows.some(row => row.acPowerPanel !== "—" && row.acPowerPanel !== "-");
   const upsOverallGroups = hasAcPowerPanel
-    ? computeUpsGroupSummary(activeLog, SRINAKARIN_OVERALL_GROUPS).map(mapGroup)
+    ? computeUpsGroupSummary(effectiveLog, SRINAKARIN_OVERALL_GROUPS).map(mapGroup)
     : [];
   const upsDetails = detailRows.map((row, index) => {
     const configured = configuredRows.find(item => item.no === row.no) ?? configuredRows[index];
-    const reading = activeLog.ups.find(item => normalizedUpsId(item.upsId) === normalizedUpsId(row.upsId))
-      ?? activeLog.ups.find(item => normalizedUpsId(item.upsId) === normalizedUpsId(configured?.keyId ?? configured?.upsId ?? row.upsId));
+    const reading = effectiveLog.ups.find(item => normalizedUpsId(item.upsId) === normalizedUpsId(row.upsId))
+      ?? effectiveLog.ups.find(item => normalizedUpsId(item.upsId) === normalizedUpsId(configured?.keyId ?? configured?.upsId ?? row.upsId));
     const capacity = row.capacity ?? configured?.capacity ?? null;
     const loadKva = reading?.loadKva ?? row.loadKva ?? null;
     return {
