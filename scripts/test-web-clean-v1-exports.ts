@@ -329,10 +329,10 @@ check("Trend chart category spacing remains uniform after the edge offsets", Mat
 // no duplicate/missing extension, and the displayed preview matches what
 // would actually be downloaded/printed.
 const filename = defaultReportFilename("Rangsit", "2026-06");
-check("default filename follows the Desktop convention", filename === "Energy_Report_Rangsit_2026-06");
-check("Excel filename has exactly one .xlsx extension", withExtension(filename, "xlsx") === "Energy_Report_Rangsit_2026-06.xlsx" && !withExtension(filename, "xlsx").includes(".xlsx.xlsx"));
-check("CSV filename has exactly one .csv extension", withExtension(filename, "csv") === "Energy_Report_Rangsit_2026-06.csv");
-check("PDF filename has exactly one .pdf extension", withExtension(filename, "pdf") === "Energy_Report_Rangsit_2026-06.pdf");
+check("Current Facility filename follows approved RST Mmm-YYYY convention", filename === "DC_Status_MonthlyReport of RST_Jun-2026");
+check("Excel filename has exactly one .xlsx extension", withExtension(filename, "xlsx") === "DC_Status_MonthlyReport of RST_Jun-2026.xlsx" && !withExtension(filename, "xlsx").includes(".xlsx.xlsx"));
+check("CSV filename has exactly one .csv extension", withExtension(filename, "csv") === "DC_Status_MonthlyReport of RST_Jun-2026.csv");
+check("PDF filename has exactly one .pdf extension", withExtension(filename, "pdf") === "DC_Status_MonthlyReport of RST_Jun-2026.pdf");
 
 // ============================================================
 // Rack Report: was previously always `rack: null` in every generated

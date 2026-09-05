@@ -28,10 +28,24 @@ export function withExtension(name: string, ext: ExportExtension): string {
   return `${base}.${ext}`;
 }
 
-/** Desktop-standard default filename for a facility + reporting month. */
+function currentFacilitySiteCode(facilityName: string): string {
+  if (/rangsit/i.test(facilityName)) return "RST";
+  if (/srinakarin/i.test(facilityName)) return "SNK";
+  const fallback = sanitizeFilename(facilityName).replace(/[^a-z0-9]+/gi, "").toUpperCase();
+  return fallback.slice(0, 3) || "SITE";
+}
+
+function reportMonthToken(month: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(month);
+  const monthNumber = match ? Number(match[2]) : NaN;
+  return match && monthNumber >= 1 && monthNumber <= 12
+    ? `${MONTH_ABBREVIATIONS_EN[monthNumber - 1]}-${match[1]}`
+    : sanitizeFilename(month);
+}
+
+/** Current Facility default basename, keyed to the selected report month. */
 export function defaultReportFilename(facilityName: string, month: string): string {
-  const safeFacility = sanitizeFilename(facilityName).replace(/\s+/g, "");
-  return `Energy_Report_${safeFacility}_${month}`;
+  return `DC_Status_MonthlyReport of ${currentFacilitySiteCode(facilityName)}_${reportMonthToken(month)}`;
 }
 
 /** All Facilities stable default basename using the requested YYYY-Mmm token.
