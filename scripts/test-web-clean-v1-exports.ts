@@ -514,8 +514,10 @@ for (const sourceCase of [
   check(`${sourceCase.site}: Desktop Rack Unit image sources are discovered when present`, (source.rackUnitCapacityImages ?? []).length === 0 || (source.rackUnitCapacityImages ?? []).length === 2);
   check(`${sourceCase.site}: UPS input rows are exported from Desktop logs`, (sheet("UPS_Loads")?.rowCount ?? 1) > 1);
   check(`${sourceCase.site}: saved values table contains all source months`, (sheet("Saved_Values")?.rowCount ?? 0) >= source.logs.length + 1);
-  check(`${sourceCase.site}: calculated energy table contains all source log months`, (sheet("Calculated_Energy")?.rowCount ?? 0) === source.logs.length + 1);
-  check(`${sourceCase.site}: Dashboard-FAC contains all source log months`, (sheet("Dashboard-FAC")?.rowCount ?? 0) === source.logs.length + 1);
+  const calculatedEnergyMonths = new Set(arraySheetValues(sheet("Calculated_Energy")).slice(1).map(row => String(row[1] ?? "")));
+  check(`${sourceCase.site}: calculated energy table contains all source log months`, source.logs.every(log => calculatedEnergyMonths.has(log.month)));
+  const dashboardFacMonths = new Set(arraySheetValues(sheet("Dashboard-FAC")).slice(1).map(row => String(row[1] ?? "")));
+  check(`${sourceCase.site}: Dashboard-FAC contains all source log months`, source.logs.every(log => dashboardFacMonths.has(log.month)));
   check(`${sourceCase.site}: Dashboard-FAC Details contains Desktop mapping rows`, (sheet("Dashboard-FAC Details")?.rowCount ?? 1) > 1 && (sheet("Dashboard-FAC Details")?.getSheetValues().flat().map(String).join("|") ?? "").includes(dashboardMapping?.mapping[0]?.upsId ?? "__missing__"));
   check(`${sourceCase.site}: every Desktop Dashboard-FAC mapping ID is retained in the export`, (dashboardMapping?.mapping ?? []).every(row => (sheet("Dashboard-FAC Details")?.getSheetValues().flat().map(String).join("|") ?? "").includes(row.upsId)));
   if (sourceCase.site === "Rangsit") {

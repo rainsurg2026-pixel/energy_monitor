@@ -95,7 +95,8 @@ assert.match(app, /target === "racks" \|\| target === "rack-units" \? "rack" : t
 const trend = readFileSync(new URL("../src/components/EngineeringTrendCharts.tsx", import.meta.url), "utf8");
 assert.doesNotMatch(trend, /processed\.filter\(row => row\.month\.startsWith\(`\$\{selectedYear\}-`\)\)/);
 assert.match(trend, /const anchorMonth = selectedDashboardMonth\(processed, selectedYear, selectedPeriod, processed\[processed\.length - 1\]!\.month\)/);
-assert.match(trend, /return processed\.slice\(Math\.max\(0, effectiveAnchor - windowSize \+ 1\), effectiveAnchor \+ 1\)/);
+assert.match(trend, /recentMonthsThroughSelected/);
+assert.match(trend, /return processed\.filter\(row => windowMonths\.has\(row\.month\)\)/);
 // missing metric stays null (a per-series gap), the month row is never dropped:
 assert.match(trend, /values: trendData\.map\(point => point\[chart\.key\]\)/);
 
