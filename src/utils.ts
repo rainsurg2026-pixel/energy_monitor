@@ -138,6 +138,28 @@ export function formatTimestamp(date: Date): string {
   return `${day}-${month}-${year} ${hours}:${minutes}:${seconds}`;
 }
 
+/** Export-facing audit timestamp in Thailand time. The report contract is
+ * deliberately fixed to GMT+7 and 24-hour time so PDF/Excel exports remain
+ * unambiguous regardless of the browser or server locale. */
+export function formatBangkokReportTimestamp(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Bangkok",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const part = (type: "day" | "month" | "year" | "hour" | "minute") => parts.find(item => item.type === type)?.value ?? "";
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const month = months[Math.max(0, Number(part("month")) - 1)] ?? part("month");
+  return `${part("day")}-${month}-${part("year")}; ${part("hour")}:${part("minute")} (GMT+7)`;
+}
+
 /** Format either an API ISO timestamp or an existing Desktop display value.
  * Invalid legacy text is retained so history screens never turn a harmless
  * metadata value into "Invalid Date". */
