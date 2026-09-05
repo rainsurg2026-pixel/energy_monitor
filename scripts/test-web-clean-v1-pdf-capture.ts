@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { facilityReportData } from "../src/web-clean-v1/exports";
+import { facilityReportData, isMemoryConstrainedPdfClient } from "../src/web-clean-v1/exports";
 import { buildReportHtml } from "../src/reports/pdf/reportHtml";
 import type { MonthlyLog } from "../src/types";
 
@@ -46,10 +46,19 @@ assert.doesNotMatch(exportSource, /onclone:\s*clonedDoc/);
 // not the parent app document.
 assert.match(exportSource, /root\.ownerDocument\?\.fonts/);
 assert.match(exportSource, /await waitForReportImages\(frameDocument\.body\)/);
-assert.match(exportSource, /const imageData = compact \? canvas\.toDataURL\("image\/jpeg", 0\.82\) : canvas\.toDataURL\("image\/png"\)/);
-assert.match(exportSource, /compact \? "JPEG" : "PNG"/);
+assert.match(exportSource, /const mobileMemoryMode = isMemoryConstrainedPdfClient\(\)/);
+assert.match(exportSource, /mobileMemoryMode \? PDF_MOBILE_RENDER_SCALE : PDF_RENDER_SCALE/);
+assert.match(exportSource, /lossy \? canvas\.toDataURL\("image\/jpeg", jpegQuality\) : canvas\.toDataURL\("image\/png"\)/);
+assert.match(exportSource, /lossy \? "JPEG" : "PNG"/);
+assert.match(exportSource, /canvas\.width = 1/);
+assert.match(exportSource, /canvas\.height = 1/);
 assert.match(exportSource, /exportReportPdfFromHtml\(buildAllFacilitiesReportHtml[^;]+\{ compact: true \}\)/);
 assert.match(exportSource, /buildCurrentFacilityPdfHtml\(data, sections\)/);
+
+assert.equal(isMemoryConstrainedPdfClient({ userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)", platform: "iPad", maxTouchPoints: 5 } as Navigator), true);
+assert.equal(isMemoryConstrainedPdfClient({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X)", platform: "MacIntel", maxTouchPoints: 5 } as Navigator), true);
+assert.equal(isMemoryConstrainedPdfClient({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", platform: "Win32", maxTouchPoints: 0 } as Navigator), false);
+
 const reportSource = readFileSync(new URL("../src/reports/pdf/reportHtml.ts", import.meta.url), "utf8");
 assert.match(reportSource, /White-report mode/);
 assert.match(reportSource, /cover-meta-card,[^}]+background:#fff/);

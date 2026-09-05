@@ -1032,6 +1032,15 @@ export interface PdfImagePlacement {
 }
 
 const PDF_RENDER_SCALE = 2;
+const PDF_MOBILE_RENDER_SCALE = 1.35;
+
+export function isMemoryConstrainedPdfClient(nav: Pick<Navigator, "userAgent" | "platform" | "maxTouchPoints"> | null = typeof navigator !== "undefined" ? navigator : null): boolean {
+  if (!nav) return false;
+  const ua = nav.userAgent ?? "";
+  const iosDevice = /iPad|iPhone|iPod/i.test(ua);
+  const ipadDesktopMode = nav.platform === "MacIntel" && (nav.maxTouchPoints ?? 0) > 1;
+  return iosDevice || ipadDesktopMode;
+}
 
 /** Fit a rendered report page inside an A4 landscape content box without
  * changing its aspect ratio. This is deliberately pure so the geometry can
@@ -1120,7 +1129,10 @@ export async function exportReportPdfFromHtml(html: string, fileName: string, op
     const pages = [...frameDocument.querySelectorAll<HTMLElement>(".cover, .page")];
     if (pages.length === 0) throw new Error("The report did not contain any printable pages.");
     const compact = options.compact === true;
-    const renderScale = compact ? 1.5 : PDF_RENDER_SCALE;
+    const mobileMemoryMode = isMemoryConstrainedPdfClient();
+    const lossy = compact || mobileMemoryMode;
+    const renderScale = compact ? 1.5 : mobileMemoryMode ? PDF_MOBILE_RENDER_SCALE : PDF_RENDER_SCALE;
+    const jpegQuality = compact ? 0.82 : 0.84;
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
     for (const [index, page] of pages.entries()) {
       const canvas = await html2canvas(page, {
@@ -1134,8 +1146,12 @@ export async function exportReportPdfFromHtml(html: string, fileName: string, op
       });
       if (index > 0) pdf.addPage("a4", "landscape");
       const placement = fitPdfImageToPage(canvas.width, canvas.height);
-      const imageData = compact ? canvas.toDataURL("image/jpeg", 0.82) : canvas.toDataURL("image/png");
-      pdf.addImage(imageData, compact ? "JPEG" : "PNG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
+      let imageData: string | null = lossy ? canvas.toDataURL("image/jpeg", jpegQuality) : canvas.toDataURL("image/png");
+      pdf.addImage(imageData, lossy ? "JPEG" : "PNG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
+      imageData = null;
+      canvas.width = 1;
+      canvas.height = 1;
+      if (mobileMemoryMode) await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     }
     pdf.save(ensureExtension(fileName, "pdf"));
   } finally {
