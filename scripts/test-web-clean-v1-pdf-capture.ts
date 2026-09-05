@@ -46,7 +46,8 @@ assert.doesNotMatch(exportSource, /onclone:\s*clonedDoc/);
 // not the parent app document.
 assert.match(exportSource, /root\.ownerDocument\?\.fonts/);
 assert.match(exportSource, /await waitForReportImages\(frameDocument\.body\)/);
-assert.match(exportSource, /if \(isMemoryConstrainedPdfClient\(\)\) \{ await exportReportPdfViaServer\(html, fileName\); return; \}/);
+assert.match(exportSource, /Web Desktop and iPad use one server-side Chromium renderer/);
+assert.match(exportSource, /await exportReportPdfViaServer\(html, fileName\);\s*return;/);
 assert.match(exportSource, /\/api\/v1\/reports\/render-pdf\?filename=/);
 assert.match(exportSource, /window\.location\.assign\(url\)/);
 assert.match(exportSource, /const imageData = compact \? canvas\.toDataURL\("image\/jpeg", 0\.82\) : canvas\.toDataURL\("image\/png"\)/);
@@ -76,4 +77,4 @@ const appCss = readFileSync(new URL("../src/index.css", import.meta.url), "utf8"
 assert.match(appCss, /table:not\(\.dashboard-table\) \*/);
 assert.match(appCss, /--color-text: #f4f7fb;/);
 
-console.log("web-clean-v1 PDF capture: downloadable PDF uses the same isolated light report document as Live Preview");
+console.log("web-clean-v1 PDF capture: downloadable PDF uses one server-side renderer on Desktop and iPad");

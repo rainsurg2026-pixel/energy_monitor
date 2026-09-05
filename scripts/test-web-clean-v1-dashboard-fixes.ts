@@ -72,7 +72,8 @@ assert.match(appSource, /months: item\.months\.filter\(entry => chartMonthSet\.h
 assert.doesNotMatch(appSource, /item\.months\.filter\(value => chartMonthSet\.has\(value\)\)/);
 assert.match(exportSource, /import\("html2canvas"\)/);
 assert.match(exportSource, /import\("jspdf"\)/);
-assert.match(exportSource, /if \(isMemoryConstrainedPdfClient\(\)\) \{ await exportReportPdfViaServer\(html, fileName\); return; \}/);
+assert.match(exportSource, /Web Desktop and iPad use one server-side Chromium renderer/);
+assert.match(exportSource, /await exportReportPdfViaServer\(html, fileName\);\s*return;/);
 assert.match(exportSource, /const renderScale = compact \? 1\.5 : PDF_RENDER_SCALE/);
 assert.match(exportSource, /scale: renderScale/);
 assert.match(exportSource, /const imageData = compact \? canvas\.toDataURL\("image\/jpeg", 0\.82\) : canvas\.toDataURL\("image\/png"\)/);

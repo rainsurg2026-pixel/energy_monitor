@@ -1107,7 +1107,9 @@ async function exportReportPdfViaServer(html: string, fileName: string): Promise
  */
 export async function exportReportPdfFromHtml(html: string, fileName: string, options: { compact?: boolean } = {}): Promise<void> {
   if (typeof document === "undefined") throw new Error("PDF export requires a browser document.");
-  if (isMemoryConstrainedPdfClient()) { await exportReportPdfViaServer(html, fileName); return; }
+  // Web Desktop and iPad use one server-side Chromium renderer so report output is deterministic across browsers.
+  await exportReportPdfViaServer(html, fileName);
+  return;
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import("html2canvas"),
     import("jspdf")
