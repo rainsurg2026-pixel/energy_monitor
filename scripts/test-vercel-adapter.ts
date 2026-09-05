@@ -85,14 +85,17 @@ const bridgeFetch: typeof fetch = async (input, init) => {
   if (pathname === "/api/v1/health/ready") return new Response(JSON.stringify({ ok: true, data: { status: "ready" } }), { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" } });
   if (pathname === "/api/v1/auth/csrf") return new Response(JSON.stringify({ ok: true, data: { csrfToken: "bridge-csrf" } }), { status: 200, headers: { "content-type": "application/json", "set-cookie": "energy_csrf=bridge-csrf; Path=/; SameSite=Lax" } });
   if (pathname === "/api/v1/auth/login") return new Response(JSON.stringify({ ok: true, data: { user: { displayName: "Production User" } } }), { status: 200, headers: { "content-type": "application/json", "set-cookie": "energy_session=bridge-session; Path=/; HttpOnly; SameSite=Lax" } });
+  if (pathname === "/api/v1/auth/session" && (headers.get("cookie") ?? "").includes("em_session=bridge-session")) return new Response(JSON.stringify({ ok: true, data: { authenticated: true, user: { displayName: "Production User" } } }), { status: 200, headers: { "content-type": "application/json" } });
   return new Response(JSON.stringify({ ok: false, error: { code: "UNAUTHORIZED", message: "Authentication is required." } }), { status: 401, headers: { "content-type": "application/json" } });
 };
 
 const bridgeEnvironment: NodeJS.ProcessEnv = { ...testEnvironment, VERCEL_GIT_COMMIT_REF: "feat/energy-monitor-next" };
+const renderedPreviewPdfHtml: string[] = [];
 const bridgeHandler = createVercelHandler(
   bridgeEnvironment,
   async () => { throw new ConfigurationError("preview runtime intentionally unavailable in bridge test"); },
-  bridgeFetch
+  bridgeFetch,
+  async html => { renderedPreviewPdfHtml.push(html); return Buffer.from("%PDF-1.4\npreview-stub\n%%EOF"); }
 );
 await withHandler(bridgeHandler, async base => {
   const ready = await request(base, "/api/v1/health/ready");
@@ -114,6 +117,22 @@ await withHandler(bridgeHandler, async base => {
   });
   assert.equal(login.status, 200);
   assert.equal((await login.json() as any).data.user.displayName, "Production User");
+
+  const reportHtml = '<!doctype html><html><head></head><body><section class="cover">PDF</section></body></html>';
+  const pdf = await fetch(`${base}/api/v1/reports/render-pdf?filename=DC_Status_MonthlyReport%20of%20RST_Sep-2026.pdf`, {
+    method: "POST",
+    headers: { "content-type": "text/html; charset=utf-8", cookie: "em_session=bridge-session; em_csrf=bridge-csrf", "x-csrf-token": "bridge-csrf" },
+    body: reportHtml
+  });
+  assert.equal(pdf.status, 200);
+  assert.match(pdf.headers.get("content-type") ?? "", /application\/pdf/);
+  assert.match(pdf.headers.get("content-disposition") ?? "", /RST_Sep-2026\.pdf/);
+  assert.equal(pdf.headers.get("x-energy-preview-pdf-renderer"), "server");
+  assert.match(Buffer.from(await pdf.arrayBuffer()).toString("utf8"), /^%PDF-1\.4/);
+  assert.equal(renderedPreviewPdfHtml.at(-1), reportHtml);
+
+  const badCsrfPdf = await fetch(`${base}/api/v1/reports/render-pdf`, { method: "POST", headers: { "content-type": "text/html", cookie: "em_session=bridge-session; em_csrf=bridge-csrf", "x-csrf-token": "wrong" }, body: reportHtml });
+  assert.equal(badCsrfPdf.status, 403);
 });
 assert.ok(bridgeCalls.some(call => new URL(call.url).pathname === "/api/v1/health/ready"));
 const loginBridgeCall = bridgeCalls.find(call => new URL(call.url).pathname === "/api/v1/auth/login");

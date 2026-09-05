@@ -1032,7 +1032,6 @@ export interface PdfImagePlacement {
 }
 
 const PDF_RENDER_SCALE = 2;
-const PDF_MOBILE_RENDER_SCALE = 1.35;
 
 export function isMemoryConstrainedPdfClient(nav: Pick<Navigator, "userAgent" | "platform" | "maxTouchPoints"> | null = typeof navigator !== "undefined" ? navigator : null): boolean {
   if (!nav) return false;
@@ -1076,6 +1075,29 @@ async function waitForReportImages(root: HTMLElement): Promise<void> {
   if (typeof fontSet?.ready?.then === "function") await fontSet.ready;
 }
 
+function browserCsrfToken(): string | undefined {
+  const value = document.cookie.split(";").map(item => item.trim()).find(item => item.startsWith("em_csrf="));
+  return value ? decodeURIComponent(value.slice("em_csrf=".length)) : undefined;
+}
+
+async function exportReportPdfViaServer(html: string, fileName: string): Promise<void> {
+  const headers = new Headers({ "content-type": "text/html; charset=utf-8" });
+  const csrf = browserCsrfToken();
+  if (csrf) headers.set("x-csrf-token", csrf);
+  const finalName = ensureExtension(fileName, "pdf");
+  const response = await fetch(`/api/v1/reports/render-pdf?filename=${encodeURIComponent(finalName)}`, { method: "POST", headers, body: html, credentials: "include" });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+    throw new Error(payload?.error?.message ?? `PDF generation failed (${response.status}).`);
+  }
+  const blob = await response.blob();
+  if (blob.size < 5 || !/application\/pdf/i.test(blob.type || response.headers.get("content-type") || "")) throw new Error("The PDF renderer returned an invalid file.");
+  const url = URL.createObjectURL(blob);
+  // iPad/iPhone Safari is far more reliable opening the completed PDF in its
+  // native viewer than forcing an async Blob download after the user gesture.
+  window.location.assign(url);
+}
+
 /**
  * Creates a real PDF download from the same report HTML used by the preview
  * and the old print renderer. The report is rendered by the user's browser,
@@ -1085,6 +1107,7 @@ async function waitForReportImages(root: HTMLElement): Promise<void> {
  */
 export async function exportReportPdfFromHtml(html: string, fileName: string, options: { compact?: boolean } = {}): Promise<void> {
   if (typeof document === "undefined") throw new Error("PDF export requires a browser document.");
+  if (isMemoryConstrainedPdfClient()) { await exportReportPdfViaServer(html, fileName); return; }
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import("html2canvas"),
     import("jspdf")
@@ -1129,10 +1152,7 @@ export async function exportReportPdfFromHtml(html: string, fileName: string, op
     const pages = [...frameDocument.querySelectorAll<HTMLElement>(".cover, .page")];
     if (pages.length === 0) throw new Error("The report did not contain any printable pages.");
     const compact = options.compact === true;
-    const mobileMemoryMode = isMemoryConstrainedPdfClient();
-    const lossy = compact || mobileMemoryMode;
-    const renderScale = compact ? 1.5 : mobileMemoryMode ? PDF_MOBILE_RENDER_SCALE : PDF_RENDER_SCALE;
-    const jpegQuality = compact ? 0.82 : 0.84;
+    const renderScale = compact ? 1.5 : PDF_RENDER_SCALE;
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
     for (const [index, page] of pages.entries()) {
       const canvas = await html2canvas(page, {
@@ -1146,12 +1166,8 @@ export async function exportReportPdfFromHtml(html: string, fileName: string, op
       });
       if (index > 0) pdf.addPage("a4", "landscape");
       const placement = fitPdfImageToPage(canvas.width, canvas.height);
-      let imageData: string | null = lossy ? canvas.toDataURL("image/jpeg", jpegQuality) : canvas.toDataURL("image/png");
-      pdf.addImage(imageData, lossy ? "JPEG" : "PNG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
-      imageData = null;
-      canvas.width = 1;
-      canvas.height = 1;
-      if (mobileMemoryMode) await new Promise<void>(resolve => window.setTimeout(resolve, 0));
+      const imageData = compact ? canvas.toDataURL("image/jpeg", 0.82) : canvas.toDataURL("image/png");
+      pdf.addImage(imageData, compact ? "JPEG" : "PNG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
     }
     pdf.save(ensureExtension(fileName, "pdf"));
   } finally {

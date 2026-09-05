@@ -46,18 +46,25 @@ assert.doesNotMatch(exportSource, /onclone:\s*clonedDoc/);
 // not the parent app document.
 assert.match(exportSource, /root\.ownerDocument\?\.fonts/);
 assert.match(exportSource, /await waitForReportImages\(frameDocument\.body\)/);
-assert.match(exportSource, /const mobileMemoryMode = isMemoryConstrainedPdfClient\(\)/);
-assert.match(exportSource, /mobileMemoryMode \? PDF_MOBILE_RENDER_SCALE : PDF_RENDER_SCALE/);
-assert.match(exportSource, /lossy \? canvas\.toDataURL\("image\/jpeg", jpegQuality\) : canvas\.toDataURL\("image\/png"\)/);
-assert.match(exportSource, /lossy \? "JPEG" : "PNG"/);
-assert.match(exportSource, /canvas\.width = 1/);
-assert.match(exportSource, /canvas\.height = 1/);
+assert.match(exportSource, /if \(isMemoryConstrainedPdfClient\(\)\) \{ await exportReportPdfViaServer\(html, fileName\); return; \}/);
+assert.match(exportSource, /\/api\/v1\/reports\/render-pdf\?filename=/);
+assert.match(exportSource, /window\.location\.assign\(url\)/);
+assert.match(exportSource, /const imageData = compact \? canvas\.toDataURL\("image\/jpeg", 0\.82\) : canvas\.toDataURL\("image\/png"\)/);
+assert.match(exportSource, /compact \? "JPEG" : "PNG"/);
 assert.match(exportSource, /exportReportPdfFromHtml\(buildAllFacilitiesReportHtml[^;]+\{ compact: true \}\)/);
 assert.match(exportSource, /buildCurrentFacilityPdfHtml\(data, sections\)/);
 
 assert.equal(isMemoryConstrainedPdfClient({ userAgent: "Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)", platform: "iPad", maxTouchPoints: 5 } as Navigator), true);
 assert.equal(isMemoryConstrainedPdfClient({ userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X)", platform: "MacIntel", maxTouchPoints: 5 } as Navigator), true);
 assert.equal(isMemoryConstrainedPdfClient({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", platform: "Win32", maxTouchPoints: 0 } as Navigator), false);
+
+const serverRendererSource = readFileSync(new URL("../server/reports/pdfRenderer.ts", import.meta.url), "utf8");
+assert.match(serverRendererSource, /@sparticuz\/chromium/);
+assert.match(serverRendererSource, /puppeteer-core/);
+assert.match(serverRendererSource, /Content-Security-Policy/);
+assert.match(serverRendererSource, /Noto Sans Thai|Energy Report Thai/);
+assert.match(serverRendererSource, /preferCSSPageSize: true/);
+assert.match(serverRendererSource, /request\.abort\("blockedbyclient"\)/);
 
 const reportSource = readFileSync(new URL("../src/reports/pdf/reportHtml.ts", import.meta.url), "utf8");
 assert.match(reportSource, /White-report mode/);
