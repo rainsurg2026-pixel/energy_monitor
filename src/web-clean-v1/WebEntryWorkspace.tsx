@@ -66,7 +66,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
   const [savingAll, setSavingAll] = useState(false);
   const [rackUnitDirty, setRackUnitDirty] = useState(false);
   const [rackCapacityDirty, setRackCapacityDirty] = useState(false);
-  const [rackUnitCompletion, setRackUnitCompletion] = useState<SectionCompletion>(() => computeRackUnitCompletion(rackUnitInitialRow?.totalU, rackUnitInitialRow?.usedU));
+  const [rackUnitCompletion, setRackUnitCompletion] = useState<SectionCompletion>(() => computeRackUnitCompletion(rackUnitInitialRow?.totalU, rackUnitInitialRow?.availableU));
   const [pendingHistoricalSave, setPendingHistoricalSave] = useState<PendingHistoricalSave | null>(null);
 
   const register = useCallback((section: Section) => (api: EntrySectionApi | null) => { if (api) sectionApisRef.current[section] = api; else delete sectionApisRef.current[section]; }, []);

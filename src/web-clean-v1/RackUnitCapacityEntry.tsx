@@ -38,9 +38,9 @@ function sameNumericValue(left: string, right: string): boolean {
 
 export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSaved, onMessage, onCompletionChange, onDirtyChange, onRegisterActions }: Props) {
   const [totalU, setTotalU] = useState(initialRow ? String(initialRow.totalU) : "");
-  const [usedU, setUsedU] = useState(initialRow ? String(initialRow.usedU) : "");
+  const [availableU, setAvailableU] = useState(initialRow ? String(initialRow.availableU) : "");
   const [baselineTotalU, setBaselineTotalU] = useState(initialRow ? String(initialRow.totalU) : "");
-  const [baselineUsedU, setBaselineUsedU] = useState(initialRow ? String(initialRow.usedU) : "");
+  const [baselineAvailableU, setBaselineAvailableU] = useState(initialRow ? String(initialRow.availableU) : "");
   const [rowVersion, setRowVersion] = useState<number | null>(null);
   const [hasSavedImage, setHasSavedImage] = useState(false);
   const [imageLoadError, setImageLoadError] = useState(false);
@@ -51,17 +51,17 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    onCompletionChange?.(computeRackUnitCompletion(totalU, usedU));
-  }, [onCompletionChange, totalU, usedU]);
+    onCompletionChange?.(computeRackUnitCompletion(totalU, availableU));
+  }, [availableU, onCompletionChange, totalU]);
 
   useEffect(() => {
     let cancelled = false;
     const initialTotal = initialRow ? String(initialRow.totalU) : "";
-    const initialUsed = initialRow ? String(initialRow.usedU) : "";
+    const initialAvailable = initialRow ? String(initialRow.availableU) : "";
     setTotalU(initialTotal);
-    setUsedU(initialUsed);
+    setAvailableU(initialAvailable);
     setBaselineTotalU(initialTotal);
-    setBaselineUsedU(initialUsed);
+    setBaselineAvailableU(initialAvailable);
     setRowVersion(null);
     setHasSavedImage(false);
     setImageLoadError(false);
@@ -71,9 +71,9 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
         const row = result.snapshot;
         if (!row) return;
         setTotalU(String(row.totalU));
-        setUsedU(String(row.usedU));
+        setAvailableU(String(row.availableU));
         setBaselineTotalU(String(row.totalU));
-        setBaselineUsedU(String(row.usedU));
+        setBaselineAvailableU(String(row.availableU));
         setRowVersion(row.rowVersion);
         // Hydrate from the persisted snapshot's image metadata (DB truth), not
         // from the storage liveness probe `image.available` - that probe is
@@ -90,7 +90,7 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
 
   useEffect(() => () => { if (stagedImage) URL.revokeObjectURL(stagedImage.previewUrl); }, [stagedImage]);
 
-  const hasChanges = !sameNumericValue(totalU, baselineTotalU) || !sameNumericValue(usedU, baselineUsedU) || stagedImage !== null;
+  const hasChanges = !sameNumericValue(totalU, baselineTotalU) || !sameNumericValue(availableU, baselineAvailableU) || stagedImage !== null;
   const hasChangesRef = useRef(false);
   hasChangesRef.current = hasChanges;
 
@@ -107,13 +107,13 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
   const save = async (): Promise<boolean> => {
     if (busy) return false;
     const total = Number(totalU);
-    const used = Number(usedU);
-    if (!Number.isFinite(total) || total < 0 || !Number.isFinite(used) || used < 0 || used > total) { onMessage("Enter valid non-negative Total (U) and Used (U) values with Used no greater than Total."); return false; }
+    const available = Number(availableU);
+    if (!Number.isFinite(total) || total < 0 || !Number.isFinite(available) || available < 0 || available > total) { onMessage("Enter valid non-negative Total (U) and Available (U) values with Available no greater than Total."); return false; }
     setBusy(true);
     try {
       const saved = await api<{ rowVersion: number }>(`/sites/${siteId}/rack-unit-capacity/${month}`, {
         method: "PUT",
-        body: JSON.stringify({ total_u: total, used_u: used, expected_row_version: rowVersion })
+        body: JSON.stringify({ total_u: total, available_u: available, expected_row_version: rowVersion })
       });
       // Track the server row version immediately so a retry after a failed
       // image upload sends the fresh version, but only advance the "saved"
@@ -132,7 +132,7 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
         setImageError(null);
       }
       setBaselineTotalU(String(total));
-      setBaselineUsedU(String(used));
+      setBaselineAvailableU(String(available));
       await onSaved();
       onMessage("Rack Unit Capacity and its monthly image were saved.");
       return true;
@@ -151,7 +151,7 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
   const reset = () => {
     removePending();
     setTotalU(baselineTotalU);
-    setUsedU(baselineUsedU);
+    setAvailableU(baselineAvailableU);
     setImageError(null);
   };
   const saveRef = useRef<() => Promise<boolean>>(async () => false);
@@ -165,9 +165,10 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
   }, [onRegisterActions]);
 
   const total = Number(totalU);
-  const used = Number(usedU);
-  const available = totalU.trim() === "" || usedU.trim() === "" ? null : total - used;
-  const availability = available !== null && Number.isFinite(total) && total > 0 ? available / total : null;
+  const available = Number(availableU);
+  const validCapacity = totalU.trim() !== "" && availableU.trim() !== "" && Number.isFinite(total) && total >= 0 && Number.isFinite(available) && available >= 0 && available <= total;
+  const used = validCapacity ? total - available : null;
+  const availability = validCapacity && total > 0 ? available / total : null;
   const imageUrl = `/api/v1/sites/${siteId}/rack-unit-capacity/${encodeURIComponent(month)}/image`;
 
   const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
@@ -182,11 +183,11 @@ export default function RackUnitCapacityEntry({ siteId, month, initialRow, onSav
   };
 
   return <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-sm">
-    <div><h3 className="flex items-center gap-2 text-base text-slate-100"><ImagePlus className="h-5 w-5 text-emerald-400" />Rack Unit Capacity</h3><p className="mt-1 text-xs text-slate-400">Enter the monthly Rack Unit Capacity and attach the image for {month}. This is the final Data Entry section.</p></div>
+    <div><h3 className="flex items-center gap-2 text-base text-slate-100"><ImagePlus className="h-5 w-5 text-emerald-400" />Rack Unit Capacity</h3><p className="mt-1 text-xs text-slate-400">Enter Total (U) and Available (U) from the monthly Rack Unit Capacity source for {month}. Used (U) and Availability (%) are calculated automatically. Attach the source image below.</p></div>
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
        <label className="text-xs text-slate-400">Total (U)<input type="number" min="0" value={totalU} disabled={busy} onChange={event => setTotalU(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-200 disabled:opacity-50" /></label>
-       <label className="text-xs text-slate-400">Used (U)<input type="number" min="0" value={usedU} disabled={busy} onChange={event => setUsedU(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-200 disabled:opacity-50" /></label>
-      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3"><p className="text-[11px] text-slate-500">Available (U)</p><p className="mt-1 text-lg text-slate-100">{available === null ? "—" : available}</p></div>
+       <label className="text-xs text-slate-400">Available (U)<input type="number" min="0" max={Number.isFinite(total) && total >= 0 ? total : undefined} value={availableU} disabled={busy} onChange={event => setAvailableU(event.target.value)} className="mt-1 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-200 disabled:opacity-50" /></label>
+      <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3"><p className="text-[11px] text-slate-500">Used (U)</p><p className="mt-1 text-lg text-slate-100">{used === null || !Number.isFinite(used) ? "—" : used}</p></div>
       <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-3"><p className="text-[11px] text-slate-500">Availability (%)</p><p className="mt-1 text-lg text-slate-100">{availability === null ? "—" : `${(availability * 100).toFixed(2)}%`}</p></div>
     </div>
     <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 space-y-3">

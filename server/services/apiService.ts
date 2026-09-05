@@ -410,8 +410,18 @@ export class ApiService {
     if (body === null || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "INVALID_BODY", "Request body must be a JSON object.");
     const source = body as Record<string, unknown>;
     const totalU = source.total_u;
-    const usedU = source.used_u;
-    if (typeof totalU !== "number" || !Number.isFinite(totalU) || totalU < 0 || typeof usedU !== "number" || !Number.isFinite(usedU) || usedU < 0 || usedU > totalU) throw new HttpError(400, "INVALID_RACK_UNIT_VALUES", "total_u and used_u must be finite non-negative numbers, with used_u less than or equal to total_u.");
+    const availableU = source.available_u;
+    const legacyUsedU = source.used_u;
+    if (typeof totalU !== "number" || !Number.isFinite(totalU) || totalU < 0) throw new HttpError(400, "INVALID_RACK_UNIT_VALUES", "total_u must be a finite non-negative number.");
+    let usedU: number;
+    if (availableU !== undefined) {
+      if (typeof availableU !== "number" || !Number.isFinite(availableU) || availableU < 0 || availableU > totalU) throw new HttpError(400, "INVALID_RACK_UNIT_VALUES", "available_u must be a finite non-negative number less than or equal to total_u.");
+      usedU = totalU - availableU;
+      if (legacyUsedU !== undefined && (typeof legacyUsedU !== "number" || !Number.isFinite(legacyUsedU) || Math.abs(legacyUsedU - usedU) > 1e-9)) throw new HttpError(400, "INVALID_RACK_UNIT_VALUES", "used_u conflicts with Total (U) minus Available (U).");
+    } else {
+      if (typeof legacyUsedU !== "number" || !Number.isFinite(legacyUsedU) || legacyUsedU < 0 || legacyUsedU > totalU) throw new HttpError(400, "INVALID_RACK_UNIT_VALUES", "available_u is required for new clients; legacy used_u must be a finite non-negative number no greater than total_u.");
+      usedU = legacyUsedU;
+    }
     const saved = await this.repository.withTransaction(repository => repository.saveRackUnitSnapshot({ siteId, month: selected, totalU, usedU, expectedRowVersion: parseExpectedRowVersion(source.expected_row_version), actorUserId, correlationId }));
     const refreshed = await this.repository.getRackUnitSnapshot(siteId, selected);
     const snapshot = refreshed ?? saved;
