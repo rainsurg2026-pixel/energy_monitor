@@ -206,6 +206,9 @@ export function createVercelHandler(environment: NodeJS.ProcessEnv = process.env
     if (previewProductionBridgeEnabled(environment) && request.method === "POST" && pathnameOf(request) === PREVIEW_PDF_RENDER_PATH) {
       try { await renderPreviewPdf(request, response, fetchImpl, renderPdf); }
       catch (error) {
+        const safeName = error instanceof Error ? error.name : "UNKNOWN_ERROR";
+        const safeCode = typeof (error as { code?: unknown })?.code === "string" ? String((error as { code: string }).code).slice(0, 64) : "UNCLASSIFIED";
+        console.error(`[pdf-render] failure name=${safeName} code=${safeCode}`);
         if ((error as { code?: unknown })?.code === "PAYLOAD_TOO_LARGE") writeJson(response, 413, { ok: false, error: { code: "PAYLOAD_TOO_LARGE", message: "Report HTML exceeds the permitted size." } });
         else writeJson(response, 503, { ok: false, error: { code: "PDF_RENDER_UNAVAILABLE", message: "The PDF renderer is temporarily unavailable." } });
       }
