@@ -118,3 +118,27 @@ test("authenticated PDF render endpoint returns a server-generated attachment", 
     assert.deepEqual(rendered, [html]);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
+
+test("admin database backup returns a protected ZIP attachment", async () => {
+  const sessionToken = "backup-test-session";
+  const user = { id: "1", username: "admin", displayName: "Admin Backup", role: "admin" as const, active: true as const };
+  const principal = { userId: "1", role: "admin" as const, active: true as const, sessionId: "backup-test-session-id" };
+  const auth = { authenticateSession: async (token?: string) => token === sessionToken ? { user, principal } : null } as unknown as AuthService;
+  const backupCalls: unknown[] = [];
+  const backupExporter = { exportAllDatabase: async (input: unknown) => { backupCalls.push(input); return { bytes: Buffer.from("PK-backup"), filename: "EnergyMonitor_Database_Backup_05-Sep-2026_22-30_GMT+7.zip", rowCount: 12, tableCount: 4 }; } };
+  const server = createServer(createApp({ repository: unusedRepository, config, authService: auth, rateLimitStore: new InMemoryRateLimitStore(), backupExporter }));
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  try {
+    const csrf = createCsrfToken(config.csrfSecret, sessionToken);
+    const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/admin/database-backup`, { method: "POST", headers: { origin: "http://test", cookie: `em_session=${sessionToken}; em_csrf=${csrf}`, "x-csrf-token": csrf } });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /application\/zip/);
+    assert.match(response.headers.get("content-disposition") ?? "", /EnergyMonitor_Database_Backup_.*GMT\+7\.zip/);
+    assert.equal(response.headers.get("x-energy-backup-tables"), "4");
+    assert.equal(response.headers.get("x-energy-backup-rows"), "12");
+    assert.equal(Buffer.from(await response.arrayBuffer()).toString("utf8"), "PK-backup");
+    assert.equal(backupCalls.length, 1);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});

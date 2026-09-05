@@ -7,6 +7,7 @@ import type { BackendRepository } from "../repositories/contracts";
 import { AuthService } from "../auth/authService";
 import { PasswordPolicyError } from "../auth/passwordPolicy";
 import type { RackUnitImageStorage } from "../storage/rackUnitImageStorage";
+import type { LogicalBackupExporter } from "../backup/logicalBackupExporter";
 import { authContext, createAuthContextMiddleware } from "../auth/http";
 import { PERMISSIONS } from "../authz/permissions";
 import { requirePermission, type AuthenticatedPrincipal, isAuthorizationError, type Role } from "../authz";
@@ -20,6 +21,7 @@ export interface AppDependencies {
   imageStorage?: RackUnitImageStorage;
   service?: ApiService;
   pdfRenderer?: (html: string) => Promise<Buffer>;
+  backupExporter?: LogicalBackupExporter;
 }
 
 function requestId(req: Request, res: Response, next: NextFunction): void {
@@ -32,7 +34,7 @@ function requestId(req: Request, res: Response, next: NextFunction): void {
 
 function readOnlyMutationGuard(config: ServerConfig, req: Request, res: Response, next: NextFunction): void {
   const mutation = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
-  const securityExceptions = req.path === "/auth/login" || req.path === "/auth/logout" || req.path === "/reports/render-pdf";
+  const securityExceptions = req.path === "/auth/login" || req.path === "/auth/logout" || req.path === "/reports/render-pdf" || req.path === "/admin/database-backup";
   if (config.readOnlyMode && mutation && !securityExceptions) {
     res.status(423).json({ ok: false, error: { code: "READ_ONLY_MODE", message: "Mutations are disabled while READ_ONLY_MODE is enabled.", requestId: res.locals.requestId } });
     return;
@@ -186,6 +188,20 @@ export function createApp(dependencies: AppDependencies) {
     const requestedScope = req.query.scope;
     const scope: HistoryScope = requestedScope === undefined ? "full" : requestedScope === "dashboard" || requestedScope === "rack" || requestedScope === "full" ? requestedScope : (() => { throw new HttpError(400, "INVALID_HISTORY_SCOPE", "scope must be dashboard, rack, or full."); })();
     sendOk(res, await service.getHistory(parseSiteId(req.params.siteId), scope));
+  }));
+
+  app.post("/api/v1/admin/database-backup", asyncRoute(async (_req, res) => {
+    const actor = withPermission(res, PERMISSIONS.migrationManage);
+    if (!dependencies.backupExporter) throw new HttpError(503, "BACKUP_UNAVAILABLE", "Database backup is not available in this runtime.");
+    const currentUser = authContext(res).user;
+    const artifact = await dependencies.backupExporter.exportAllDatabase({ generatedBy: currentUser?.displayName ?? actor.userId, environment: dependencies.config.nodeEnv });
+    res.status(200);
+    res.setHeader("content-type", "application/zip");
+    res.setHeader("content-disposition", `attachment; filename="${artifact.filename}"`);
+    res.setHeader("cache-control", "no-store");
+    res.setHeader("x-energy-backup-tables", String(artifact.tableCount));
+    res.setHeader("x-energy-backup-rows", String(artifact.rowCount));
+    res.send(artifact.bytes);
   }));
 
   app.get("/api/v1/admin/users", asyncRoute(async (_req, res) => { const actor = withPermission(res, PERMISSIONS.usersList); sendOk(res, await auth.listUsers(actor)); }));
