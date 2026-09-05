@@ -10,6 +10,8 @@ function check(name: string, condition: unknown): void { assert.equal(Boolean(co
 check("default filename matches the Desktop convention", defaultReportFilename("Rangsit", "2026-06") === "Energy_Report_Rangsit_2026-06");
 check("default filename strips spaces from a multi-word facility name", defaultReportFilename("Data Center One", "2026-06") === "Energy_Report_DataCenterOne_2026-06");
 check("All Facilities filename uses YYYY-Mmm", defaultAllFacilitiesReportFilename("2026-07") === "All_Facilities_Energy_Report_2026-Jul");
+check("All Facilities filename appends both site names", defaultAllFacilitiesReportFilename("2026-07", ["Rangsit", "Srinakarin"]) === "All_Facilities_Energy_Report_2026-Jul_Rangsit_Srinakarin");
+check("All Facilities filename sanitizes and de-duplicates site names", defaultAllFacilitiesReportFilename("2026-07", ["Data Center One", "Data Center One"]) === "All_Facilities_Energy_Report_2026-Jul_DataCenterOne");
 
 // Extension safety: no duplicate extensions, case-insensitive detection.
 check("Excel gets .xlsx", withExtension("Energy_Report_Rangsit_2026-06", "xlsx") === "Energy_Report_Rangsit_2026-06.xlsx");

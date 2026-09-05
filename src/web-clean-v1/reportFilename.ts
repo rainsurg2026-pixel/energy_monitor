@@ -34,14 +34,18 @@ export function defaultReportFilename(facilityName: string, month: string): stri
   return `Energy_Report_${safeFacility}_${month}`;
 }
 
-/** All Facilities stable default basename using the requested YYYY-Mmm token. */
-export function defaultAllFacilitiesReportFilename(month: string): string {
+/** All Facilities stable default basename using the requested YYYY-Mmm token.
+ * Facility names are appended when supplied so multi-site artifacts are
+ * self-identifying outside the application. */
+export function defaultAllFacilitiesReportFilename(month: string, facilityNames: readonly string[] = []): string {
   const match = /^(\d{4})-(\d{2})$/.exec(month);
   const monthNumber = match ? Number(match[2]) : NaN;
   const token = match && monthNumber >= 1 && monthNumber <= 12
     ? `${match[1]}-${MONTH_ABBREVIATIONS_EN[monthNumber - 1]}`
     : sanitizeFilename(month);
-  return `All_Facilities_Energy_Report_${token}`;
+  const sites = [...new Set(facilityNames.map(name => sanitizeFilename(name).replace(/\s+/g, "")).filter(Boolean))];
+  const suffix = sites.length > 0 ? `_${sites.join("_")}` : "";
+  return `All_Facilities_Energy_Report_${token}${suffix}`;
 }
 
 /** The name actually used at export time: sanitized, and never empty -

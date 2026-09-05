@@ -46,8 +46,13 @@ assert.doesNotMatch(exportSource, /onclone:\s*clonedDoc/);
 // not the parent app document.
 assert.match(exportSource, /root\.ownerDocument\?\.fonts/);
 assert.match(exportSource, /await waitForReportImages\(frameDocument\.body\)/);
-assert.match(exportSource, /canvas\.toDataURL\("image\/png"\), "PNG"/);
+assert.match(exportSource, /const imageData = compact \? canvas\.toDataURL\("image\/jpeg", 0\.82\) : canvas\.toDataURL\("image\/png"\)/);
+assert.match(exportSource, /compact \? "JPEG" : "PNG"/);
+assert.match(exportSource, /exportReportPdfFromHtml\(buildAllFacilitiesReportHtml[^;]+\{ compact: true \}\)/);
 assert.match(exportSource, /buildCurrentFacilityPdfHtml\(data, sections\)/);
+const reportSource = readFileSync(new URL("../src/reports/pdf/reportHtml.ts", import.meta.url), "utf8");
+assert.match(reportSource, /White-report mode/);
+assert.match(reportSource, /cover-meta-card,[^}]+background:#fff/);
 
 // The app still contains a theme-level table override; iframe isolation is
 // therefore a real protection boundary rather than a cosmetic refactor.

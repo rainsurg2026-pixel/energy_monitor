@@ -813,7 +813,7 @@ export function buildAllFacilitiesCsv(facilities: ExportFacility[], comparison: 
 
 function allFacilitiesDefaultFileName(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null): string {
   const month = comparison?.referenceMonth ?? facilities[0]?.selectedMonth ?? facilities[0]?.reportingMonths?.at(-1) ?? "";
-  return defaultAllFacilitiesReportFilename(month);
+  return defaultAllFacilitiesReportFilename(month, facilities.map(facility => facility.siteName));
 }
 
 export function exportAllFacilitiesCsv(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, fileName?: string): void {
@@ -1074,7 +1074,7 @@ async function waitForReportImages(root: HTMLElement): Promise<void> {
  * jsPDF then packages each report page into a downloadable PDF blob. This is
  * intentionally asynchronous and does not open a popup or invoke print().
  */
-export async function exportReportPdfFromHtml(html: string, fileName: string): Promise<void> {
+export async function exportReportPdfFromHtml(html: string, fileName: string, options: { compact?: boolean } = {}): Promise<void> {
   if (typeof document === "undefined") throw new Error("PDF export requires a browser document.");
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import("html2canvas"),
@@ -1119,11 +1119,13 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
     }
     const pages = [...frameDocument.querySelectorAll<HTMLElement>(".cover, .page")];
     if (pages.length === 0) throw new Error("The report did not contain any printable pages.");
+    const compact = options.compact === true;
+    const renderScale = compact ? 1.5 : PDF_RENDER_SCALE;
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
     for (const [index, page] of pages.entries()) {
       const canvas = await html2canvas(page, {
         backgroundColor: "#ffffff",
-        scale: PDF_RENDER_SCALE,
+        scale: renderScale,
         useCORS: true,
         logging: false,
         width: Math.max(page.scrollWidth, 1),
@@ -1132,7 +1134,8 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
       });
       if (index > 0) pdf.addPage("a4", "landscape");
       const placement = fitPdfImageToPage(canvas.width, canvas.height);
-      pdf.addImage(canvas.toDataURL("image/png"), "PNG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
+      const imageData = compact ? canvas.toDataURL("image/jpeg", 0.82) : canvas.toDataURL("image/png");
+      pdf.addImage(imageData, compact ? "JPEG" : "PNG", placement.xMm, placement.yMm, placement.widthMm, placement.heightMm, undefined, "FAST");
     }
     pdf.save(ensureExtension(fileName, "pdf"));
   } finally {
@@ -1158,7 +1161,7 @@ export function exportHtml(logs: MonthlyLog[], siteName: string, selectedMonth: 
 }
 
 export function exportAllFacilitiesHtml(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): void {
-  download(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? `${defaultAllFacilitiesReportFilename(selectedMonth)}.html`, "text/html;charset=utf-8");
+  download(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? `${defaultAllFacilitiesReportFilename(selectedMonth, facilities.map(facility => facility.siteName))}.html`, "text/html;charset=utf-8");
 }
 
 
@@ -1198,5 +1201,5 @@ export function buildAllFacilitiesReportHtml(facilities: ExportFacility[], compa
 
 /** Generates one real PDF download containing one report per facility. */
 export async function exportAllFacilitiesPdf(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, selectedMonth: string, fileName?: string, sections?: readonly ReportSectionId[]): Promise<void> {
-  await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? defaultAllFacilitiesReportFilename(selectedMonth));
+  await exportReportPdfFromHtml(buildAllFacilitiesReportHtml(facilities, comparison, selectedMonth, sections), fileName ?? defaultAllFacilitiesReportFilename(selectedMonth, facilities.map(facility => facility.siteName)), { compact: true });
 }

@@ -48,6 +48,9 @@ export const REPORT_CSS = `
 .appendix-page table{font-size:11px}.appendix-page th,.appendix-page td{padding:6px 5px}.appendix-intro{display:flex;justify-content:space-between;gap:16px;margin:10px 0 14px;padding:12px 14px;background:#f7f2ee;border:1px solid #e7d9d2;border-radius:7px}.appendix-intro strong{font-size:14px;color:#29415d}.appendix-intro span{color:#657488}
 .positions table{font-size:10.5px}.positions th,.positions td{padding:5px}.rack-position-page .continuation{margin-top:-2px}.rack-unit-capacity-layout .rack-unit-capacity-image-placeholder{min-height:48mm;height:48mm}.rack-unit-capacity-layout .ruc-right:has(.rack-unit-capacity-image-placeholder){align-items:flex-start;padding-top:12px}.rack-unit-capacity-image-page-content{height:150mm;display:flex;align-items:center;justify-content:center;padding:8mm 12mm}.rack-unit-capacity-image-page-content .rack-unit-capacity-image-figure{width:100%;height:100%;margin:0}.rack-unit-capacity-image-page-content .rack-unit-capacity-image{max-width:100%;max-height:138mm;width:auto;height:auto}.rack-unit-capacity-image-page-content .rack-unit-capacity-image-placeholder{width:75%;height:90mm;font-size:13px}.rack-unit-capacity-image-page-content .rack-unit-capacity-image-caption{font-size:11px;margin-top:7px}
 .capacity-health-page .zone-summary table{font-size:10.5px}.capacity-health-page .zone-summary th,.capacity-health-page .zone-summary td{padding:5px}
+/* White-report mode: decorative report surfaces stay unfilled for cleaner printing
+ * and smaller rasterized PDFs. Semantic chart/heatmap colors remain intact. */
+.cover:before,.cover:after{display:none}.page{box-shadow:none}.cover-meta-card,.cover-audit,.kpi,.rack-unit-capacity-image-placeholder,.appendix-intro,th{background:#fff}.ups-track{background:#fff;border:1px solid #dce4ea}
 `;
 
 export function facilityBandPage(facilityName: string): string {

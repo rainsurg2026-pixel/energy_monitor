@@ -25,6 +25,8 @@ assert.match(app, /const contextMonth = effectiveMonth\(period, periodEndMonth\)
 assert.match(app, /Recent Reports/);
 assert.match(app, /HistoryProvider\.remove\(item\.id\)/);
 assert.match(app, /defaultAllFacilitiesReportFilename/);
+assert.match(app, /defaultAllFacilitiesReportFilename\(contextMonth, sites\.map\(item => item\.name\)\)/);
+assert.match(app, /compactAllFacilitiesImageDataUri/);
 assert.match(app, /includeImage: true/);
 
 assert.match(app, /exportAllFacilitiesHtml/);

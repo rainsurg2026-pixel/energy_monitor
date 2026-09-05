@@ -77,6 +77,29 @@ const readStoredFacility = (userId: string) => { try { return sessionStorage.get
 const storeFacility = (userId: string, siteId: number) => { try { sessionStorage.setItem(facilityStorageKey(userId), String(siteId)); } catch { /* facility remains selected in memory when storage is unavailable */ } };
 const readRecentReports = (): ReportHistoryItem[] => { try { return HistoryProvider.list(); } catch { return []; } };
 
+async function compactAllFacilitiesImageDataUri(image: WebRackUnitCapacityImage | null): Promise<string | null> {
+  if (!image?.dataUri || typeof document === "undefined") return image?.dataUri ?? null;
+  const maxWidth = 1400;
+  const maxHeight = 900;
+  const width = Math.max(1, image.meta.width || 1);
+  const height = Math.max(1, image.meta.height || 1);
+  const ratio = Math.min(1, maxWidth / width, maxHeight / height);
+  if (ratio === 1 && image.contentType === "image/jpeg" && image.byteSize <= 800_000) return image.dataUri;
+  const source = new Image();
+  source.src = image.dataUri;
+  try { await source.decode(); } catch { return image.dataUri; }
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * ratio));
+  canvas.height = Math.max(1, Math.round(height * ratio));
+  const context = canvas.getContext("2d");
+  if (!context) return image.dataUri;
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  const compact = canvas.toDataURL("image/jpeg", 0.84);
+  return compact.length < image.dataUri.length ? compact : image.dataUri;
+}
+
 function createWebRackUnitImageProvider(siteId: number): Pick<IDataProvider, "getRackUnitCapacityImage"> {
   return {
     getRackUnitCapacityImage: async (facility, reportingMonth) => {
@@ -753,7 +776,8 @@ function Reports({ lang, siteId, siteName, userDisplayName, logs, month, sites, 
       const scopedRackHistory = (siteHistory.rackCapacityHistory ?? []).filter(row => selectedReportMonthSet.has(row.snapshotMonth));
       const scopedRackUnitCapacity = (siteHistory.rackUnitCapacity ?? []).filter(row => selectedReportMonthSet.has(row.month));
       const scopedUpsGroupHistory = siteHistory.upsGroupHistory ? { ...siteHistory.upsGroupHistory, rows: siteHistory.upsGroupHistory.rows.filter(row => selectedReportMonthSet.has(row.month)) } : null;
-      return { siteName: site.name, siteCode: site.code, logs: scopedLogs, calculationLogs: siteHistory.logs, rack: rackReportFromSnapshot(rackResponse), rackHistory: scopedRackHistory, rackUnitCapacity: scopedRackUnitCapacity, trendRackUnitCapacity: siteHistory.rackUnitCapacity ?? [], upsGroupHistory: scopedUpsGroupHistory, dashboardMapping: { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping(site.name) }, rackUnitCapacityImageDataUri: rackUnitImage?.dataUri ?? null, rackUnitCapacityImageMeta: rackUnitImage?.meta ?? null, reportingMonths: selectedReportMonths, selectedMonth };
+      const compactRackUnitImageDataUri = includeImage ? await compactAllFacilitiesImageDataUri(rackUnitImage) : null;
+      return { siteName: site.name, siteCode: site.code, logs: scopedLogs, calculationLogs: siteHistory.logs, rack: rackReportFromSnapshot(rackResponse), rackHistory: scopedRackHistory, rackUnitCapacity: scopedRackUnitCapacity, trendRackUnitCapacity: siteHistory.rackUnitCapacity ?? [], upsGroupHistory: scopedUpsGroupHistory, dashboardMapping: { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping(site.name) }, rackUnitCapacityImageDataUri: compactRackUnitImageDataUri, rackUnitCapacityImageMeta: rackUnitImage?.meta ?? null, reportingMonths: selectedReportMonths, selectedMonth };
     }));
     allFacilitiesCacheRef.current.set(cacheKey, request);
     void request.catch(() => { if (allFacilitiesCacheRef.current.get(cacheKey) === request) allFacilitiesCacheRef.current.delete(cacheKey); });
@@ -850,7 +874,7 @@ function Reports({ lang, siteId, siteName, userDisplayName, logs, month, sites, 
     return () => { cancelled = true; };
   }, [contextMonth, loadReportImage, siteId]);
   const resolvedFileName = resolveFilename(fileNameInput, siteName, contextMonth);
-  const allFacilitiesFileName = defaultAllFacilitiesReportFilename(contextMonth);
+  const allFacilitiesFileName = defaultAllFacilitiesReportFilename(contextMonth, sites.map(item => item.name));
   const scopedLogs = useMemo(() => filterLogsByPeriod(logs, period, periodEndMonth), [logs, period, periodEndMonth]);
   const availableMonths = availableReportMonths.length > 0 ? availableReportMonths : [...new Set(logs.map(log => log.month))].sort();
 

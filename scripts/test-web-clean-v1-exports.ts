@@ -694,6 +694,9 @@ for (const sourceCase of [
   const allFacilitiesHtmlWithImages = buildAllFacilitiesReportHtml(allFacilitiesWithImages, null, "2026-06");
   check("All Facilities PDF/HTML includes the selected-month image for every facility", (allFacilitiesHtmlWithImages.split("data:image/png;base64,").length - 1) === 2);
   check("All Facilities default filename uses YYYY-Mmm", defaultAllFacilitiesReportFilename("2026-07") === "All_Facilities_Energy_Report_2026-Jul");
+  check("All Facilities default filename appends included sites", defaultAllFacilitiesReportFilename("2026-07", ["Rangsit", "Srinakarin"]) === "All_Facilities_Energy_Report_2026-Jul_Rangsit_Srinakarin");
+  const excelDashboardSource = readFileSync("src/web-clean-v1/excelDashboard.ts", "utf8");
+  check("interactive Excel OOXML is DEFLATE-compressed", excelDashboardSource.includes('compression: "DEFLATE"') && excelDashboardSource.includes("level: 6"));
   const multiNames = multiWorkbook.worksheets.map((sheet: any) => sheet.name);
   check("All Facilities Excel has 90 Site Energy Comparison", multiNames.some((name: string) => name.startsWith("90 ")));
   check("All Facilities Excel has 91 Site Rack Comparison", multiNames.some((name: string) => name.startsWith("91 ")));
