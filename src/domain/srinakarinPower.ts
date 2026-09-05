@@ -1,8 +1,18 @@
 import type { MonthlyLog, PhaseReading, SrinakarinInputSnapshot, UpsRecord } from "../types";
 
-export const SRINAKARIN_AGGREGATE_IDS = [
+export const SRINAKARIN_OVERALL_UPS_IDS = [
+  "UPS 11A", "UPS 11B", "UPS 12A", "UPS 12B", "UPS 13A", "UPS 13B"
+] as const;
+
+export const SRINAKARIN_DCM4_AGGREGATE_IDS = [
   "UPS 41A", "UPS 41B", "PPC 41A", "PPC 41B", "PPC 42A", "PPC 42B",
   "PPC 43A", "PPC 43B", "PPC 44A", "PPC 44B"
+] as const;
+
+/** Every monthly aggregate persisted by the Srinakarin Web entry workflow. */
+export const SRINAKARIN_AGGREGATE_IDS = [
+  ...SRINAKARIN_OVERALL_UPS_IDS,
+  ...SRINAKARIN_DCM4_AGGREGATE_IDS
 ] as const;
 
 export const SRINAKARIN_DEFAULT_UPS_PHASE_IDS = [
@@ -73,10 +83,20 @@ function existingRecord(log: MonthlyLog, id: string): UpsRecord | undefined {
   return log.ups.find(record => normalizeId(record.upsId) === wanted);
 }
 
+function hasUpsPhaseSource(snapshot: SrinakarinInputSnapshot | undefined, id: string): boolean {
+  const prefix = `${normalizeId(id)} -`;
+  return Object.keys(snapshot?.upsPhase ?? {}).some(phaseId => normalizeId(phaseId).startsWith(prefix));
+}
+
 /** Preserves the Srinakarin phase-to-monthly aggregate used by v2.3.1. */
 export function calculateSrinakarinAggregate(log: MonthlyLog): UpsRecord[] {
   const snapshot = log.srinakarinInputs;
-  return SRINAKARIN_AGGREGATE_IDS.map(id => {
+  const aggregateIds = SRINAKARIN_AGGREGATE_IDS.filter(id =>
+    !(SRINAKARIN_OVERALL_UPS_IDS as readonly string[]).includes(id)
+      || existingRecord(log, id) !== undefined
+      || hasUpsPhaseSource(snapshot, id)
+  );
+  return aggregateIds.map(id => {
     const existing = existingRecord(log, id);
     const isUps = id.startsWith("UPS ");
     const isPpc43 = id.startsWith("PPC 43");

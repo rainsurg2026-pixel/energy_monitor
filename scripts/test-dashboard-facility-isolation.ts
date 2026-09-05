@@ -19,7 +19,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { readWorkbookFromFile } from "../src/excel/WorkbookReader";
 import { DeviceLists } from "../src/excel/SheetMapper";
-import { SRINAKARIN_AGGREGATE_IDS } from "../src/utils/srinakarinPower";
+import { SRINAKARIN_AGGREGATE_IDS, SRINAKARIN_DCM4_AGGREGATE_IDS } from "../src/utils/srinakarinPower";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -103,12 +103,10 @@ async function main(): Promise<void> {
     SRINAKARIN_AGGREGATE_IDS.some(id => srinakarinIds.has(id.replace(/\s+/g, "").toLowerCase())));
   // Rangsit's own site has no "UPS 41A"/"PPC 4xA" hardware at all - if these
   // ever appeared in a Rangsit read, that would be a real cross-site leak.
-  // (Srinakarin's own file separately carries "UPS 11A"/"13A" rows too - that
-  // is real data for a different device at that site, not a leak, and the
-  // fixed dashboard code never reads them: SRINAKARIN_AGGREGATE_IDS excludes
-  // them, which is exactly the fix's point.)
+  // UPS 11/12/13 legitimately exist at both facilities. Cross-site isolation
+  // therefore checks only Srinakarin's DCM4-exclusive UPS41/PPC41-44 IDs.
   check("Rangsit's UPS records never carry Srinakarin-exclusive aggregate IDs (UPS 41A/PPC 4xA) - no cross-site leak",
-    SRINAKARIN_AGGREGATE_IDS.every(id => !rangsitIds.has(id.replace(/\s+/g, "").toLowerCase())));
+    SRINAKARIN_DCM4_AGGREGATE_IDS.every(id => !rangsitIds.has(id.replace(/\s+/g, "").toLowerCase())));
   check("Rangsit's UMDB-mapped 'UPS 14C' never appears in Srinakarin's aggregate ID set",
     !SRINAKARIN_AGGREGATE_IDS.some(id => id.replace(/\s+/g, "").toLowerCase() === "ups14c"));
 

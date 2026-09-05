@@ -71,6 +71,7 @@ assert.match(serverRendererSource, /request\.abort\("blockedbyclient"\)/);
 const reportSource = readFileSync(new URL("../src/reports/pdf/reportHtml.ts", import.meta.url), "utf8");
 assert.match(reportSource, /White-report mode/);
 assert.match(reportSource, /cover-meta-card,[^}]+background:#fff/);
+assert.match(reportSource, /\.dashboard-continuation-page\{min-height:0;page-break-before:auto;break-before:auto;page-break-inside:auto;break-inside:auto\}/);
 
 // The app still contains a theme-level table override; iframe isolation is
 // therefore a real protection boundary rather than a cosmetic refactor.
