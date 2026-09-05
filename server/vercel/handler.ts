@@ -54,7 +54,71 @@ function writeHealth(response: ServerResponse, method: string | undefined): void
   writeJson(response, 200, { ok: true, data: API_HEALTH_RESPONSE });
 }
 
-export function createVercelHandler(environment: NodeJS.ProcessEnv = process.env, createRuntime: RuntimeFactory = createConfiguredRuntime): VercelNodeHandler {
+const PRODUCTION_API_ORIGIN = "https://energy-monitor-puce.vercel.app";
+const PRODUCTION_DATA_PREVIEW_BRANCH = "feat/energy-monitor-next";
+
+function previewProductionBridgeEnabled(environment: NodeJS.ProcessEnv): boolean {
+  return environment.VERCEL_ENV === "preview" && environment.VERCEL_GIT_COMMIT_REF === PRODUCTION_DATA_PREVIEW_BRANCH;
+}
+
+function previewBridgeAllows(method: string | undefined, pathname: string): boolean {
+  const normalizedMethod = (method ?? "GET").toUpperCase();
+  if (["GET", "HEAD", "OPTIONS"].includes(normalizedMethod)) return true;
+  return normalizedMethod === "POST" && (pathname === "/api/v1/auth/login" || pathname === "/api/v1/auth/logout");
+}
+
+async function requestBody(request: IncomingMessage): Promise<Uint8Array | undefined> {
+  const method = (request.method ?? "GET").toUpperCase();
+  if (method === "GET" || method === "HEAD") return undefined;
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of request) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  if (chunks.length === 0) return undefined;
+  return new Uint8Array(Buffer.concat(chunks.map(chunk => Buffer.from(chunk))));
+}
+
+async function proxyProductionApiReadOnly(request: IncomingMessage, response: ServerResponse, fetchImpl: typeof fetch): Promise<void> {
+  const pathname = pathnameOf(request);
+  if (!previewBridgeAllows(request.method, pathname)) {
+    writeJson(response, 403, { ok: false, error: { code: "READ_ONLY_MODE", message: "Preview uses Production data in read-only mode." } });
+    return;
+  }
+
+  const target = new URL(request.url ?? pathname, PRODUCTION_API_ORIGIN);
+  const headers = new Headers();
+  for (const name of ["accept", "content-type", "cookie", "x-csrf-token", "user-agent"]) {
+    const value = request.headers[name];
+    if (Array.isArray(value)) headers.set(name, value.join(", "));
+    else if (typeof value === "string") headers.set(name, value);
+  }
+  // The bridge is server-to-server. Present the canonical Production origin to
+  // the upstream CSRF/CORS policy while the browser remains same-origin to Preview.
+  headers.set("origin", PRODUCTION_API_ORIGIN);
+  headers.set("referer", `${PRODUCTION_API_ORIGIN}/`);
+
+  const upstream = await fetchImpl(target, {
+    method: request.method ?? "GET",
+    headers,
+    body: await requestBody(request),
+    redirect: "manual"
+  });
+
+  response.statusCode = upstream.status;
+  response.setHeader("cache-control", upstream.headers.get("cache-control") ?? "no-store");
+  response.setHeader("x-energy-preview-data-source", "production-api-read-only");
+  for (const name of ["content-type", "content-disposition", "location", "x-request-id"]) {
+    const value = upstream.headers.get(name);
+    if (value) response.setHeader(name, value);
+  }
+  const cookieHeaders = (upstream.headers as Headers & { getSetCookie?: () => string[] }).getSetCookie?.() ?? [];
+  if (cookieHeaders.length > 0) response.setHeader("set-cookie", cookieHeaders);
+  else {
+    const cookie = upstream.headers.get("set-cookie");
+    if (cookie) response.setHeader("set-cookie", cookie);
+  }
+  response.end(Buffer.from(await upstream.arrayBuffer()));
+}
+
+export function createVercelHandler(environment: NodeJS.ProcessEnv = process.env, createRuntime: RuntimeFactory = createConfiguredRuntime, fetchImpl: typeof fetch = fetch): VercelNodeHandler {
   let runtimePromise: Promise<ConfiguredRuntime> | undefined;
   const getRuntime = (): Promise<ConfiguredRuntime> => {
     if (!runtimePromise) {
@@ -76,6 +140,15 @@ export function createVercelHandler(environment: NodeJS.ProcessEnv = process.env
       const runtime = await getRuntime();
       runtime.app(request, response);
     } catch (error) {
+      if (error instanceof ConfigurationError && previewProductionBridgeEnabled(environment)) {
+        try {
+          await proxyProductionApiReadOnly(request, response, fetchImpl);
+          return;
+        } catch {
+          writeJson(response, 503, { ok: false, error: { code: "SERVICE_UNAVAILABLE", message: "The Production data bridge is unavailable." } });
+          return;
+        }
+      }
       writeJson(response, 503, unavailablePayload(error, environment));
     }
   };

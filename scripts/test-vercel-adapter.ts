@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { AddressInfo } from "node:net";
 import { readFile } from "node:fs/promises";
 import { createVercelHandler } from "../server/vercel/handler";
-import { loadServerConfig } from "../server/config/env";
+import { ConfigurationError, loadServerConfig } from "../server/config/env";
 import { createPoolOptions } from "../server/db/pool";
 import type { ConfiguredRuntime } from "../server/runtime";
 
@@ -73,6 +73,54 @@ await withAdapter(async base => {
   assert.match(sites.contentType, /application\/json/);
   assert.equal(sites.body.includes("<div id=\"root\">"), false);
 });
+
+const bridgeCalls: Array<{ url: string; method: string; origin: string | null; cookie: string | null; body: string }> = [];
+const bridgeFetch: typeof fetch = async (input, init) => {
+  const url = String(input);
+  const method = String(init?.method ?? "GET").toUpperCase();
+  const headers = new Headers(init?.headers);
+  const body = init?.body ? Buffer.from(init.body as Uint8Array).toString("utf8") : "";
+  bridgeCalls.push({ url, method, origin: headers.get("origin"), cookie: headers.get("cookie"), body });
+  const pathname = new URL(url).pathname;
+  if (pathname === "/api/v1/health/ready") return new Response(JSON.stringify({ ok: true, data: { status: "ready" } }), { status: 200, headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  if (pathname === "/api/v1/auth/csrf") return new Response(JSON.stringify({ ok: true, data: { csrfToken: "bridge-csrf" } }), { status: 200, headers: { "content-type": "application/json", "set-cookie": "energy_csrf=bridge-csrf; Path=/; SameSite=Lax" } });
+  if (pathname === "/api/v1/auth/login") return new Response(JSON.stringify({ ok: true, data: { user: { displayName: "Production User" } } }), { status: 200, headers: { "content-type": "application/json", "set-cookie": "energy_session=bridge-session; Path=/; HttpOnly; SameSite=Lax" } });
+  return new Response(JSON.stringify({ ok: false, error: { code: "UNAUTHORIZED", message: "Authentication is required." } }), { status: 401, headers: { "content-type": "application/json" } });
+};
+
+const bridgeEnvironment: NodeJS.ProcessEnv = { ...testEnvironment, VERCEL_GIT_COMMIT_REF: "feat/energy-monitor-next" };
+const bridgeHandler = createVercelHandler(
+  bridgeEnvironment,
+  async () => { throw new ConfigurationError("preview runtime intentionally unavailable in bridge test"); },
+  bridgeFetch
+);
+await withHandler(bridgeHandler, async base => {
+  const ready = await request(base, "/api/v1/health/ready");
+  assert.equal(ready.status, 200);
+  assert.deepEqual(JSON.parse(ready.body), { ok: true, data: { status: "ready" } });
+
+  const csrfResponse = await fetch(`${base}/api/v1/auth/csrf`);
+  assert.equal(csrfResponse.status, 200);
+  assert.equal(csrfResponse.headers.get("x-energy-preview-data-source"), "production-api-read-only");
+
+  const blocked = await fetch(`${base}/api/v1/sites/1/months/2026-09`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  assert.equal(blocked.status, 403);
+  assert.equal((await blocked.json() as any).error.code, "READ_ONLY_MODE");
+
+  const login = await fetch(`${base}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: "energy_csrf=bridge-csrf", "x-csrf-token": "bridge-csrf" },
+    body: JSON.stringify({ username: "admin", password: "test" })
+  });
+  assert.equal(login.status, 200);
+  assert.equal((await login.json() as any).data.user.displayName, "Production User");
+});
+assert.ok(bridgeCalls.some(call => new URL(call.url).pathname === "/api/v1/health/ready"));
+const loginBridgeCall = bridgeCalls.find(call => new URL(call.url).pathname === "/api/v1/auth/login");
+assert.equal(loginBridgeCall?.origin, "https://energy-monitor-puce.vercel.app");
+assert.equal(loginBridgeCall?.cookie, "energy_csrf=bridge-csrf");
+assert.match(loginBridgeCall?.body ?? "", /"username":"admin"/);
+assert.equal(bridgeCalls.some(call => new URL(call.url).pathname === "/api/v1/sites/1/months/2026-09"), false);
 
 let startupAttempts = 0;
 const recoveringHandler = createVercelHandler(testEnvironment, async () => {
