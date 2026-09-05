@@ -15,7 +15,7 @@ import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
 import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
 import type { ReportSectionId } from "../reporting/reportingTypes";
 import { recentMonthsThroughSelected } from "../utils/historyWindow";
-import { addDashboardDataSheet, addCurrentFacilityDashboard, addInteractiveDashboard, injectInteractiveDashboardCharts, type CurrentFacilityDashboardOptions, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
+import { addDashboardDataSheet, addCurrentFacilityDashboard, injectInteractiveDashboardCharts, type CurrentFacilityDashboardOptions, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
 import { defaultAllFacilitiesReportFilename } from "./reportFilename";
 import { formatBangkokReportTimestamp } from "../utils";
 
@@ -423,8 +423,9 @@ async function workbookForCurrentFacility(facility: ExportFacility): Promise<any
   const plan = addCurrentFacilityDashboard(workbook, facility.siteName, metrics, {
     dashboardSheetName, dataSheetName, selectedMonth, exportedAt: facility.generatedAt ?? new Date().toISOString(), exportedBy: facility.generatedBy ?? null,
     trendMetrics, trendDataSheetName,
-    airSheetName: "06_Input_AirConditioning", rackSheetName: "03_Saved_Rack", rackUnitSheetName: "04_Saved_RackUnit",
-    airFields, airRows, rackRows, rackUnitRows, rackImageDataUri: facility.rackUnitCapacityImageDataUri ?? null, rackImageMeta: facility.rackUnitCapacityImageMeta ?? null
+    airSheetName: "06_Input_AirConditioning", airDashboardSheetName: "31 Dashboard-FAC Air", rackSheetName: "03_Saved_Rack", rackUnitSheetName: "04_Saved_RackUnit",
+    upsSheetName: "29 Dashboard-FAC UPS", detailSheetName: "30 Dashboard-FAC Details", dcSheetName: "32 Dashboard-FAC DC",
+    airFields, airRows, airDashboardRows: baseModel.dashboardAirRows, upsRows: baseModel.dashboardUpsRows, detailRows: baseModel.dashboardDetailRows, dcRows: baseModel.dashboardDcRows, rackRows, rackUnitRows, rackImageDataUri: facility.rackUnitCapacityImageDataUri ?? null, rackImageMeta: facility.rackUnitCapacityImageMeta ?? null
   });
   const savedEnergy = addCurrentTableSheet(workbook, "02_Saved_Energy", "tblSavedEnergy",
     ["Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "UPS Load (kW)", "UPS Load (%)", "Status"],
@@ -526,12 +527,18 @@ export async function workbookForFacilities(facilities: ExportFacility[], compar
     const airFields = [...new Set(logs.flatMap(log => Object.keys(log.air.meters ?? {}).concat(["eb41a", "eb41b", "eb42a", "eb42b"])))].sort();
 
     const dashboardModel = buildExcelDashboardModel(logs, calculationLogs, facility);
+    const reportMetrics = dashboardMetricsForMonths(dashboardModel, reportMonths);
     const trendDashboardModel = buildExcelDashboardModel(trendLogs, calculationLogs, trendFacility);
     const trendMetrics = dashboardMetricsForMonths(trendDashboardModel, trendMonths);
     const separateTrendData = trendMonths.join(",") !== reportMonths.join(",");
-    dashboardPlans.push(addInteractiveDashboard(workbook, prefix, facility.siteName, dashboardModel.metrics, { dashboardSheetName: sheetOrderName(code, 1, "Dashboard"), dataSheetName: dashboardDataName, includeDataSheet: false, exportedBy: facility.generatedBy ?? null, exportedAt: facility.generatedAt, trendMetrics, trendDataSheetName: separateTrendData ? trendDataName : dashboardDataName }));
+    const airRows = logs.map(log => ({ month: log.month, values: airFields.map(field => (log.air as unknown as Record<string, number | null | undefined>)[field] ?? log.air.meters?.[field] ?? null) }));
+    const rackRows: CurrentFacilityDashboardOptions["rackRows"] = (facility.rackHistory ?? []).map(row => ({ month: row.snapshotMonth, zone: row.rackZone, total: row.totalRacks, inUse: row.inUse, available: row.available, reserved: row.reserved, pending: row.pendingDismantle, other: row.other, usage: row.usagePct, availability: row.availabilityPct }));
+    if (rackRows.length === 0 && facility.rack) { const rackMetrics = calculateRackCapacityMetrics(facility.rack.records); rackRows.push({ month: facility.rack.sourceSnapshot, zone: "(Total)", total: rackMetrics.total, inUse: rackMetrics.inUse.count, available: rackMetrics.available.count, reserved: rackMetrics.reserved.count, pending: rackMetrics.pendingDismantle.count, other: rackMetrics.other.count, usage: rackMetrics.total > 0 ? rackMetrics.inUse.count / rackMetrics.total : null, availability: rackMetrics.total > 0 ? rackMetrics.available.count / rackMetrics.total : null }); }
+    rackRows.sort((a, b) => a.month.localeCompare(b.month) || (a.zone.toLowerCase().includes("total") ? -1 : b.zone.toLowerCase().includes("total") ? 1 : a.zone.localeCompare(b.zone)));
+    const dashboardRackUnitRows: CurrentFacilityDashboardOptions["rackUnitRows"] = (facility.rackUnitCapacity ?? []).map(row => ({ month: row.month, total: row.totalU, used: row.usedU, available: row.availableU, usage: row.totalU > 0 ? row.usedU / row.totalU : null, availability: row.availabilityPct })).sort((a, b) => a.month.localeCompare(b.month));
+    dashboardPlans.push(addCurrentFacilityDashboard(workbook, facility.siteName, reportMetrics, { dashboardSheetName: sheetOrderName(code, 1, "Dashboard"), dataSheetName: dashboardDataName, selectedMonth, exportedAt: facility.generatedAt ?? new Date().toISOString(), exportedBy: facility.generatedBy ?? null, trendMetrics, trendDataSheetName: separateTrendData ? trendDataName : dashboardDataName, airSheetName: sheetOrderName(code, 21, "Air_Inputs"), airDashboardSheetName: sheetOrderName(code, 31, "Dashboard-FAC Air"), rackSheetName: sheetOrderName(code, 34, "Rack Capacity History"), rackUnitSheetName: sheetOrderName(code, 33, "Rack Unit Capacity"), upsSheetName: sheetOrderName(code, 29, "Dashboard-FAC UPS"), detailSheetName: sheetOrderName(code, 30, "Dashboard-FAC Details"), dcSheetName: sheetOrderName(code, 32, "Dashboard-FAC DC"), airFields, airRows, airDashboardRows: dashboardModel.dashboardAirRows, upsRows: dashboardModel.dashboardUpsRows, detailRows: dashboardModel.dashboardDetailRows, dcRows: dashboardModel.dashboardDcRows, rackRows, rackUnitRows: dashboardRackUnitRows, rackImageDataUri: facility.rackUnitCapacityImageDataUri ?? null, rackImageMeta: facility.rackUnitCapacityImageMeta ?? null }));
     if (separateTrendData) deferredDashboardData.push({ name: trendDataName, metrics: trendMetrics });
-    deferredDashboardData.push({ name: dashboardDataName, metrics: dashboardModel.metrics });
+    deferredDashboardData.push({ name: dashboardDataName, metrics: reportMetrics });
     const report = reportDataFromFacility(facility, selectedMonth);
     const executive = addPresentationSheet(workbook, sheetOrderName(code, 2, "Executive"), `${facility.siteName} — Executive Summary`);
     configureTableSheet(executive, ["Reporting Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)", "Status"], [[selectedMonth, report.currentRow?.buildingEnergyKwh ?? null, report.currentRow?.buildingCostThb ?? null, report.currentRow?.floorEnergyKwh ?? null, report.currentRow?.floorCostThb ?? null, report.currentRow?.averageRateThbPerKwh ?? null, report.currentRow?.floorSharePercent == null ? null : report.currentRow.floorSharePercent / 100, report.currentRow?.status ?? "Partial"]]);
@@ -1092,10 +1099,17 @@ async function exportReportPdfViaServer(html: string, fileName: string): Promise
   }
   const blob = await response.blob();
   if (blob.size < 5 || !/application\/pdf/i.test(blob.type || response.headers.get("content-type") || "")) throw new Error("The PDF renderer returned an invalid file.");
-  const url = URL.createObjectURL(blob);
-  // iPad/iPhone Safari is far more reliable opening the completed PDF in its
-  // native viewer than forcing an async Blob download after the user gesture.
-  window.location.assign(url);
+  const namedBlob = new File([blob], finalName, { type: "application/pdf" });
+  const url = URL.createObjectURL(namedBlob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = finalName;
+  anchor.rel = "noopener";
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 /**

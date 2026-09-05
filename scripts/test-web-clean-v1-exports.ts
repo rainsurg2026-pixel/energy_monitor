@@ -111,7 +111,7 @@ const interactiveXlsx = await writeInteractiveExcelWorkbook(completeExportWorkbo
 const interactiveZip = await JSZip.loadAsync(interactiveXlsx);
 const interactiveParts = Object.keys(interactiveZip.files);
 const chartParts = interactiveParts.filter(name => /^xl\/charts\/chart\d+\.xml$/.test(name));
-check("Interactive Excel export contains exactly six native editable charts", chartParts.length === 6);
+check("Interactive Excel export contains seven native editable charts including Rack Unit Capacity Trend", chartParts.length === 7);
 const dashboardXmlParts: string[] = [];
 for (const name of interactiveParts.filter(item => /^xl\/worksheets\/sheet\d+\.xml$/.test(item))) {
   const file = interactiveZip.file(name);
@@ -122,13 +122,13 @@ check("Interactive Dashboard has a reporting-month dropdown", dashboardSheetXml.
 check("Interactive Dashboard cards use the selected month", dashboardSheetXml.includes("MATCH($B$3"));
 const chartFile = chartParts.length > 0 ? interactiveZip.file(chartParts[0]) : null;
 const chartXml = chartFile ? await chartFile.async("string") : "";
-check("Interactive Dashboard chart references native Dashboard helper ranges", chartXml.includes("01_Dashboard") && chartXml.includes("4th Floor Estimated Cost Trend (THB)"));
+check("Interactive Dashboard chart references the exported native Trend_Data range", chartXml.includes("98_Trend_Data") && chartXml.includes("4th Floor Estimated Cost Trend (THB)"));
 check("Interactive line charts suppress per-point series and category labels", chartXml.includes("showCatName val=\"0\"") && chartXml.includes("showSerName val=\"0\"") && chartXml.includes("showVal val=\"0\""));
 check("Interactive charts provide a bottom legend", chartXml.includes("legendPos val=\"b\"") && chartXml.includes("overlay val=\"0\""));
 check("Interactive Excel export contains a worksheet drawing relationship", interactiveParts.some(name => /xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(name)) && interactiveParts.some(name => /xl\/drawings\/drawing\d+\.xml$/.test(name)));
   const chartTitles: string[] = [];
   for (const name of chartParts) { const file = interactiveZip.file(name); if (file) chartTitles.push((await file.async("string")).match(/<a:t>([^<]+)<\/a:t>/)?.[1] ?? ""); }
-  check("Interactive Excel export charts are the six required trends in order", JSON.stringify(chartTitles) === JSON.stringify(["4th Floor Estimated Cost Trend (THB)", "4th Floor Total Energy Trend (kWh)", "4th Floor Average Electricity Rate Trend (THB/kWh)", "4th Floor UPS Energy Trend (kWh)", "4th Floor Air Conditioning Energy Trend (kWh)", "4th Floor DC Power Energy Trend (kWh)"]));
+  check("Interactive Excel export charts mirror the PDF trend set in order", JSON.stringify(chartTitles) === JSON.stringify(["4th Floor Estimated Cost Trend (THB)", "4th Floor Total Energy Trend (kWh)", "4th Floor Average Electricity Rate Trend (THB/kWh)", "4th Floor UPS Energy Trend (kWh)", "4th Floor Air Conditioning Energy Trend (kWh)", "4th Floor DC Power Energy Trend (kWh)", "Rack Unit Capacity Trend"]));
   check("Interactive Excel export embeds rack image media", interactiveParts.some(name => /^xl\/media\/image\d+\.(png|jpe?g)$/.test(name)));
   check("Interactive Excel export contains no macro project", !interactiveParts.includes("xl/vbaProject.bin"));
 const auditUser = "Patamin Thevase";
@@ -139,8 +139,8 @@ const selectionDashboard = selectionWorkbook.getWorksheet("01_Dashboard")!;
 check("Current Facility export keeps the UI-selected month", selectionDashboard.getCell("B3").value === "2026-05");
 check("Current Facility Excel first sheet shows the authenticated display name", selectionDashboard.getCell("H3").value === auditUser);
 check("Current Facility Excel first sheet shows the export timestamp", selectionDashboard.getCell("K3").value === auditTimestampDisplay);
-check("Current Facility Air GWh formulas use the Facility input columns", String(selectionDashboard.getCell(20, 2).value?.formula ?? "").includes("06_Input_AirConditioning") && String(selectionDashboard.getCell(20, 2).value?.formula ?? "").includes("$C$2"));
-check("Current Facility trend helper formulas use the exported Quick Period trend data", String(selectionDashboard.getCell(2, 21).value?.formula ?? "").includes("98_Trend_Data") && !String(selectionDashboard.getCell(2, 21).value?.formula ?? "").includes("MATCH($S2"));
+check("Current Facility Air GWh formulas use the shared Dashboard-FAC Air values used by PDF", (() => { let found = false; selectionDashboard.eachRow(row => row.eachCell(cell => { const formula = String((cell.value as any)?.formula ?? ""); if (formula.includes("31 Dashboard-FAC Air") && formula.includes("SUMIFS")) found = true; })); return found; })());
+check("Current Facility dashboard includes the same Engineering and Executive section sequence as PDF", selectionDashboard.getSheetValues().flat().map(String).includes("Engineering View") && selectionDashboard.getSheetValues().flat().map(String).includes("Executive View"));
 check("Current Facility dashboard excludes comparison-only sections", !selectionDashboard.getSheetValues().flat().map(String).some(value => value.includes("Electricity Consumption Comparison") || value.includes("Electricity Cost Comparison")));
 
 // Quick Period contract: exported data follows the selected report scope. If
@@ -160,7 +160,7 @@ const oneMonthTrendData = oneMonthWorkbook.getWorksheet("98_Trend_Data")!;
 const oneMonthEnergyInput = oneMonthWorkbook.worksheets.find(sheet => sheet.name.includes("Energy_Cost_Inputs"))!;
 check("One-month Excel report data contains only the selected Quick Period month", oneMonthReportData.rowCount === 2 && oneMonthEnergyInput.rowCount === 2 && oneMonthEnergyInput.getCell(2, 1).value === "2026-05");
 check("One-month Excel charts receive trailing 12 months", oneMonthTrendData.rowCount === 13 && oneMonthTrendData.getCell(2, 1).value === "2025-06" && oneMonthTrendData.getCell(13, 1).value === "2026-05");
-check("One-month Current Facility helper range spans the trailing 12 chart months", oneMonthWorkbook.getWorksheet("01_Dashboard")!.getCell(2, 20).value?.result === "Jun-25" && oneMonthWorkbook.getWorksheet("01_Dashboard")!.getCell(13, 20).value?.result === "May-26");
+check("One-month Current Facility Rack Unit chart uses the same trailing 12 trend data sheet", oneMonthTrendData.getCell(2, 2).value === "Jun-25" && oneMonthTrendData.getCell(13, 2).value === "May-26");
 
 const twoMonthWorkbook = await workbookForFacilities([{
   siteName: "Rangsit",
@@ -176,8 +176,8 @@ const multiAuditWorkbook = await workbookForFacilities([
   { siteName: "Srinakarin", siteCode: "SNK", generatedBy: auditUser, generatedAt: auditTimestamp, logs: [log("2026-05")] }
 ]);
 const multiAuditFirstSheet = multiAuditWorkbook.worksheets[0]!;
-check("All Facilities Excel first sheet shows the authenticated display name", multiAuditFirstSheet.getCell("B4").value === auditUser);
-check("All Facilities Excel first sheet shows the export timestamp", multiAuditFirstSheet.getCell("H4").value === auditTimestampDisplay);
+check("All Facilities Excel first sheet shows the authenticated display name", multiAuditFirstSheet.getCell("H3").value === auditUser);
+check("All Facilities Excel first sheet shows the export timestamp", multiAuditFirstSheet.getCell("K3").value === auditTimestampDisplay);
 const rackOnlyExport = await workbookForFacilities([{
   siteName: "Rangsit",
   logs: [],
