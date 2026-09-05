@@ -154,11 +154,16 @@ export function addDashboardDataSheet(workbook: any, dataSheetName: string, metr
   }
 }
 
-export function addInteractiveDashboard(workbook: any, prefix: string, siteName: string, metrics: ExcelDashboardMetric[], options: { dashboardSheetName?: string; dataSheetName?: string; includeDataSheet?: boolean; exportedBy?: string | null; exportedAt?: string } = {}): ExcelDashboardPlan {
+export function addInteractiveDashboard(workbook: any, prefix: string, siteName: string, metrics: ExcelDashboardMetric[], options: { dashboardSheetName?: string; dataSheetName?: string; includeDataSheet?: boolean; exportedBy?: string | null; exportedAt?: string; trendMetrics?: ExcelDashboardMetric[]; trendDataSheetName?: string } = {}): ExcelDashboardPlan {
   const dashboardSheetName = options.dashboardSheetName ?? safeSheetName(prefix, "Dashboard");
   const dataSheetName = options.dataSheetName ?? safeSheetName(prefix, "Dashboard_Data");
+  const trendMetrics = options.trendMetrics ?? metrics;
+  const trendDataSheetName = options.trendDataSheetName ?? dataSheetName;
   const dashboard = workbook.addWorksheet(dashboardSheetName);
-  if (options.includeDataSheet !== false) addDashboardDataSheet(workbook, dataSheetName, metrics);
+  if (options.includeDataSheet !== false) {
+    if (trendDataSheetName !== dataSheetName) addDashboardDataSheet(workbook, trendDataSheetName, trendMetrics);
+    addDashboardDataSheet(workbook, dataSheetName, metrics);
+  }
   const dataRowEnd = Math.max(2, metrics.length + 1);
   const selectedMetric = metrics.at(-1);
   const data = excelSheetRef(dataSheetName);
@@ -286,13 +291,13 @@ export function addInteractiveDashboard(workbook: any, prefix: string, siteName:
   for (let row = 20; row <= 52; row++) dashboard.getRow(row).height = 18;
 
   const firstDataRow = 2;
-  const lastDataRow = Math.max(firstDataRow, metrics.length + 1);
-  const categoryRange = chartRange(dataSheetName, "B", firstDataRow, lastDataRow);
-  const categories = metrics.map(metric => monthLabelShort(metric.month, "en"));
-  const series = (name: string, column: string, key: keyof ExcelDashboardMetric, color: string): ExcelDashboardSeries => ({ name, range: chartRange(dataSheetName, column, firstDataRow, lastDataRow), values: metrics.map(metric => metricValue(metric, key)), color });
+  const lastDataRow = Math.max(firstDataRow, trendMetrics.length + 1);
+  const categoryRange = chartRange(trendDataSheetName, "B", firstDataRow, lastDataRow);
+  const categories = trendMetrics.map(metric => monthLabelShort(metric.month, "en"));
+  const series = (name: string, column: string, key: keyof ExcelDashboardMetric, color: string): ExcelDashboardSeries => ({ name, range: chartRange(trendDataSheetName, column, firstDataRow, lastDataRow), values: trendMetrics.map(metric => metricValue(metric, key)), color });
   return {
     dashboardSheetName,
-    charts: metrics.length === 0 ? [] : [
+    charts: trendMetrics.length === 0 ? [] : [
       { title: "Monthly Energy Consumption Trend", kind: "line", categoryRange, categories, series: [series("Building Energy", "C", "buildingEnergyKwh", "E4572E"), series("4th Floor Energy", "E", "floorEnergyKwh", "007A75"), series("UPS Energy", "I", "upsEnergyKwh", "4472C4"), series("Air Energy", "J", "airEnergyKwh", "ED9B40"), series("DC Energy", "K", "dcEnergyKwh", "6B7280")], fromCol: 0, fromRow: 19, toCol: 7, toRow: 35 },
       { title: "Monthly Energy Cost Trend", kind: "line", categoryRange, categories, series: [series("Building Cost", "D", "buildingCostThb", "E4572E"), series("4th Floor Cost", "F", "floorCostThb", "007A75")], fromCol: 7, fromRow: 19, toCol: 14, toRow: 35 },
       { title: "Rack Unit Capacity and Utilization Trend", kind: "line", categoryRange, categories, series: [series("Total (U)", "N", "rackTotalU", "1E3A5F"), series("Used (U)", "O", "rackUsedU", "E4572E"), series("Available (U)", "P", "rackAvailableU", "00A878")], fromCol: 0, fromRow: 36, toCol: 7, toRow: 52 },
@@ -314,6 +319,9 @@ export interface CurrentFacilityDashboardOptions {
   airRows: Array<{ month: string; values: Array<number | null> }>;
   rackRows: Array<{ month: string; zone: string; total: number; inUse: number; available: number; reserved: number; pending: number; other: number; usage: number | null; availability: number | null }>;
   rackUnitRows: Array<{ month: string; total: number; used: number; available: number; usage: number | null; availability: number | null }>;
+  /** Chart-only scope. Matches Quick Period unless the report contains one month, when it is trailing 12. */
+  trendMetrics?: ExcelDashboardMetric[];
+  trendDataSheetName?: string;
   rackImageDataUri?: string | null;
   rackImageMeta?: { savedAt: string; savedBy: string; width: number; height: number } | null;
 }
@@ -388,7 +396,10 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   const lookup = (column: string, key: keyof ExcelDashboardMetric) => currentLookup(options.dataSheetName, column, dataRowEnd, metricValue(selected, key));
   const rackEnd = Math.max(2, options.rackRows.length + 1);
   const unitEnd = Math.max(2, options.rackUnitRows.length + 1);
-  const data = excelSheetRef(options.dataSheetName);
+  const trendMetrics = options.trendMetrics ?? metrics;
+  const trendDataSheetName = options.trendDataSheetName ?? options.dataSheetName;
+  const trendData = excelSheetRef(trendDataSheetName);
+  const trendDataRowEnd = Math.max(2, trendMetrics.length + 1);
 
   sheet.views = [{ state: "frozen", ySplit: 4, showGridLines: false }];
   sheet.properties.tabColor = TEAL;
@@ -485,25 +496,32 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   sheet.mergeCells(executiveRow + 2, 5, executiveRow + 2, 8);
   sheet.getCell(executiveRow + 2, 5).value = "Trend scope";
   sheet.mergeCells(executiveRow + 3, 5, executiveRow + 6, 8);
-  sheet.getCell(executiveRow + 3, 5).value = "Trailing 12 available months ending at Reporting Month. Formula-driven and independent of the application's export quick range.";
+  const oneMonthReport = metrics.length === 1;
+  sheet.getCell(executiveRow + 3, 5).value = oneMonthReport
+    ? "One-month report: charts show up to the trailing 12 available months ending at the Reporting Month."
+    : `Charts follow the exported Quick Period (${trendMetrics.length} reporting month${trendMetrics.length === 1 ? "" : "s"}).`;
   sheet.getCell(executiveRow + 3, 5).alignment = { vertical: "middle", horizontal: "left", wrapText: true };
   sheet.getCell(executiveRow + 3, 5).font = { name: "Aptos", size: 10, color: { argb: MUTED } };
 
   const helperFirst = 2;
-  const helperLast = 13;
-  const trailing = metrics.filter(metric => metric.month <= options.selectedMonth).slice(-12);
+  const helperLast = Math.max(helperFirst, trendMetrics.length + 1);
   for (let row = helperFirst; row <= helperLast; row++) {
-    const metric = trailing[row - helperFirst];
-    const ordinal = row - helperFirst + 1;
-    const monthKey = "IFERROR(INDEX(" + data + "!$A$2:$A$" + dataRowEnd + ",MATCH($B$3," + data + "!$A$2:$A$" + dataRowEnd + ",0)-12+ROW(A" + ordinal + ")),\"\")";
-    const monthLabel = "IFERROR(INDEX(" + data + "!$B$2:$B$" + dataRowEnd + ",MATCH($B$3," + data + "!$A$2:$A$" + dataRowEnd + ",0)-12+ROW(A" + ordinal + ")),\"\")";
-    sheet.getCell(row, 19).value = cellFormula(monthKey, metric?.month ?? null);
-    sheet.getCell(row, 20).value = cellFormula(monthLabel, metric ? monthLabelShort(metric.month, "en") : null);
+    const metric = trendMetrics[row - helperFirst];
+    const sourceRow = row;
+    if (!metric) {
+      for (let column = 19; column <= 26; column++) sheet.getCell(row, column).value = "";
+      continue;
+    }
+    sheet.getCell(row, 19).value = cellFormula(`IFERROR(${trendData}!$A$${sourceRow},\"\")`, metric.month);
+    sheet.getCell(row, 20).value = cellFormula(`IFERROR(${trendData}!$B$${sourceRow},\"\")`, monthLabelShort(metric.month, "en"));
     const helperValues: Array<[number, string, keyof ExcelDashboardMetric]> = [[21, "F", "floorCostThb"], [22, "E", "floorEnergyKwh"], [23, "G", "averageRateThbPerKwh"], [24, "I", "upsEnergyKwh"], [25, "J", "airEnergyKwh"], [26, "K", "dcEnergyKwh"]];
     helperValues.forEach(([column, sourceColumn, key]) => {
-      const formula = "IFERROR(INDEX(" + data + "!$" + sourceColumn + "$2:$" + sourceColumn + "$" + dataRowEnd + ",MATCH($S" + row + "," + data + "!$A$2:$A$" + dataRowEnd + ",0)),\"\")";
+      const formula = `IFERROR(${trendData}!$${sourceColumn}$${sourceRow},\"\")`;
       sheet.getCell(row, column).value = cellFormula(formula, metricValue(metric, key));
     });
+  }
+  if (trendMetrics.length === 0) {
+    for (let column = 19; column <= 26; column++) sheet.getCell(helperFirst, column).value = "";
   }
   for (let column = 19; column <= 26; column++) sheet.getColumn(column).hidden = true;
 
@@ -576,9 +594,9 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   sheet.pageSetup.rowBreaks = [{ id: executiveRow - 1 }, { id: rackRow - 1 }, { id: unitRow - 1 }];
 
   const categoryRange = chartRange(options.dashboardSheetName, "T", helperFirst, helperLast);
-  const chartSeries = (name: string, column: string, key: keyof ExcelDashboardMetric, color: string): ExcelDashboardSeries => ({ name, range: chartRange(options.dashboardSheetName, column, helperFirst, helperLast), values: trailing.map(metric => metricValue(metric, key)), color });
-  const chart = (title: string, column: string, key: keyof ExcelDashboardMetric, color: string, fromCol: number, fromRow: number, toCol: number, toRow: number): ExcelDashboardChart => ({ title, kind: "line", categoryRange, categories: trailing.map(metric => monthLabelShort(metric.month, "en")), series: [chartSeries(title.replace(" Trend", ""), column, key, color)], fromCol, fromRow, toCol, toRow });
-  return { dashboardSheetName: options.dashboardSheetName, charts: [
+  const chartSeries = (name: string, column: string, key: keyof ExcelDashboardMetric, color: string): ExcelDashboardSeries => ({ name, range: chartRange(options.dashboardSheetName, column, helperFirst, helperLast), values: trendMetrics.map(metric => metricValue(metric, key)), color });
+  const chart = (title: string, column: string, key: keyof ExcelDashboardMetric, color: string, fromCol: number, fromRow: number, toCol: number, toRow: number): ExcelDashboardChart => ({ title, kind: "line", categoryRange, categories: trendMetrics.map(metric => monthLabelShort(metric.month, "en")), series: [chartSeries(title.replace(" Trend", ""), column, key, color)], fromCol, fromRow, toCol, toRow });
+  return { dashboardSheetName: options.dashboardSheetName, charts: trendMetrics.length === 0 ? [] : [
     chart("4th Floor Estimated Cost Trend (THB)", "U", "floorCostThb", "E4572E", 0, executiveRow + 11, 6, executiveRow + 27),
     chart("4th Floor Total Energy Trend (kWh)", "V", "floorEnergyKwh", "007A75", 7, executiveRow + 11, 14, executiveRow + 27),
     chart("4th Floor Average Electricity Rate Trend (THB/kWh)", "W", "averageRateThbPerKwh", "4472C4", 0, executiveRow + 28, 6, executiveRow + 44),

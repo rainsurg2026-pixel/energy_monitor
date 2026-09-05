@@ -140,8 +140,37 @@ check("Current Facility export keeps the UI-selected month", selectionDashboard.
 check("Current Facility Excel first sheet shows the authenticated display name", selectionDashboard.getCell("H3").value === auditUser);
 check("Current Facility Excel first sheet shows the export timestamp", selectionDashboard.getCell("K3").value === auditTimestampDisplay);
 check("Current Facility Air GWh formulas use the Facility input columns", String(selectionDashboard.getCell(20, 2).value?.formula ?? "").includes("06_Input_AirConditioning") && String(selectionDashboard.getCell(20, 2).value?.formula ?? "").includes("$C$2"));
-check("Current Facility trend helper formulas follow the selected-month helper key", String(selectionDashboard.getCell(2, 21).value?.formula ?? "").includes("MATCH($S2"));
+check("Current Facility trend helper formulas use the exported Quick Period trend data", String(selectionDashboard.getCell(2, 21).value?.formula ?? "").includes("98_Trend_Data") && !String(selectionDashboard.getCell(2, 21).value?.formula ?? "").includes("MATCH($S2"));
 check("Current Facility dashboard excludes comparison-only sections", !selectionDashboard.getSheetValues().flat().map(String).some(value => value.includes("Electricity Consumption Comparison") || value.includes("Electricity Cost Comparison")));
+
+// Quick Period contract: exported data follows the selected report scope. If
+// that scope contains exactly one month, only the chart data receives the
+// trailing 12 available months from calculation history.
+const trailingTwelveMonths = ["2025-06", "2025-07", "2025-08", "2025-09", "2025-10", "2025-11", "2025-12", "2026-01", "2026-02", "2026-03", "2026-04", "2026-05"];
+const trailingTwelveLogs = trailingTwelveMonths.map((month, index) => ({ ...log(month), energyCost: { buildingEnergyKwh: 1000 + index, buildingElectricityCostThb: 5000 + index } }));
+const oneMonthWorkbook = await workbookForFacilities([{
+  siteName: "Rangsit",
+  selectedMonth: "2026-05",
+  reportingMonths: ["2026-05"],
+  logs: [trailingTwelveLogs.at(-1)!],
+  calculationLogs: trailingTwelveLogs
+}] as any);
+const oneMonthReportData = oneMonthWorkbook.getWorksheet("99_Dashboard_Data")!;
+const oneMonthTrendData = oneMonthWorkbook.getWorksheet("98_Trend_Data")!;
+const oneMonthEnergyInput = oneMonthWorkbook.worksheets.find(sheet => sheet.name.includes("Energy_Cost_Inputs"))!;
+check("One-month Excel report data contains only the selected Quick Period month", oneMonthReportData.rowCount === 2 && oneMonthEnergyInput.rowCount === 2 && oneMonthEnergyInput.getCell(2, 1).value === "2026-05");
+check("One-month Excel charts receive trailing 12 months", oneMonthTrendData.rowCount === 13 && oneMonthTrendData.getCell(2, 1).value === "2025-06" && oneMonthTrendData.getCell(13, 1).value === "2026-05");
+check("One-month Current Facility helper range spans the trailing 12 chart months", oneMonthWorkbook.getWorksheet("01_Dashboard")!.getCell(2, 20).value?.result === "Jun-25" && oneMonthWorkbook.getWorksheet("01_Dashboard")!.getCell(13, 20).value?.result === "May-26");
+
+const twoMonthWorkbook = await workbookForFacilities([{
+  siteName: "Rangsit",
+  selectedMonth: "2026-05",
+  reportingMonths: ["2026-04", "2026-05"],
+  logs: trailingTwelveLogs.slice(-2),
+  calculationLogs: trailingTwelveLogs
+}] as any);
+const twoMonthTrendData = twoMonthWorkbook.getWorksheet("98_Trend_Data")!;
+check("Multi-month Excel charts follow Quick Period instead of expanding to 12 months", twoMonthTrendData.rowCount === 3 && twoMonthTrendData.getCell(2, 1).value === "2026-04" && twoMonthTrendData.getCell(3, 1).value === "2026-05");
 const multiAuditWorkbook = await workbookForFacilities([
   { siteName: "Rangsit", siteCode: "RST", generatedBy: auditUser, generatedAt: auditTimestamp, logs: [log("2026-05")] },
   { siteName: "Srinakarin", siteCode: "SNK", generatedBy: auditUser, generatedAt: auditTimestamp, logs: [log("2026-05")] }

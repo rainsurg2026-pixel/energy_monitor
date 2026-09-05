@@ -249,16 +249,18 @@ function trendPage(title: string, unit: string, series: TrendSeries[], rows: Rep
 }
 
 function facilityTrendPages(data: ReportData): string {
+  const rows = data.executiveTrendRows ?? data.monthlyRows;
   const charts: Array<[string, string, string, Array<number | null>, string]> = [
-    ["Total 4th Floor Energy Trend", "kWh", REPORT_PALETTE.energy, data.monthlyRows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy for the selected reporting window."],
-    ["UPS System Energy Trend", "kWh", REPORT_PALETTE.ups, data.monthlyRows.map(row => row.upsEnergyKwh), "Monthly UPS system energy utilization."],
-    ["Air Conditioning Energy Trend", "kWh", REPORT_PALETTE.air, data.monthlyRows.map(row => row.airEnergyKwh), "Meter-difference energy; gaps indicate an unavailable prior reading."],
-    ["DC Power Panel Energy Trend", "kWh", REPORT_PALETTE.dc, data.monthlyRows.map(row => row.dcEnergyKwh), "Monthly DC panel energy estimate."],
-    ["Estimated 4th Floor Cost Trend", "THB", REPORT_PALETTE.cost, data.monthlyRows.map(row => row.floorCostThb), "Estimated cost at the building average electricity rate."],
-    ["Building Average Electricity Rate Trend", "THB/kWh", REPORT_PALETTE.rate, data.monthlyRows.map(row => row.averageRateThbPerKwh), "Building electricity cost divided by building energy."],
+    ["Total 4th Floor Energy Trend", "kWh", REPORT_PALETTE.energy, rows.map(row => row.floorEnergyKwh), "Monthly total 4th Floor energy for the chart reporting window."],
+    ["UPS System Energy Trend", "kWh", REPORT_PALETTE.ups, rows.map(row => row.upsEnergyKwh), "Monthly UPS system energy utilization."],
+    ["Air Conditioning Energy Trend", "kWh", REPORT_PALETTE.air, rows.map(row => row.airEnergyKwh), "Meter-difference energy; gaps indicate an unavailable prior reading."],
+    ["DC Power Panel Energy Trend", "kWh", REPORT_PALETTE.dc, rows.map(row => row.dcEnergyKwh), "Monthly DC panel energy estimate."],
+    ["Estimated 4th Floor Cost Trend", "THB", REPORT_PALETTE.cost, rows.map(row => row.floorCostThb), "Estimated cost at the building average electricity rate."],
+    ["Building Average Electricity Rate Trend", "THB/kWh", REPORT_PALETTE.rate, rows.map(row => row.averageRateThbPerKwh), "Building electricity cost divided by building energy."],
   ];
+  const eyebrow = data.monthlyRows.length === 1 ? "FACILITY TREND ANALYTICS - TRAILING 12 MONTHS" : "FACILITY TREND ANALYTICS - SELECTED QUICK PERIOD";
   return charts.map(([title, unit, color, values, explanation]) =>
-    trendPage(title, unit, [{ name: title, color, values }], data.monthlyRows, explanation, "FACILITY TREND ANALYTICS", "historical")
+    trendPage(title, unit, [{ name: title, color, values }], rows, explanation, eyebrow, "historical")
   ).join("");
 }
 
@@ -858,8 +860,9 @@ function currentExecutiveTrendPages(data: ReportData): string {
     ["4th Floor Air Conditioning Energy Trend (kWh)", "kWh", REPORT_PALETTE.air, rows.map(row => row.airEnergyKwh), "Monthly air-conditioning meter-difference energy."],
     ["4th Floor DC Power Energy Trend (kWh)", "kWh", REPORT_PALETTE.dc, rows.map(row => row.dcEnergyKwh), "Monthly DC power panel energy estimate."]
   ];
+  const eyebrow = data.monthlyRows.length === 1 ? "EXECUTIVE VIEW - TRAILING 12 MONTHS" : "EXECUTIVE VIEW - SELECTED QUICK PERIOD";
   return charts.map(([title, unit, color, values, explanation]) =>
-    trendPage(title, unit, [{ name: title, color, values }], rows, explanation, "EXECUTIVE VIEW · LAST 12 MONTHS", "executive")
+    trendPage(title, unit, [{ name: title, color, values }], rows, explanation, eyebrow, "executive")
   ).join("");
 }
 
@@ -890,16 +893,17 @@ export function buildCurrentFacilityPdfHtml(data: ReportData, selectedSections?:
 export function buildReportBodyPages(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
   const executive = executiveDashboardPage(data);
   const dashboard = data.engineeringDashboard ? engineeringDashboard(data, data.engineeringDashboard) : "";
+  const trendRows = data.executiveTrendRows ?? data.monthlyRows;
   const executiveTrend = trendPage(
     "Monthly Energy Consumption Trend",
     "kWh",
     [
-      { name: "Whole Building", color: REPORT_PALETTE.energy, values: data.monthlyRows.map(row => row.buildingEnergyKwh) },
-      { name: "4th Floor", color: REPORT_PALETTE.siteRangsit, values: data.monthlyRows.map(row => row.floorEnergyKwh) }
+      { name: "Whole Building", color: REPORT_PALETTE.energy, values: trendRows.map(row => row.buildingEnergyKwh) },
+      { name: "4th Floor", color: REPORT_PALETTE.siteRangsit, values: trendRows.map(row => row.floorEnergyKwh) }
     ],
-    data.monthlyRows,
-    "Monthly whole-building and 4th-floor energy consumption for the selected reporting window.",
-    "EXECUTIVE DASHBOARD · TREND ANALYTICS",
+    trendRows,
+    data.monthlyRows.length === 1 ? "One-month report: chart shows up to the trailing 12 available months ending at the selected month." : "Monthly whole-building and 4th-floor energy consumption for the selected Quick Period.",
+    data.monthlyRows.length === 1 ? "EXECUTIVE DASHBOARD - TRAILING 12 MONTHS" : "EXECUTIVE DASHBOARD - SELECTED QUICK PERIOD",
     "executive"
   );
   const trendPages = facilityTrendPages(data);

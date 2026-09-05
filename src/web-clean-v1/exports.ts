@@ -52,6 +52,8 @@ export interface ExportFacility {
   rack?: RackCapacityReport | null;
   rackHistory?: RackCapacityHistoryRow[];
   rackUnitCapacity?: ExportRackUnitCapacityRow[];
+  /** Full Rack Unit history used only for chart context when a one-month report requests a trailing 12-month trend. */
+  trendRackUnitCapacity?: ExportRackUnitCapacityRow[];
   upsGroupHistory?: UpsGroupHistoryReport | null;
   dashboardMapping?: DashboardUpsMappingReport | null;
   /** The selected month's image loaded from the authenticated Storage API. */
@@ -368,6 +370,19 @@ function currentMetricRows(metrics: ExcelDashboardMetric[]): unknown[][] {
   return metrics.map(metric => [metric.month, metric.buildingEnergyKwh, metric.buildingCostThb, metric.floorEnergyKwh, metric.floorCostThb, metric.averageRateThbPerKwh, metric.floorSharePercent, metric.upsEnergyKwh, metric.airEnergyKwh, metric.dcEnergyKwh, metric.upsLoadKw, metric.upsLoadPercent]);
 }
 
+function emptyDashboardMetric(month: string): ExcelDashboardMetric {
+  return {
+    month, buildingEnergyKwh: null, buildingCostThb: null, floorEnergyKwh: null, floorCostThb: null, averageRateThbPerKwh: null,
+    floorSharePercent: null, upsEnergyKwh: null, airEnergyKwh: null, dcEnergyKwh: null, upsLoadKw: null, upsLoadPercent: null,
+    rackTotalU: null, rackUsedU: null, rackAvailableU: null, rackUsagePercent: null
+  };
+}
+
+function dashboardMetricsForMonths(model: { metrics: ExcelDashboardMetric[] }, months: readonly string[]): ExcelDashboardMetric[] {
+  const byMonth = new Map(model.metrics.map(metric => [metric.month, metric]));
+  return months.map(month => byMonth.get(month) ?? emptyDashboardMetric(month));
+}
+
 async function workbookForCurrentFacility(facility: ExportFacility): Promise<any> {
   const ExcelJS = (await import("exceljs")).default;
   const workbook = new ExcelJS.Workbook();
@@ -380,13 +395,14 @@ async function workbookForCurrentFacility(facility: ExportFacility): Promise<any
     ...(facility.upsGroupHistory?.rows ?? []).map(row => row.month)
   ])].sort();
   const baseModel = buildExcelDashboardModel(logs, calculationLogs, facility);
-  const metricByMonth = new Map(baseModel.metrics.map(metric => [metric.month, metric]));
-  const metrics: ExcelDashboardMetric[] = months.map(month => metricByMonth.get(month) ?? {
-    month, buildingEnergyKwh: null, buildingCostThb: null, floorEnergyKwh: null, floorCostThb: null, averageRateThbPerKwh: null,
-    floorSharePercent: null, upsEnergyKwh: null, airEnergyKwh: null, dcEnergyKwh: null, upsLoadKw: null, upsLoadPercent: null,
-    rackTotalU: null, rackUsedU: null, rackAvailableU: null, rackUsagePercent: null
-  });
+  const metrics = dashboardMetricsForMonths(baseModel, months);
   const selectedMonth = facility.selectedMonth && months.includes(facility.selectedMonth) ? facility.selectedMonth : (months.at(-1) ?? "");
+  const trendMonths = exportTrendMonths(months, calculationLogs.map(log => log.month), selectedMonth);
+  const trendMonthSet = new Set(trendMonths);
+  const trendLogs = calculationLogs.filter(log => trendMonthSet.has(log.month));
+  const trendFacility: ExportFacility = { ...facility, logs: trendLogs, rackUnitCapacity: facility.trendRackUnitCapacity ?? facility.rackUnitCapacity, reportingMonths: trendMonths };
+  const trendModel = buildExcelDashboardModel(trendLogs, calculationLogs, trendFacility);
+  const trendMetrics = dashboardMetricsForMonths(trendModel, trendMonths);
   const airFields = [...new Set(logs.flatMap(log => Object.keys(log.air.meters ?? {}).concat(["eb41a", "eb41b", "eb42a", "eb42b"])))].sort();
   const airRows = logs.map(log => ({ month: log.month, values: airFields.map(field => (log.air as unknown as Record<string, number | null | undefined>)[field] ?? log.air.meters?.[field] ?? null) }));
   const rackRows: CurrentFacilityDashboardOptions["rackRows"] = (facility.rackHistory ?? []).map(row => ({
@@ -402,9 +418,11 @@ async function workbookForCurrentFacility(facility: ExportFacility): Promise<any
     month: row.month, total: row.totalU, used: row.usedU, available: row.availableU, usage: row.totalU > 0 ? row.usedU / row.totalU : null, availability: row.availabilityPct
   })).sort((a, b) => a.month.localeCompare(b.month));
   const dashboardSheetName = "01_Dashboard";
+  const trendDataSheetName = "98_Trend_Data";
   const dataSheetName = "99_Dashboard_Data";
   const plan = addCurrentFacilityDashboard(workbook, facility.siteName, metrics, {
     dashboardSheetName, dataSheetName, selectedMonth, exportedAt: facility.generatedAt ?? new Date().toISOString(), exportedBy: facility.generatedBy ?? null,
+    trendMetrics, trendDataSheetName,
     airSheetName: "06_Input_AirConditioning", rackSheetName: "03_Saved_Rack", rackUnitSheetName: "04_Saved_RackUnit",
     airFields, airRows, rackRows, rackUnitRows, rackImageDataUri: facility.rackUnitCapacityImageDataUri ?? null, rackImageMeta: facility.rackUnitCapacityImageMeta ?? null
   });
@@ -469,6 +487,7 @@ async function workbookForCurrentFacility(facility: ExportFacility): Promise<any
     });
     imageMetadata.getColumn(6).numFmt = "0.0%"; imageMetadata.getColumn(7).numFmt = "0.0%";
   }
+  addDashboardDataSheet(workbook, trendDataSheetName, trendMetrics);
   addDashboardDataSheet(workbook, dataSheetName, metrics);
   const dataEnd = Math.max(2, metrics.length + 1);
   workbook.definedNames.add(workbookSheetRef(dataSheetName) + "!$A$2:$A$" + dataEnd, "AvailableReportingMonths");
@@ -489,6 +508,7 @@ export async function workbookForFacilities(facilities: ExportFacility[], compar
     const code = multiFacility ? (facility.siteCode || facility.siteName.replace(/[^a-z0-9]+/giu, "").slice(0, 6)) : undefined;
     const prefix = code ?? "";
     const dashboardDataName = `${code ? code + " " : ""}Dashboard_Data`.slice(0, 31);
+    const trendDataName = `${code ? code + " " : ""}Trend_Data`.slice(0, 31);
     const logs = [...facility.logs].sort((a, b) => a.month.localeCompare(b.month));
     const calculationLogs = [...(facility.calculationLogs ?? logs)].sort((a, b) => a.month.localeCompare(b.month));
     const months = new Set(facility.reportingMonths ?? [
@@ -497,12 +517,21 @@ export async function workbookForFacilities(facilities: ExportFacility[], compar
       ...(facility.rackHistory ?? []).map(row => row.snapshotMonth),
       ...(facility.upsGroupHistory?.rows ?? []).map(row => row.month)
     ]);
+    const selectedMonth = facility.selectedMonth ?? facility.reportingMonths?.at(-1) ?? logs.at(-1)?.month ?? facility.rack?.sourceSnapshot ?? "";
+    const reportMonths = [...months].sort();
+    const trendMonths = exportTrendMonths(reportMonths, calculationLogs.map(log => log.month), selectedMonth);
+    const trendMonthSet = new Set(trendMonths);
+    const trendLogs = calculationLogs.filter(log => trendMonthSet.has(log.month));
+    const trendFacility: ExportFacility = { ...facility, logs: trendLogs, rackUnitCapacity: facility.trendRackUnitCapacity ?? facility.rackUnitCapacity, reportingMonths: trendMonths };
     const airFields = [...new Set(logs.flatMap(log => Object.keys(log.air.meters ?? {}).concat(["eb41a", "eb41b", "eb42a", "eb42b"])))].sort();
 
     const dashboardModel = buildExcelDashboardModel(logs, calculationLogs, facility);
-    dashboardPlans.push(addInteractiveDashboard(workbook, prefix, facility.siteName, dashboardModel.metrics, { dashboardSheetName: sheetOrderName(code, 1, "Dashboard"), dataSheetName: dashboardDataName, includeDataSheet: false, exportedBy: facility.generatedBy ?? null, exportedAt: facility.generatedAt }));
+    const trendDashboardModel = buildExcelDashboardModel(trendLogs, calculationLogs, trendFacility);
+    const trendMetrics = dashboardMetricsForMonths(trendDashboardModel, trendMonths);
+    const separateTrendData = trendMonths.join(",") !== reportMonths.join(",");
+    dashboardPlans.push(addInteractiveDashboard(workbook, prefix, facility.siteName, dashboardModel.metrics, { dashboardSheetName: sheetOrderName(code, 1, "Dashboard"), dataSheetName: dashboardDataName, includeDataSheet: false, exportedBy: facility.generatedBy ?? null, exportedAt: facility.generatedAt, trendMetrics, trendDataSheetName: separateTrendData ? trendDataName : dashboardDataName }));
+    if (separateTrendData) deferredDashboardData.push({ name: trendDataName, metrics: trendMetrics });
     deferredDashboardData.push({ name: dashboardDataName, metrics: dashboardModel.metrics });
-    const selectedMonth = facility.reportingMonths?.at(-1) ?? logs.at(-1)?.month ?? facility.rack?.sourceSnapshot ?? "";
     const report = reportDataFromFacility(facility, selectedMonth);
     const executive = addPresentationSheet(workbook, sheetOrderName(code, 2, "Executive"), `${facility.siteName} — Executive Summary`);
     configureTableSheet(executive, ["Reporting Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)", "Status"], [[selectedMonth, report.currentRow?.buildingEnergyKwh ?? null, report.currentRow?.buildingCostThb ?? null, report.currentRow?.floorEnergyKwh ?? null, report.currentRow?.floorCostThb ?? null, report.currentRow?.averageRateThbPerKwh ?? null, report.currentRow?.floorSharePercent == null ? null : report.currentRow.floorSharePercent / 100, report.currentRow?.status ?? "Partial"]]);
@@ -527,7 +556,7 @@ export async function workbookForFacilities(facilities: ExportFacility[], compar
     report.monthlyRows.forEach(row => history.addRow([row.month, row.buildingEnergyKwh, row.buildingCostThb, row.floorEnergyKwh, row.floorCostThb, row.upsEnergyKwh, row.airEnergyKwh, row.dcEnergyKwh]));
     const trends = addPresentationSheet(workbook, sheetOrderName(code, 7, "Trends"), `${facility.siteName} — Trends`);
     trends.addRow(["Month", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)"]);
-    report.monthlyRows.forEach(row => trends.addRow([row.month, row.floorEnergyKwh, row.floorCostThb, row.upsEnergyKwh, row.airEnergyKwh, row.dcEnergyKwh]));
+    (report.executiveTrendRows ?? report.monthlyRows).forEach(row => trends.addRow([row.month, row.floorEnergyKwh, row.floorCostThb, row.upsEnergyKwh, row.airEnergyKwh, row.dcEnergyKwh]));
 
     addTableSheet(workbook, prefix, "UPS_Loads", ["Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Raw phases JSON", "Last Saved"], logs.flatMap(log => log.ups.map(row => [log.month, row.upsId, row.voltage, row.current, row.loadKw, row.loadKva, JSON.stringify(row.phases ?? {}), log.lastSavedUps])));
     addTableSheet(workbook, prefix, "Air_Inputs", ["Month", ...airFields.map(field => `${field.toUpperCase()} (GWh)`), "Raw meters JSON", "Last Saved"], logs.map(log => [log.month, ...airFields.map(field => (log.air as unknown as Record<string, number | null | undefined>)[field] ?? log.air.meters?.[field] ?? null), JSON.stringify(log.air.meters ?? {}), log.lastSavedAir]));
@@ -792,10 +821,9 @@ export function exportAllFacilitiesCsv(facilities: ExportFacility[], comparison:
 }
 
 export async function exportAllFacilitiesExcel(facilities: ExportFacility[], comparison: SiteComparisonReportModel | null, fileName?: string): Promise<void> {
-  // Keep the report-period scope for PDF/HTML; Excel receives complete history
-  // already carried as calculationLogs for month-selector interaction.
-  const workbookFacilities = facilities.map(facility => ({ ...facility, logs: facility.calculationLogs ?? facility.logs }));
-  const workbook = await workbookForFacilities(workbookFacilities, comparison);
+  // `logs` is the authoritative Quick Period scope. Full history stays in
+  // calculationLogs only for derived values and the one-month 12-month chart exception.
+  const workbook = await workbookForFacilities(facilities, comparison);
   const data = await writeInteractiveExcelWorkbook(workbook);
   download(data, fileName ?? `${allFacilitiesDefaultFileName(facilities, comparison)}.xlsx`, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
@@ -921,6 +949,15 @@ function reportRows(logs: MonthlyLog[], calculationLogs: MonthlyLog[] = logs): R
   });
 }
 
+/** Resolves the chart window from the report scope. Multi-month Quick Periods
+ * are authoritative. A one-month report is the only exception: charts receive
+ * up to the previous 12 available months ending at the selected month. */
+export function exportTrendMonths(reportMonths: readonly string[], calculationMonths: readonly string[], selectedMonth: string): string[] {
+  const report = [...new Set(reportMonths)].filter(Boolean).sort();
+  if (report.length !== 1) return report;
+  return recentMonthsThroughSelected([...new Set(calculationMonths)].filter(Boolean).sort(), selectedMonth, 12).sort();
+}
+
 export function facilityReportData(logs: MonthlyLog[], siteName: string, selectedMonth: string, rack: RackCapacityReport | null = null, rackHistory: RackCapacityHistoryRow[] = [], rackUnitCapacity: RackUnitCapacityRow[] = [], calculationLogs: MonthlyLog[] = logs, extras: ReportDataExtras = {}): ReportData {
   // `logs` is the visible/reporting-period scope. `calculationLogs` is the
   // complete history used only to resolve previous readings and derived
@@ -928,8 +965,8 @@ export function facilityReportData(logs: MonthlyLog[], siteName: string, selecte
   // report pages instead of silently exporting the full calculation history.
   const rows = reportRows(logs, calculationLogs);
   const calculationRows = logs === calculationLogs ? rows : reportRows(calculationLogs, calculationLogs);
-  const executiveTrendMonths = new Set(recentMonthsThroughSelected(calculationRows.map(row => row.month), selectedMonth, 12));
-  const executiveTrendRows = calculationRows.filter(row => executiveTrendMonths.has(row.month));
+  const executiveTrendMonths = new Set(exportTrendMonths(rows.map(row => row.month), calculationRows.map(row => row.month), selectedMonth));
+  const executiveTrendRows = (rows.length === 1 ? calculationRows : rows).filter(row => executiveTrendMonths.has(row.month));
   const current = rows.find(row => row.month === selectedMonth) ?? null;
   const dashboardMapping = extras.dashboardMapping?.mapping?.length
     ? extras.dashboardMapping
@@ -1017,32 +1054,8 @@ export function fitPdfImageToPage(canvasWidth: number, canvasHeight: number, pag
   };
 }
 
-/**
- * Neutralizes `src/index.css`'s app-wide dark-theme table readability override
- * inside the offscreen PDF renderer.
- *
- * That stylesheet forces `color/fill/font-weight` `!important` on every
- * `table:not(.dashboard-table)` and all its descendants so in-app legacy tables
- * stay legible; in the default (non-`.theme-light`) theme it resolves to
- * `--color-text: #f4f7fb` (near-white). The PDF exporter mounts the report into
- * the main document, so that rule cascades onto the report's tables and their
- * `<td>` values render near-white on the white PDF page - while KPI cards,
- * cover, and hand-built SVG charts (not inside `<table>`) stay correct. The
- * `srcdoc` Live Preview is unaffected because its iframe is an isolated
- * document the app CSS never reaches.
- *
- * Redefining the foreground custom properties on the renderer host makes the
- * leaked `color: var(--color-text) !important` resolve to a readable dark
- * value; the explicit `td`/`th` rules (higher specificity than the app rule,
- * plus later source order) restore the report's intended print colours and
- * bold headers. Scoped to `[data-energy-monitor-pdf-renderer]` only.
- */
-export const PDF_EXPORT_SURFACE_CSS =
-  "[data-energy-monitor-pdf-renderer]{--color-text:#243247;--color-text-secondary:#40566e;--color-text-muted:#5f6f82;--ui-text:#243247;color:#243247}" +
-  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table)," +
-  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table) *{color:#243247!important;-webkit-text-fill-color:#243247!important;fill:#243247!important;opacity:1!important}" +
-  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table) td{color:#1f2937!important;-webkit-text-fill-color:#1f2937!important}" +
-  "html [data-energy-monitor-pdf-renderer] table:not(.dashboard-table) th{color:#40566e!important;-webkit-text-fill-color:#40566e!important;font-weight:bold!important}";
+/** Downloaded PDFs render inside the same isolated document model as Live Preview.
+ * This prevents the application theme from leaking into report colors. */
 
 async function waitForReportImages(root: HTMLElement): Promise<void> {
   const images = [...root.querySelectorAll<HTMLImageElement>("img")];
@@ -1050,7 +1063,8 @@ async function waitForReportImages(root: HTMLElement): Promise<void> {
     if (image.complete) return;
     try { await image.decode(); } catch { /* html2canvas will render the placeholder */ }
   }));
-  if (typeof document.fonts?.ready?.then === "function") await document.fonts.ready;
+  const fontSet = root.ownerDocument?.fonts;
+  if (typeof fontSet?.ready?.then === "function") await fontSet.ready;
 }
 
 /**
@@ -1066,64 +1080,55 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
     import("html2canvas"),
     import("jspdf")
   ]);
-  const parsed = new DOMParser().parseFromString(html, "text/html");
-  for (const staleHost of [...document.querySelectorAll<HTMLElement>("[data-energy-monitor-pdf-renderer]")]) staleHost.remove();
-  const host = document.createElement("div");
-  host.dataset.energyMonitorPdfRenderer = "true";
-  Object.assign(host.style, {
+
+  // Live Preview uses srcDoc in an iframe. Use the same isolated document for
+  // the downloadable PDF so app-level dark/light theme CSS cannot alter report
+  // fills, text, tables, charts, or cover colors during html2canvas capture.
+  for (const staleFrame of [...document.querySelectorAll<HTMLIFrameElement>("iframe[data-energy-monitor-pdf-renderer]")]) staleFrame.remove();
+  const frame = document.createElement("iframe");
+  frame.dataset.energyMonitorPdfRenderer = "true";
+  frame.setAttribute("sandbox", "allow-same-origin");
+  frame.setAttribute("aria-hidden", "true");
+  Object.assign(frame.style, {
     position: "absolute",
     left: "0",
     top: "0",
     width: "1123px",
-    minHeight: "1px",
-    overflow: "visible",
-    background: "#ffffff",
-    color: "#243247",
-    fontFamily: '"TH Sarabun New", "Noto Sans Thai", Tahoma, sans-serif',
+    height: "794px",
+    border: "0",
+    overflow: "hidden",
     pointerEvents: "none",
     opacity: "0.01",
     zIndex: "-1"
   });
-  const reportStyle = parsed.head.querySelector("style");
-  if (reportStyle) host.appendChild(reportStyle.cloneNode(true));
-  const surfaceStyle = document.createElement("style");
-  surfaceStyle.dataset.energyMonitorPdfSurface = "true";
-  surfaceStyle.textContent = PDF_EXPORT_SURFACE_CSS;
-  host.appendChild(surfaceStyle);
-  for (const child of [...parsed.body.childNodes]) host.appendChild(child.cloneNode(true));
-  document.body.appendChild(host);
+
+  const loaded = new Promise<void>((resolve, reject) => {
+    frame.addEventListener("load", () => resolve(), { once: true });
+    frame.addEventListener("error", () => reject(new Error("The report render frame could not be loaded.")), { once: true });
+  });
+  frame.srcdoc = html;
+  document.body.appendChild(frame);
+
   try {
-    await waitForReportImages(host);
-    // Let the offscreen renderer finish layout so html2canvas reads settled
-    // geometry and computed styles (no arbitrary timeout).
-    if (typeof requestAnimationFrame === "function") {
-      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await loaded;
+    const frameDocument = frame.contentDocument;
+    if (!frameDocument?.body) throw new Error("The report render frame is unavailable.");
+    await waitForReportImages(frameDocument.body);
+    if (typeof frame.contentWindow?.requestAnimationFrame === "function") {
+      await new Promise<void>(resolve => frame.contentWindow!.requestAnimationFrame(() => frame.contentWindow!.requestAnimationFrame(() => resolve())));
     }
-    const pages = [...host.querySelectorAll<HTMLElement>(".cover, .page")];
+    const pages = [...frameDocument.querySelectorAll<HTMLElement>(".cover, .page")];
     if (pages.length === 0) throw new Error("The report did not contain any printable pages.");
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
     for (const [index, page] of pages.entries()) {
       const canvas = await html2canvas(page, {
         backgroundColor: "#ffffff",
-        // Render every PDF page at 2x before fitting it into A4. The prior
-        // 1x JPEG pipeline visibly softened SVG text, chart labels, and
-        // attached Rack Unit Capacity images across the whole document.
         scale: PDF_RENDER_SCALE,
         useCORS: true,
         logging: false,
         width: Math.max(page.scrollWidth, 1),
         height: Math.max(page.scrollHeight, page.offsetHeight, 1),
-        windowWidth: Math.max(page.scrollWidth, 1),
-        // Belt-and-suspenders: guarantee the readable-table-surface CSS is in
-        // the cloned document html2canvas actually rasterizes, independent of
-        // whether it carries body <style> clones through.
-        onclone: clonedDoc => {
-          if (clonedDoc.getElementById("__em-pdf-surface")) return;
-          const cloneStyle = clonedDoc.createElement("style");
-          cloneStyle.id = "__em-pdf-surface";
-          cloneStyle.textContent = PDF_EXPORT_SURFACE_CSS;
-          clonedDoc.head.appendChild(cloneStyle);
-        }
+        windowWidth: Math.max(page.scrollWidth, 1)
       });
       if (index > 0) pdf.addPage("a4", "landscape");
       const placement = fitPdfImageToPage(canvas.width, canvas.height);
@@ -1131,7 +1136,7 @@ export async function exportReportPdfFromHtml(html: string, fileName: string): P
     }
     pdf.save(ensureExtension(fileName, "pdf"));
   } finally {
-    host.remove();
+    frame.remove();
   }
 }
 

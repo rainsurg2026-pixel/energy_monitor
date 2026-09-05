@@ -63,12 +63,13 @@ assert.match(rackViewsSource, /<RackCapacityProvider key=\{`\$\{siteName \?\? ""
 assert.match(reportPreviewSource, /loadWebRackUnitCapacityImage\(siteId, month\)\.catch\(\(\) => null\)/);
 assert.match(reportPreviewSource, /rackUnitCapacityImageDataUri: rackUnitImage\?\.dataUri \?\? null/);
 
-// Site Energy & Cost Comparison export: the per-site rows are { month, metrics }
-// objects and must be filtered on `.month`, never compared whole against the
-// Set<string> of selected months (has(row) is always false and blanked every
-// energy/cost value across CSV/Excel/HTML/PDF).
-assert.match(appSource, /months: item\.months\.filter\(entry => selectedReportMonthSet\.has\(entry\.month\)\)/);
-assert.doesNotMatch(appSource, /item\.months\.filter\(value => selectedReportMonthSet\.has\(value\)\)/);
+// Site Energy & Cost Comparison export: chart scope follows Quick Period,
+// except a one-month report deliberately expands only the chart window to the
+// trailing 12 available months. Per-site rows are still filtered by `.month`.
+assert.match(appSource, /selectedReportMonths\.length === 1/);
+assert.match(appSource, /recentMonthsThroughSelected\(result\.months, selectedMonth, 12\)/);
+assert.match(appSource, /months: item\.months\.filter\(entry => chartMonthSet\.has\(entry\.month\)\)/);
+assert.doesNotMatch(appSource, /item\.months\.filter\(value => chartMonthSet\.has\(value\)\)/);
 assert.match(exportSource, /import\("html2canvas"\)/);
 assert.match(exportSource, /import\("jspdf"\)/);
 assert.match(exportSource, /scale: PDF_RENDER_SCALE/);
