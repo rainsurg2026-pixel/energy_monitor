@@ -120,7 +120,7 @@ function rackUnitTrendPage(data: ReportData): string {
     formatUsagePercent1(usagePercent(row)),
     formatRatioPercent1(row.availabilityPct)
   ]);
-  return '<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity Six-Month Trend</h2><p class="note">' +
+  return '<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity Trend</h2><p class="note">' +
     escapeHtml(data.facility) + ' · ' + escapeHtml(formatMonth(data.reportingMonth)) +
     '</p>' + table(["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], renderedRows) +
     '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p>' +
