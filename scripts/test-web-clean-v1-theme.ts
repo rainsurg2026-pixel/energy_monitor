@@ -10,6 +10,7 @@ assert.equal(themeStorageKey("8"), "energy-monitor:theme:8");
 assert.notEqual(themeStorageKey("8"), themeStorageKey("9"));
 const css = readFileSync(new URL("../src/index.css", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
+const admin = readFileSync(new URL("../src/web-clean-v1/AdminUserManagement.tsx", import.meta.url), "utf8");
 for (const token of ["--color-bg", "--color-surface", "--color-surface-elevated", "--color-text", "--color-text-secondary", "--color-text-muted", "--color-text-disabled", "--color-border", "--color-input-bg", "--color-input-text", "--color-input-placeholder", "--color-primary", "--color-secondary", "--color-danger", "--color-success", "--color-warning"]) assert.match(css, new RegExp(`${token}:`));
 assert.match(css, /body\s*\{[^}]*background: var\(--color-bg\);[^}]*color: var\(--color-text\);/s);
 assert.match(css, /input::placeholder,[\s\S]*?color: var\(--color-input-placeholder\);/);
@@ -19,8 +20,8 @@ assert.match(app, /function Login[\s\S]*?bg-slate-950 px-4 text-slate-100/);
 assert.match(app, /เข้าระบบเพื่อดำเนินการต่อ/);
 assert.doesNotMatch(app, /เข้าสู่พื้นที่ปฏิบัติการ v2\.3\.1 เพื่อดำเนินการต่อ/);
 assert.match(app, /function Login[\s\S]*?text-center/);
-assert.match(app, /PASSWORD_MIN_LENGTH = 6/);
-assert.match(app, /passwordHelp/);
+assert.match(admin, /PASSWORD_MIN_LENGTH = 6/);
+assert.match(admin, /passwordHelp/);
 
 // Dashboard accent colors (amber/emerald/purple/rose/sky/teal) are tuned for
 // dark-theme legibility and were measured at 1.1-2.8:1 against the light
