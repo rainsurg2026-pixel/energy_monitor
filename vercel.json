@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run vercel-build",
   "functions": {
-    "api/runtime.js": {
+    "api/[...path].js": {
       "maxDuration": 60,
       "includeFiles": "{node_modules/@sparticuz/chromium/bin/**,node_modules/@fontsource/noto-sans-thai/files/*.woff2}"
     }
