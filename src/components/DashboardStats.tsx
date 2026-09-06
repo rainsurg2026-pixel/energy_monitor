@@ -86,7 +86,7 @@ export default function DashboardStats({ log, logs = [], lang = "en" }: Dashboar
               {totalAirGwh === null ? "—" : `${formatNumber2(totalAirGwh)} GWh`}
             </h3>
             <p className="text-xs text-slate-500">
-              {totalAirGwh === null ? copy.noAc : `${copy.equivalent}: ${formatNumber2(totalAirGwh * 1000)} MWh`}
+              {totalAirGwh === null ? copy.noAc : `${copy.equivalent}: ${formatNumber2(totalAirGwh * 1_000_000)} kWh`}
             </p>
             <p className="text-[10px] leading-snug text-slate-500">{copy.acNote} · {acPeriodNote}</p>
           </div>

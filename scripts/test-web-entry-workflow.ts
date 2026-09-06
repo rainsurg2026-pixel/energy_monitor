@@ -71,6 +71,7 @@ assert.match(workspace, /<SrinakarinPowerPhaseTable lang=\{lang\}/);
 assert.match(workspace, /<DashboardStats lang=\{lang\} log=\{liveDraft\} logs=\{historyLogs\}/);
 assert.match(dashboardStats, /calculateEnergyCostForMonth\(calculationLogs, log\.month\)\.airEnergyKwh/);
 assert.match(dashboardStats, /Sum of current-month minus previous-month AC meter readings/);
+assert.match(dashboardStats, /formatNumber2\(totalAirGwh \* 1_000_000\)\} kWh/);
 assert.match(dashboardStats, /ผลรวมผลต่างมิเตอร์เดือนปัจจุบันเทียบเดือนก่อน/);
 const acLog=(month:string,base:number):MonthlyLog=>({month,ups:[],air:{eb41a:base,eb41b:base+10,eb42a:base+20,eb42b:base+30,meters:{}},dc:[],energyCost:{buildingEnergyKwh:1,buildingElectricityCostThb:1},lastSavedUps:null,lastSavedAir:"saved",lastSavedDc:null,lastSavedEnergyCost:null});
 const acCalc=calculateEnergyCostForMonth([acLog("2026-07",10),acLog("2026-08",10.05)],"2026-08");
