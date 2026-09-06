@@ -493,6 +493,22 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
         </div>
       </div>
 
+      {/* ENGINEERING OPERATIONAL TOTALS */}
+      <section data-testid="engineering-operational-totals" className="grid grid-cols-1 gap-4 md:grid-cols-3" aria-label={lang === "th" ? "สรุปโหลดระบบวิศวกรรม" : "Engineering operational totals"}>
+        <article className="rounded-2xl border border-indigo-500/20 bg-slate-900 p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">2.1 Total UPS and PPC Load Status – DCM 4th Floor</p><p className="mt-3 font-mono text-2xl font-black text-indigo-300">{formatNumber2(baseCalcs.totalUpsKw)} <span className="text-xs font-sans text-slate-400">kW</span></p></div><Zap className="h-5 w-5 shrink-0 text-indigo-400" /></div>
+          <p className="mt-3 text-[10px] leading-relaxed text-slate-400">{formatNumber2(baseCalcs.totalUpsKva)} kVA · {formatNumber2(baseCalcs.totalUpsEnergyKwh)} kWh/month</p>
+        </article>
+        <article className="rounded-2xl border border-cyan-500/20 bg-slate-900 p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">2.2 Total Air</p><p className="mt-3 font-mono text-2xl font-black text-cyan-300">{calcs.airEnergyKwh === null ? "—" : formatNumber2(calcs.airEnergyKwh)} <span className="text-xs font-sans text-slate-400">kWh</span></p></div><Thermometer className="h-5 w-5 shrink-0 text-cyan-400" /></div>
+          <p className="mt-3 text-[10px] leading-relaxed text-slate-400">{lang === "th" ? "พลังงานระบบปรับอากาศจากผลต่างมิเตอร์ของเดือนที่เลือก" : "Monthly air-conditioning energy from persisted meter differences"}</p>
+        </article>
+        <article className="rounded-2xl border border-violet-500/20 bg-slate-900 p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400">2.3 Total DC Power Panels</p><p className="mt-3 font-mono text-2xl font-black text-violet-300">{formatNumber2(calcs.totalDcEnergyKwh)} <span className="text-xs font-sans text-slate-400">kWh</span></p></div><Database className="h-5 w-5 shrink-0 text-violet-400" /></div>
+          <p className="mt-3 text-[10px] leading-relaxed text-slate-400">DC {formatNumber2(calcs.totalDcPowerW)} W · AC {formatNumber2(calcs.totalDcAcPowerW)} W</p>
+        </article>
+      </section>
+
       {/* Rack Capacity now has its own dedicated tab (see RackCapacityEditor). */}
 
       <EngineeringSectionNav sections={engineeringNavSections} lang={lang} />

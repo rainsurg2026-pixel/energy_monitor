@@ -60,7 +60,7 @@ assert.match(executive, /function DesktopHeader/);
 assert.match(executive, /function MobileHeader/);
 assert.match(executive, /data-testid="executive-desktop-v2"/);
 assert.match(executive, /data-testid="executive-mobile-v2"/);
-assert.match(executive, /grid grid-cols-4 gap-4/);
+assert.match(executive, /grid grid-cols-3 gap-4 xl:grid-cols-6/);
 assert.match(executive, /grid grid-cols-2 gap-2\.5/);
 assert.match(capacity, /layout: "desktop" \| "mobile"/);
 assert.match(capacity, /compact = layout === "mobile"/);

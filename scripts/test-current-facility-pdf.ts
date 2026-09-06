@@ -102,7 +102,10 @@ assert.ok(!body.includes("<h2>Air Conditioning Energy Trend</h2>"));
 assert.ok(!body.includes("DC Power Panel Energy Trend"));
 
 const executivePage = body.slice(body.indexOf('data-report-section="executive"'), body.indexOf('data-report-section="executive"') + 5000);
-for (const label of ["4th Floor Energy", "Estimated 4th Floor Cost", "4th Floor Energy Share", "Average Electricity Rate"]) assert.ok(executivePage.includes(label));
+for (const label of ["Building Energy", "Building Cost", "4th Floor Energy", "Estimated 4th Floor Cost", "4th Floor Energy Share", "Average Electricity Rate"]) assert.ok(executivePage.includes(label));
+for (const label of ["2.1 Total UPS and PPC Load Status – DCM 4th Floor", "2.2 Total Air", "2.3 Total DC Power Panels"]) assert.ok(body.includes(label), `Engineering PDF includes ${label}`);
+assert.ok(body.includes("Facility Trend Analytics Summary"));
+for (const label of ["Building Energy Total", "4th Floor Energy Total", "Building Cost Total", "4th Floor Cost Total"]) assert.ok(body.includes(label), `Facility trend PDF includes ${label}`);
 assert.ok(body.includes("Capacity Overview"));
 assert.ok(body.includes("Rack Capacity Trend"));
 assert.ok(body.includes("Rack Unit Capacity Trend"));
@@ -113,6 +116,8 @@ assert.doesNotMatch(body, /Six-month trend uses/, "PDF no longer hard-codes a si
 const capacityPageStart = body.indexOf("Capacity Overview");
 const capacityPageEnd = body.indexOf("Rack Capacity and Utilization");
 const capacityPage = body.slice(capacityPageStart, capacityPageEnd);
+assert.ok(capacityPage.includes("Rack Capacity Trend") && capacityPage.includes("Rack Unit Capacity Trend"), "Capacity Overview contains both trend charts in the same semantic page section.");
+assert.match(body, /<section class="page executive-dashboard-page capacity-overview-page"[^>]*>[\s\S]*?<h2>Capacity Overview<\/h2>/);
 assert.match(capacityPage, /font-size="9" font-weight="700"/, "PDF compact Capacity charts keep point value labels.");
 assert.match(capacityPage, />70(?:\.00)?<\/text>/, "PDF Rack Unit trend prints a compact point value.");
 assert.ok(!executivePage.includes("2,500.00"), "Executive summary must not sum the quick-range rows.");

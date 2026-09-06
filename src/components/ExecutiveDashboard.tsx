@@ -28,7 +28,7 @@ interface ExecutiveDashboardProps {
   onExport?: (format: "pdf" | "excel" | "csv") => void;
 }
 
-type MetricKey = "floorEnergyKwh" | "floorElectricityCostThb" | "energySharePercent" | "averageElectricityRateThbPerKwh";
+type MetricKey = "buildingEnergyKwh" | "buildingElectricityCostThb" | "floorEnergyKwh" | "floorElectricityCostThb" | "energySharePercent" | "averageElectricityRateThbPerKwh";
 type EnergyMetrics = ReturnType<typeof calculateEnergyCostForMonth>;
 
 interface KpiDefinition {
@@ -178,12 +178,16 @@ export default function ExecutiveDashboard({ logs, lang, selectedMonth: selected
 
   const copy = lang === "th" ? {
     empty: "ไม่มีข้อมูลของเดือนรายงานที่เลือก",
+    buildingEnergy: "พลังงานทั้งอาคาร",
+    buildingCost: "ค่าไฟทั้งอาคาร",
     floorEnergy: "พลังงานชั้น 4",
     floorCost: "ประมาณการค่าไฟชั้น 4",
     share: "สัดส่วนพลังงานชั้น 4",
     rate: "อัตราค่าไฟเฉลี่ย",
   } : {
     empty: "No data is available for the selected reporting month.",
+    buildingEnergy: "Building Energy",
+    buildingCost: "Building Cost",
     floorEnergy: "4th Floor Energy",
     floorCost: "Estimated 4th Floor Cost",
     share: "4th Floor Energy Share",
@@ -191,6 +195,8 @@ export default function ExecutiveDashboard({ logs, lang, selectedMonth: selected
   };
 
   const definitions: KpiDefinition[] = [
+    { key: "buildingEnergyKwh", label: copy.buildingEnergy, unit: "kWh", icon: Zap, tone: "energy", format: formatNumber2 },
+    { key: "buildingElectricityCostThb", label: copy.buildingCost, unit: "THB", icon: Coins, tone: "cost", format: value => `฿${formatNumber2(value)}` },
     { key: "floorEnergyKwh", label: copy.floorEnergy, unit: "kWh", icon: Zap, tone: "energy", format: formatNumber2 },
     { key: "floorElectricityCostThb", label: copy.floorCost, unit: "THB", icon: Coins, tone: "cost", format: value => `฿${formatNumber2(value)}` },
     { key: "energySharePercent", label: copy.share, unit: "% of building", icon: TrendingUp, tone: "share", format: value => `${formatNumber2(value)}%` },
@@ -207,7 +213,7 @@ export default function ExecutiveDashboard({ logs, lang, selectedMonth: selected
   if (desktop) {
     return <div className="space-y-6 animate-fadeIn" data-testid="executive-desktop-v2">
       <DesktopHeader {...headerProps} />
-      <section className="grid grid-cols-4 gap-4" aria-label="Executive KPI summary">
+      <section className="grid grid-cols-3 gap-4 xl:grid-cols-6" aria-label="Executive KPI summary">
         {kpiValues.map(item => <div key={item.definition.key}><DesktopKpiCard {...item} previousMonth={previousMonth} /></div>)}
       </section>
       <EngineeringTrendCharts logs={logs} lang={lang} selectedMonth={selectedMonth} layout="desktop" />

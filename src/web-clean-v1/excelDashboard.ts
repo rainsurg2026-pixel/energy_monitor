@@ -577,20 +577,24 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   addCard(sheet, 10, 12, 7, "Estimated 4th Floor Cost", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
   addCard(sheet, 13, 14, 7, "4th Floor Share", lookup("H", "floorSharePercent"), "0.00", LIGHT_AMBER);
   addCard(sheet, 1, 3, 11, "UPS Status", currentLookup(upsStatusData.sheetName, "B", upsStatusData.rowEnd, upsStatusCached), "@", LIGHT_TEAL);
-  addCard(sheet, 4, 6, 11, "UPS Energy", lookup("I", "upsEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 7, 9, 11, "Air Conditioning Energy", lookup("J", "airEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 10, 12, 11, "DC Power Energy", lookup("K", "dcEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 4, 6, 11, "2.1 Total UPS/PPC Load - DCM 4th Floor", lookup("L", "upsLoadKw"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 7, 9, 11, "2.2 Total Air", lookup("J", "airEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 10, 12, 11, "2.3 Total DC Power Panels", lookup("K", "dcEnergyKwh"), "#,##0.00", LIGHT_BLUE);
   addCard(sheet, 13, 14, 11, "Average Rate", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_AMBER);
 
   sectionHeading(sheet, 15, "Executive View");
-  addCard(sheet, 1, 3, 17, "4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 4, 6, 17, "Estimated 4th Floor Cost", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
-  addCard(sheet, 7, 10, 17, "4th Floor Energy Share", lookup("H", "floorSharePercent"), "0.00", LIGHT_TEAL);
-  addCard(sheet, 11, 14, 17, "Average Electricity Rate", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_BLUE);
-  addNote(1, 3, 20, previousLookupFormula("E", metricValue(selected, "floorEnergyKwh"), metricValue(previous, "floorEnergyKwh")));
-  addNote(4, 6, 20, previousLookupFormula("F", metricValue(selected, "floorCostThb"), metricValue(previous, "floorCostThb")));
-  addNote(7, 10, 20, previousLookupFormula("H", metricValue(selected, "floorSharePercent"), metricValue(previous, "floorSharePercent")));
-  addNote(11, 14, 20, previousLookupFormula("G", metricValue(selected, "averageRateThbPerKwh"), metricValue(previous, "averageRateThbPerKwh")));
+  addCard(sheet, 1, 2, 17, "Building Energy", lookup("C", "buildingEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 3, 4, 17, "Building Cost", lookup("D", "buildingCostThb"), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 5, 6, 17, "4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 7, 8, 17, "Estimated 4th Floor Cost", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 9, 11, 17, "4th Floor Energy Share", lookup("H", "floorSharePercent"), "0.00", LIGHT_TEAL);
+  addCard(sheet, 12, 14, 17, "Average Electricity Rate", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_BLUE);
+  addNote(1, 2, 20, previousLookupFormula("C", metricValue(selected, "buildingEnergyKwh"), metricValue(previous, "buildingEnergyKwh")));
+  addNote(3, 4, 20, previousLookupFormula("D", metricValue(selected, "buildingCostThb"), metricValue(previous, "buildingCostThb")));
+  addNote(5, 6, 20, previousLookupFormula("E", metricValue(selected, "floorEnergyKwh"), metricValue(previous, "floorEnergyKwh")));
+  addNote(7, 8, 20, previousLookupFormula("F", metricValue(selected, "floorCostThb"), metricValue(previous, "floorCostThb")));
+  addNote(9, 11, 20, previousLookupFormula("H", metricValue(selected, "floorSharePercent"), metricValue(previous, "floorSharePercent")));
+  addNote(12, 14, 20, previousLookupFormula("G", metricValue(selected, "averageRateThbPerKwh"), metricValue(previous, "averageRateThbPerKwh")));
 
   const energyHeadingRow = 22;
   sectionHeading(sheet, energyHeadingRow, "Energy & Cost Trends");
@@ -641,6 +645,27 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
     { title: "Rack Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Usage %", "U", "rackPositionUsagePercent", "6366F1"), chartSeries("Availability %", "V", "rackPositionAvailabilityPercent", "14B8A6")], fromCol: 0, fromRow: rackChartRow, toCol: 14, toRow: rackChartRow + fullWidthChartHeight },
     { title: "Rack Unit Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Total U", "N", "rackTotalU", "64748B"), chartSeries("Used U", "O", "rackUsedU", "6366F1"), chartSeries("Available U", "P", "rackAvailableU", "14B8A6")], fromCol: 0, fromRow: rackChartRow + fullWidthChartStep, toCol: 14, toRow: rackChartRow + fullWidthChartStep + fullWidthChartHeight }
   ];
+  const historyHeadingRow = rackChartRow + fullWidthChartStep * 2 + 2;
+  sectionHeading(sheet, historyHeadingRow, "Facility Trend Analytics Summary");
+  const historicalValues = (key: keyof ExcelDashboardMetric) => trendMetrics.map(metric => metricValue(metric, key)).filter((value): value is number => value !== null && Number.isFinite(value));
+  const summaryFormula = (column: string, key: keyof ExcelDashboardMetric, average: boolean) => {
+    const values = historicalValues(key);
+    const cached = values.length ? (average ? values.reduce((sum, value) => sum + value, 0) / values.length : values.reduce((sum, value) => sum + value, 0)) : null;
+    const range = chartRange(trendDataSheetName, column, chartFirstRow, chartLastRow);
+    return cellFormula(average ? `IFERROR(AVERAGE(${range}),"")` : `IFERROR(SUM(${range}),"")`, cached);
+  };
+  const historyCardRow = historyHeadingRow + 2;
+  addCard(sheet, 1, 3, historyCardRow, "Building Energy Total", summaryFormula("C", "buildingEnergyKwh", false), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 4, 6, historyCardRow, "4th Floor Energy Total", summaryFormula("E", "floorEnergyKwh", false), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 7, 10, historyCardRow, "Building Energy Monthly Average", summaryFormula("C", "buildingEnergyKwh", true), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 11, 14, historyCardRow, "4th Floor Energy Monthly Average", summaryFormula("E", "floorEnergyKwh", true), "#,##0.00", LIGHT_TEAL);
+
+  const historyCostCardRow = historyCardRow + 4;
+  addCard(sheet, 1, 3, historyCostCardRow, "Building Cost Total", summaryFormula("D", "buildingCostThb", false), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 4, 6, historyCostCardRow, "4th Floor Cost Total", summaryFormula("F", "floorCostThb", false), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 7, 10, historyCostCardRow, "Building Cost Monthly Average", summaryFormula("D", "buildingCostThb", true), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 11, 14, historyCostCardRow, "4th Floor Cost Monthly Average", summaryFormula("F", "floorCostThb", true), "#,##0.00", LIGHT_TEAL);
+
   setFormulaCell(sheet, "Z2", currentLookup(upsStatusData.sheetName, "B", upsStatusData.rowEnd, upsStatusCached), "@");
   sheet.getColumn(26).hidden = true;
   return { dashboardSheetName: options.dashboardSheetName, charts };

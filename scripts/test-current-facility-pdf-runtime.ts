@@ -5,6 +5,7 @@ import { buildReportData } from "../src/reports/reportDataBuilder";
 import { buildCurrentFacilityPdfHtml } from "../src/reports/pdf/reportHtml";
 import { validateReportHtml } from "../src/reports/pdf/reportSafety";
 import { validatePdfBuffer } from "../src/electron/ipc/allReportPdf";
+import { shiftMonth } from "../src/utils/monthUtils";
 
 async function main(): Promise<void> {
   const root = process.cwd();
@@ -23,7 +24,20 @@ async function main(): Promise<void> {
     appVersion: "current-facility-pdf-runtime-test",
     dashboard
   });
-  const html = buildCurrentFacilityPdfHtml(report);
+  const capacityMonths = [-2, -1, 0].map(offset => shiftMonth(report.reportingMonth, offset));
+  const capacityReport = {
+    ...report,
+    rackHistory: capacityMonths.map((month, index) => {
+      const total = 358;
+      const inUse = 292 + index;
+      const available = 10 - index;
+      const reserved = 32;
+      const pendingDismantle = total - inUse - available - reserved;
+      return { snapshotMonth: month, facility: facilityName, rackZone: "(Total)", totalRacks: total, inUse, available, reserved, pendingDismantle, other: 0, usagePct: inUse / total, availabilityPct: available / total, reservedPct: reserved / total, pendingDismantlePct: pendingDismantle / total, otherPct: 0, generatedAt: report.generatedAt, dataVersion: 1 };
+    }),
+    rackUnitCapacity: capacityMonths.map((month, index) => ({ month, totalU: 14121, usedU: 12180 + index * 80, availableU: 1941 - index * 80, availabilityPct: (1941 - index * 80) / 14121 }))
+  };
+  const html = buildCurrentFacilityPdfHtml(capacityReport);
   validateReportHtml(html);
   const htmlPath = path.join(outputDir, "Current_Facility.test.html");
   await fs.writeFile(htmlPath, html, "utf8");
@@ -33,6 +47,7 @@ async function main(): Promise<void> {
     await win.webContents.executeJavaScript("document.fonts && document.fonts.ready ? document.fonts.ready : true", true);
     const pdf = await win.webContents.printToPDF({ printBackground: true, pageSize: "A4", landscape: true, preferCSSPageSize: true });
     const validation = validatePdfBuffer(pdf);
+    if (!html.includes("Capacity Overview") || !html.includes("Rack Capacity Trend") || !html.includes("Rack Unit Capacity Trend")) throw new Error("Capacity Overview runtime fixture did not render both trend charts.");
     if (validation.pageCount < 10) throw new Error("Current Facility PDF runtime output is unexpectedly short: " + validation.pageCount + " page(s).");
     await fs.writeFile(path.join(outputDir, "Current_Facility.test.pdf"), pdf);
     const pagePositions = await win.webContents.executeJavaScript("Array.from(document.querySelectorAll('.cover, .page')).map((element) => element.getBoundingClientRect().top + window.scrollY)", true) as number[];
