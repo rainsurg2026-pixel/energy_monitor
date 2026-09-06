@@ -1,5 +1,6 @@
 import type { AirRecord, EnergyCalculationProfile, MonthlyLog, SrinakarinInputSnapshot, UpsRecord } from "../../src/types";
 import { HttpError } from "../errors";
+import { roundNullableAirMeterReading } from "../../src/domain/airMeterPrecision";
 
 type JsonObject = Record<string, unknown>;
 function object(value: unknown, field: string): JsonObject {
@@ -23,6 +24,13 @@ function nullableText(value: unknown, field: string): string | null {
 function numberMap(value: unknown, field: string): Record<string, number | null> {
   const source = object(value ?? {}, field);
   return Object.fromEntries(Object.entries(source).map(([key, entry]) => [text(key, `${field} key`), nullableNumber(entry, `${field}.${key}`)]));
+}
+function airNumber(value: unknown, field: string): number | null {
+  return roundNullableAirMeterReading(nullableNumber(value, field));
+}
+function airNumberMap(value: unknown, field: string): Record<string, number | null> {
+  const source = object(value ?? {}, field);
+  return Object.fromEntries(Object.entries(source).map(([key, entry]) => [text(key, `${field} key`), airNumber(entry, `${field}.${key}`)]));
 }
 function phase(value: unknown, field: string): { voltage: number | null; current: number | null; loadKw: number | null; loadKva: number | null } {
   const source = object(value, field);
@@ -58,7 +66,7 @@ export function parseMonthlyLog(value: unknown, expectedMonth: string): MonthlyL
   const source = object(value, "log");
   if (source.month !== expectedMonth) throw new HttpError(400, "INVALID_BODY", "log.month must match the requested month.");
   const airSource = object(source.air, "log.air");
-  const air: AirRecord = { eb41a: nullableNumber(airSource.eb41a, "log.air.eb41a"), eb41b: nullableNumber(airSource.eb41b, "log.air.eb41b"), eb42a: nullableNumber(airSource.eb42a, "log.air.eb42a"), eb42b: nullableNumber(airSource.eb42b, "log.air.eb42b"), meters: numberMap(airSource.meters, "log.air.meters") };
+  const air: AirRecord = { eb41a: airNumber(airSource.eb41a, "log.air.eb41a"), eb41b: airNumber(airSource.eb41b, "log.air.eb41b"), eb42a: airNumber(airSource.eb42a, "log.air.eb42a"), eb42b: airNumber(airSource.eb42b, "log.air.eb42b"), meters: airNumberMap(airSource.meters, "log.air.meters") };
   const upsValue = source.ups;
   if (!Array.isArray(upsValue)) throw new HttpError(400, "INVALID_BODY", "log.ups must be an array.");
   const dcValue = source.dc;

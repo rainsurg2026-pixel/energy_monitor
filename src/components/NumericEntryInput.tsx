@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatFixedNumber, formatNumber2 } from "../utils/numberFormatBridge";
+import { exceedsDecimalPlaces } from "../utils/numericInputValidation";
 
 interface NumericEntryInputProps {
   value: number | null | undefined;
@@ -9,6 +10,10 @@ interface NumericEntryInputProps {
   disabled?: boolean;
   step?: string;
   precision?: number;
+  trimTrailingZeros?: boolean;
+  minimumPrecision?: number;
+  maxDecimalPlaces?: number;
+  onPrecisionViolation?: (maxDecimalPlaces: number) => void;
   /** Accessible name — the table cells around this input are plain <td>, so
    *  without it a screen reader announces the field as "edit text, blank". */
   ariaLabel?: string;
@@ -23,27 +28,31 @@ export default function NumericEntryInput({
   disabled = false,
   step,
   precision,
+  trimTrailingZeros = false,
+  minimumPrecision = 0,
+  maxDecimalPlaces,
+  onPrecisionViolation,
   ariaLabel
 }: NumericEntryInputProps) {
   const [focused, setFocused] = useState(false);
   const [text, setText] = useState("");
 
+  const fixedDisplayValue = (numericValue: number): string => {
+    if (precision === undefined) return formatNumber2(numericValue);
+    const formatted = formatFixedNumber(numericValue, precision);
+    if (!trimTrailingZeros || precision <= minimumPrecision || !formatted.includes(".")) return formatted;
+    const [whole, fraction = ""] = formatted.split(".");
+    const trimmed = fraction.replace(/0+$/, "");
+    const kept = trimmed.length < minimumPrecision ? fraction.slice(0, minimumPrecision) : trimmed;
+    return kept.length > 0 ? whole + "." + kept : whole;
+  };
+
   useEffect(() => {
-    if (!focused) {
-      setText(value === null || value === undefined
-        ? ""
-        : precision === undefined
-          ? formatNumber2(value)
-          : formatFixedNumber(value, precision));
-    }
-  }, [focused, precision, value]);
+    if (!focused) setText(value === null || value === undefined ? "" : fixedDisplayValue(value));
+  }, [focused, minimumPrecision, precision, trimTrailingZeros, value]);
 
   const rawValue = value === null || value === undefined ? "" : String(value);
-  const displayValue = value === null || value === undefined
-    ? ""
-    : precision === undefined
-      ? formatNumber2(value)
-      : formatFixedNumber(value, precision);
+  const displayValue = value === null || value === undefined ? "" : fixedDisplayValue(value);
 
   return (
     <input
@@ -61,6 +70,10 @@ export default function NumericEntryInput({
       onBlur={() => setFocused(false)}
       onChange={event => {
         const next = event.target.value.replace(/,/g, "");
+        if (maxDecimalPlaces !== undefined && exceedsDecimalPlaces(next, maxDecimalPlaces)) {
+          onPrecisionViolation?.(maxDecimalPlaces);
+          return;
+        }
         setText(next);
         onChange(next);
       }}

@@ -4,6 +4,7 @@ import { Save, Check, RotateCcw } from "lucide-react";
 import { formatMonthYear } from "../utils";
 import { EntrySectionApi } from "../utils/completion";
 import NumericEntryInput from "./NumericEntryInput";
+import { roundNullableAirMeterReading } from "../domain/airMeterPrecision";
 
 interface AirTableProps {
   monthStr: string;
@@ -68,6 +69,7 @@ export default function AirTable({
   });
   const [isSaved, setIsSaved] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
+  const [precisionWarning, setPrecisionWarning] = useState(false);
 
   // Sync with prop when month or initialRecord changes
   useEffect(() => {
@@ -80,7 +82,7 @@ export default function AirTable({
     setHasChanges(true);
     setIsSaved(false);
     const parsed = value === "" ? null : parseFloat(value);
-    const next = Number.isNaN(parsed) ? null : parsed;
+    const next = Number.isNaN(parsed) ? null : roundNullableAirMeterReading(parsed);
     if (!["eb41a", "eb41b", "eb42a", "eb42b"].includes(field)) {
       setRecord(prev => ({ ...prev, meters: { ...(prev.meters ?? {}), [field]: next } }));
       return;
@@ -198,9 +200,13 @@ export default function AirTable({
                 <td key={field} className="py-5 px-2">
                   <NumericEntryInput
                     ariaLabel={label(field)}
-                    step="0.000001"
-                    precision={6}
-                    placeholder="0.000000"
+                    step="0.0000001"
+                    precision={7}
+                    trimTrailingZeros
+                    minimumPrecision={6}
+                    maxDecimalPlaces={7}
+                    onPrecisionViolation={() => setPrecisionWarning(true)}
+                    placeholder="0.000000 / 0.0000000"
                     value={valueForField(field)}
                     onChange={value => {
                       handleInputChange(field, value);
@@ -214,6 +220,23 @@ export default function AirTable({
         </table>
       </div>
 
+      {precisionWarning && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
+          <section role="dialog" aria-modal="true" aria-labelledby="air-precision-warning-title" className="w-full max-w-sm rounded-2xl border border-amber-500/40 bg-slate-900 p-6 shadow-2xl">
+            <h4 id="air-precision-warning-title" className="font-display text-lg font-bold text-amber-300">
+              {th ? "กรอกได้สูงสุด 7 ตำแหน่งทศนิยม" : "Maximum 7 decimal places"}
+            </h4>
+            <p className="mt-3 text-sm leading-relaxed text-slate-300">
+              {th ? "ค่า AC Energy Meter ต้องกรอกได้ไม่เกิน 7 ตำแหน่งทศนิยม ระบบไม่รับตัวเลขตำแหน่งที่ 8 โปรดตรวจสอบและกรอกใหม่" : "AC Energy Meter values accept up to 7 decimal places. The 8th decimal digit was not entered. Please review the value and try again."}
+            </p>
+            <div className="mt-6 flex justify-end">
+              <button type="button" autoFocus onClick={() => setPrecisionWarning(false)} className="rounded-lg bg-amber-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-400">
+                {th ? "ตกลง" : "OK"}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       {/* Footer info & timestamp */}
       <div className="px-5 py-3 border-t border-slate-850 bg-slate-900/20 flex flex-col sm:flex-row justify-between items-center gap-2 text-xs text-slate-500 font-mono">
         <span>{copy.meters(fields.length)}</span>

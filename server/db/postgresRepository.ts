@@ -6,6 +6,7 @@ import { withTransaction, type DbExecutor, query } from "./pool";
 import { HttpError } from "../errors";
 import type { BackendRepository, PeriodRecord, RackCapacityHistoryRecord, RackCapacitySaveResult, RackFieldChangeOutcome, RackSnapshotRecord, RackUnitImageRecord, RackUnitSnapshotRecord, SaveMonthlyLogInput, SaveRackCapacityInput, SaveRackUnitImageInput, SaveRackUnitSnapshotInput, SiteRecord, UpdateSettingsInput, UpsGroupHistoryRecord, UpsGroupHistoryUpsertRow } from "../repositories/contracts";
 import { dashboardMappingFromPolicy } from "../repositories/dashboardMapping";
+import { roundNullableAirMeterReading } from "../../src/domain/airMeterPrecision";
 import type { DisplayPeriod } from "../policies/displayPeriod";
 
 function numberOrNull(value: unknown): number | null { return value === null || value === undefined ? null : Number(value); }
@@ -176,7 +177,8 @@ export class PostgresRepository implements BackendRepository {
     for (const [key, value] of Object.entries(input.log.air.meters ?? {})) airValues[key] = value;
     for (const [code, reading] of Object.entries(airValues)) {
       const meterId = await upsertMeter(code);
-      await client.query("INSERT INTO air_meter_readings(period_id, meter_id, site_id, reading, raw_inputs) VALUES ($1,$2,$3,$4,$5)", [periodId, meterId, input.siteId, reading, { code, reading }]);
+      const normalizedReading = roundNullableAirMeterReading(reading);
+      await client.query("INSERT INTO air_meter_readings(period_id, meter_id, site_id, reading, raw_inputs) VALUES ($1,$2,$3,$4,$5)", [periodId, meterId, input.siteId, normalizedReading, { code, reading: normalizedReading }]);
     }
 
     for (const record of input.log.dc) {
@@ -295,7 +297,7 @@ export class PostgresRepository implements BackendRepository {
       if (row.phase_code) { const phases = (log.ups.find(item => item.upsId === record.upsId)?.phases ?? {}); phases[row.phase_code] = { voltage: record.voltage, current: record.current, loadKw: record.loadKw, loadKva: record.loadKva }; const existing = log.ups.find(item => item.upsId === record.upsId); if (existing) existing.phases = phases; else log.ups.push({ ...record, phases }); }
       else log.ups.push(record);
     }
-    for (const row of air.rows) { const log = byPeriod.get(row.period_id); if (!log) continue; if (row.code in log.air) (log.air as unknown as Record<string, number | null>)[row.code] = numberOrNull(row.reading); else log.air.meters![row.code] = numberOrNull(row.reading); }
+    for (const row of air.rows) { const log = byPeriod.get(row.period_id); if (!log) continue; const reading = numberOrNull(row.reading); if (row.code in log.air) (log.air as unknown as Record<string, number | null>)[row.code] = reading; else log.air.meters![row.code] = reading; }
     for (const row of dc.rows) { const log = byPeriod.get(row.period_id); if (log) log.dc.push({ panelId: row.code, voltage: numberOrNull(row.voltage), current: numberOrNull(row.current) }); }
     for (const row of electrical.rows) {
       const log = byPeriod.get(row.period_id); if (!log) continue;

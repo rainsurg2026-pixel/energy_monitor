@@ -195,8 +195,32 @@ export function sheetOrderName(facilityCode: string | undefined, order: number, 
 const RAW_SHEET_ORDER: Record<string, number> = {
   UPS_Loads: 20, Air_Inputs: 21, DC_Inputs: 22, Energy_Cost_Inputs: 23, Saved_Records: 24, Saved_Values: 25, Raw_Inputs: 26, Calculated_Energy: 27,
   "Dashboard-FAC": 28, "Dashboard-FAC UPS": 29, "Dashboard-FAC Details": 30, "Dashboard-FAC Air": 31, "Dashboard-FAC DC": 32,
-  "Rack Unit Capacity": 33, "Rack Capacity History": 34, "UPS Group History": 35, "Rack Capacity Raw": 36
+  "Rack Unit Capacity": 33, "Rack Capacity History": 34, "UPS Group History": 35, "Rack Capacity Raw": 36,
+  "Dashboard-FAC UPS Overall": 37, "Dashboard-FAC Totals": 38
 };
+
+type ExcelSheetCategory = "report" | "saved" | "input" | "calculation" | "history" | "compatibility";
+
+const EXCEL_SHEET_TAB_COLORS: Record<ExcelSheetCategory, string> = {
+  report: "FF007A75",
+  saved: "FF2563EB",
+  input: "FFF59E0B",
+  calculation: "FF7C3AED",
+  history: "FF16A34A",
+  compatibility: "FF94A3B8"
+};
+
+function applyExcelSheetCategory(sheet: any, category: ExcelSheetCategory): void {
+  sheet.properties.tabColor = { argb: EXCEL_SHEET_TAB_COLORS[category] };
+}
+
+function rawSheetCategory(title: string): ExcelSheetCategory {
+  if (["UPS_Loads", "Air_Inputs", "DC_Inputs", "Energy_Cost_Inputs", "Raw_Inputs"].includes(title)) return "input";
+  if (["Calculated_Energy", "Dashboard-FAC", "Dashboard-FAC UPS", "Dashboard-FAC UPS Overall", "Dashboard-FAC Details", "Dashboard-FAC Air", "Dashboard-FAC DC", "Dashboard-FAC Totals"].includes(title)) return "calculation";
+  if (["Saved_Records", "Saved_Values", "Rack Unit Capacity"].includes(title)) return "saved";
+  if (["Rack Capacity History", "UPS Group History", "Rack Capacity Raw"].includes(title)) return "history";
+  return "compatibility";
+}
 
 function excelColumnNameForTable(column: number): string {
   let value = column;
@@ -230,6 +254,7 @@ function addTableSheet(workbook: any, prefix: string, title: string, headers: un
   const sheet = workbook.addWorksheet(name);
   const tableName = "tbl" + (prefix || "Sheet") + title.replace(/[^a-z0-9]/giu, "");
   configureTableSheet(sheet, headers, rows, tableName);
+  applyExcelSheetCategory(sheet, rawSheetCategory(title));
   return sheet;
 }
 
@@ -240,6 +265,7 @@ function addPresentationSheet(workbook: any, name: string, title: string): any {
   sheet.getCell("A1").font = { name: "Aptos Display", size: 16, bold: true, color: { argb: "FFFFFFFF" } };
   sheet.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
   sheet.views = [{ state: "frozen", ySplit: 2 }];
+  applyExcelSheetCategory(sheet, "report");
   return sheet;
 }
 
@@ -255,18 +281,22 @@ interface ExcelDashboardModel {
   metrics: ExcelDashboardMetric[];
   dashboardRows: unknown[][];
   dashboardUpsRows: unknown[][];
+  dashboardUpsOverallRows: unknown[][];
   dashboardDetailRows: unknown[][];
   dashboardAirRows: unknown[][];
   dashboardDcRows: unknown[][];
+  dashboardTotalsRows: unknown[][];
 }
 
 function buildExcelDashboardModel(logs: MonthlyLog[], calculationLogs: MonthlyLog[], facility: ExportFacility): ExcelDashboardModel {
   const metrics: ExcelDashboardMetric[] = [];
   const dashboardRows: unknown[][] = [];
   const dashboardUpsRows: unknown[][] = [];
+  const dashboardUpsOverallRows: unknown[][] = [];
   const dashboardDetailRows: unknown[][] = [];
   const dashboardAirRows: unknown[][] = [];
   const dashboardDcRows: unknown[][] = [];
+  const dashboardTotalsRows: unknown[][] = [];
   for (const log of logs) {
     const mapping = buildDashboardUpsMapping(facility.upsGroupHistory ?? null, log.month, facility.dashboardMapping?.mapping ?? fallbackDashboardMapping(facility.siteName)?.mapping ?? []);
     const dashboard = buildEngineeringDashboardSnapshot(calculationLogs, log.month, mapping);
@@ -320,12 +350,18 @@ function buildExcelDashboardModel(logs: MonthlyLog[], calculationLogs: MonthlyLo
       rackUnit?.availableU ?? null,
       rackUnit?.availabilityPct ?? null
     ]);
-    for (const row of [...(dashboard?.upsGroups ?? []), ...(dashboard?.upsOverallGroups ?? [])]) dashboardUpsRows.push([log.month, row.name, row.totalKw, row.totalKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh]);
+    for (const row of dashboard?.upsGroups ?? []) dashboardUpsRows.push([log.month, row.name, row.totalKw, row.totalKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh]);
+    for (const row of dashboard?.upsOverallGroups ?? []) dashboardUpsOverallRows.push([log.month, row.name, row.totalKw, row.totalKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh]);
     for (const row of dashboard?.upsDetails ?? []) dashboardDetailRows.push([log.month, row.no, row.umdb, row.upsId, row.acPowerPanel, row.sts, row.oudb, row.voltage, row.current, row.loadKw, row.loadKva, row.capacity, row.loadPercent]);
     for (const field of dashboard?.airFields ?? []) dashboardAirRows.push([log.month, field, dashboard.airPrevious[field], dashboard.airCurrent[field], dashboard.airDifference[field]]);
     for (const row of dashboard?.dcPanels ?? []) dashboardDcRows.push([log.month, row.panelId, row.voltage, row.current, row.dcPowerW, row.acCurrentA, row.acPowerW, row.monthlyEnergyKwh]);
+    dashboardTotalsRows.push([
+      log.month, dashboard?.daysInMonth ?? null, dashboard?.previousMonth ?? null, dashboard?.totalUpsKw ?? null, dashboard?.totalUpsKva ?? null, dashboard?.totalUpsEnergyKwh ?? null,
+      dashboard?.detailedVoltageAvg ?? null, dashboard?.detailedCurrentSum ?? null, dashboard?.airEnergyKwh ?? null, dashboard?.totalDcPowerW ?? null, dashboard?.totalDcAcCurrentA ?? null, dashboard?.totalDcAcPowerW ?? null, dashboard?.totalDcEnergyKwh ?? null,
+      buildingEnergyKwh, buildingCostThb, floorEnergyKwh, floorCostThb, dashboard?.averageRateThbPerKwh ?? calculated.averageElectricityRateThbPerKwh, floorSharePercent
+    ]);
   }
-  return { metrics, dashboardRows, dashboardUpsRows, dashboardDetailRows, dashboardAirRows, dashboardDcRows };
+  return { metrics, dashboardRows, dashboardUpsRows, dashboardUpsOverallRows, dashboardDetailRows, dashboardAirRows, dashboardDcRows, dashboardTotalsRows };
 }
 
 /**
@@ -339,9 +375,16 @@ function buildExcelDashboardModel(logs: MonthlyLog[], calculationLogs: MonthlyLo
  */
 function workbookSheetRef(name: string): string { return "'" + name.replace(/'/g, "''") + "'"; }
 
-function addCurrentTableSheet(workbook: any, name: string, tableName: string, headers: unknown[], rows: unknown[][]): any {
+function addCurrentTableSheet(workbook: any, name: string, tableName: string, headers: unknown[], rows: unknown[][], category: Exclude<ExcelSheetCategory, "report" | "compatibility">): any {
   const sheet = workbook.addWorksheet(name);
   configureTableSheet(sheet, headers, rows, tableName);
+  applyExcelSheetCategory(sheet, category);
+  return sheet;
+}
+
+function addCompatibilityTableSheet(workbook: any, prefix: string, title: string, headers: unknown[], rows: unknown[][]): any {
+  const sheet = addTableSheet(workbook, prefix, title, headers, rows);
+  sheet.state = "hidden";
   return sheet;
 }
 function addRackUnitImageToSavedSheet(workbook: any, sheet: any, dataUri: string | null | undefined, meta: ReportData["rackUnitCapacityImageMeta"]): void {
@@ -388,23 +431,26 @@ async function workbookForCurrentFacility(facility: ExportFacility): Promise<any
   const workbook = new ExcelJS.Workbook();
   const logs = [...facility.logs].sort((a, b) => a.month.localeCompare(b.month));
   const calculationLogs = [...(facility.calculationLogs ?? logs)].sort((a, b) => a.month.localeCompare(b.month));
-  const months = [...new Set([
-    ...(facility.reportingMonths ?? []), ...logs.map(log => log.month),
+  const reportMonths = [...new Set(facility.reportingMonths?.length ? facility.reportingMonths : logs.map(log => log.month))].sort();
+  const dataMonths = [...new Set([
+    ...calculationLogs.map(log => log.month),
     ...(facility.rackHistory ?? []).map(row => row.snapshotMonth),
     ...(facility.rackUnitCapacity ?? []).map(row => row.month),
     ...(facility.upsGroupHistory?.rows ?? []).map(row => row.month)
   ])].sort();
-  const baseModel = buildExcelDashboardModel(logs, calculationLogs, facility);
-  const metrics = dashboardMetricsForMonths(baseModel, months);
-  const selectedMonth = facility.selectedMonth && months.includes(facility.selectedMonth) ? facility.selectedMonth : (months.at(-1) ?? "");
-  const trendMonths = exportTrendMonths(months, calculationLogs.map(log => log.month), selectedMonth);
+  const fullFacility: ExportFacility = { ...facility, logs: calculationLogs, reportingMonths: dataMonths };
+  const baseModel = buildExcelDashboardModel(calculationLogs, calculationLogs, fullFacility);
+  const fullMetrics = dashboardMetricsForMonths(baseModel, calculationLogs.map(log => log.month));
+  const metrics = dashboardMetricsForMonths(baseModel, reportMonths);
+  const selectedMonth = facility.selectedMonth && reportMonths.includes(facility.selectedMonth) ? facility.selectedMonth : (reportMonths.at(-1) ?? calculationLogs.at(-1)?.month ?? "");
+  const trendMonths = exportTrendMonths(reportMonths, calculationLogs.map(log => log.month), selectedMonth);
   const trendMonthSet = new Set(trendMonths);
   const trendLogs = calculationLogs.filter(log => trendMonthSet.has(log.month));
   const trendFacility: ExportFacility = { ...facility, logs: trendLogs, rackUnitCapacity: facility.trendRackUnitCapacity ?? facility.rackUnitCapacity, reportingMonths: trendMonths };
   const trendModel = buildExcelDashboardModel(trendLogs, calculationLogs, trendFacility);
   const trendMetrics = dashboardMetricsForMonths(trendModel, trendMonths);
-  const airFields = [...new Set(logs.flatMap(log => Object.keys(log.air.meters ?? {}).concat(["eb41a", "eb41b", "eb42a", "eb42b"])))].sort();
-  const airRows = logs.map(log => ({ month: log.month, values: airFields.map(field => (log.air as unknown as Record<string, number | null | undefined>)[field] ?? log.air.meters?.[field] ?? null) }));
+  const airFields = [...new Set(calculationLogs.flatMap(log => Object.keys(log.air.meters ?? {}).concat(["eb41a", "eb41b", "eb42a", "eb42b"])))].sort();
+  const airRows = calculationLogs.map(log => ({ month: log.month, values: airFields.map(field => (log.air as unknown as Record<string, number | null | undefined>)[field] ?? log.air.meters?.[field] ?? null) }));
   const rackRows: CurrentFacilityDashboardOptions["rackRows"] = (facility.rackHistory ?? []).map(row => ({
     month: row.snapshotMonth, zone: row.rackZone, total: row.totalRacks, inUse: row.inUse, available: row.available, reserved: row.reserved,
     pending: row.pendingDismantle, other: row.other, usage: row.usagePct, availability: row.availabilityPct
@@ -424,63 +470,90 @@ async function workbookForCurrentFacility(facility: ExportFacility): Promise<any
     dashboardSheetName, dataSheetName, selectedMonth, exportedAt: facility.generatedAt ?? new Date().toISOString(), exportedBy: facility.generatedBy ?? null,
     trendMetrics, trendDataSheetName,
     airSheetName: "06_Input_AirConditioning", airDashboardSheetName: "31 Dashboard-FAC Air", rackSheetName: "03_Saved_Rack", rackUnitSheetName: "04_Saved_RackUnit",
-    upsSheetName: "29 Dashboard-FAC UPS", detailSheetName: "30 Dashboard-FAC Details", dcSheetName: "32 Dashboard-FAC DC",
-    airFields, airRows, airDashboardRows: baseModel.dashboardAirRows, upsRows: baseModel.dashboardUpsRows, detailRows: baseModel.dashboardDetailRows, dcRows: baseModel.dashboardDcRows, rackRows, rackUnitRows, rackImageDataUri: facility.rackUnitCapacityImageDataUri ?? null, rackImageMeta: facility.rackUnitCapacityImageMeta ?? null
+    upsSheetName: "29 Dashboard-FAC UPS", upsOverallSheetName: "37 Dashboard-FAC UPS Overall", detailSheetName: "30 Dashboard-FAC Details", dcSheetName: "32 Dashboard-FAC DC", totalsSheetName: "38 Dashboard-FAC Totals",
+    airFields, airRows, airDashboardRows: baseModel.dashboardAirRows, upsRows: baseModel.dashboardUpsRows, upsOverallRows: baseModel.dashboardUpsOverallRows, detailRows: baseModel.dashboardDetailRows, dcRows: baseModel.dashboardDcRows, totalsRows: baseModel.dashboardTotalsRows, rackRows, rackUnitRows, rackImageDataUri: facility.rackUnitCapacityImageDataUri ?? null, rackImageMeta: facility.rackUnitCapacityImageMeta ?? null
   });
   const savedEnergy = addCurrentTableSheet(workbook, "02_Saved_Energy", "tblSavedEnergy",
     ["Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "UPS Load (kW)", "UPS Load (%)", "Status"],
-    metrics.map(metric => [...currentMetricRows([metric])[0], metric.floorEnergyKwh === null ? "Partial" : "Complete"]));
+    fullMetrics.map(metric => [...currentMetricRows([metric])[0], metric.floorEnergyKwh === null ? "Partial" : "Complete"]), "saved");
   const savedRack = addCurrentTableSheet(workbook, "03_Saved_Rack", "tblSavedRack",
     ["Month", "Facility", "Rack Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other", "Usage (%)", "Availability (%)"],
-    rackRows.map(row => [row.month, facility.siteName, row.zone, row.total, row.inUse, row.available, row.reserved, row.pending, row.other, row.usage, row.availability]));
+    rackRows.map(row => [row.month, facility.siteName, row.zone, row.total, row.inUse, row.available, row.reserved, row.pending, row.other, row.usage, row.availability]), "saved");
   const savedRackUnit = addCurrentTableSheet(workbook, "04_Saved_RackUnit", "tblSavedRackUnit",
     ["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Attached", "Image Content Type", "Image Saved At"],
-    rackUnitRows.map(row => { const source = facility.rackUnitCapacity?.find(item => item.month === row.month); return [row.month, row.total, row.used, row.available, row.usage, row.availability, source?.imageAttached ? "Yes" : "No", source?.imageContentType ?? null, source?.imageSavedAt ?? null]; }));
+    rackUnitRows.map(row => { const saved = facility.rackUnitCapacity?.find(item => item.month === row.month); return [row.month, row.total, row.used, row.available, row.usage, row.availability, saved?.imageAttached ? "Yes" : "No", saved?.imageContentType ?? null, saved?.imageSavedAt ?? null]; }), "saved");
   addRackUnitImageToSavedSheet(workbook, savedRackUnit, facility.rackUnitCapacityImageDataUri ?? null, facility.rackUnitCapacityImageMeta ?? null);
-  addCurrentTableSheet(workbook, "05_Input_UPS", "tblInputUPS", ["Month", "Facility", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Raw phases JSON", "Last Saved"], logs.flatMap(log => log.ups.map(row => [log.month, facility.siteName, row.upsId, row.voltage, row.current, row.loadKw, row.loadKva, JSON.stringify(row.phases ?? {}), log.lastSavedUps])));
-  const inputAirRows = airRows.map(row => [row.month, facility.siteName, ...row.values, JSON.stringify(logs.find(log => log.month === row.month)?.air.meters ?? {}), logs.find(log => log.month === row.month)?.lastSavedAir ?? null]);
-  const inputAir = addCurrentTableSheet(workbook, "06_Input_AirConditioning", "tblInputAir", ["Month", "Facility", ...airFields.map(field => field.toUpperCase() + " (GWh)"), "Raw meters JSON", "Last Saved"], inputAirRows);
-  airFields.forEach((_field, index) => { for (let row = 2; row <= Math.max(2, inputAirRows.length + 1); row++) inputAir.getCell(row, index + 3).numFmt = "0.000000"; });
-  addCurrentTableSheet(workbook, "07_Input_DCPower", "tblInputDCPower", ["Month", "Facility", "DC Panel", "Voltage (V)", "Current (A)", "Last Saved"], logs.flatMap(log => log.dc.map(row => [log.month, facility.siteName, row.panelId, row.voltage, row.current, log.lastSavedDc])));
-  addCurrentTableSheet(workbook, "08_Input_Rack", "tblInputRack", ["Snapshot Month", "Facility", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], (facility.rack?.records ?? []).map(row => [facility.rack?.sourceSnapshot ?? selectedMonth, facility.siteName, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
-  addCurrentTableSheet(workbook, "09_History_Energy", "tblHistoryEnergy", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "Status"], metrics.map(metric => [metric.month, metric.buildingEnergyKwh, metric.buildingCostThb, metric.floorEnergyKwh, metric.floorCostThb, metric.averageRateThbPerKwh, metric.upsEnergyKwh, metric.airEnergyKwh, metric.dcEnergyKwh, metric.floorEnergyKwh === null ? "Partial" : "Complete"]));
-  addCurrentTableSheet(workbook, "10_History_Rack", "tblHistoryRack", ["Month", "Facility", "Rack Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other", "Usage (%)", "Availability (%)"], rackRows.map(row => [row.month, facility.siteName, row.zone, row.total, row.inUse, row.available, row.reserved, row.pending, row.other, row.usage, row.availability]));
+
+  addCurrentTableSheet(workbook, "05_Input_UPS", "tblInputUPS", ["Month", "Facility", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Raw phases JSON", "Last Saved"], calculationLogs.flatMap(log => log.ups.map(row => [log.month, facility.siteName, row.upsId, row.voltage, row.current, row.loadKw, row.loadKva, JSON.stringify(row.phases ?? {}), log.lastSavedUps])), "input");
+  const inputAirRows = airRows.map(row => [row.month, facility.siteName, ...row.values, JSON.stringify(calculationLogs.find(log => log.month === row.month)?.air.meters ?? {}), calculationLogs.find(log => log.month === row.month)?.lastSavedAir ?? null]);
+  const inputAir = addCurrentTableSheet(workbook, "06_Input_AirConditioning", "tblInputAir", ["Month", "Facility", ...airFields.map(field => field.toUpperCase() + " (GWh)"), "Raw meters JSON", "Last Saved"], inputAirRows, "input");
+  airFields.forEach((_field, index) => { for (let row = 2; row <= Math.max(2, inputAirRows.length + 1); row++) inputAir.getCell(row, index + 3).numFmt = "0.000000#"; });
+  addCurrentTableSheet(workbook, "07_Input_DCPower", "tblInputDCPower", ["Month", "Facility", "DC Panel", "Voltage (V)", "Current (A)", "Last Saved"], calculationLogs.flatMap(log => log.dc.map(row => [log.month, facility.siteName, row.panelId, row.voltage, row.current, log.lastSavedDc])), "input");
+  const inputEnergyCost = addCurrentTableSheet(workbook, "08_Input_EnergyCost", "tblInputEnergyCost", ["Month", "Facility", "Building Energy (kWh)", "Building Cost (THB)", "Calculated Average Rate (THB/kWh)", "Calculated 4th Floor Cost (THB)", "Last Saved"], calculationLogs.map(log => { const metric = fullMetrics.find(item => item.month === log.month); return [log.month, facility.siteName, log.energyCost.buildingEnergyKwh, log.energyCost.buildingElectricityCostThb, metric?.averageRateThbPerKwh ?? null, metric?.floorCostThb ?? null, log.lastSavedEnergyCost]; }), "input");
+  addCurrentTableSheet(workbook, "09_Input_Rack", "tblInputRack", ["Snapshot Month", "Facility", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], (facility.rack?.records ?? []).map(row => [facility.rack?.sourceSnapshot ?? selectedMonth, facility.siteName, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]), "input");
+
+  const calculation = addCurrentTableSheet(workbook, "10_Calculation_Energy", "tblCalculationEnergy", ["Month", "Days", "Previous Month", "UPS Total kW", "UPS Total kVA", "UPS Energy (kWh)", "UPS Detail Voltage Avg (V)", "UPS Detail Current Total (A)", "Air Energy (kWh)", "DC Power (W)", "DC AC Current @220V (A)", "DC AC Power (W)", "DC Energy (kWh)", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)", "Rack Total (U)", "Rack Used (U)", "Rack Available (U)", "Rack Usage (%)", "Calculation Status"], baseModel.dashboardTotalsRows.map(row => { const metric = fullMetrics.find(item => item.month === row[0]); return [...row, metric?.rackTotalU ?? null, metric?.rackUsedU ?? null, metric?.rackAvailableU ?? null, metric?.rackUsagePercent ?? null, metric?.floorEnergyKwh === null ? "Partial" : "Complete"]; }), "calculation");
+  const calculationUps = addCurrentTableSheet(workbook, "11_Calculation_UPS", "tblCalculationUPS", ["Month", "Facility", "Scope", "UPS Group", "Total Load (kW)", "Total Load (kVA)", "Capacity (kVA)", "Load (%)", "Available (%)", "Monthly Energy (kWh)"], [
+    ...baseModel.dashboardUpsOverallRows.map(row => [row[0], facility.siteName, "Overall", ...row.slice(1)]),
+    ...baseModel.dashboardUpsRows.map(row => [row[0], facility.siteName, "UPS / PPC", ...row.slice(1)])
+  ], "calculation");
+  const calculationUpsDetail = addCurrentTableSheet(workbook, "12_Calculation_UPS_Detail", "tblCalculationUPSDetail", ["Month", "Facility", "No.", "UMDB", "UPS ID", "AC Power Panel", "STS", "OUDB", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Capacity (kVA)", "Load (%)"], baseModel.dashboardDetailRows.map(row => [row[0], facility.siteName, ...row.slice(1)]), "calculation");
+  const floorElectricity = addCurrentTableSheet(workbook, "13_Calculation_4thFloor", "tblCalculation4thFloor", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "Average Rate (THB/kWh)", "UPS Energy (kWh)", "Air Conditioning Energy (kWh)", "DC Power Energy (kWh)", "4th Floor Energy (kWh)", "4th Floor Estimated Cost (THB)", "4th Floor Share (%)"], fullMetrics.map(metric => [metric.month, metric.buildingEnergyKwh, metric.buildingCostThb, metric.averageRateThbPerKwh, metric.upsEnergyKwh, metric.airEnergyKwh, metric.dcEnergyKwh, metric.floorEnergyKwh, metric.floorCostThb, metric.floorSharePercent]), "calculation");
+
+  const historyEnergy = addCurrentTableSheet(workbook, "14_History_Energy", "tblHistoryEnergy", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "Status"], fullMetrics.map(metric => [metric.month, metric.buildingEnergyKwh, metric.buildingCostThb, metric.floorEnergyKwh, metric.floorCostThb, metric.averageRateThbPerKwh, metric.upsEnergyKwh, metric.airEnergyKwh, metric.dcEnergyKwh, metric.floorEnergyKwh === null ? "Partial" : "Complete"]), "history");
+  const historyRack = addCurrentTableSheet(workbook, "15_History_Rack", "tblHistoryRack", ["Month", "Facility", "Rack Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Decommission", "Other", "Usage (%)", "Availability (%)"], rackRows.map(row => [row.month, facility.siteName, row.zone, row.total, row.inUse, row.available, row.reserved, row.pending, row.other, row.usage, row.availability]), "history");
+  const historyRackUnit = addCurrentTableSheet(workbook, "16_History_RackUnit", "tblHistoryRackUnit", ["Month", "Facility", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Attached", "Image Saved At"], rackUnitRows.map(row => { const saved = facility.rackUnitCapacity?.find(item => item.month === row.month); return [row.month, facility.siteName, row.total, row.used, row.available, row.usage, row.availability, saved?.imageAttached ? "Yes" : "No", saved?.imageSavedAt ?? null]; }), "history");
+  const historyUps = addCurrentTableSheet(workbook, "17_History_UPS", "tblHistoryUPS", ["Month", "Facility", "UPS Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)", "Generated At", "Data Version"], (facility.upsGroupHistory?.rows ?? []).map(row => [row.month, row.facility, row.group, row.totalLoadKw, row.totalLoadKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh, row.generatedAt, row.dataVersion]), "history");
+
   savedRack.getColumn(10).numFmt = "0.0%"; savedRack.getColumn(11).numFmt = "0.0%";
   savedRackUnit.getColumn(5).numFmt = "0.0%"; savedRackUnit.getColumn(6).numFmt = "0.0%";
   savedEnergy.getColumn(6).numFmt = "#,##0.00"; savedEnergy.getColumn(7).numFmt = "0.00"; savedEnergy.getColumn(12).numFmt = "0.00";
+  for (const col of [3, 4, 5, 6]) inputEnergyCost.getColumn(col).numFmt = "#,##0.00";
+  for (const col of [2, 3, 4, 5, 6, 7, 8, 9]) calculation.getColumn(col).numFmt = "#,##0.00";
+  calculation.getColumn(10).numFmt = "0.00"; calculation.getColumn(14).numFmt = "0.00";
+  for (const col of [2, 3, 4, 5, 6, 7, 8, 9]) historyEnergy.getColumn(col).numFmt = "#,##0.00";
+  for (const col of [2, 3, 4, 5, 6, 7, 8, 9, 10]) floorElectricity.getColumn(col).numFmt = col === 10 ? "0.00" : "#,##0.00";
+  for (const col of [5, 6, 7, 8, 9, 10]) calculationUps.getColumn(col).numFmt = col === 8 || col === 9 ? "0.00" : "#,##0.00";
+  for (const col of [9, 10, 11, 12, 13, 14]) calculationUpsDetail.getColumn(col).numFmt = col === 14 ? "0.00" : "#,##0.00";
+  historyRack.getColumn(10).numFmt = "0.0%"; historyRack.getColumn(11).numFmt = "0.0%";
+  historyRackUnit.getColumn(6).numFmt = "0.0%"; historyRackUnit.getColumn(7).numFmt = "0.0%";
+  historyUps.getColumn(7).numFmt = "0.00"; historyUps.getColumn(8).numFmt = "0.00";
+
   // Compatibility tables retain the historical export contract for downstream
-  // consumers while the prefixed Current Facility tables above are the
-  // authoritative interactive workbook sources.
-  addTableSheet(workbook, "", "UPS_Loads", ["Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Raw phases JSON", "Last Saved"], logs.flatMap(log => log.ups.map(row => [log.month, row.upsId, row.voltage, row.current, row.loadKw, row.loadKva, JSON.stringify(row.phases ?? {}), log.lastSavedUps])));
-  const legacyAir = addTableSheet(workbook, "", "Air_Inputs", ["Month", ...airFields.map(field => field.toUpperCase() + " (GWh)"), "Raw meters JSON", "Last Saved"], airRows.map(row => [row.month, ...row.values, JSON.stringify(logs.find(log => log.month === row.month)?.air.meters ?? {}), logs.find(log => log.month === row.month)?.lastSavedAir ?? null]));
-  airFields.forEach((_field, index) => { for (let row = 2; row <= Math.max(2, airRows.length + 1); row++) legacyAir.getCell(row, index + 2).numFmt = "0.000000"; });
-  addTableSheet(workbook, "", "DC_Inputs", ["Month", "DC Panel", "Voltage (V)", "Current (A)", "Last Saved"], logs.flatMap(log => log.dc.map(row => [log.month, row.panelId, row.voltage, row.current, log.lastSavedDc])));
-  addTableSheet(workbook, "", "Energy_Cost_Inputs", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "Stored Floor Cost (THB)", "Stored Average Rate (THB/kWh)", "Last Saved"], logs.map(log => [log.month, log.energyCost.buildingEnergyKwh, log.energyCost.buildingElectricityCostThb, log.energyCost.floorElectricityCostThb ?? null, log.energyCost.averageElectricityRateThbPerKwh ?? null, log.lastSavedEnergyCost]));
-  const logsByMonth = new Map(logs.map(log => [log.month, log]));
-  addTableSheet(workbook, "", "Saved_Records", ["Month", "UPS Last Saved", "Air Last Saved", "DC Last Saved", "Energy Cost Last Saved", "Source State"], months.map(month => {
+  // consumers while remaining hidden from Excel V2's normal workbook view.
+  addCompatibilityTableSheet(workbook, "", "UPS_Loads", ["Month", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Raw phases JSON", "Last Saved"], calculationLogs.flatMap(log => log.ups.map(row => [log.month, row.upsId, row.voltage, row.current, row.loadKw, row.loadKva, JSON.stringify(row.phases ?? {}), log.lastSavedUps])));
+  const legacyAir = addCompatibilityTableSheet(workbook, "", "Air_Inputs", ["Month", ...airFields.map(field => field.toUpperCase() + " (GWh)"), "Raw meters JSON", "Last Saved"], airRows.map(row => [row.month, ...row.values, JSON.stringify(calculationLogs.find(log => log.month === row.month)?.air.meters ?? {}), calculationLogs.find(log => log.month === row.month)?.lastSavedAir ?? null]));
+  airFields.forEach((_field, index) => { for (let row = 2; row <= Math.max(2, airRows.length + 1); row++) legacyAir.getCell(row, index + 2).numFmt = "0.000000#"; });
+  addCompatibilityTableSheet(workbook, "", "DC_Inputs", ["Month", "DC Panel", "Voltage (V)", "Current (A)", "Last Saved"], calculationLogs.flatMap(log => log.dc.map(row => [log.month, row.panelId, row.voltage, row.current, log.lastSavedDc])));
+  addCompatibilityTableSheet(workbook, "", "Energy_Cost_Inputs", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "Stored Floor Cost (THB)", "Stored Average Rate (THB/kWh)", "Last Saved"], calculationLogs.map(log => [log.month, log.energyCost.buildingEnergyKwh, log.energyCost.buildingElectricityCostThb, log.energyCost.floorElectricityCostThb ?? null, log.energyCost.averageElectricityRateThbPerKwh ?? null, log.lastSavedEnergyCost]));
+  const logsByMonth = new Map(calculationLogs.map(log => [log.month, log]));
+  addCompatibilityTableSheet(workbook, "", "Saved_Records", ["Month", "UPS Last Saved", "Air Last Saved", "DC Last Saved", "Energy Cost Last Saved", "Source State"], dataMonths.map(month => {
     const log = logsByMonth.get(month);
     return [month, log?.lastSavedUps ?? null, log?.lastSavedAir ?? null, log?.lastSavedDc ?? null, log?.lastSavedEnergyCost ?? null, log ? "persisted monthly log" : "persisted Rack Unit-only row"];
   }));
-  addTableSheet(workbook, "", "Saved_Values", ["Month", "UPS Saved JSON", "Air Saved JSON", "DC Saved JSON", "Energy Cost Saved JSON", "Rack Unit Saved JSON", "Rack Unit Image JSON", "UPS Last Saved", "Air Last Saved", "DC Last Saved", "Energy Cost Last Saved"], months.map(month => {
+  addCompatibilityTableSheet(workbook, "", "Saved_Values", ["Month", "UPS Saved JSON", "Air Saved JSON", "DC Saved JSON", "Energy Cost Saved JSON", "Rack Unit Saved JSON", "Rack Unit Image JSON", "UPS Last Saved", "Air Last Saved", "DC Last Saved", "Energy Cost Last Saved"], dataMonths.map(month => {
     const log = logsByMonth.get(month);
     const rackUnit = facility.rackUnitCapacity?.find(row => row.month === month) ?? null;
     const image = rackUnit?.imageAttached ? { attached: true, contentType: rackUnit.imageContentType ?? null, savedAt: rackUnit.imageSavedAt ?? null } : null;
     return [month, JSON.stringify(log?.ups ?? null), JSON.stringify(log?.air ?? null), JSON.stringify(log?.dc ?? null), JSON.stringify(log?.energyCost ?? null), JSON.stringify(rackUnit), JSON.stringify(image), log?.lastSavedUps ?? null, log?.lastSavedAir ?? null, log?.lastSavedDc ?? null, log?.lastSavedEnergyCost ?? null];
   }));
-  addTableSheet(workbook, "", "Raw_Inputs", ["Month", "Raw Phase/Panel Values JSON"], logs.filter(log => log.srinakarinInputs).map(log => [log.month, JSON.stringify(log.srinakarinInputs)]));
-  addTableSheet(workbook, "", "Calculated_Energy", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "Floor Energy (kWh)", "Floor Cost (THB)", "Average Rate (THB/kWh)", "Floor Share (%)", "Status"], metrics.map(metric => [metric.month, metric.buildingEnergyKwh, metric.buildingCostThb, metric.upsEnergyKwh, metric.airEnergyKwh, metric.dcEnergyKwh, metric.floorEnergyKwh, metric.floorCostThb, metric.averageRateThbPerKwh, metric.floorSharePercent, metric.floorEnergyKwh === null ? "Partial" : "Complete"]));
-  addTableSheet(workbook, "", "Dashboard-FAC", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "Floor Share (%)", "Status"], metrics.map(metric => [metric.month, metric.buildingEnergyKwh, metric.buildingCostThb, metric.floorEnergyKwh, metric.floorCostThb, metric.averageRateThbPerKwh, metric.floorSharePercent, metric.floorEnergyKwh === null ? "Partial" : "Complete"]));
-  addTableSheet(workbook, "", "Dashboard-FAC UPS", ["Month", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)"], baseModel.dashboardUpsRows);
-  addTableSheet(workbook, "", "Dashboard-FAC Details", ["Month", "No", "UMDB", "UPS ID", "AC Power Panel", "STS", "OUDB", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Capacity", "Load (%)"], baseModel.dashboardDetailRows);
-  addTableSheet(workbook, "", "Dashboard-FAC Air", ["Month", "Field", "Previous", "Current", "Difference"], baseModel.dashboardAirRows);
-  addTableSheet(workbook, "", "Dashboard-FAC DC", ["Month", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current (A)", "AC Power (W)", "Monthly Energy (kWh)"], baseModel.dashboardDcRows);
-  const legacyRackUnit = addTableSheet(workbook, "", "Rack Unit Capacity", ["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Attached", "Image Content Type", "Image Saved At"], (facility.rackUnitCapacity ?? []).filter(row => months.includes(row.month)).map(row => [row.month, row.totalU, row.usedU, row.availableU, row.totalU > 0 ? row.usedU / row.totalU : null, row.availabilityPct, row.imageAttached ? "Yes" : "No", row.imageContentType ?? null, row.imageSavedAt ?? null]));
+  addCompatibilityTableSheet(workbook, "", "Raw_Inputs", ["Month", "Raw Phase/Panel Values JSON"], calculationLogs.filter(log => log.srinakarinInputs).map(log => [log.month, JSON.stringify(log.srinakarinInputs)]));
+  addCompatibilityTableSheet(workbook, "", "Calculated_Energy", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "Floor Energy (kWh)", "Floor Cost (THB)", "Average Rate (THB/kWh)", "Floor Share (%)", "Status"], fullMetrics.map(metric => [metric.month, metric.buildingEnergyKwh, metric.buildingCostThb, metric.upsEnergyKwh, metric.airEnergyKwh, metric.dcEnergyKwh, metric.floorEnergyKwh, metric.floorCostThb, metric.averageRateThbPerKwh, metric.floorSharePercent, metric.floorEnergyKwh === null ? "Partial" : "Complete"]));
+  addCompatibilityTableSheet(workbook, "", "Dashboard-FAC", ["Month", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "Floor Share (%)", "Status"], fullMetrics.map(metric => [metric.month, metric.buildingEnergyKwh, metric.buildingCostThb, metric.floorEnergyKwh, metric.floorCostThb, metric.averageRateThbPerKwh, metric.floorSharePercent, metric.floorEnergyKwh === null ? "Partial" : "Complete"]));
+  addCompatibilityTableSheet(workbook, "", "Dashboard-FAC UPS", ["Month", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)"], baseModel.dashboardUpsRows);
+  addCompatibilityTableSheet(workbook, "", "Dashboard-FAC Details", ["Month", "No", "UMDB", "UPS ID", "AC Power Panel", "STS", "OUDB", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Capacity", "Load (%)"], baseModel.dashboardDetailRows);
+  addCompatibilityTableSheet(workbook, "", "Dashboard-FAC Air", ["Month", "Field", "Previous", "Current", "Difference"], baseModel.dashboardAirRows);
+  addCompatibilityTableSheet(workbook, "", "Dashboard-FAC DC", ["Month", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current (A)", "AC Power (W)", "Monthly Energy (kWh)"], baseModel.dashboardDcRows);
+  addCompatibilityTableSheet(workbook, "", "Dashboard-FAC UPS Overall", ["Month", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)"], baseModel.dashboardUpsOverallRows);
+  addCompatibilityTableSheet(workbook, "", "Dashboard-FAC Totals", ["Month", "Days", "Previous Month", "UPS Total kW", "UPS Total kVA", "UPS Energy (kWh)", "UPS Detail Voltage Avg (V)", "UPS Detail Current Total (A)", "Air Energy (kWh)", "DC Power (W)", "DC AC Current (A)", "DC AC Power (W)", "DC Energy (kWh)", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], baseModel.dashboardTotalsRows);
+  const legacyRackUnit = addCompatibilityTableSheet(workbook, "", "Rack Unit Capacity", ["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Attached", "Image Content Type", "Image Saved At"], (facility.rackUnitCapacity ?? []).filter(row => dataMonths.includes(row.month)).map(row => [row.month, row.totalU, row.usedU, row.availableU, row.totalU > 0 ? row.usedU / row.totalU : null, row.availabilityPct, row.imageAttached ? "Yes" : "No", row.imageContentType ?? null, row.imageSavedAt ?? null]));
   legacyRackUnit.getColumn(5).numFmt = "0.0%"; legacyRackUnit.getColumn(6).numFmt = "0.0%";
-  addTableSheet(workbook, "", "Rack Capacity History", ["Snapshot Month", "Facility", "Rack Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle", "Other", "Usage (%)", "Availability (%)", "Reserved (%)", "Pending Dismantle (%)", "Other (%)", "Generated At", "Data Version"], (facility.rackHistory ?? []).map(row => [row.snapshotMonth, row.facility, row.rackZone, row.totalRacks, row.inUse, row.available, row.reserved, row.pendingDismantle, row.other, row.usagePct, row.availabilityPct, row.reservedPct, row.pendingDismantlePct, row.otherPct, row.generatedAt, row.dataVersion]));
-  addTableSheet(workbook, "", "UPS Group History", ["Month", "Facility", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)", "Generated At", "Data Version"], (facility.upsGroupHistory?.rows ?? []).map(row => [row.month, row.facility, row.group, row.totalLoadKw, row.totalLoadKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh, row.generatedAt, row.dataVersion]));
-  addTableSheet(workbook, "", "Rack Capacity Raw", ["Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], (facility.rack?.records ?? []).map(row => [facility.rack?.sourceSnapshot ?? selectedMonth, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
+  addCompatibilityTableSheet(workbook, "", "Rack Capacity History", ["Snapshot Month", "Facility", "Rack Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle", "Other", "Usage (%)", "Availability (%)", "Reserved (%)", "Pending Dismantle (%)", "Other (%)", "Generated At", "Data Version"], (facility.rackHistory ?? []).map(row => [row.snapshotMonth, row.facility, row.rackZone, row.totalRacks, row.inUse, row.available, row.reserved, row.pendingDismantle, row.other, row.usagePct, row.availabilityPct, row.reservedPct, row.pendingDismantlePct, row.otherPct, row.generatedAt, row.dataVersion]));
+  addCompatibilityTableSheet(workbook, "", "UPS Group History", ["Month", "Facility", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)", "Generated At", "Data Version"], (facility.upsGroupHistory?.rows ?? []).map(row => [row.month, row.facility, row.group, row.totalLoadKw, row.totalLoadKva, row.capacity, row.loadPercent, row.availablePercent, row.monthlyEnergyKwh, row.generatedAt, row.dataVersion]));
+  addCompatibilityTableSheet(workbook, "", "Rack Capacity Raw", ["Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], (facility.rack?.records ?? []).map(row => [facility.rack?.sourceSnapshot ?? selectedMonth, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
   if ((facility.rackUnitCapacityImages ?? []).length > 0) {
-    const imageMetadata = addPresentationSheet(workbook, "05 Rack Unit Capacity", "Rack Unit Capacity image metadata");
+    const imageMetadata = addPresentationSheet(workbook, "18_History_RackImage", "Rack Unit Capacity image metadata");
+    applyExcelSheetCategory(imageMetadata, "history");
     imageMetadata.addRow(["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Content Type", "Byte Size", "Width", "Height", "Saved At"]);
     (facility.rackUnitCapacityImages ?? []).forEach(image => {
       const row = facility.rackUnitCapacity?.find(item => item.month === image.reportingMonth);
@@ -536,7 +609,7 @@ export async function workbookForFacilities(facilities: ExportFacility[], compar
     if (rackRows.length === 0 && facility.rack) { const rackMetrics = calculateRackCapacityMetrics(facility.rack.records); rackRows.push({ month: facility.rack.sourceSnapshot, zone: "(Total)", total: rackMetrics.total, inUse: rackMetrics.inUse.count, available: rackMetrics.available.count, reserved: rackMetrics.reserved.count, pending: rackMetrics.pendingDismantle.count, other: rackMetrics.other.count, usage: rackMetrics.total > 0 ? rackMetrics.inUse.count / rackMetrics.total : null, availability: rackMetrics.total > 0 ? rackMetrics.available.count / rackMetrics.total : null }); }
     rackRows.sort((a, b) => a.month.localeCompare(b.month) || (a.zone.toLowerCase().includes("total") ? -1 : b.zone.toLowerCase().includes("total") ? 1 : a.zone.localeCompare(b.zone)));
     const dashboardRackUnitRows: CurrentFacilityDashboardOptions["rackUnitRows"] = (facility.rackUnitCapacity ?? []).map(row => ({ month: row.month, total: row.totalU, used: row.usedU, available: row.availableU, usage: row.totalU > 0 ? row.usedU / row.totalU : null, availability: row.availabilityPct })).sort((a, b) => a.month.localeCompare(b.month));
-    dashboardPlans.push(addCurrentFacilityDashboard(workbook, facility.siteName, reportMetrics, { dashboardSheetName: sheetOrderName(code, 1, "Dashboard"), dataSheetName: dashboardDataName, selectedMonth, exportedAt: facility.generatedAt ?? new Date().toISOString(), exportedBy: facility.generatedBy ?? null, trendMetrics, trendDataSheetName: separateTrendData ? trendDataName : dashboardDataName, airSheetName: sheetOrderName(code, 21, "Air_Inputs"), airDashboardSheetName: sheetOrderName(code, 31, "Dashboard-FAC Air"), rackSheetName: sheetOrderName(code, 34, "Rack Capacity History"), rackUnitSheetName: sheetOrderName(code, 33, "Rack Unit Capacity"), upsSheetName: sheetOrderName(code, 29, "Dashboard-FAC UPS"), detailSheetName: sheetOrderName(code, 30, "Dashboard-FAC Details"), dcSheetName: sheetOrderName(code, 32, "Dashboard-FAC DC"), airFields, airRows, airDashboardRows: dashboardModel.dashboardAirRows, upsRows: dashboardModel.dashboardUpsRows, detailRows: dashboardModel.dashboardDetailRows, dcRows: dashboardModel.dashboardDcRows, rackRows, rackUnitRows: dashboardRackUnitRows, rackImageDataUri: facility.rackUnitCapacityImageDataUri ?? null, rackImageMeta: facility.rackUnitCapacityImageMeta ?? null }));
+    dashboardPlans.push(addCurrentFacilityDashboard(workbook, facility.siteName, reportMetrics, { dashboardSheetName: sheetOrderName(code, 1, "Dashboard"), dataSheetName: dashboardDataName, selectedMonth, exportedAt: facility.generatedAt ?? new Date().toISOString(), exportedBy: facility.generatedBy ?? null, trendMetrics, trendDataSheetName: separateTrendData ? trendDataName : dashboardDataName, airSheetName: sheetOrderName(code, 21, "Air_Inputs"), airDashboardSheetName: sheetOrderName(code, 31, "Dashboard-FAC Air"), rackSheetName: sheetOrderName(code, 34, "Rack Capacity History"), rackUnitSheetName: sheetOrderName(code, 33, "Rack Unit Capacity"), upsSheetName: sheetOrderName(code, 29, "Dashboard-FAC UPS"), upsOverallSheetName: sheetOrderName(code, 37, "Dashboard-FAC UPS Overall"), detailSheetName: sheetOrderName(code, 30, "Dashboard-FAC Details"), dcSheetName: sheetOrderName(code, 32, "Dashboard-FAC DC"), totalsSheetName: sheetOrderName(code, 38, "Dashboard-FAC Totals"), airFields, airRows, airDashboardRows: dashboardModel.dashboardAirRows, upsRows: dashboardModel.dashboardUpsRows, upsOverallRows: dashboardModel.dashboardUpsOverallRows, detailRows: dashboardModel.dashboardDetailRows, dcRows: dashboardModel.dashboardDcRows, totalsRows: dashboardModel.dashboardTotalsRows, rackRows, rackUnitRows: dashboardRackUnitRows, rackImageDataUri: facility.rackUnitCapacityImageDataUri ?? null, rackImageMeta: facility.rackUnitCapacityImageMeta ?? null }));
     if (separateTrendData) deferredDashboardData.push({ name: trendDataName, metrics: trendMetrics });
     deferredDashboardData.push({ name: dashboardDataName, metrics: reportMetrics });
     const report = reportDataFromFacility(facility, selectedMonth);
@@ -594,6 +667,8 @@ export async function workbookForFacilities(facilities: ExportFacility[], compar
     addTableSheet(workbook, prefix, "Dashboard-FAC Details", ["Month", "No", "UMDB", "UPS ID", "AC Power Panel", "STS", "OUDB", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Capacity", "Load (%)"], dashboardDetailRows);
     addTableSheet(workbook, prefix, "Dashboard-FAC Air", ["Month", "Field", "Previous", "Current", "Difference"], dashboardAirRows);
     addTableSheet(workbook, prefix, "Dashboard-FAC DC", ["Month", "DC Panel", "Voltage (V)", "Current (A)", "DC Power (W)", "AC Current (A)", "AC Power (W)", "Monthly Energy (kWh)"], dashboardDcRows);
+    addTableSheet(workbook, prefix, "Dashboard-FAC UPS Overall", ["Month", "Group", "Total Load (kW)", "Total Load (kVA)", "Capacity", "Load (%)", "Available (%)", "Monthly Energy (kWh)"], dashboardModel.dashboardUpsOverallRows);
+    addTableSheet(workbook, prefix, "Dashboard-FAC Totals", ["Month", "Days", "Previous Month", "UPS Total kW", "UPS Total kVA", "UPS Energy (kWh)", "UPS Detail Voltage Avg (V)", "UPS Detail Current Total (A)", "Air Energy (kWh)", "DC Power (W)", "DC AC Current (A)", "DC AC Power (W)", "DC Energy (kWh)", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)"], dashboardModel.dashboardTotalsRows);
 
     const rackUnitRows = (facility.rackUnitCapacity ?? []).filter(row => months.has(row.month)).sort((a, b) => a.month.localeCompare(b.month));
     const rackUnitSheet = addTableSheet(workbook, prefix, "Rack Unit Capacity", ["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Attached", "Image Content Type", "Image Saved At"], rackUnitRows.map(row => [row.month, row.totalU, row.usedU, row.availableU, row.totalU > 0 ? row.usedU / row.totalU : null, row.availabilityPct, row.imageAttached ? "Yes" : "No", row.imageContentType ?? null, row.imageSavedAt ?? null]));

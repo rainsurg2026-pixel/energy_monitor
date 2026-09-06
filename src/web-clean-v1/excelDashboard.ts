@@ -123,6 +123,7 @@ function chartRange(sheetName: string, column: string, firstRow: number, lastRow
 export function addDashboardDataSheet(workbook: any, dataSheetName: string, metrics: ExcelDashboardMetric[]): void {
   const sheet = workbook.addWorksheet(dataSheetName);
   sheet.state = "hidden";
+  sheet.properties.tabColor = { argb: "FF7C3AED" };
   sheet.addRow(["Month", "Label", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "UPS Load (kW)", "UPS Load (%)", "Rack Total (U)", "Rack Used (U)", "Rack Available (U)", "Rack Usage (%)"]);
   for (const metric of metrics) {
     sheet.addRow([
@@ -171,7 +172,7 @@ export function addInteractiveDashboard(workbook: any, prefix: string, siteName:
   const lookup = (column: string, key: keyof ExcelDashboardMetric) => lookupFormula(dataSheetName, column, dataRowEnd, metricValue(selectedMetric, key));
 
   dashboard.views = [{ state: "frozen", ySplit: 4, showGridLines: false }];
-  dashboard.properties.tabColor = TEAL;
+  dashboard.properties.tabColor = { argb: TEAL };
   dashboard.mergeCells("A1:N1");
   dashboard.getCell("A1").value = "Data Center Energy & Facility Monitor — Interactive Dashboard";
   dashboard.getCell("A1").font = { name: "Aptos Display", size: 20, bold: true, color: { argb: NAVY } };
@@ -318,14 +319,18 @@ export interface CurrentFacilityDashboardOptions {
   rackSheetName: string;
   rackUnitSheetName: string;
   upsSheetName: string;
+  upsOverallSheetName: string;
   detailSheetName: string;
   dcSheetName: string;
+  totalsSheetName: string;
   airFields: string[];
   airRows: Array<{ month: string; values: Array<number | null> }>;
   airDashboardRows: unknown[][];
   upsRows: unknown[][];
+  upsOverallRows: unknown[][];
   detailRows: unknown[][];
   dcRows: unknown[][];
+  totalsRows: unknown[][];
   rackRows: Array<{ month: string; zone: string; total: number; inUse: number; available: number; reserved: number; pending: number; other: number; usage: number | null; availability: number | null }>;
   rackUnitRows: Array<{ month: string; total: number; used: number; available: number; usage: number | null; availability: number | null }>;
   /** Chart-only scope. Matches Quick Period unless the report contains one month, when it is trailing 12. */
@@ -354,9 +359,15 @@ function currentLookup(sheetName: string, column: string, rowEnd: number, result
 
 function nthMonthLookup(sheetName: string, column: string, rowEnd: number, nth: number, result: number | string | null): { formula: string; result: number | string } {
   const data = excelSheetRef(sheetName);
-  const rows = `ROW(${data}!$A$2:$A$${rowEnd})-ROW(${data}!$A$2)+1`;
-  const position = `AGGREGATE(15,6,(${rows})/(${data}!$A$2:$A$${rowEnd}=$B$3),${nth})`;
-  return cellFormula(`IFERROR(INDEX(${data}!$${column}$2:$${column}$${rowEnd},${position}),\"\")`, result);
+  // Dashboard source rows are emitted month-by-month, so each month's rows are
+  // contiguous. Use a simple MATCH + row offset instead of AGGREGATE's array
+  // expression: Excel's FullCalcOnLoad can recalculate that legacy array form
+  // to #VALUE! (hidden by IFERROR), leaving otherwise-valid UPS/DC rows blank.
+  const first = `MATCH($B$3,${data}!$A$2:$A${rowEnd},0)`;
+  const position = nth === 1 ? first : `${first}+${nth - 1}`;
+  const monthAtPosition = `INDEX(${data}!$A$2:$A${rowEnd},${position})`;
+  const valueAtPosition = `INDEX(${data}!${column}$2:${column}${rowEnd},${position})`;
+  return cellFormula(`IFERROR(IF(${monthAtPosition}=$B$3,${valueAtPosition},\"\"),\"\")`, result);
 }
 
 function rowsForMonth(rows: unknown[][], month: string): unknown[][] {
@@ -367,6 +378,34 @@ function maxRowsPerMonth(rows: unknown[][]): number {
   const counts = new Map<string, number>();
   rows.forEach(row => { const month = String(row[0] ?? ""); counts.set(month, (counts.get(month) ?? 0) + 1); });
   return Math.max(1, ...counts.values());
+}
+function upsStatusForMonth(rows: unknown[][], month: string): { status: string; groupCount: number; maxLoadPercent: number | null } {
+  const selected = rowsForMonth(rows, month);
+  const maxLoadPercent = selected.reduce<number | null>((maximum, row) => {
+    const value = numberResult(row[5]);
+    return value === null ? maximum : maximum === null ? value : Math.max(maximum, value);
+  }, null);
+  return {
+    status: selected.length === 0 ? "No UPS status" : selected.length + " group(s) - max " + (maxLoadPercent ?? 0).toFixed(2) + "% load",
+    groupCount: selected.length,
+    maxLoadPercent
+  };
+}
+
+function addUpsStatusDataSheet(workbook: any, dashboardSheetName: string, months: readonly string[], upsRows: unknown[][]): { sheetName: string; rowEnd: number } {
+  const sheetName = safeSheetName(dashboardSheetName, "UPS_Status");
+  const sheet = workbook.addWorksheet(sheetName);
+  sheet.state = "hidden";
+  sheet.properties.tabColor = { argb: "FF7C3AED" };
+  sheet.addRow(["Month", "UPS Status", "Group Count", "Max Load (%)"]);
+  months.forEach(month => {
+    const summary = upsStatusForMonth(upsRows, month);
+    sheet.addRow([month, summary.status, summary.groupCount, summary.maxLoadPercent]);
+  });
+  sheet.getRow(1).font = { name: "Aptos", bold: true, color: { argb: WHITE } };
+  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: DARK_BLUE } };
+  sheet.getColumn(4).numFmt = "0.00";
+  return { sheetName, rowEnd: Math.max(2, months.length + 1) };
 }
 
 function numberResult(value: unknown): number | null {
@@ -434,8 +473,10 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   const rackEnd = Math.max(2, options.rackRows.length + 1);
   const unitEnd = Math.max(2, options.rackUnitRows.length + 1);
   const upsEnd = Math.max(2, options.upsRows.length + 1);
+  const upsOverallEnd = Math.max(2, options.upsOverallRows.length + 1);
   const detailEnd = Math.max(2, options.detailRows.length + 1);
   const dcEnd = Math.max(2, options.dcRows.length + 1);
+  const totalsEnd = Math.max(2, options.totalsRows.length + 1);
   const airDashboardEnd = Math.max(2, options.airDashboardRows.length + 1);
   const trendMetrics = options.trendMetrics ?? metrics;
   const trendDataSheetName = options.trendDataSheetName ?? options.dataSheetName;
@@ -443,15 +484,20 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   const reportPeriodLabel = metrics.length > 0 ? `${monthLabelShort(metrics[0].month, "en")} - ${monthLabelShort(metrics.at(-1)!.month, "en")}` : "N/A";
   const trendPeriodLabel = trendMetrics.length > 0 ? `${monthLabelShort(trendMetrics[0].month, "en")} - ${monthLabelShort(trendMetrics.at(-1)!.month, "en")}` : "N/A";
   const upsSelectedRows = rowsForMonth(options.upsRows, options.selectedMonth);
+  const upsOverallSelectedRows = rowsForMonth(options.upsOverallRows, options.selectedMonth);
+  const upsStatusData = addUpsStatusDataSheet(workbook, options.dashboardSheetName, metrics.map(metric => metric.month), options.upsRows);
+  const selectedTotals = rowsForMonth(options.totalsRows, options.selectedMonth)[0] ?? [];
+  const totalsLookup = (column: string, result: number | string | null) => currentLookup(options.totalsSheetName, column, totalsEnd, result);
   const detailSelectedRows = rowsForMonth(options.detailRows, options.selectedMonth);
   const dcSelectedRows = rowsForMonth(options.dcRows, options.selectedMonth);
   const airDashboardSelectedRows = rowsForMonth(options.airDashboardRows, options.selectedMonth);
   const upsMaxRows = maxRowsPerMonth(options.upsRows);
+  const upsOverallMaxRows = maxRowsPerMonth(options.upsOverallRows);
   const detailMaxRows = maxRowsPerMonth(options.detailRows);
   const dcMaxRows = maxRowsPerMonth(options.dcRows);
 
   sheet.views = [{ state: "frozen", ySplit: 4, showGridLines: false }];
-  sheet.properties.tabColor = TEAL;
+  sheet.properties.tabColor = { argb: TEAL };
   sheet.mergeCells("A1:N1");
   sheet.getCell("A1").value = "Data Center Energy & Facility Monitor Report";
   sheet.getCell("A1").font = { name: "Aptos Display", size: 22, bold: true, color: { argb: NAVY } };
@@ -509,12 +555,41 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   addCard(sheet, 11, 14, 7, "Building Average Electricity Rate", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_BLUE);
 
   const upsStart = 12;
-  sheet.mergeCells(upsStart, 1, upsStart, 14);
-  sheet.getCell(upsStart, 1).value = "1. UPS Load Status - DCM 4th Floor";
-  sheet.getCell(upsStart, 1).font = { name: "Aptos Display", size: 12, bold: true, color: { argb: NAVY } };
-  dashboardTableHeader(sheet, upsStart + 1, ["No.", "UPS Group", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %", "Monthly Energy kWh"]);
+  let upsGroupStart = upsStart;
+  if (options.upsOverallRows.length > 0) {
+    sheet.mergeCells(upsStart, 1, upsStart, 14);
+    sheet.getCell(upsStart, 1).value = "1. UPS Load Status";
+    sheet.getCell(upsStart, 1).font = { name: "Aptos Display", size: 12, bold: true, color: { argb: NAVY } };
+    sheet.mergeCells(upsStart + 1, 1, upsStart + 1, 14);
+    sheet.getCell(upsStart + 1, 1).value = "1.1 UPS Load Status - Overall";
+    sheet.getCell(upsStart + 1, 1).font = { name: "Aptos", size: 10, bold: true, color: { argb: NAVY } };
+    dashboardTableHeader(sheet, upsStart + 2, ["No.", "UPS", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %"]);
+    for (let index = 0; index < upsOverallMaxRows; index++) {
+      const row = upsStart + 3 + index;
+      const cached = upsOverallSelectedRows[index] ?? [];
+      dashboardBodyRow(sheet, row, [
+        cellFormula(`IF(B${row}=\"\",\"\",${index + 1})`, cached.length ? index + 1 : ""),
+        nthMonthLookup(options.upsOverallSheetName, "B", upsOverallEnd, index + 1, textResult(cached[1])),
+        nthMonthLookup(options.upsOverallSheetName, "C", upsOverallEnd, index + 1, numberResult(cached[2])),
+        nthMonthLookup(options.upsOverallSheetName, "D", upsOverallEnd, index + 1, numberResult(cached[3])),
+        nthMonthLookup(options.upsOverallSheetName, "E", upsOverallEnd, index + 1, numberResult(cached[4])),
+        nthMonthLookup(options.upsOverallSheetName, "F", upsOverallEnd, index + 1, numberResult(cached[5])),
+        nthMonthLookup(options.upsOverallSheetName, "G", upsOverallEnd, index + 1, numberResult(cached[6]))
+      ]);
+      for (const col of [3, 4, 5, 6, 7]) sheet.getCell(row, col).numFmt = "#,##0.00";
+    }
+    upsGroupStart = upsStart + upsOverallMaxRows + 5;
+    sheet.mergeCells(upsGroupStart, 1, upsGroupStart, 14);
+    sheet.getCell(upsGroupStart, 1).value = "1.2 UPS and PPC Load Status - DCM 4th Floor";
+    sheet.getCell(upsGroupStart, 1).font = { name: "Aptos", size: 10, bold: true, color: { argb: NAVY } };
+  } else {
+    sheet.mergeCells(upsGroupStart, 1, upsGroupStart, 14);
+    sheet.getCell(upsGroupStart, 1).value = "1. UPS Load Status - DCM 4th Floor";
+    sheet.getCell(upsGroupStart, 1).font = { name: "Aptos Display", size: 12, bold: true, color: { argb: NAVY } };
+  }
+  dashboardTableHeader(sheet, upsGroupStart + 1, ["No.", "UPS Group", "Total kW", "Total kVA", "Capacity kVA", "Load %", "Available %", "Monthly Energy kWh"]);
   for (let index = 0; index < upsMaxRows; index++) {
-    const row = upsStart + 2 + index;
+    const row = upsGroupStart + 2 + index;
     const cached = upsSelectedRows[index] ?? [];
     const values: unknown[] = [
       cellFormula(`IF(B${row}=\"\",\"\",${index + 1})`, cached.length ? index + 1 : ""),
@@ -530,9 +605,13 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
     for (const col of [3, 4, 5, 8]) sheet.getCell(row, col).numFmt = "#,##0.00";
     for (const col of [6, 7]) sheet.getCell(row, col).numFmt = "0.00";
   }
-  const upsNoteRow = upsStart + upsMaxRows + 2;
+  const upsTotalRow = upsGroupStart + upsMaxRows + 2;
+  dashboardBodyRow(sheet, upsTotalRow, ["Total", "", totalsLookup("D", numberResult(selectedTotals[3])), totalsLookup("E", numberResult(selectedTotals[4])), "-", "-", "-", totalsLookup("F", numberResult(selectedTotals[5]))]);
+  sheet.getRow(upsTotalRow).font = { name: "Aptos", size: 9, bold: true, color: { argb: TEXT } };
+  for (const col of [3, 4, 8]) sheet.getCell(upsTotalRow, col).numFmt = "#,##0.00";
+  const upsNoteRow = upsTotalRow + 2;
   sheet.mergeCells(upsNoteRow, 1, upsNoteRow, 14);
-  sheet.getCell(upsNoteRow, 1).value = "UPS group capacity and mapping values are sourced from Dashboard-FAC. Monthly energy uses the selected-month engineering calculation.";
+  sheet.getCell(upsNoteRow, 1).value = "UPS values and totals use the same selected-month Engineering Dashboard snapshot as the web application.";
   sheet.getCell(upsNoteRow, 1).font = { name: "Aptos", size: 9, italic: true, color: { argb: MUTED } };
 
   const detailStart = upsNoteRow + 2;
@@ -549,24 +628,36 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
     for (const col of [7, 8, 9, 10, 11, 12]) sheet.getCell(row, col).numFmt = "#,##0.00";
   }
 
-  const airStart = detailStart + detailMaxRows + 4;
+  const detailTotalRow = detailStart + detailMaxRows + 2;
+  dashboardBodyRow(sheet, detailTotalRow, ["Total", "", "", "", "", "", totalsLookup("G", numberResult(selectedTotals[6])), totalsLookup("H", numberResult(selectedTotals[7])), totalsLookup("D", numberResult(selectedTotals[3])), totalsLookup("E", numberResult(selectedTotals[4])), "-", "-"]);
+  sheet.getRow(detailTotalRow).font = { name: "Aptos", size: 9, bold: true, color: { argb: TEXT } };
+  for (const col of [7, 8, 9, 10]) sheet.getCell(detailTotalRow, col).numFmt = "#,##0.00";
+
+  const airStart = detailTotalRow + 3;
   sheet.mergeCells(airStart, 1, airStart, 14);
   sheet.getCell(airStart, 1).value = "2. Air Conditioning Energy Consumption - 4th Floor";
   sheet.getCell(airStart, 1).font = { name: "Aptos Display", size: 12, bold: true, color: { argb: NAVY } };
-  dashboardTableHeader(sheet, airStart + 1, ["Meter", "Previous (GWh)", "Current (GWh)", "Difference (GWh)"]);
+  dashboardTableHeader(sheet, airStart + 1, ["Reporting Month", ...options.airFields.map(field => field.toUpperCase() + " (GWh)"), "Monthly Energy (kWh)"]);
   const airSource = excelSheetRef(options.airDashboardSheetName);
-  options.airFields.forEach((field, index) => {
-    const row = airStart + 2 + index;
+  const airPrevValues: unknown[] = [textResult(selectedTotals[2]) || "Previous Month"];
+  const airCurrentValues: unknown[] = [options.selectedMonth];
+  const airDiffValues: unknown[] = ["Monthly Difference"];
+  options.airFields.forEach(field => {
     const cached = airDashboardSelectedRows.find(item => String(item[1] ?? "").toLowerCase() === field.toLowerCase()) ?? [];
-    const fieldCell = `$A${row}`;
-    dashboardBodyRow(sheet, row, [field.toUpperCase(),
-      cellFormula(`IFERROR(SUMIFS(${airSource}!$C$2:$C$${airDashboardEnd},${airSource}!$A$2:$A$${airDashboardEnd},$B$3,${airSource}!$B$2:$B$${airDashboardEnd},${fieldCell}),\"\")`, numberResult(cached[2])),
-      cellFormula(`IFERROR(SUMIFS(${airSource}!$D$2:$D$${airDashboardEnd},${airSource}!$A$2:$A$${airDashboardEnd},$B$3,${airSource}!$B$2:$B$${airDashboardEnd},${fieldCell}),\"\")`, numberResult(cached[3])),
-      cellFormula(`IFERROR(SUMIFS(${airSource}!$E$2:$E$${airDashboardEnd},${airSource}!$A$2:$A$${airDashboardEnd},$B$3,${airSource}!$B$2:$B$${airDashboardEnd},${fieldCell}),\"\")`, numberResult(cached[4]))
-    ]);
-    for (const col of [2, 3, 4]) sheet.getCell(row, col).numFmt = "0.000000";
+    const fieldText = field.replace(/"/g, '""');
+    airPrevValues.push(cellFormula(`IFERROR(SUMIFS(${airSource}!$C$2:$C${airDashboardEnd},${airSource}!$A$2:$A${airDashboardEnd},$B$3,${airSource}!$B$2:$B${airDashboardEnd},\"${fieldText}\"),\"\")`, numberResult(cached[2])));
+    airCurrentValues.push(cellFormula(`IFERROR(SUMIFS(${airSource}!$D$2:$D${airDashboardEnd},${airSource}!$A$2:$A${airDashboardEnd},$B$3,${airSource}!$B$2:$B${airDashboardEnd},\"${fieldText}\"),\"\")`, numberResult(cached[3])));
+    airDiffValues.push(cellFormula(`IFERROR(SUMIFS(${airSource}!$E$2:$E${airDashboardEnd},${airSource}!$A$2:$A${airDashboardEnd},$B$3,${airSource}!$B$2:$B${airDashboardEnd},\"${fieldText}\"),\"\")`, numberResult(cached[4])));
   });
-  const airNoteRow = airStart + options.airFields.length + 2;
+  airPrevValues.push("-");
+  airCurrentValues.push("-");
+  airDiffValues.push(totalsLookup("I", numberResult(selectedTotals[8])));
+  dashboardBodyRow(sheet, airStart + 2, airPrevValues);
+  dashboardBodyRow(sheet, airStart + 3, airCurrentValues);
+  dashboardBodyRow(sheet, airStart + 4, airDiffValues);
+  for (const row of [airStart + 2, airStart + 3, airStart + 4]) for (let col = 2; col <= options.airFields.length + 1; col++) sheet.getCell(row, col).numFmt = "0.000000#";
+  sheet.getCell(airStart + 4, options.airFields.length + 2).numFmt = "#,##0.00";
+  const airNoteRow = airStart + 6;
   sheet.mergeCells(airNoteRow, 1, airNoteRow, 14);
   sheet.getCell(airNoteRow, 1).value = "Air-conditioning energy is the complete GWh meter difference x 1,000,000. Missing readings remain unavailable rather than zero.";
   sheet.getCell(airNoteRow, 1).font = { name: "Aptos", size: 9, italic: true, color: { argb: MUTED } };
@@ -593,7 +684,12 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
     for (const col of [3, 4, 5, 6, 7, 8]) sheet.getCell(row, col).numFmt = "#,##0.00";
   }
 
-  const overallStart = dcStart + dcMaxRows + 4;
+  const dcTotalRow = dcStart + dcMaxRows + 2;
+  dashboardBodyRow(sheet, dcTotalRow, ["Total", "", "-", "-", totalsLookup("J", numberResult(selectedTotals[9])), totalsLookup("K", numberResult(selectedTotals[10])), totalsLookup("L", numberResult(selectedTotals[11])), totalsLookup("M", numberResult(selectedTotals[12]))]);
+  sheet.getRow(dcTotalRow).font = { name: "Aptos", size: 9, bold: true, color: { argb: TEXT } };
+  for (const col of [5, 6, 7, 8]) sheet.getCell(dcTotalRow, col).numFmt = "#,##0.00";
+
+  const overallStart = dcTotalRow + 3;
   sheet.mergeCells(overallStart, 1, overallStart, 14);
   sheet.getCell(overallStart, 1).value = "4. Overall Energy Consumption & Electricity Cost";
   sheet.getCell(overallStart, 1).font = { name: "Aptos Display", size: 12, bold: true, color: { argb: NAVY } };
@@ -604,12 +700,8 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   const executiveRow = overallStart + 5;
   sectionHeading(sheet, executiveRow, "Executive View");
   const upsSource = excelSheetRef(options.upsSheetName);
-  const maxUpsLoad = upsSelectedRows.reduce<number | null>((maximum, row) => {
-    const value = numberResult(row[5]);
-    return value === null ? maximum : maximum === null ? value : Math.max(maximum, value);
-  }, null);
-  const upsStatusResult = upsSelectedRows.length === 0 ? "No UPS status" : `${upsSelectedRows.length} group(s) - max ${(maxUpsLoad ?? 0).toFixed(2)}% load`;
-  const upsStatusFormula = cellFormula(`IF(COUNTIFS(${upsSource}!$A$2:$A$${upsEnd},$B$3)=0,\"No UPS status\",COUNTIFS(${upsSource}!$A$2:$A$${upsEnd},$B$3)&\" group(s) - max \"&TEXT(MAXIFS(${upsSource}!$F$2:$F$${upsEnd},${upsSource}!$A$2:$A$${upsEnd},$B$3),\"0.00\")&\"% load\")`, upsStatusResult);
+  const upsStatusResult = upsStatusForMonth(options.upsRows, options.selectedMonth).status;
+  const upsStatusFormula = currentLookup(upsStatusData.sheetName, "B", upsStatusData.rowEnd, upsStatusResult);
   addCard(sheet, 1, 4, executiveRow + 2, "Total Building Energy", lookup("C", "buildingEnergyKwh"), "#,##0.00", LIGHT_BLUE);
   addCard(sheet, 5, 8, executiveRow + 2, "Total 4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_TEAL);
   addCard(sheet, 9, 14, executiveRow + 2, "Total Building Cost", lookup("D", "buildingCostThb"), "#,##0.00", LIGHT_BLUE);

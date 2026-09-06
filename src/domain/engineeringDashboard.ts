@@ -1,9 +1,10 @@
 import type { MonthlyLog } from "../types";
 import type { DomainDashboardUpsMappingReport, DomainEngineeringDashboardSnapshot } from "./types";
-import { calculateEnergyCostForMonth, getAirFields, getAirValue } from "./energyCost";
+import { calculateEnergyCostForMonth, calculateFloorElectricityCost, getAirFields, getAirValue } from "./energyCost";
 import { computeUpsGroupSummary, type UpsGroupConfig } from "./upsGroupAggregation";
 import { daysInLocalMonthOr30, previousMonthOrEmpty } from "./dates";
 import { calculateSrinakarinAggregate } from "./srinakarinPower";
+import { roundAirMeterReading } from "./airMeterPrecision";
 
 export interface DashboardUpsTopology {
   upsGroups: UpsGroupConfig[];
@@ -88,11 +89,12 @@ export function buildEngineeringDashboardSnapshot(
   const airFields = getAirFields(activeLog);
   const airCurrent = Object.fromEntries(airFields.map(field => [field, getAirValue(activeLog, field)]));
   const airPrevious = Object.fromEntries(airFields.map(field => [field, previousLog ? getAirValue(previousLog, field) : null]));
-  const airDifference = Object.fromEntries(airFields.map(field => {
+  const rawAirDifference = Object.fromEntries(airFields.map(field => {
     const current = airCurrent[field]; const previous = airPrevious[field];
     return [field, current !== null && previous !== null ? current - previous : null];
   }));
-  const differenceValues = airFields.map(field => airDifference[field]);
+  const airDifference = Object.fromEntries(airFields.map(field => [field, rawAirDifference[field] === null ? null : roundAirMeterReading(rawAirDifference[field] as number)]));
+  const differenceValues = airFields.map(field => rawAirDifference[field]);
   const airEnergyKwh = differenceValues.every(value => value !== null)
     ? differenceValues.reduce((sum, value) => sum + (value as number), 0) * 1000000 : null;
   const dcPanels = activeLog.dc.map(panel => {
@@ -100,16 +102,28 @@ export function buildEngineeringDashboardSnapshot(
     return { panelId: panel.panelId, voltage, current, dcPowerW, acCurrentA: acPowerW / 220, acPowerW, monthlyEnergyKwh: acPowerW * 24 * daysInMonth / 1000 };
   });
   const energy = calculateEnergyCostForMonth(logs, activeLog.month);
+  const totalUpsEnergyKwh = upsGroups.reduce((sum, row) => sum + row.monthlyEnergyKwh, 0);
+  const totalDcEnergyKwh = dcPanels.reduce((sum, row) => sum + row.monthlyEnergyKwh, 0);
+  // Keep the canonical UPS/DC completeness and profile rules from the energy
+  // calculation, but use the exact Air total shown in this Engineering snapshot.
+  // This prevents the Air table and Overall Energy/Cost cards from diverging.
+  const floorEnergyKwh = energy.upsEnergyKwh === null || airEnergyKwh === null || energy.dcEnergyKwh === null
+    ? null
+    : energy.upsEnergyKwh + airEnergyKwh + energy.dcEnergyKwh;
+  const floorCostThb = calculateFloorElectricityCost(energy.buildingEnergyKwh, energy.buildingElectricityCostThb, floorEnergyKwh);
+  const floorSharePercent = floorEnergyKwh === null || energy.buildingEnergyKwh === null || energy.buildingEnergyKwh === 0
+    ? null
+    : floorEnergyKwh / energy.buildingEnergyKwh * 100;
   return {
     daysInMonth, previousMonth: previousLog?.month ?? null, upsGroups, upsOverallGroups, upsDetails,
     totalUpsKw: upsGroups.reduce((sum, row) => sum + row.totalKw, 0), totalUpsKva: upsGroups.reduce((sum, row) => sum + row.totalKva, 0),
-    totalUpsEnergyKwh: upsGroups.reduce((sum, row) => sum + row.monthlyEnergyKwh, 0),
+    totalUpsEnergyKwh,
     detailedVoltageAvg: (() => { const values = upsDetails.map(row => row.voltage).filter((value): value is number => value !== null); return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null; })(),
     detailedCurrentSum: (() => { const values = upsDetails.map(row => row.current).filter((value): value is number => value !== null); return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) : null; })(),
     airFields, airPrevious, airCurrent, airDifference, airEnergyKwh, dcPanels,
     totalDcPowerW: dcPanels.reduce((sum, row) => sum + row.dcPowerW, 0), totalDcAcCurrentA: dcPanels.reduce((sum, row) => sum + row.acCurrentA, 0),
-    totalDcAcPowerW: dcPanels.reduce((sum, row) => sum + row.acPowerW, 0), totalDcEnergyKwh: dcPanels.reduce((sum, row) => sum + row.monthlyEnergyKwh, 0),
-    buildingEnergyKwh: energy.buildingEnergyKwh, buildingCostThb: energy.buildingElectricityCostThb, floorEnergyKwh: energy.floorEnergyKwh,
-    floorCostThb: energy.floorElectricityCostThb, averageRateThbPerKwh: energy.averageElectricityRateThbPerKwh, floorSharePercent: energy.energySharePercent
+    totalDcAcPowerW: dcPanels.reduce((sum, row) => sum + row.acPowerW, 0), totalDcEnergyKwh,
+    buildingEnergyKwh: energy.buildingEnergyKwh, buildingCostThb: energy.buildingElectricityCostThb, floorEnergyKwh,
+    floorCostThb, averageRateThbPerKwh: energy.averageElectricityRateThbPerKwh, floorSharePercent
   };
 }

@@ -60,8 +60,9 @@ const dashboardFloorEnergy = formulaResult(dashboard.getCell("D32").value);
 const dashboardFloorCost = formulaResult(dashboard.getCell("E32").value);
 if (dashboardAverageRate !== null && dashboardFloorEnergy !== null && dashboardFloorCost !== null) {
   assert("Average rate matches Dashboard-FAC F32", equal(calculation.averageElectricityRateThbPerKwh, dashboardAverageRate));
-  assert("4th Floor Energy matches Dashboard-FAC D32", equal(calculation.floorEnergyKwh, dashboardFloorEnergy));
-  assert("4th Floor Electricity Cost matches Dashboard-FAC E32", equal(calculation.floorElectricityCostThb, dashboardFloorCost));
+
+  assert("Historical workbook 4th Floor Energy remains source-faithful before user edits", equal(calculation.floorEnergyKwh, dashboardFloorEnergy));
+  assert("Historical workbook 4th Floor Electricity Cost remains source-faithful before user edits", equal(calculation.floorElectricityCostThb, dashboardFloorCost));
 } else {
   console.log("SKIP  Dashboard-FAC cached results are #VALUE! in the source workbook");
 }
