@@ -68,8 +68,8 @@ assert.equal(data.executiveTrendRows?.length, 2);
 assert.ok(headingIndex("Engineering View") < headingIndex("Executive View"));
 assert.ok(headingIndex("Executive View") < headingIndex("4th Floor Estimated Cost Trend (THB)"));
 assert.ok(headingIndex("4th Floor DC Power Energy Trend (kWh)") < headingIndex("Capacity Overview"));
-assert.ok(headingIndex("Capacity Overview") < headingIndex("Rack Capacity and Utilization"));
-assert.ok(headingIndex("Rack Capacity and Utilization") < headingIndex("Rack Unit Capacity and Utilization"));
+assert.ok(headingIndex("Capacity Overview") < headingIndex("Rack Capacity &amp; Utilization"));
+assert.ok(headingIndex("Rack Capacity &amp; Utilization") < headingIndex("Rack Unit Capacity &amp; Utilization"));
 
 const trendTitles = [
   "4th Floor Estimated Cost Trend (THB)",
@@ -91,9 +91,15 @@ assert.ok(body.includes("SELECTED QUICK PERIOD"));
 assert.ok(body.includes("executive-summary-flow"));
 assert.ok(body.includes("executive-first-trend-continuation"));
 assert.match(body, /persisted selected-month snapshots only/);
-assert.ok(body.includes("Rack Capacity Details"));
+assert.ok(body.includes("Rack Zone Breakdown"));
+assert.ok(body.includes("RACK CAPACITY V3"));
+assert.ok(body.includes("RACK UNIT CAPACITY V3"));
+assert.ok(body.includes("Operational Health"));
+assert.ok(!body.includes("Capacity Health and Zone Heatmap"), "Current Facility PDF removes the redundant legacy capacity-health page.");
 assert.ok(body.includes("Rack Positions"));
-assert.ok(body.includes("Rack Unit Capacity and Utilization"));
+assert.ok(body.includes("Rack Unit Capacity &amp; Utilization"));
+assert.ok(body.includes("RACK CAPACITY V3") && body.includes("RACK UNIT CAPACITY V3"), "PDF uses approved V3 visual hierarchy for both rack pages.");
+assert.ok(body.includes("rack-v3-kpis") && body.includes("Operational Health") && body.includes("Overall Capacity Mix") && body.includes("Overall U Capacity Mix"));
 assert.ok(!body.includes("Electricity Consumption Comparison"));
 assert.ok(!body.includes("Electricity Cost Comparison"));
 assert.ok(!body.includes("Monthly Energy Consumption Trend"));
@@ -117,10 +123,10 @@ assert.ok(body.includes("Trend range follows the selected export reporting windo
 assert.match(body, /Rack Unit Capacity Trend[\s\S]*font-size="9" font-weight="700"/, "PDF Rack Unit trend shows compact point labels.");
 assert.doesNotMatch(body, /Six-month trend uses/, "PDF no longer hard-codes a six-month Rack Unit trend.");
 const capacityPageStart = body.indexOf("Capacity Overview");
-const capacityPageEnd = body.indexOf("Rack Capacity and Utilization");
+const capacityPageEnd = body.indexOf("Rack Capacity &amp; Utilization");
 const capacityPage = body.slice(capacityPageStart, capacityPageEnd);
 assert.ok(capacityPage.includes("Rack Capacity Trend") && capacityPage.includes("Rack Unit Capacity Trend"), "Capacity Overview contains both trend charts in the same semantic page section.");
-assert.match(body, /<section class="page executive-dashboard-page capacity-overview-page"[^>]*>[\s\S]*?<h2>Capacity Overview<\/h2>/);
+assert.match(body, /<section class="page executive-dashboard-page capacity-overview-page rack-v3-capacity"[^>]*>[\s\S]*?<h2>Capacity Overview<\/h2>/);
 assert.match(capacityPage, /font-size="9" font-weight="700"/, "PDF compact Capacity charts keep point value labels.");
 assert.match(capacityPage, />70(?:\.00)?<\/text>/, "PDF Rack Unit trend prints a compact point value.");
 assert.ok(!executivePage.includes("2,500.00"), "Executive summary must not sum the quick-range rows.");

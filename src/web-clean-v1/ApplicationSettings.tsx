@@ -134,7 +134,7 @@ export default function ApplicationSettings(props: Props) {
           </form> : <div className="rounded-xl border border-slate-800 bg-slate-950/40 p-4 text-sm text-slate-300">{displayPeriod.startMonth} → {displayPeriod.endMonth}</div>}
           <div className="grid gap-3 lg:grid-cols-2">
             <div className="rounded-xl border border-slate-800 p-4"><b>{th ? "ช่วงกราฟ" : "Trend scope"}</b><p className="mt-1 text-sm text-slate-400">{th ? "รายงานหลายเดือน: กราฟตาม Quick Period · รายงาน 1 เดือน: กราฟย้อนหลัง 12 เดือน" : "Multi-month reports follow Quick Period. Single-month reports show a trailing 12-month trend."}</p></div>
-            <div className="rounded-xl border border-slate-800 p-4"><b>{th ? "เวลาและชื่อไฟล์" : "Time & filenames"}</b><p className="mt-1 text-sm text-slate-400">dd-Mmm-yyyy; HH:mm · GMT+7 / Asia/Bangkok<br />Current Facility: DC_Status_MonthlyReport of RST/SNK_Mmm-YYYY</p></div>
+            <div className="rounded-xl border border-slate-800 p-4"><b>{th ? "เวลาและชื่อไฟล์" : "Time & filenames"}</b><p className="mt-1 text-sm text-slate-400">dd-Mmm-YYYY_HH:MM:SS(GMT+7) · Asia/Bangkok<br />Current Facility: DC_Status_MonthlyReport of RST/SNK_Mmm-YYYY</p></div>
           </div>
         </div>}
 

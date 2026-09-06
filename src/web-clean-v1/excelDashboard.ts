@@ -24,6 +24,8 @@ export interface ExcelDashboardMetric {
   rackAvailablePositions: number | null;
   rackPositionUsagePercent: number | null;
   rackPositionAvailabilityPercent: number | null;
+  rackReservedPositions: number | null;
+  rackPendingPositions: number | null;
 }
 
 interface ExcelDashboardSeries {
@@ -62,6 +64,12 @@ const LIGHT_RED = "FFFDECEC";
 const BORDER = "FFD5DEE8";
 const TEXT = "FF243247";
 const MUTED = "FF657488";
+const RACK_DARK = "FF061427";
+const RACK_PANEL = "FF081B33";
+const RACK_INDIGO = "FF6366F1";
+const RACK_CYAN = "FF22D3EE";
+const RACK_TEAL = "FF14B8A6";
+const RACK_AMBER = "FFF59E0B";
 
 function safeSheetName(prefix: string, name: string): string {
   const title = name.replace(/[\\/*?:\[\]]/g, "-");
@@ -98,8 +106,8 @@ function styleRange(sheet: any, fromRow: number, toRow: number, fromCol: number,
 function addCard(sheet: any, fromCol: number, toCol: number, topRow: number, label: string, formula: { formula: string; result: number | string }, numberFormat: string, _fill: string): void {
   sheet.mergeCells(topRow, fromCol, topRow, toCol);
   sheet.mergeCells(topRow + 1, fromCol, topRow + 2, toCol);
-  styleRange(sheet, topRow, topRow, fromCol, toCol, WHITE, { name: "Aptos", size: 9, bold: true, color: { argb: MUTED } }, { vertical: "middle", horizontal: "left" });
-  styleRange(sheet, topRow + 1, topRow + 2, fromCol, toCol, WHITE, { name: "Aptos Display", size: 18, bold: true, color: { argb: NAVY } }, { vertical: "middle", horizontal: "left" });
+  styleRange(sheet, topRow, topRow, fromCol, toCol, _fill, { name: "Aptos", size: 9, bold: true, color: { argb: MUTED } }, { vertical: "middle", horizontal: "left" });
+  styleRange(sheet, topRow + 1, topRow + 2, fromCol, toCol, _fill, { name: "Aptos Display", size: 18, bold: true, color: { argb: NAVY } }, { vertical: "middle", horizontal: "left" });
   sheet.getCell(topRow, fromCol).value = label;
   const valueCell = sheet.getCell(topRow + 1, fromCol);
   valueCell.value = formula;
@@ -145,7 +153,7 @@ export function addDashboardDataSheet(workbook: any, dataSheetName: string, metr
   const sheet = workbook.addWorksheet(dataSheetName);
   sheet.state = "hidden";
   sheet.properties.tabColor = { argb: "FF7C3AED" };
-  sheet.addRow(["Month", "Label", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "UPS Load (kW)", "UPS Load (%)", "Rack Total (U)", "Rack Used (U)", "Rack Available (U)", "Rack Usage (%)", "Rack Total Positions", "Rack In Use Positions", "Rack Available Positions", "Rack Position Usage (%)", "Rack Position Availability (%)"]);
+  sheet.addRow(["Month", "Label", "Building Energy (kWh)", "Building Cost (THB)", "4th Floor Energy (kWh)", "4th Floor Cost (THB)", "Average Rate (THB/kWh)", "4th Floor Share (%)", "UPS Energy (kWh)", "Air Energy (kWh)", "DC Energy (kWh)", "UPS Load (kW)", "UPS Load (%)", "Rack Total (U)", "Rack Used (U)", "Rack Available (U)", "Rack Usage (%)", "Rack Total Positions", "Rack In Use Positions", "Rack Available Positions", "Rack Position Usage (%)", "Rack Position Availability (%)", "Rack Reserved Positions", "Rack Pending Dismantle Positions"]);
   for (const metric of metrics) {
     sheet.addRow([
       metric.month,
@@ -169,7 +177,9 @@ export function addDashboardDataSheet(workbook: any, dataSheetName: string, metr
       metric.rackInUsePositions,
       metric.rackAvailablePositions,
       metric.rackPositionUsagePercent,
-      metric.rackPositionAvailabilityPercent
+      metric.rackPositionAvailabilityPercent,
+      metric.rackReservedPositions,
+      metric.rackPendingPositions
     ]);
   }
   sheet.getRow(1).font = { name: "Aptos", bold: true, color: { argb: "FFFFFFFF" } };
@@ -386,6 +396,12 @@ function currentLookup(sheetName: string, column: string, rowEnd: number, result
   return cellFormula(formula, result);
 }
 
+function currentTableLookup(sheetName: string, column: string, rowEnd: number, result: number | string | null): { formula: string; result: number | string } {
+  const data = excelSheetRef(sheetName);
+  const formula = "IFERROR(INDEX(" + data + "!$" + column + "$3:$" + column + "$" + rowEnd + ",MATCH($B$3," + data + "!$A$3:$A$" + rowEnd + ",0)),\"\")";
+  return cellFormula(formula, result);
+}
+
 function nthMonthLookup(sheetName: string, column: string, rowEnd: number, nth: number, result: number | string | null): { formula: string; result: number | string } {
   const data = excelSheetRef(sheetName);
   // Dashboard source rows are emitted month-by-month, so each month's rows are
@@ -455,6 +471,32 @@ function sectionHeading(sheet: any, row: number, title: string): void {
   sheet.getRow(row).height = 25;
 }
 
+function sectionHeadingDark(sheet: any, row: number, title: string): void {
+  sheet.mergeCells(row, 1, row, 14);
+  const cell = sheet.getCell(row, 1);
+  cell.value = title;
+  cell.font = { name: "Aptos Display", size: 14, bold: true, color: { argb: WHITE } };
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: RACK_PANEL } };
+  cell.alignment = { vertical: "middle", horizontal: "left" };
+  sheet.getRow(row).height = 28;
+}
+
+function addDarkCard(sheet: any, fromCol: number, toCol: number, topRow: number, label: string, formula: { formula: string; result: number | string }, numberFormat: string, accent: string): void {
+  sheet.mergeCells(topRow, fromCol, topRow, toCol);
+  sheet.mergeCells(topRow + 1, fromCol, topRow + 2, toCol);
+  styleRange(sheet, topRow, topRow + 2, fromCol, toCol, RACK_DARK, { name: "Aptos", size: 9, bold: true, color: { argb: WHITE } }, { vertical: "middle", horizontal: "left" });
+  const labelCell = sheet.getCell(topRow, fromCol);
+  labelCell.value = label;
+  labelCell.font = { name: "Aptos", size: 9, bold: true, color: { argb: accent } };
+  const valueCell = sheet.getCell(topRow + 1, fromCol);
+  valueCell.value = formula;
+  valueCell.numFmt = numberFormat;
+  valueCell.font = { name: "Aptos Display", size: 18, bold: true, color: { argb: WHITE } };
+  for (let row = topRow; row <= topRow + 2; row++) {
+    sheet.getCell(row, fromCol).border = { top: { style: "thin", color: { argb: accent } }, left: { style: "medium", color: { argb: accent } }, bottom: { style: "thin", color: { argb: "FF1E293B" } }, right: { style: "thin", color: { argb: "FF1E293B" } } };
+  }
+}
+
 function dashboardTableHeader(sheet: any, row: number, headers: string[], fromCol = 1): void {
   headers.forEach((header, index) => {
     const cell = sheet.getCell(row, fromCol + index);
@@ -503,8 +545,8 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   const previous = metrics.find(metric => metric.month === previousMonth);
   const data = excelSheetRef(options.dataSheetName);
   const lookup = (column: string, key: keyof ExcelDashboardMetric) => currentLookup(options.dataSheetName, column, dataRowEnd, metricValue(selected, key));
-  const rackEnd = Math.max(2, options.rackRows.length + 1);
-  const unitEnd = Math.max(2, options.rackUnitRows.length + 1);
+  const rackEnd = Math.max(3, options.rackRows.length + 2);
+  const unitEnd = Math.max(3, options.rackUnitRows.length + 2);
   const rackSource = excelSheetRef(options.rackSheetName);
   const rackSelected = options.rackRows.find(item => item.month === options.selectedMonth && item.zone.toLowerCase().includes("total")) ?? null;
   const unitSelected = options.rackUnitRows.find(item => item.month === options.selectedMonth) ?? null;
@@ -522,7 +564,7 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
       : `${currentResult > previousResult ? "▲" : currentResult < previousResult ? "▼" : "•"} ${(Math.abs((currentResult - previousResult) / Math.abs(previousResult)) * 100).toFixed(1)}% vs ${monthLabelShort(previousMonth, "en").split("-")[0]}`;
     return cellFormula(`IFERROR(IF(${currentExpr}>${previousExpr},"▲ ",IF(${currentExpr}<${previousExpr},"▼ ","• "))&TEXT(ABS((${currentExpr}-${previousExpr})/ABS(${previousExpr})),"0.0%")&" vs "&TEXT(EDATE(DATE(LEFT($B$3,4),RIGHT($B$3,2),1),-1),"mmm"),"No prior-month comparison")`, cached);
   };
-  const rackLookup = (column: string, result: number | null) => cellFormula(`IFERROR(SUMIFS(${rackSource}!$${column}$2:$${column}$${rackEnd},${rackSource}!$A$2:$A$${rackEnd},$B$3,${rackSource}!$C$2:$C$${rackEnd},"(Total)"),"")`, result);
+  const rackLookup = (column: string, result: number | null) => cellFormula(`IFERROR(SUMIFS(${rackSource}!${column}$3:${column}${rackEnd},${rackSource}!$A$3:$A${rackEnd},$B$3,${rackSource}!$C$3:$C${rackEnd},"(Total)"),"")`, result);
   const statusText = (cellAddress: string, value: number | null) => cellFormula(`IF(${cellAddress}="","No data",IF(${cellAddress}>=0.85,"High",IF(${cellAddress}>=0.8,"Attention","Normal")))`, value === null ? "No data" : value >= 0.85 ? "High" : value >= 0.8 ? "Attention" : "Normal");
   const addNote = (fromCol: number, toCol: number, row: number, value: any) => {
     sheet.mergeCells(row, fromCol, row, toCol);
@@ -569,24 +611,20 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   sheet.getCell("A4").font = sheet.getCell("F4").font = { name: "Aptos", size: 9, bold: true, color: { argb: NAVY } };
   sheet.getCell("B4").font = sheet.getCell("G4").font = { name: "Aptos", size: 9, color: { argb: MUTED } };
 
-  // Engineering View is deliberately first in Current Facility exports.
+  // Engineering View is deliberately first in Current Facility exports. Duplicate Executive KPIs are intentionally omitted.
   sectionHeading(sheet, 5, "Engineering View · Building Energy Dashboard");
-  addCard(sheet, 1, 3, 7, "Building Energy", lookup("C", "buildingEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 4, 6, 7, "Building Electricity Cost", lookup("D", "buildingCostThb"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 7, 9, 7, "4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_TEAL);
-  addCard(sheet, 10, 12, 7, "Estimated 4th Floor Cost", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
-  addCard(sheet, 13, 14, 7, "4th Floor Share", lookup("H", "floorSharePercent"), "0.00", LIGHT_AMBER);
-  addCard(sheet, 1, 3, 11, "UPS Status", currentLookup(upsStatusData.sheetName, "B", upsStatusData.rowEnd, upsStatusCached), "@", LIGHT_TEAL);
-  addCard(sheet, 4, 6, 11, "2.1 Total UPS/PPC Load - DCM 4th Floor", lookup("L", "upsLoadKw"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 7, 9, 11, "2.2 Total Air", lookup("J", "airEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 10, 12, 11, "2.3 Total DC Power Panels", lookup("K", "dcEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 13, 14, 11, "Average Rate", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_AMBER);
+  addCard(sheet, 1, 4, 7, "UPS Status", currentLookup(upsStatusData.sheetName, "B", upsStatusData.rowEnd, upsStatusCached), "@", LIGHT_TEAL);
+  addCard(sheet, 5, 9, 7, "4th Floor Energy Share (%)", lookup("H", "floorSharePercent"), "0.00", LIGHT_AMBER);
+  addCard(sheet, 10, 14, 7, "Average Electricity Rate (THB/kWh)", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_AMBER);
+  addCard(sheet, 1, 5, 11, "2.1 Total UPS/PPC Load - DCM 4th Floor (kW)", lookup("L", "upsLoadKw"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 6, 10, 11, "2.2 Total Air (kWh)", lookup("J", "airEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 11, 14, 11, "2.3 Total DC Power Panels (kWh)", lookup("K", "dcEnergyKwh"), "#,##0.00", LIGHT_BLUE);
 
   sectionHeading(sheet, 15, "Executive View");
-  addCard(sheet, 1, 3, 17, "Building Energy", lookup("C", "buildingEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 4, 7, 17, "Building Cost", lookup("D", "buildingCostThb"), "#,##0.00", LIGHT_TEAL);
-  addCard(sheet, 8, 10, 17, "4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 11, 14, 17, "Estimated 4th Floor Cost", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 1, 3, 17, "Building Energy (kWh)", lookup("C", "buildingEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 4, 7, 17, "Building Cost (THB)", lookup("D", "buildingCostThb"), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 8, 10, 17, "4th Floor Energy (kWh)", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 11, 14, 17, "Estimated 4th Floor Cost (THB)", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
   addNote(1, 3, 20, previousLookupFormula("C", metricValue(selected, "buildingEnergyKwh"), metricValue(previous, "buildingEnergyKwh")));
   addNote(4, 7, 20, previousLookupFormula("D", metricValue(selected, "buildingCostThb"), metricValue(previous, "buildingCostThb")));
   addNote(8, 10, 20, previousLookupFormula("E", metricValue(selected, "floorEnergyKwh"), metricValue(previous, "floorEnergyKwh")));
@@ -598,14 +636,14 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   const fullWidthChartHeight = 18;
   const fullWidthChartStep = fullWidthChartHeight + 2;
   const capacityHeadingRow = energyChartRow + fullWidthChartStep * 6 + 1;
-  sectionHeading(sheet, capacityHeadingRow, "Capacity Overview");
+  sectionHeadingDark(sheet, capacityHeadingRow, "Capacity Overview · Rack Capacity + Rack Unit");
   const rackUsage = rackSelected?.usage ?? null;
   const unitUsage = unitSelected?.usage ?? null;
   const capacityCardRow = capacityHeadingRow + 2;
-  addCard(sheet, 1, 3, capacityCardRow, "Rack Usage", rackLookup("J", rackUsage), "0.0%", LIGHT_AMBER);
-  addCard(sheet, 4, 6, capacityCardRow, "Available Racks", rackLookup("F", rackSelected?.available ?? null), "#,##0", LIGHT_TEAL);
-  addCard(sheet, 7, 10, capacityCardRow, "Rack Unit Usage", currentLookup(options.rackUnitSheetName, "E", unitEnd, unitUsage), "0.0%", LIGHT_AMBER);
-  addCard(sheet, 11, 14, capacityCardRow, "Available U", currentLookup(options.rackUnitSheetName, "D", unitEnd, unitSelected?.available ?? null), "#,##0.00", LIGHT_TEAL);
+  addDarkCard(sheet, 1, 3, capacityCardRow, "Rack Usage (%)", rackLookup("J", rackUsage), "0.0%", RACK_AMBER);
+  addDarkCard(sheet, 4, 6, capacityCardRow, "Available Racks (racks)", rackLookup("F", rackSelected?.available ?? null), "#,##0", RACK_TEAL);
+  addDarkCard(sheet, 7, 10, capacityCardRow, "Rack Unit Usage (%)", currentTableLookup(options.rackUnitSheetName, "E", unitEnd, unitUsage), "0.0%", RACK_AMBER);
+  addDarkCard(sheet, 11, 14, capacityCardRow, "Available U (U)", currentTableLookup(options.rackUnitSheetName, "D", unitEnd, unitSelected?.available ?? null), "#,##0.00", RACK_TEAL);
   const capacityNoteRow = capacityCardRow + 3;
   addNote(1, 3, capacityNoteRow, statusText(`A${capacityCardRow + 1}`, rackUsage));
   addNote(4, 6, capacityNoteRow, "Persisted selected-month Rack snapshot");
@@ -616,11 +654,28 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   sheet.getCell(thresholdRow, 1).value = "Capacity thresholds: Normal <80% · Attention 80–84.9% · High ≥85%. Missing snapshots remain blank and are not treated as zero.";
   sheet.getCell(thresholdRow, 1).font = { name: "Aptos", size: 8, italic: true, color: { argb: MUTED } };
   const rackHeadingRow = thresholdRow + 2;
-  sectionHeading(sheet, rackHeadingRow, "Rack Capacity Trends");
-  const rackChartRow = rackHeadingRow + 2;
+  sectionHeadingDark(sheet, rackHeadingRow, "Rack Capacity & Utilization V3");
+  const rackCardRow = rackHeadingRow + 2;
+  addDarkCard(sheet, 1, 3, rackCardRow, "Total Racks (racks)", rackLookup("D", rackSelected?.total ?? null), "#,##0", "FF94A3B8");
+  addDarkCard(sheet, 4, 6, rackCardRow, "In Use (racks)", rackLookup("E", rackSelected?.inUse ?? null), "#,##0", RACK_INDIGO);
+  addDarkCard(sheet, 7, 8, rackCardRow, "Available (racks)", rackLookup("F", rackSelected?.available ?? null), "#,##0", RACK_TEAL);
+  addDarkCard(sheet, 9, 11, rackCardRow, "Reserved (racks)", rackLookup("G", rackSelected?.reserved ?? null), "#,##0", "FF3B82F6");
+  addDarkCard(sheet, 12, 14, rackCardRow, "Pending Dismantle (racks)", rackLookup("H", rackSelected?.pending ?? null), "#,##0", RACK_AMBER);
+  const rackChartRow = rackCardRow + 5;
+  const rackUnitHeadingRow = rackChartRow + fullWidthChartHeight + 2;
+  const rackUnitCardRow = rackUnitHeadingRow + 2;
+  const rackUnitChartRow = rackUnitCardRow + 5;
+  const historyHeadingRow = rackUnitChartRow + fullWidthChartHeight + 2;
+  sectionHeadingDark(sheet, rackUnitHeadingRow, "Rack Unit Capacity & Utilization V3");
+  addDarkCard(sheet, 1, 3, rackUnitCardRow, "Total U (U)", currentTableLookup(options.rackUnitSheetName, "B", unitEnd, unitSelected?.total ?? null), "#,##0", "FF60A5FA");
+  addDarkCard(sheet, 4, 6, rackUnitCardRow, "Used U (U)", currentTableLookup(options.rackUnitSheetName, "C", unitEnd, unitSelected?.used ?? null), "#,##0", RACK_INDIGO);
+  addDarkCard(sheet, 7, 9, rackUnitCardRow, "Available U (U)", currentTableLookup(options.rackUnitSheetName, "D", unitEnd, unitSelected?.available ?? null), "#,##0", RACK_TEAL);
+  addDarkCard(sheet, 10, 11, rackUnitCardRow, "Usage (%)", currentTableLookup(options.rackUnitSheetName, "E", unitEnd, unitUsage), "0.0%", RACK_AMBER);
+  addDarkCard(sheet, 12, 14, rackUnitCardRow, "Availability (%)", currentTableLookup(options.rackUnitSheetName, "F", unitEnd, unitSelected?.availability ?? null), "0.0%", RACK_TEAL);
+  sectionHeading(sheet, historyHeadingRow, "Facility Trend Analytics Summary");
 
   sheet.columns = Array.from({ length: 14 }, (_, index) => ({ key: excelColumnName(index + 1).toLowerCase(), width: index === 0 ? 22 : 16 }));
-  for (const row of [1, 3, 5, 15, energyHeadingRow, capacityHeadingRow, rackHeadingRow]) sheet.getRow(row).height = row === 1 ? 38 : 25;
+  for (const row of [1, 3, 5, 15, energyHeadingRow, capacityHeadingRow, rackHeadingRow, rackUnitHeadingRow, historyHeadingRow]) sheet.getRow(row).height = row === 1 ? 38 : 25;
   sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9, margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
   sheet.pageSetup.rowBreaks = [{ id: 14 }, { id: energyHeadingRow - 1 }, { id: capacityHeadingRow - 1 }];
 
@@ -639,10 +694,8 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
     chart("4th Floor Air Conditioning Energy Trend (kWh)", "J", "airEnergyKwh", "06B6D4", energyChartRow + fullWidthChartStep * 4),
     chart("4th Floor DC Power Energy Trend (kWh)", "K", "dcEnergyKwh", "8B5CF6", energyChartRow + fullWidthChartStep * 5),
     { title: "Rack Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Usage %", "U", "rackPositionUsagePercent", "6366F1"), chartSeries("Availability %", "V", "rackPositionAvailabilityPercent", "14B8A6")], fromCol: 0, fromRow: rackChartRow, toCol: 14, toRow: rackChartRow + fullWidthChartHeight },
-    { title: "Rack Unit Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Total U", "N", "rackTotalU", "64748B"), chartSeries("Used U", "O", "rackUsedU", "6366F1"), chartSeries("Available U", "P", "rackAvailableU", "14B8A6")], fromCol: 0, fromRow: rackChartRow + fullWidthChartStep, toCol: 14, toRow: rackChartRow + fullWidthChartStep + fullWidthChartHeight }
+    { title: "Rack Unit Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Total U", "N", "rackTotalU", "64748B"), chartSeries("Used U", "O", "rackUsedU", "6366F1"), chartSeries("Available U", "P", "rackAvailableU", "14B8A6")], fromCol: 0, fromRow: rackUnitChartRow, toCol: 14, toRow: rackUnitChartRow + fullWidthChartHeight }
   ];
-  const historyHeadingRow = rackChartRow + fullWidthChartStep * 2 + 2;
-  sectionHeading(sheet, historyHeadingRow, "Facility Trend Analytics Summary");
   const historicalValues = (key: keyof ExcelDashboardMetric) => trendMetrics.map(metric => metricValue(metric, key)).filter((value): value is number => value !== null && Number.isFinite(value));
   const summaryFormula = (column: string, key: keyof ExcelDashboardMetric, average: boolean) => {
     const values = historicalValues(key);
@@ -651,16 +704,17 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
     return cellFormula(average ? `IFERROR(AVERAGE(${range}),"")` : `IFERROR(SUM(${range}),"")`, cached);
   };
   const historyCardRow = historyHeadingRow + 2;
-  addCard(sheet, 1, 3, historyCardRow, "Building Energy Total", summaryFormula("C", "buildingEnergyKwh", false), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 4, 6, historyCardRow, "4th Floor Energy Total", summaryFormula("E", "floorEnergyKwh", false), "#,##0.00", LIGHT_TEAL);
-  addCard(sheet, 7, 10, historyCardRow, "Building Energy Monthly Average", summaryFormula("C", "buildingEnergyKwh", true), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 11, 14, historyCardRow, "4th Floor Energy Monthly Average", summaryFormula("E", "floorEnergyKwh", true), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 1, 3, historyCardRow, "Building Energy Total (kWh)", summaryFormula("C", "buildingEnergyKwh", false), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 4, 6, historyCardRow, "4th Floor Energy Total (kWh)", summaryFormula("E", "floorEnergyKwh", false), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 7, 10, historyCardRow, "Building Energy Monthly Average (kWh)", summaryFormula("C", "buildingEnergyKwh", true), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 11, 14, historyCardRow, "4th Floor Energy Monthly Average (kWh)", summaryFormula("E", "floorEnergyKwh", true), "#,##0.00", LIGHT_TEAL);
 
   const historyCostCardRow = historyCardRow + 4;
-  addCard(sheet, 1, 3, historyCostCardRow, "Building Cost Total", summaryFormula("D", "buildingCostThb", false), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 4, 6, historyCostCardRow, "4th Floor Cost Total", summaryFormula("F", "floorCostThb", false), "#,##0.00", LIGHT_TEAL);
-  addCard(sheet, 7, 10, historyCostCardRow, "Building Cost Monthly Average", summaryFormula("D", "buildingCostThb", true), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 11, 14, historyCostCardRow, "4th Floor Cost Monthly Average", summaryFormula("F", "floorCostThb", true), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 1, 3, historyCostCardRow, "Building Cost Total (THB)", summaryFormula("D", "buildingCostThb", false), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 4, 6, historyCostCardRow, "4th Floor Cost Total (THB)", summaryFormula("F", "floorCostThb", false), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 7, 10, historyCostCardRow, "Building Cost Monthly Average (THB)", summaryFormula("D", "buildingCostThb", true), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 11, 14, historyCostCardRow, "4th Floor Cost Monthly Average (THB)", summaryFormula("F", "floorCostThb", true), "#,##0.00", LIGHT_TEAL);
+  sheet.pageSetup.printArea = `A1:N${historyCostCardRow + 3}`;
 
   setFormulaCell(sheet, "Z2", currentLookup(upsStatusData.sheetName, "B", upsStatusData.rowEnd, upsStatusCached), "@");
   sheet.getColumn(26).hidden = true;

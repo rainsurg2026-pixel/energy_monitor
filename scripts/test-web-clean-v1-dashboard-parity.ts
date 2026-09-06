@@ -14,6 +14,7 @@ const rackContext = readFileSync(new URL("../src/components/rack/RackCapacityCon
 
 assert.match(app, /const BenchmarkDashboard = lazy\(\(\) => import\("\.\.\/components\/BenchmarkDashboard"\)\)/);
 assert.match(app, /const DASHBOARD_REPORT_VIEWS = \["executive", "dashboard", "benchmark"\] as const/);
+assert.doesNotMatch(app, /SmartInsightPanel/, "Executive View no longer renders Smart Facility Analytics Panel");
 assert.match(app, /selectedReportView === "benchmark" && <BenchmarkDashboard logs=\{logs\} lang=\{lang\} \/>/);
 
 // Forecast is removed from both hosted Web and Desktop, not merely hidden.

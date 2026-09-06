@@ -203,21 +203,21 @@ export default function ExecutiveDashboard({ logs, lang, selectedMonth: selected
 
   if (desktop) {
     return <div className="space-y-6 animate-fadeIn" data-testid="executive-desktop-v2">
-      <DesktopHeader {...headerProps} />
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-4" aria-label="Executive KPI summary">
         {kpiValues.map(item => <div key={item.definition.key}><DesktopKpiCard {...item} previousMonth={previousMonth} /></div>)}
       </section>
       <EngineeringTrendCharts logs={logs} lang={lang} selectedMonth={selectedMonth} layout="desktop" />
       <ExecutiveCapacityOverview selectedMonth={selectedMonth} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} lang={lang} layout="desktop" onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} />
+      <DesktopHeader {...headerProps} />
     </div>;
   }
 
   return <div className="space-y-4 animate-fadeIn" data-testid="executive-mobile-v2">
-    <MobileHeader {...headerProps} />
     <section className="grid grid-cols-2 gap-2.5" aria-label="Executive KPI summary">
       {kpiValues.map(item => <div key={item.definition.key}><MobileKpiCard {...item} previousMonth={previousMonth} /></div>)}
     </section>
     <EngineeringTrendCharts logs={logs} lang={lang} selectedMonth={selectedMonth} layout="mobile" />
     <ExecutiveCapacityOverview selectedMonth={selectedMonth} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} lang={lang} layout="mobile" onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} />
+    <MobileHeader {...headerProps} />
   </div>;
 }

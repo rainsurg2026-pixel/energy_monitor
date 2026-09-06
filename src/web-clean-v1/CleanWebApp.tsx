@@ -36,7 +36,6 @@ import AppNavigationV2, { type AppViewV2 } from "./AppNavigationV2";
 const DashboardSummary = lazy(() => import("../components/DashboardSummary"));
 const ExecutiveDashboard = lazy(() => import("../components/ExecutiveDashboard"));
 const BenchmarkDashboard = lazy(() => import("../components/BenchmarkDashboard"));
-const SmartInsightPanel = lazy(() => import("../components/SmartInsightPanel"));
 const HistoricalExplorer = lazy(() => import("../components/HistoricalExplorer"));
 const HistoricalCharts = lazy(() => import("../components/HistoricalCharts"));
 const WebSiteComparison = lazy(() => import("./WebSiteComparison"));
@@ -608,7 +607,7 @@ function DashboardView({ logs, month, displayPeriod, siteName = "Facility", site
       <UniversalFilterBar lang={lang} onExport={exportDashboard} exportFormats={["pdf", "excel", "csv"]} facility={null} siteName={siteName} selectedMonth={activeMonth} availableMonths={availableMonths} onReportingMonthChange={onSelectMonth} onRefresh={onRefresh} upsGroupNames={upsGroupNames} reportViews={DASHBOARD_REPORT_VIEWS} showUtilityActions={selectedReportView !== "executive"} />
       {exportNotice && <p role="status" className="text-sm text-teal-300">{exportNotice}</p>}
       {selectedReportView === "dashboard" && <DashboardSummary logs={logs} selectedMonth={activeMonth} lang={lang} dataSourceLabel={lang === "th" ? "Production API" : "Source: Production API"} upsMapping={upsMapping} />}
-      {selectedReportView === "executive" && <><ExecutiveDashboard logs={logs} lang={lang} selectedMonth={activeMonth} facilityName={siteName} sourceLabel="Production API" rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} onRefresh={onRefresh} onExport={exportDashboard} /><SmartInsightPanel logs={logs} lang={lang} /></>}
+      {selectedReportView === "executive" && <ExecutiveDashboard logs={logs} lang={lang} selectedMonth={activeMonth} facilityName={siteName} sourceLabel="Production API" rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} onRefresh={onRefresh} onExport={exportDashboard} />}
       {selectedReportView === "benchmark" && <BenchmarkDashboard logs={logs} lang={lang} />}
     </div>
   );

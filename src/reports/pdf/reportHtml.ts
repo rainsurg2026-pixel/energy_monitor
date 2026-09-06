@@ -62,6 +62,8 @@ export const REPORT_CSS = `
 .executive-first-trend-continuation{min-height:0;height:128mm;page-break-before:auto;break-before:auto;padding-top:6px;padding-bottom:12px}
 .executive-first-trend-continuation .trend-svg{height:92mm;flex:none}
 .executive-first-trend-continuation .chart-explanation{font-size:10.5px;line-height:1.25}
+/* Rack Capacity V3 / Rack Unit V3 printable theme. The Web version stays richer; PDF keeps the same navy/indigo/teal hierarchy with print-safe contrast. */
+.rack-v3-page,.rack-unit-v3-page{background:#f8fafc;box-shadow:inset 0 7px 0 #6366f1}.rack-v3-hero{min-height:116px;padding:16px 18px;border-radius:12px;background:linear-gradient(120deg,#061427,#0f2b50 62%,#102d52);color:#fff;display:flex;justify-content:space-between;align-items:center;gap:22px;overflow:hidden}.rack-v3-hero h2{margin:0;border:0;padding:0;color:#fff;font-size:25px}.rack-v3-hero .note{color:#b8c7db;margin-top:5px}.rack-v3-hero-stat{min-width:210px;text-align:right}.rack-v3-hero-stat strong{display:block;font-size:34px;line-height:1;color:#fff}.rack-v3-hero-stat span{display:inline-block;margin-top:7px;padding:3px 9px;border-radius:99px;border:1px solid #64748b;color:#dbeafe;font-size:10px;font-weight:700}.rack-v3-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:9px 0}.rack-v3-card{min-height:78px;padding:9px 10px;border:1px solid #1e3a5f;border-top:3px solid #64748b;border-radius:7px;background:#081b33;break-inside:avoid}.rack-v3-label{font-size:9px;text-transform:uppercase;letter-spacing:.35px;color:#94a3b8;font-weight:700}.rack-v3-value{font-size:21px;color:#f8fafc;font-weight:800;margin-top:5px}.rack-v3-unit{font-size:9px;color:#94a3b8;margin-top:2px}.rack-v3-main{display:grid;grid-template-columns:1.25fr .75fr;gap:9px;margin-top:8px}.rack-v3-panel{padding:10px 11px;border:1px solid #d8e1ec;border-radius:8px;background:#fff;break-inside:avoid}.rack-v3-panel h3{font-size:14px;margin-bottom:7px;color:#1e3a5f}.rack-v3-mixbar{height:20px;display:flex;overflow:hidden;border-radius:6px;background:#e2e8f0}.rack-v3-mixbar i{display:block;height:100%}.rack-v3-legend{display:grid;grid-template-columns:repeat(2,1fr);gap:5px 10px;margin-top:8px}.rack-v3-legend div{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:9.5px;color:#475569}.rack-v3-legend b{color:#1e293b}.rack-v3-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px}.rack-v3-health{display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.rack-v3-health-card{padding:8px;border:1px solid #d8e1ec;border-left:3px solid #6366f1;border-radius:7px;background:#f8fafc}.rack-v3-health-card strong{display:block;font-size:18px;color:#1e3a5f}.rack-v3-health-card span{font-size:9px;color:#64748b}.rack-v3-zone{margin-top:9px}.rack-v3-zone table{font-size:9.5px}.rack-v3-zone th{background:#0f2744!important;color:#e2e8f0!important;border-color:#294764}.rack-v3-zone td{border-color:#dbe3ed}.rack-v3-footer{margin-top:7px;padding-top:6px;border-top:1px solid #dbe3ed;display:flex;justify-content:space-between;font-size:9px;color:#64748b}.rack-unit-v3-mix{display:grid;grid-template-columns:1.05fr .95fr;gap:9px;margin-top:8px}.rack-unit-v3-gauge{display:flex;gap:16px;align-items:center}.rack-unit-v3-gauge svg{width:155px;height:155px}.rack-v3-capacity{background:#f8fafc;box-shadow:inset 0 7px 0 #6366f1}.rack-v3-capacity>h2{color:#1e3a5f}.rack-v3-capacity .kpi{background:#081b33!important;border-color:#1e3a5f}.rack-v3-capacity .kpi-label,.rack-v3-capacity .kpi-unit,.rack-v3-capacity .kpi-note{color:#94a3b8}.rack-v3-capacity .kpi-value{color:#f8fafc}.rack-v3-capacity .executive-capacity-trends .block{background:#fff;border-color:#d8e1ec}.rack-v3-capacity .executive-capacity-trends h3{color:#1e3a5f}
 `;
 
 export function facilityBandPage(facilityName: string): string {
@@ -80,6 +82,14 @@ function formatMonth(month: string | null): string {
 function kpi(label: string, value: string, unit: string, note: string): string {
   return `<div class="kpi"><div class="kpi-label">${escapeHtml(label)}</div><div class="kpi-value">${escapeHtml(value)}</div><div class="kpi-unit">${escapeHtml(unit)}</div><div class="kpi-note">${escapeHtml(note)}</div></div>`;
 }
+function v3Kpi(label: string, value: string, unit: string, accent: string): string {
+  return '<div class="rack-v3-card" style="border-top-color:' + accent + '"><div class="rack-v3-label">' + escapeHtml(label) + '</div><div class="rack-v3-value">' + escapeHtml(value) + '</div><div class="rack-v3-unit">' + escapeHtml(unit) + '</div></div>';
+}
+
+function v3Health(value: string, label: string, accent: string): string {
+  return '<div class="rack-v3-health-card" style="border-left-color:' + accent + '"><strong>' + escapeHtml(value) + '</strong><span>' + escapeHtml(label) + '</span></div>';
+}
+
 function table(headers: string[], rows: string[][], className = ""): string {
   return `<div class="table-wrap ${className}"><table><thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${row.map((cell, index) => `<td${index === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
 }
@@ -415,45 +425,32 @@ function rackUnitCapacityImageFigure(data: ReportData, row: RackUnitCapacityRow)
  *  rackUnitCapacityImageFigure() above - no calculation, color, or image
  *  logic is reimplemented here. */
 function renderRackUnitCapacityExecutivePage(data: ReportData): string {
-  const subtitle = `${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(data.reportingMonth))}`;
+  const subtitle = `${escapeHtml(data.facility)} - ${escapeHtml(formatMonth(data.reportingMonth))}`;
   if (data.rackUnitCapacity.length === 0) {
-    return `<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">Rack Unit Capacity data is not yet available in this workbook.</p></section>`;
+    return `<section class="page rack-unit-v3-page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">Rack Unit Capacity data is not yet available in this workbook.</p></section>`;
   }
   const row = unitCapacityRowForReportingMonth(data);
   if (!row) {
-    return `<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">No Rack Unit Capacity data is available for the selected reporting month (${escapeHtml(formatMonth(data.reportingMonth))}).</p></section>`;
+    return `<section class="page rack-unit-v3-page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><p class="note">No Rack Unit Capacity data is available for the selected reporting month.</p></section>`;
   }
   const previousRow = findPreviousRackUnitCapacityRow(data.rackUnitCapacity, row.month);
   const usagePctNow = usagePercent(row);
   const usagePctPrev = previousRow ? usagePercent(previousRow) : null;
-  const trendDirection = usagePctNow !== null && usagePctPrev !== null ? getTrendDirection(calculatePercentageDelta(usagePctNow, usagePctPrev), 0.05) : null;
-  const trendValue = trendDirection === null || usagePctNow === null || usagePctPrev === null
-    ? "—"
-    : `${trendDirection === "Up" ? "▲" : trendDirection === "Down" ? "▼" : "◆"} ${Math.abs(calculatePercentageDelta(usagePctNow, usagePctPrev)).toFixed(1)}%`;
-  const trendNote = trendDirection === null ? "no prior month" : getTrendLabel(trendDirection, "en");
-  const availabilityText = formatRatioPercent1(row.availabilityPct);
+  const usageRatio = usagePctNow === null ? null : usagePctNow / 100;
+  const status = executiveCapacityStatus(usageRatio);
+  const statusColor = status === "High" ? "#fb7185" : status === "Attention" ? "#f59e0b" : "#14b8a6";
+  const trendPoints = usagePctNow !== null && usagePctPrev !== null ? usagePctNow - usagePctPrev : null;
+  const trendText = trendPoints === null ? "No prior month" : `${trendPoints >= 0 ? "+" : "-"}${Math.abs(trendPoints).toFixed(1)} pp`;
   const kpis = [
-    kpi("Total (U)", formatInteger(row.totalU), "U", ""),
-    kpi("Used (U)", formatInteger(row.usedU), "U", ""),
-    kpi("Available (U)", formatInteger(row.availableU), "U", ""),
-    kpi("Availability %", availabilityText, "", ""),
-    kpi("Usage %", formatUsagePercent1(usagePctNow), "", ""),
-    kpi("Trend vs Previous Month", trendValue, "", trendNote)
+    v3Kpi("Total U", formatInteger(row.totalU), "U", "#60a5fa"),
+    v3Kpi("Used U", formatInteger(row.usedU), "U", "#6366f1"),
+    v3Kpi("Available U", formatInteger(row.availableU), "U", "#14b8a6"),
+    v3Kpi("Usage %", formatUsagePercent1(usagePctNow), "", statusColor),
+    v3Kpi("Availability %", formatRatioPercent1(row.availabilityPct), "", "#14b8a6")
   ].join("");
-  const donut = donutSvg(
-    [
-      { name: "Used", count: row.usedU, ratio: null, color: REPORT_PALETTE.rackInUse },
-      { name: "Available", count: Math.max(0, row.availableU), ratio: null, color: REPORT_PALETTE.rackAvailable }
-    ],
-    row.totalU,
-    `${row.usedU} / ${row.totalU}`,
-    "Used / Total (U)"
-  );
-  const legend = `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackInUse}"></i><span>Used (U)</span><strong>${row.usedU}</strong></div>` +
-    `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackAvailable}"></i><span>Available (U)</span><strong>${row.availableU}</strong></div>` +
-    `<div class="legend-row"><i style="background:${REPORT_PALETTE.rackTotal}"></i><span>Total (U)</span><strong>${row.totalU}</strong></div>`;
-  const imagePage = `<section class="page rack-unit-capacity-image-page" data-report-section="rack-unit-capacity"><h2>Monthly Rack Unit Capacity Image</h2><p class="note">${subtitle}</p><div class="rack-unit-capacity-image-page-content">${rackUnitCapacityImageFigure(data, row)}</div></section>`;
-  return `<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity and Utilization</h2><p class="note">${subtitle}</p><div class="kpis-3col">${kpis}</div><div class="rack-unit-capacity-layout"><div class="ruc-left"><div class="block gauge-row">${donut}<div class="gauge-caption">${legend}</div></div></div></div></section>${imagePage}${rackUnitTrendPage(data)}`;
+  const donut = donutSvg([{ name: "Used", count: row.usedU, ratio: null, color: REPORT_PALETTE.rackInUse },{ name: "Available", count: Math.max(0,row.availableU), ratio: null, color: REPORT_PALETTE.rackAvailable }],row.totalU,`${row.usedU} / ${row.totalU}`,"Used / Total (U)");
+  const imagePage = `<section class="page rack-unit-v3-page rack-unit-capacity-image-page" data-report-section="rack-unit-capacity"><div class="rack-v3-hero"><div><p class="eyebrow" style="color:#67e8f9!important">RACK UNIT CAPACITY V3</p><h2>Monthly Rack Unit Capacity Image</h2><p class="note">${subtitle}</p></div><div class="rack-v3-hero-stat"><strong>${formatUsagePercent1(usagePctNow)}</strong><span>${status} UTILIZATION</span></div></div><div class="rack-unit-capacity-image-page-content">${rackUnitCapacityImageFigure(data,row)}</div></section>`;
+  return `<section class="page rack-unit-v3-page" data-report-section="rack-unit-capacity"><div class="rack-v3-hero"><div><p class="eyebrow" style="color:#67e8f9!important">RACK UNIT CAPACITY V3</p><h2>Rack Unit Capacity &amp; Utilization</h2><p class="note">${subtitle} - physical rack-space capacity and deployment headroom</p></div><div class="rack-v3-hero-stat"><strong>${formatUsagePercent1(usagePctNow)}</strong><span style="border-color:${statusColor};color:${statusColor}">${status} UTILIZATION</span></div></div><div class="rack-v3-kpis">${kpis}</div><div class="rack-unit-v3-mix"><article class="rack-v3-panel"><h3>Overall U Capacity Mix</h3><div class="rack-unit-v3-gauge">${donut}<div><div class="legend-row"><i style="background:${REPORT_PALETTE.rackInUse}"></i><span>Used U</span><strong>${formatInteger(row.usedU)}</strong></div><div class="legend-row"><i style="background:${REPORT_PALETTE.rackAvailable}"></i><span>Available U</span><strong>${formatInteger(row.availableU)}</strong></div><p class="note">Available U is physical rack space only.</p></div></div></article><article class="rack-v3-panel"><h3>Operational Health</h3><div class="rack-v3-health">${v3Health(formatInteger(row.availableU),"Available U for deployment","#14b8a6")}${v3Health(status,"Capacity status",statusColor)}${v3Health(trendText,"Usage vs previous month",trendPoints !== null && trendPoints > 0 ? "#fb7185" : "#14b8a6")}${v3Health("1U = 1.75 in","Rack unit standard","#60a5fa")}</div></article></div><div class="rack-v3-footer"><span>Source: Production API - selected-month persisted snapshot</span><span>${escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE)}</span></div></section>${imagePage}${rackUnitTrendPage(data)}`;
 }
 
 /** Half-donut gauge arc: a track path drawn once in a neutral color, then
@@ -599,45 +596,21 @@ function rackComparisonPage(data: ReportData): string {
 }
 
 function rackCapacityPage(data: ReportData): string {
-  if (!data.rack || data.rack.records.length === 0) {
-    return `<section class="page" data-report-section="rack-capacity"><h2>Rack Capacity and Utilization</h2><p class="note">Rack capacity data is unavailable in this workbook.</p></section>`;
-  }
+  if (!data.rack || data.rack.records.length === 0) return `<section class="page rack-v3-page" data-report-section="rack-capacity"><h2>Rack Capacity and Utilization</h2><p class="note">Rack capacity data is unavailable in this workbook.</p></section>`;
   const metrics = calculateRackCapacityMetrics(data.rack.records);
-  const cards = [
-    ["Total Racks", metrics.total, metrics.total > 0 ? 1 : null],
-    ["In Use", metrics.inUse.count, metrics.inUse.ratio],
-    ["Available", metrics.available.count, metrics.available.ratio],
-    ["Reserved", metrics.reserved.count, metrics.reserved.ratio],
-    ["Pending Dismantle", metrics.pendingDismantle.count, metrics.pendingDismantle.ratio]
-  ] as const;
-  const kpis = cards.map(([label, count, ratio]) => kpi(label, String(count), formatRatioPercent(ratio), "")).join("");
-  const donut = donutSvg(
-    [
-      { name: "In Use", count: metrics.inUse.count, ratio: metrics.inUse.ratio },
-      { name: "Available", count: metrics.available.count, ratio: metrics.available.ratio },
-      { name: "Reserved", count: metrics.reserved.count, ratio: metrics.reserved.ratio },
-      { name: "Pending Dismantle", count: metrics.pendingDismantle.count, ratio: metrics.pendingDismantle.ratio },
-      { name: "Other", count: metrics.other.count, ratio: metrics.other.ratio }
-    ],
-    metrics.total
-  );
-  const zoneRows = metrics.zoneMetrics.map(zone => [
-    escapeHtml(zone.zone),
-    `${zone.inUse.count} (${formatRatioPercent(zone.inUse.ratio, 1)})`,
-    `${zone.available.count} (${formatRatioPercent(zone.available.ratio, 1)})`,
-    `${zone.reserved.count} (${formatRatioPercent(zone.reserved.ratio, 1)})`,
-    `${zone.pendingDismantle.count} (${formatRatioPercent(zone.pendingDismantle.ratio, 1)})`,
-    String(zone.total)
-  ]);
-  zoneRows.push([
-    "Grand Total",
-    `${metrics.inUse.count} (${formatRatioPercent(metrics.inUse.ratio, 1)})`,
-    `${metrics.available.count} (${formatRatioPercent(metrics.available.ratio, 1)})`,
-    `${metrics.reserved.count} (${formatRatioPercent(metrics.reserved.ratio, 1)})`,
-    `${metrics.pendingDismantle.count} (${formatRatioPercent(metrics.pendingDismantle.ratio, 1)})`,
-    String(metrics.total)
-  ]);
-  return `<section class="page" data-report-section="rack-capacity"><h2>Rack Capacity and Utilization</h2><p class="note">${escapeHtml(data.facility)} · Usage ${formatRatioPercent(metrics.inUse.ratio)} · Availability ${formatRatioPercent(metrics.available.ratio)}</p><div class="kpis">${kpis}</div><div class="rack-donut-row"><div>${donut}</div><div class="table-wrap" style="flex:1"><h3>Rack Capacity Details</h3><table><thead><tr><th class="left">Rack Zone</th><th>In Use</th><th>Available</th><th>Reserved</th><th>Pending Dismantle</th><th>Total</th></tr></thead><tbody>${zoneRows.map(row => `<tr>${row.map((cell, i) => `<td${i === 0 ? " class=\"left\"" : ""}>${cell}</td>`).join("")}</tr>`).join("")}</tbody></table></div></div><p class="note">Detailed Available, Reserved, and Pending Decommission rack positions continue on the following page(s) at a larger readable size.</p></section>${rackPositionPages(data)}`;
+  const usageRatio = metrics.inUse.ratio;
+  const status = executiveCapacityStatus(usageRatio);
+  const statusColor = status === "High" ? "#fb7185" : status === "Attention" ? "#f59e0b" : "#14b8a6";
+  const highZones = metrics.zoneMetrics.filter(zone => (zone.inUse.ratio ?? 0) >= .85);
+  const highestPending = [...metrics.zoneMetrics].sort((a,b)=>b.pendingDismantle.count-a.pendingDismantle.count)[0];
+  const availableZones = metrics.zoneMetrics.filter(zone => zone.available.count > 0).length;
+  const kpis = [v3Kpi("Total Racks",formatInteger(metrics.total),"racks","#94a3b8"),v3Kpi("In Use",formatInteger(metrics.inUse.count),formatRatioPercent(metrics.inUse.ratio,1),"#6366f1"),v3Kpi("Available",formatInteger(metrics.available.count),formatRatioPercent(metrics.available.ratio,1),"#14b8a6"),v3Kpi("Reserved",formatInteger(metrics.reserved.count),formatRatioPercent(metrics.reserved.ratio,1),"#3b82f6"),v3Kpi("Pending Dismantle",formatInteger(metrics.pendingDismantle.count),formatRatioPercent(metrics.pendingDismantle.ratio,1),"#f59e0b")].join("");
+  const mixItems=[{label:"In Use",count:metrics.inUse.count,ratio:metrics.inUse.ratio,color:"#6366f1"},{label:"Available",count:metrics.available.count,ratio:metrics.available.ratio,color:"#14b8a6"},{label:"Reserved",count:metrics.reserved.count,ratio:metrics.reserved.ratio,color:"#3b82f6"},{label:"Pending",count:metrics.pendingDismantle.count,ratio:metrics.pendingDismantle.ratio,color:"#f59e0b"}];
+  const mixBar=mixItems.map(item=>`<i style="width:${metrics.total>0?(item.count/metrics.total)*100:0}%;background:${item.color}"></i>`).join("");
+  const mixLegend=mixItems.map(item=>`<div><span><i class="rack-v3-dot" style="background:${item.color}"></i>${item.label}</span><b>${formatInteger(item.count)} (${formatRatioPercent(item.ratio,1)})</b></div>`).join("");
+  const zoneRows=metrics.zoneMetrics.map(zone=>[escapeHtml(zone.zone),formatInteger(zone.total),formatInteger(zone.inUse.count),formatInteger(zone.available.count),formatInteger(zone.reserved.count),formatInteger(zone.pendingDismantle.count),formatRatioPercent(zone.inUse.ratio,1)]);
+  const operational=v3Health(formatInteger(metrics.available.count),`Available across ${availableZones} zone${availableZones===1?"":"s"}`,"#14b8a6")+v3Health(String(highZones.length),"Zones at or above 85%","#fb7185")+v3Health(formatInteger(metrics.pendingDismantle.count),"Pending dismantle racks","#f59e0b")+v3Health(highestPending?highestPending.zone:"-",highestPending&&highestPending.pendingDismantle.count>0?`Highest dismantle count (${highestPending.pendingDismantle.count})`:"No dismantle pressure","#60a5fa");
+  return `<section class="page rack-v3-page" data-report-section="rack-capacity"><div class="rack-v3-hero"><div><p class="eyebrow" style="color:#67e8f9!important">RACK CAPACITY V3</p><h2>Rack Capacity &amp; Utilization - ${escapeHtml(formatMonth(data.reportingMonth))}</h2><p class="note">${escapeHtml(data.facility)} - rack capacity, status and utilization summary</p></div><div class="rack-v3-hero-stat"><strong>${formatRatioPercent(usageRatio,1)}</strong><span style="border-color:${statusColor};color:${statusColor}">${status} UTILIZATION</span></div></div><div class="rack-v3-kpis">${kpis}</div><div class="rack-v3-main"><article class="rack-v3-panel"><h3>Overall Capacity Mix</h3><div class="rack-v3-mixbar">${mixBar}</div><div class="rack-v3-legend">${mixLegend}</div></article><article class="rack-v3-panel"><h3>Operational Health</h3><div class="rack-v3-health">${operational}</div></article></div><article class="rack-v3-panel rack-v3-zone"><h3>Rack Zone Breakdown</h3>${table(["Zone","Total Racks","In Use","Available","Reserved","Pending Dismantle","Utilization"],zoneRows)}</article><div class="rack-v3-footer"><span>Source: Production API - selected-month persisted snapshot</span><span>Normal &lt;80% - Attention 80-84.9% - High &gt;=85%</span></div></section>${rackPositionPages(data)}`;
 }
 
 function rackPositionPages(data: ReportData): string {
@@ -959,7 +932,7 @@ function currentExecutiveCapacityPage(data: ReportData): string {
     { name: "Used U", color: REPORT_PALETTE.rackInUse, values: unitRows.map(row => row.usedU) },
     { name: "Available U", color: REPORT_PALETTE.rackAvailable, values: unitRows.map(row => row.availableU) }
   ], "U");
-  return `<section class="page executive-dashboard-page capacity-overview-page" data-report-section="executive"><p class="eyebrow">EXECUTIVE VIEW · CAPACITY &amp; AVAILABILITY</p><h2>Capacity Overview</h2><p class="note">${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(current.month))} · persisted selected-month snapshots only</p><div class="kpis">${kpi("Rack Usage", formatRatioPercent1(rackUsage), "of rack positions", `${executiveCapacityStatus(rackUsage)} · Normal <80%, Attention 80–84.9%, High ≥85%`)}${kpi("Available Racks", availableRacks === null ? "—" : formatInteger(availableRacks), "racks", "Selected reporting month")}${kpi("Rack Unit Usage", formatRatioPercent1(unitUsage), "of total U", `${executiveCapacityStatus(unitUsage)} · Normal <80%, Attention 80–84.9%, High ≥85%`)}${kpi("Available U", unitCurrent ? format2(unitCurrent.availableU) : "—", "U", "Physical rack space only")}</div><div class="executive-capacity-trends">${rackChart}${unitChart}</div></section>`;
+  return `<section class="page executive-dashboard-page capacity-overview-page rack-v3-capacity" data-report-section="executive"><p class="eyebrow">EXECUTIVE VIEW · CAPACITY &amp; AVAILABILITY</p><h2>Capacity Overview</h2><p class="note">${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(current.month))} · persisted selected-month snapshots only</p><div class="kpis">${kpi("Rack Usage", formatRatioPercent1(rackUsage), "of rack positions", `${executiveCapacityStatus(rackUsage)} · Normal <80%, Attention 80–84.9%, High ≥85%`)}${kpi("Available Racks", availableRacks === null ? "—" : formatInteger(availableRacks), "racks", "Selected reporting month")}${kpi("Rack Unit Usage", formatRatioPercent1(unitUsage), "of total U", `${executiveCapacityStatus(unitUsage)} · Normal <80%, Attention 80–84.9%, High ≥85%`)}${kpi("Available U", unitCurrent ? format2(unitCurrent.availableU) : "—", "U", "Physical rack space only")}</div><div class="executive-capacity-trends">${rackChart}${unitChart}</div></section>`;
 }
 
 function currentExecutiveTrendPages(data: ReportData): string {
@@ -993,7 +966,7 @@ export function buildCurrentFacilityPdfBody(data: ReportData, selectedSections?:
     ? engineeringDashboard(data, data.engineeringDashboard, true)
     : `<section class="page dashboard-page" data-report-section="dashboard"><h2>Engineering View</h2><p class="note">Engineering data is unavailable for the selected month.</p></section>`;
   const executive = currentExecutiveDashboardPage(data) + currentExecutiveTrendPages(data) + facilityTrendSummaryPage(data) + currentExecutiveCapacityPage(data);
-  const rack = rackCapacityPage(data) + capacityHealthPage(data);
+  const rack = rackCapacityPage(data);
   const rackUnit = renderRackUnitCapacityExecutivePage(data);
   const body = `${engineering}${executive}${rack}${rackUnit}`;
   const sections = currentFacilitySelectedSections(selectedSections);

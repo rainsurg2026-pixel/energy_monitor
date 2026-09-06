@@ -151,13 +151,14 @@ export function formatBangkokReportTimestamp(value: Date | string): string {
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    second: "2-digit",
     hour12: false,
     hourCycle: "h23"
   }).formatToParts(date);
-  const part = (type: "day" | "month" | "year" | "hour" | "minute") => parts.find(item => item.type === type)?.value ?? "";
+  const part = (type: "day" | "month" | "year" | "hour" | "minute" | "second") => parts.find(item => item.type === type)?.value ?? "";
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const month = months[Math.max(0, Number(part("month")) - 1)] ?? part("month");
-  return `${part("day")}-${month}-${part("year")}; ${part("hour")}:${part("minute")} (GMT+7)`;
+  return `${part("day")}-${month}-${part("year")}_${part("hour")}:${part("minute")}:${part("second")}(GMT+7)`;
 }
 
 /** Format either an API ISO timestamp or an existing Desktop display value.

@@ -12,6 +12,7 @@ const rackViews = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityViews
 // the V2 navigation component rather than the legacy duplicated nav arrays.
 assert.match(app, /<main className="min-w-0 pb-20 md:pb-6">/);
 assert.match(app, /<AppNavigationV2 activeView=\{view\}/);
+assert.doesNotMatch(app, /SmartInsightPanel/, "Executive View removes the legacy Smart Facility Analytics Panel");
 assert.doesNotMatch(app, /const nav: Array</);
 
 // Desktop navigation: five primary items with Capacity / Reports /
@@ -65,6 +66,8 @@ assert.match(executive, /grid grid-cols-2 gap-2\.5/);
 assert.match(capacity, /layout: "desktop" \| "mobile"/);
 assert.match(capacity, /compact = layout === "mobile"/);
 assert.ok(executive.indexOf("<EngineeringTrendCharts") < executive.indexOf("<ExecutiveCapacityOverview"), "Executive Dashboard keeps Capacity at the bottom after Energy trends");
+assert.ok(executive.indexOf("<ExecutiveCapacityOverview") < executive.lastIndexOf("<DesktopHeader"), "Executive desktop metadata/actions bar is rendered at the bottom");
+assert.ok(executive.indexOf("<ExecutiveCapacityOverview") < executive.lastIndexOf("<MobileHeader"), "Executive mobile metadata/actions bar is rendered at the bottom");
 assert.match(rackViews, /height=\{300\} compact minPointSlots=\{12\}/);
 
 console.log("web-clean-v1 responsive shell: Navigation V2 separates desktop/mobile layouts, fixed mobile nav has five items, and Executive V2 has dedicated mobile/desktop renderers");

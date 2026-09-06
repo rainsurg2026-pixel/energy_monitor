@@ -233,19 +233,29 @@ function excelColumnNameForTable(column: number): string {
   return result;
 }
 
-function configureTableSheet(sheet: any, headers: unknown[], rows: unknown[][], tableName?: string): void {
-  const tableRows = rows.length > 0 ? rows : [headers.map(() => null)];
-  sheet.addRow(headers);
-  tableRows.forEach(values => sheet.addRow(values));
-  sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
-  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
-  if (!tableName) sheet.autoFilter = { from: "A1", to: { row: Math.max(1, sheet.rowCount), column: Math.max(1, sheet.getRow(1).cellCount) } };
+function isTimestampHeader(header: unknown): boolean {
+  return /(?:Timestamp|Last Saved|Generated At|Image Saved At|Saved At|Captured Date)/i.test(String(header));
+}
+
+function normalizeTableTimestamps(headers: unknown[], rows: unknown[][]): unknown[][] {
+  const timestampIndexes = headers.map((header, index) => isTimestampHeader(header) ? index : -1).filter(index => index >= 0);
+  if (timestampIndexes.length === 0) return rows;
+  return rows.map(row => row.map((value, index) => timestampIndexes.includes(index) && value !== null && value !== undefined && value !== "" ? formatBangkokReportTimestamp(String(value)) : value));
+}
+
+function configureTableSheet(sheet: any, headers: unknown[], rows: unknown[][], tableName?: string, startRow = 1, formatVisibleTimestamps = false): void {
+  const normalizedRows = formatVisibleTimestamps ? normalizeTableTimestamps(headers, rows) : rows;
+  const tableRows = normalizedRows.length > 0 ? normalizedRows : [headers.map(() => null)];
+  sheet.getRow(startRow).values = headers as any[];
+  tableRows.forEach((values, index) => { sheet.getRow(startRow + 1 + index).values = values as any[]; });
+  sheet.getRow(startRow).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  sheet.getRow(startRow).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+  sheet.views = [{ state: "frozen", ySplit: startRow }];
+  const endRow = startRow + tableRows.length;
+  if (!tableName) sheet.autoFilter = { from: { row: startRow, column: 1 }, to: { row: endRow, column: Math.max(1, headers.length) } };
   sheet.columns.forEach((column: any) => { column.width = 22; });
-  sheet.columns.forEach((column: any, index: number) => {
-    if (String(headers[index]).includes("JSON")) column.width = 48;
-  });
-  if (tableName) sheet.addTable({ name: tableName, ref: "A1:" + excelColumnNameForTable(headers.length) + Math.max(2, tableRows.length + 1), headerRow: true, totalsRow: false, columns: headers.map(header => ({ name: String(header) })), rows: tableRows });
+  sheet.columns.forEach((column: any, index: number) => { if (String(headers[index]).includes("JSON")) column.width = 48; });
+  if (tableName) sheet.addTable({ name: tableName, ref: "A" + startRow + ":" + excelColumnNameForTable(headers.length) + endRow, headerRow: true, totalsRow: false, columns: headers.map(header => ({ name: String(header) })), rows: tableRows });
 }
 
 function addTableSheet(workbook: any, prefix: string, title: string, headers: unknown[], rows: unknown[][]): any {
@@ -333,7 +343,9 @@ function buildExcelDashboardModel(logs: MonthlyLog[], calculationLogs: MonthlyLo
       rackInUsePositions: rackPosition?.inUse ?? null,
       rackAvailablePositions: rackPosition?.available ?? null,
       rackPositionUsagePercent: rackPosition?.usagePct == null ? null : rackPosition.usagePct * 100,
-      rackPositionAvailabilityPercent: rackPosition?.availabilityPct == null ? null : rackPosition.availabilityPct * 100
+      rackPositionAvailabilityPercent: rackPosition?.availabilityPct == null ? null : rackPosition.availabilityPct * 100,
+      rackReservedPositions: rackPosition?.reserved ?? null,
+      rackPendingPositions: rackPosition?.pendingDismantle ?? null
     });
     dashboardRows.push([
       log.month,
@@ -383,9 +395,34 @@ function workbookSheetRef(name: string): string { return "'" + name.replace(/'/g
 
 function addCurrentTableSheet(workbook: any, name: string, tableName: string, headers: unknown[], rows: unknown[][], category: Exclude<ExcelSheetCategory, "report" | "compatibility">): any {
   const sheet = workbook.addWorksheet(name);
-  configureTableSheet(sheet, headers, rows, tableName);
+  const home = sheet.getCell("A1");
+  home.value = { text: "⌂ Home", hyperlink: "#'01_Dashboard'!A1" };
+  home.font = { name: "Aptos", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+  home.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+  home.alignment = { vertical: "middle", horizontal: "center" };
+  sheet.getRow(1).height = 22;
+  configureTableSheet(sheet, headers, rows, tableName, 2, true);
   applyExcelSheetCategory(sheet, category);
   return sheet;
+}
+
+function addCurrentWorkbookNavigation(workbook: any, dashboardSheetName: string): void {
+  const dashboard = workbook.getWorksheet(dashboardSheetName);
+  if (!dashboard) return;
+  const visibleSheets = workbook.worksheets.filter((sheet: any) => sheet.name !== dashboardSheetName && sheet.state !== "hidden");
+  dashboard.getColumn(15).width = 24;
+  dashboard.getColumn(16).width = 6;
+  visibleSheets.forEach((target: any, index: number) => {
+    const row = 5 + index;
+    dashboard.mergeCells(row, 15, row, 16);
+    const cell = dashboard.getCell(row, 15);
+    cell.value = { text: target.name, hyperlink: "#'" + target.name.replace(/'/g, "''") + "'!A1" };
+    cell.font = { name: "Aptos", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 === 0 ? "FF1E3A5F" : "FF0F766E" } };
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = { top: { style: "thin", color: { argb: "FF334155" } }, left: { style: "thin", color: { argb: "FF334155" } }, bottom: { style: "thin", color: { argb: "FF334155" } }, right: { style: "thin", color: { argb: "FF334155" } } };
+    dashboard.getRow(row).height = 24;
+  });
 }
 
 function addCompatibilityTableSheet(workbook: any, prefix: string, title: string, headers: unknown[], rows: unknown[][]): any {
@@ -411,7 +448,7 @@ function addRackUnitImageToSavedSheet(workbook: any, sheet: any, dataUri: string
   const height = meta && meta.width > 0 && meta.height > 0 ? Math.min(190, width * meta.height / meta.width) : 190;
   sheet.addImage(imageId, { tl: { col: 10, row: 1 }, ext: { width, height } });
   sheet.mergeCells("K11:P11");
-  sheet.getCell("K11").value = "Embedded Rack Unit Capacity image" + (meta && meta.savedAt ? " - captured " + meta.savedAt : "");
+  sheet.getCell("K11").value = "Embedded Rack Unit Capacity image" + (meta && meta.savedAt ? " - captured " + formatBangkokReportTimestamp(meta.savedAt) : "");
   sheet.getCell("K11").font = { italic: true, color: { argb: "FF657488" } };
 }
 
@@ -424,7 +461,7 @@ function emptyDashboardMetric(month: string): ExcelDashboardMetric {
     month, buildingEnergyKwh: null, buildingCostThb: null, floorEnergyKwh: null, floorCostThb: null, averageRateThbPerKwh: null,
     floorSharePercent: null, upsEnergyKwh: null, airEnergyKwh: null, dcEnergyKwh: null, upsLoadKw: null, upsLoadPercent: null,
     rackTotalU: null, rackUsedU: null, rackAvailableU: null, rackUsagePercent: null,
-    rackTotalPositions: null, rackInUsePositions: null, rackAvailablePositions: null, rackPositionUsagePercent: null, rackPositionAvailabilityPercent: null
+    rackTotalPositions: null, rackInUsePositions: null, rackAvailablePositions: null, rackPositionUsagePercent: null, rackPositionAvailabilityPercent: null, rackReservedPositions: null, rackPendingPositions: null
   };
 }
 
@@ -494,7 +531,7 @@ async function workbookForCurrentFacility(facility: ExportFacility): Promise<any
   addCurrentTableSheet(workbook, "05_Input_UPS", "tblInputUPS", ["Month", "Facility", "UPS ID", "Voltage (V)", "Current (A)", "Load (kW)", "Load (kVA)", "Raw phases JSON", "Last Saved"], calculationLogs.flatMap(log => log.ups.map(row => [log.month, facility.siteName, row.upsId, row.voltage, row.current, row.loadKw, row.loadKva, JSON.stringify(row.phases ?? {}), log.lastSavedUps])), "input");
   const inputAirRows = airRows.map(row => [row.month, facility.siteName, ...row.values, JSON.stringify(calculationLogs.find(log => log.month === row.month)?.air.meters ?? {}), calculationLogs.find(log => log.month === row.month)?.lastSavedAir ?? null]);
   const inputAir = addCurrentTableSheet(workbook, "06_Input_AirConditioning", "tblInputAir", ["Month", "Facility", ...airFields.map(field => field.toUpperCase() + " (GWh)"), "Raw meters JSON", "Last Saved"], inputAirRows, "input");
-  airFields.forEach((_field, index) => { for (let row = 2; row <= Math.max(2, inputAirRows.length + 1); row++) inputAir.getCell(row, index + 3).numFmt = "0.000000#"; });
+  airFields.forEach((_field, index) => { for (let row = 3; row <= Math.max(3, inputAirRows.length + 2); row++) inputAir.getCell(row, index + 3).numFmt = "0.000000#"; });
   addCurrentTableSheet(workbook, "07_Input_DCPower", "tblInputDCPower", ["Month", "Facility", "DC Panel", "Voltage (V)", "Current (A)", "Last Saved"], calculationLogs.flatMap(log => log.dc.map(row => [log.month, facility.siteName, row.panelId, row.voltage, row.current, log.lastSavedDc])), "input");
   const inputEnergyCost = addCurrentTableSheet(workbook, "08_Input_EnergyCost", "tblInputEnergyCost", ["Month", "Facility", "Building Energy (kWh)", "Building Cost (THB)", "Calculated Average Rate (THB/kWh)", "Calculated 4th Floor Cost (THB)", "Last Saved"], calculationLogs.map(log => { const metric = fullMetrics.find(item => item.month === log.month); return [log.month, facility.siteName, log.energyCost.buildingEnergyKwh, log.energyCost.buildingElectricityCostThb, metric?.averageRateThbPerKwh ?? null, metric?.floorCostThb ?? null, log.lastSavedEnergyCost]; }), "input");
   addCurrentTableSheet(workbook, "09_Input_Rack", "tblInputRack", ["Snapshot Month", "Facility", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], (facility.rack?.records ?? []).map(row => [facility.rack?.sourceSnapshot ?? selectedMonth, facility.siteName, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]), "input");
@@ -560,11 +597,20 @@ async function workbookForCurrentFacility(facility: ExportFacility): Promise<any
   addCompatibilityTableSheet(workbook, "", "Rack Capacity Raw", ["Snapshot Month", "Row", "Rack Zone", "Rack ID", "Status", "Cabinet Size", "Detail", "Device Type", "Remarks"], (facility.rack?.records ?? []).map(row => [facility.rack?.sourceSnapshot ?? selectedMonth, row.rowNumber, row.rackZone, row.rackId, row.status, row.cabinetSize, row.detail, row.deviceType, row.remarks]));
   if ((facility.rackUnitCapacityImages ?? []).length > 0) {
     const imageMetadata = addPresentationSheet(workbook, "18_History_RackImage", "Rack Unit Capacity image metadata");
+    imageMetadata.unMergeCells("A1:H1");
+    imageMetadata.mergeCells("B1:H1");
+    imageMetadata.getCell("B1").value = "Rack Unit Capacity image metadata";
+    imageMetadata.getCell("B1").font = { name: "Aptos Display", size: 16, bold: true, color: { argb: "FFFFFFFF" } };
+    imageMetadata.getCell("B1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+    imageMetadata.getCell("A1").value = { text: "⌂ Home", hyperlink: "#'01_Dashboard'!A1" };
+    imageMetadata.getCell("A1").font = { name: "Aptos", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+    imageMetadata.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F766E" } };
+    imageMetadata.getCell("A1").alignment = { vertical: "middle", horizontal: "center" };
     applyExcelSheetCategory(imageMetadata, "history");
     imageMetadata.addRow(["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)", "Image Content Type", "Byte Size", "Width", "Height", "Saved At"]);
     (facility.rackUnitCapacityImages ?? []).forEach(image => {
       const row = facility.rackUnitCapacity?.find(item => item.month === image.reportingMonth);
-      imageMetadata.addRow([facility.siteName, image.reportingMonth, row?.totalU ?? null, row?.usedU ?? null, row?.availableU ?? null, row && row.totalU > 0 ? row.usedU / row.totalU : null, row?.availabilityPct ?? null, image.contentType, image.byteSize ?? null, image.width ?? null, image.height ?? null, image.savedAt ?? null]);
+      imageMetadata.addRow([facility.siteName, image.reportingMonth, row?.totalU ?? null, row?.usedU ?? null, row?.availableU ?? null, row && row.totalU > 0 ? row.usedU / row.totalU : null, row?.availabilityPct ?? null, image.contentType, image.byteSize ?? null, image.width ?? null, image.height ?? null, image.savedAt ? formatBangkokReportTimestamp(image.savedAt) : null]);
     });
     imageMetadata.getColumn(6).numFmt = "0.0%"; imageMetadata.getColumn(7).numFmt = "0.0%";
   }
@@ -573,6 +619,7 @@ async function workbookForCurrentFacility(facility: ExportFacility): Promise<any
   const dataEnd = Math.max(2, metrics.length + 1);
   workbook.definedNames.add(workbookSheetRef(dataSheetName) + "!$A$2:$A$" + dataEnd, "AvailableReportingMonths");
   workbook.definedNames.add(workbookSheetRef(dashboardSheetName) + "!$B$3", "CurrentReportingMonth");
+  addCurrentWorkbookNavigation(workbook, dashboardSheetName);
   (workbook as any).views = [{ activeTab: 0, firstSheet: 0 }];
   workbookDashboardPlans.set(workbook, [plan]);
   return workbook;
