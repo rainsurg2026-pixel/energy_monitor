@@ -359,9 +359,15 @@ function currentLookup(sheetName: string, column: string, rowEnd: number, result
 
 function nthMonthLookup(sheetName: string, column: string, rowEnd: number, nth: number, result: number | string | null): { formula: string; result: number | string } {
   const data = excelSheetRef(sheetName);
-  const rows = `ROW(${data}!$A$2:$A$${rowEnd})-ROW(${data}!$A$2)+1`;
-  const position = `AGGREGATE(15,6,(${rows})/(${data}!$A$2:$A$${rowEnd}=$B$3),${nth})`;
-  return cellFormula(`IFERROR(INDEX(${data}!$${column}$2:$${column}$${rowEnd},${position}),\"\")`, result);
+  // Dashboard source rows are emitted month-by-month, so each month's rows are
+  // contiguous. Use a simple MATCH + row offset instead of AGGREGATE's array
+  // expression: Excel's FullCalcOnLoad can recalculate that legacy array form
+  // to #VALUE! (hidden by IFERROR), leaving otherwise-valid UPS/DC rows blank.
+  const first = `MATCH($B$3,${data}!$A$2:$A${rowEnd},0)`;
+  const position = nth === 1 ? first : `${first}+${nth - 1}`;
+  const monthAtPosition = `INDEX(${data}!$A$2:$A${rowEnd},${position})`;
+  const valueAtPosition = `INDEX(${data}!${column}$2:${column}${rowEnd},${position})`;
+  return cellFormula(`IFERROR(IF(${monthAtPosition}=$B$3,${valueAtPosition},\"\"),\"\")`, result);
 }
 
 function rowsForMonth(rows: unknown[][], month: string): unknown[][] {
