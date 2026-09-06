@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { formatFixedNumber, formatNumber2 } from "../utils/numberFormatBridge";
+import { exceedsDecimalPlaces } from "../utils/numericInputValidation";
 
 interface NumericEntryInputProps {
   value: number | null | undefined;
@@ -9,6 +10,8 @@ interface NumericEntryInputProps {
   disabled?: boolean;
   step?: string;
   precision?: number;
+  maxDecimalPlaces?: number;
+  onPrecisionViolation?: (maxDecimalPlaces: number) => void;
   /** Accessible name — the table cells around this input are plain <td>, so
    *  without it a screen reader announces the field as "edit text, blank". */
   ariaLabel?: string;
@@ -23,6 +26,8 @@ export default function NumericEntryInput({
   disabled = false,
   step,
   precision,
+  maxDecimalPlaces,
+  onPrecisionViolation,
   ariaLabel
 }: NumericEntryInputProps) {
   const [focused, setFocused] = useState(false);
@@ -61,6 +66,10 @@ export default function NumericEntryInput({
       onBlur={() => setFocused(false)}
       onChange={event => {
         const next = event.target.value.replace(/,/g, "");
+        if (maxDecimalPlaces !== undefined && exceedsDecimalPlaces(next, maxDecimalPlaces)) {
+          onPrecisionViolation?.(maxDecimalPlaces);
+          return;
+        }
         setText(next);
         onChange(next);
       }}

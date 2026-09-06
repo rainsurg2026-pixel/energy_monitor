@@ -1,5 +1,6 @@
 import type { MonthlyLog, UpsRecord, DcRecord } from "../types";
 import { daysInUtcMonth, normalizedMonth, previousUtcMonth } from "./dates";
+import { roundAirMeterReading, roundNullableAirMeterReading } from "./airMeterPrecision";
 
 export interface EnergyCostCalculation {
   buildingEnergyKwh: number | null;
@@ -60,9 +61,10 @@ export function getAirValue(log: MonthlyLog, field: string): number | null {
   const meter = log.air.meters?.[field] ?? null;
   // EB41/EB42 are top-level records; configured EB43/EB44 fields are meters.
   // Keep a fallback for records saved by older releases on the other path.
-  return (LEGACY_AIR_FIELDS as readonly string[]).includes(field)
+  const value = (LEGACY_AIR_FIELDS as readonly string[]).includes(field)
     ? fixed[field] ?? meter
     : meter ?? fixed[field] ?? null;
+  return roundNullableAirMeterReading(value);
 }
 
 /** Excel direct arithmetic cannot safely be replaced by a zero for a blank lookup. */
@@ -84,10 +86,10 @@ function calculateAirEnergy(current: MonthlyLog, previous: MonthlyLog | null): n
   const deltas = fields.map(field => {
     const value = getAirValue(current, field);
     const previousValue = getAirValue(previous, field);
-    return value === null || previousValue === null ? null : value - previousValue;
+    return value === null || previousValue === null ? null : roundAirMeterReading(value - previousValue);
   });
   const totalDelta = sumRequired(deltas);
-  return totalDelta === null ? null : totalDelta * 1000000;
+  return totalDelta === null ? null : roundAirMeterReading(totalDelta) * 1000000;
 }
 
 function calculateDcEnergy(log: MonthlyLog, days: number): number | null {

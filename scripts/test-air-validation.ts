@@ -1,5 +1,10 @@
 import { listMissingFields } from "../src/utils/completion";
+import { readFileSync } from "node:fs";
 import { createEmptyLog, logsToRows, parseSafeNumber, rowsToLogs } from "../src/excel/SheetMapper";
+import { roundAirMeterReading } from "../src/domain/airMeterPrecision";
+import { calculateEnergyCostForMonth } from "../src/domain/energyCost";
+import { parseMonthlyLog } from "../server/services/rawInputValidation";
+import { exceedsDecimalPlaces } from "../src/utils/numericInputValidation";
 
 function assert(name: string, condition: boolean): void {
   if (!condition) throw new Error(name);
@@ -65,3 +70,23 @@ const rangsitAirMissing = listMissingFields(rangsitLog, rangsitFields)
   .filter(field => field.section === "air")
   .map(field => field.label);
 assert("Rangsit validation ignores stale EB43/EB44 keys", rangsitAirMissing.length === 0 && !rangsitAirMissing.some(label => /EB43|EB44/.test(label)));
+
+// Six-decimal Air meter precision is a data contract, not display-only formatting.
+assert("7th decimal rounds to the stored 6-decimal value", roundAirMeterReading(9.2478576) === 9.247858 && roundAirMeterReading(9.3251728) === 9.325173);
+
+const julySix = createEmptyLog("2026-07", { upsIds: [], dcIds: [], airFields: rangsitFields });
+julySix.air = { eb41a: 19.678136, eb41b: 21.904596, eb42a: 10.287741, eb42b: 9.2478576, meters: {} };
+const augustSix = createEmptyLog("2026-08", { upsIds: [], dcIds: [], airFields: rangsitFields });
+augustSix.air = { eb41a: 19.763672, eb41b: 21.993352, eb42a: 10.367957, eb42b: 9.3251728, meters: {} };
+const parsedAugust = parseMonthlyLog(augustSix, "2026-08");
+assert("API validation persists Air values at exactly 6 decimals", parsedAugust.air.eb42b === 9.325173);
+const roundedAirEnergy = calculateEnergyCostForMonth([julySix, augustSix], "2026-08").airEnergyKwh;
+assert("Web Air calculation uses the same six-decimal values the user entered", roundedAirEnergy === 331823);
+
+assert("AC input allows exactly 6 decimal places", !exceedsDecimalPlaces("9.325173", 6));
+assert("AC input rejects a 7th decimal digit", exceedsDecimalPlaces("9.3251738", 6));
+assert("AC input guard also rejects pasted values beyond 6 decimals", exceedsDecimalPlaces("19.7636729", 6));
+
+const airTableSource = readFileSync(new URL("../src/components/AirTable.tsx", import.meta.url), "utf8");
+assert("AirTable locks AC inputs to six decimals", airTableSource.includes("maxDecimalPlaces={6}"));
+assert("AirTable shows a precision warning popup when a 7th decimal is attempted", airTableSource.includes("onPrecisionViolation={() => setPrecisionWarning(true)}") && airTableSource.includes('role="dialog"') && airTableSource.includes("Maximum 6 decimal places"));

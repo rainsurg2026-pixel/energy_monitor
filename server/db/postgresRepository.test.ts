@@ -13,6 +13,7 @@ const client = {
     if (text.includes("INSERT INTO monthly_periods")) return { rows: [{ id: "7", row_version: 1 }] };
     if (text.includes("INSERT INTO devices") || text.includes("INSERT INTO air_meters") || text.includes("INSERT INTO dc_panels")) return { rows: [{ id: "9" }] };
     if (text.includes("FROM monthly_periods p LEFT JOIN energy_cost_inputs")) return { rows: [{ id: "7", period_month: "2026-07-01", building_energy_kwh: null, building_cost_thb: null, last_saved_ups: "2026-07-15T06:30:00.000Z", last_saved_air: "2026-07-15T06:30:00.000Z", last_saved_dc: "2026-07-15T06:30:00.000Z", last_saved_energy_cost: "2026-07-15T06:30:00.000Z" }] };
+    if (text.includes("FROM air_meter_readings")) return { rows: [{ period_id: "7", code: "eb42b", reading: "9.2478576" }] };
     return { rows: [] };
   },
   release() {}
@@ -31,7 +32,7 @@ await repository.saveMonthlyLog({
   log: {
     month: "2026-07",
     ups: [],
-    air: { eb41a: null, eb41b: null, eb42a: null, eb42b: null, meters: {} },
+    air: { eb41a: null, eb41b: null, eb42a: null, eb42b: 9.3251728, meters: {} },
     dc: [],
     energyCost: { buildingEnergyKwh: null, buildingElectricityCostThb: null },
     lastSavedUps: null,
@@ -46,13 +47,17 @@ assert.ok(timestampUpdate, "monthly save advances all Desktop section timestamps
 assert.match(timestampUpdate!.text, /last_saved_air = now\(\)/);
 assert.match(timestampUpdate!.text, /last_saved_dc = now\(\)/);
 assert.match(timestampUpdate!.text, /last_saved_energy_cost = now\(\)/);
+const airInsert = calls.find(call => call.text.includes("INSERT INTO air_meter_readings") && (call.values?.[4] as { code?: string } | undefined)?.code === "eb42b");
+assert.equal(airInsert?.values?.[3], 9.325173, "repository writes Air meter readings at six decimals");
+assert.deepEqual(airInsert?.values?.[4], { code: "eb42b", reading: 9.325173 }, "raw_inputs uses the same normalized six-decimal Air value");
 
 const readBack = await repository.getMonthlyLogs(1, ["2026-07"]);
 assert.equal(readBack[0]?.lastSavedUps, "2026-07-15T06:30:00.000Z");
 assert.equal(readBack[0]?.lastSavedEnergyCost, "2026-07-15T06:30:00.000Z");
+assert.equal(readBack[0]?.air.eb42b, 9.247858, "legacy DB Air readings are normalized to six decimals on read");
 
 const selectSource = await import("node:fs/promises").then(fs => fs.readFile(new URL("./postgresRepository.ts", import.meta.url), "utf8"));
 assert.match(selectSource, /p\.last_saved_ups/);
 assert.match(selectSource, /lastSavedEnergyCost: row\.last_saved_energy_cost/);
 
-console.log("postgres repository: section save timestamps are persisted and read back");
+console.log("postgres repository: timestamps and six-decimal Air precision are persisted/read back");

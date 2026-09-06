@@ -4,6 +4,7 @@ import { calculateEnergyCostForMonth, getAirFields, getAirValue } from "./energy
 import { computeUpsGroupSummary, type UpsGroupConfig } from "./upsGroupAggregation";
 import { daysInLocalMonthOr30, previousMonthOrEmpty } from "./dates";
 import { calculateSrinakarinAggregate } from "./srinakarinPower";
+import { roundAirMeterReading } from "./airMeterPrecision";
 
 export interface DashboardUpsTopology {
   upsGroups: UpsGroupConfig[];
@@ -90,11 +91,11 @@ export function buildEngineeringDashboardSnapshot(
   const airPrevious = Object.fromEntries(airFields.map(field => [field, previousLog ? getAirValue(previousLog, field) : null]));
   const airDifference = Object.fromEntries(airFields.map(field => {
     const current = airCurrent[field]; const previous = airPrevious[field];
-    return [field, current !== null && previous !== null ? current - previous : null];
+    return [field, current !== null && previous !== null ? roundAirMeterReading(current - previous) : null];
   }));
   const differenceValues = airFields.map(field => airDifference[field]);
   const airEnergyKwh = differenceValues.every(value => value !== null)
-    ? differenceValues.reduce((sum, value) => sum + (value as number), 0) * 1000000 : null;
+    ? roundAirMeterReading(differenceValues.reduce((sum, value) => sum + (value as number), 0)) * 1000000 : null;
   const dcPanels = activeLog.dc.map(panel => {
     const voltage = panel.voltage ?? 0, current = panel.current ?? 0, dcPowerW = voltage * current, acPowerW = dcPowerW / 200 * 220;
     return { panelId: panel.panelId, voltage, current, dcPowerW, acCurrentA: acPowerW / 220, acPowerW, monthlyEnergyKwh: acPowerW * 24 * daysInMonth / 1000 };
