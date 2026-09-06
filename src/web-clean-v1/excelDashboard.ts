@@ -597,7 +597,9 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   const energyHeadingRow = 20;
   sectionHeading(sheet, energyHeadingRow, "Energy & Cost Trends");
   const energyChartRow = energyHeadingRow + 2;
-  const rackHeadingRow = energyChartRow + 51;
+  const fullWidthChartHeight = 18;
+  const fullWidthChartStep = fullWidthChartHeight + 2;
+  const rackHeadingRow = energyChartRow + fullWidthChartStep * 6 + 1;
   sectionHeading(sheet, rackHeadingRow, "Rack Capacity Trends");
   const rackChartRow = rackHeadingRow + 2;
 
@@ -614,14 +616,14 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   };
   const chart = (title: string, column: string, key: keyof ExcelDashboardMetric, color: string, fromCol: number, fromRow: number, toCol: number, toRow: number): ExcelDashboardChart => ({ title, kind: "line", categoryRange, categories, series: [chartSeries(title.replace(" Trend", ""), column, key, color)], fromCol, fromRow, toCol, toRow });
   const charts: ExcelDashboardChart[] = trendMetrics.length === 0 ? [] : [
-    chart("4th Floor Estimated Cost Trend (THB)", "F", "floorCostThb", "10B981", 0, energyChartRow, 6, energyChartRow + 15),
-    chart("4th Floor Total Energy Trend (kWh)", "E", "floorEnergyKwh", "6366F1", 7, energyChartRow, 14, energyChartRow + 15),
-    chart("4th Floor Average Electricity Rate Trend (THB/kWh)", "G", "averageRateThbPerKwh", "3B82F6", 0, energyChartRow + 17, 6, energyChartRow + 32),
-    chart("4th Floor UPS Energy Trend (kWh)", "I", "upsEnergyKwh", "4F46E5", 7, energyChartRow + 17, 14, energyChartRow + 32),
-    chart("4th Floor Air Conditioning Energy Trend (kWh)", "J", "airEnergyKwh", "14B8A6", 0, energyChartRow + 34, 6, energyChartRow + 49),
-    chart("4th Floor DC Power Energy Trend (kWh)", "K", "dcEnergyKwh", "64748B", 7, energyChartRow + 34, 14, energyChartRow + 49),
-    { title: "Rack Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Usage %", "U", "rackPositionUsagePercent", "6366F1"), chartSeries("Availability %", "V", "rackPositionAvailabilityPercent", "14B8A6")], fromCol: 0, fromRow: rackChartRow, toCol: 6, toRow: rackChartRow + 18 },
-    { title: "Rack Unit Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Total U", "N", "rackTotalU", "64748B"), chartSeries("Used U", "O", "rackUsedU", "6366F1"), chartSeries("Available U", "P", "rackAvailableU", "14B8A6")], fromCol: 7, fromRow: rackChartRow, toCol: 14, toRow: rackChartRow + 18 }
+    chart("4th Floor Estimated Cost Trend (THB)", "F", "floorCostThb", "10B981", 0, energyChartRow, 14, energyChartRow + fullWidthChartHeight),
+    chart("4th Floor Total Energy Trend (kWh)", "E", "floorEnergyKwh", "2563EB", 0, energyChartRow + fullWidthChartStep, 14, energyChartRow + fullWidthChartStep + fullWidthChartHeight),
+    chart("4th Floor Average Electricity Rate Trend (THB/kWh)", "G", "averageRateThbPerKwh", "F59E0B", 0, energyChartRow + fullWidthChartStep * 2, 14, energyChartRow + fullWidthChartStep * 2 + fullWidthChartHeight),
+    chart("4th Floor UPS Energy Trend (kWh)", "I", "upsEnergyKwh", "4F46E5", 0, energyChartRow + fullWidthChartStep * 3, 14, energyChartRow + fullWidthChartStep * 3 + fullWidthChartHeight),
+    chart("4th Floor Air Conditioning Energy Trend (kWh)", "J", "airEnergyKwh", "06B6D4", 0, energyChartRow + fullWidthChartStep * 4, 14, energyChartRow + fullWidthChartStep * 4 + fullWidthChartHeight),
+    chart("4th Floor DC Power Energy Trend (kWh)", "K", "dcEnergyKwh", "8B5CF6", 0, energyChartRow + fullWidthChartStep * 5, 14, energyChartRow + fullWidthChartStep * 5 + fullWidthChartHeight),
+    { title: "Rack Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Usage %", "U", "rackPositionUsagePercent", "6366F1"), chartSeries("Availability %", "V", "rackPositionAvailabilityPercent", "14B8A6")], fromCol: 0, fromRow: rackChartRow, toCol: 14, toRow: rackChartRow + fullWidthChartHeight },
+    { title: "Rack Unit Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Total U", "N", "rackTotalU", "64748B"), chartSeries("Used U", "O", "rackUsedU", "6366F1"), chartSeries("Available U", "P", "rackAvailableU", "14B8A6")], fromCol: 0, fromRow: rackChartRow + fullWidthChartStep, toCol: 14, toRow: rackChartRow + fullWidthChartStep + fullWidthChartHeight }
   ];
   setFormulaCell(sheet, "Z2", currentLookup(upsStatusData.sheetName, "B", upsStatusData.rowEnd, upsStatusCached), "@");
   sheet.getColumn(26).hidden = true;
@@ -646,7 +648,7 @@ function numCache(values: Array<number | null>): string {
 }
 
 function chartSeriesXml(series: ExcelDashboardSeries, categoryRange: string, categories: string[], index: number, kind: "line" | "bar"): string {
-  const marker = kind === "line" ? `<c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="${series.color}"/></a:solidFill></a:ln></c:spPr></c:marker>` : "";
+  const marker = kind === "line" ? `<c:marker><c:symbol val="circle"/><c:size val="6"/><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="28575"><a:solidFill><a:srgbClr val="${series.color}"/></a:solidFill></a:ln></c:spPr></c:marker>` : "";
   const position = index % 2 === 0 ? "t" : "b";
   const dataLabels = kind === "line" ? chartDataLabels(true, series.labelFormat ?? excelCompactChartFormat(series.values), position) : "";
   return `<c:ser><c:idx val="${index}"/><c:order val="${index}"/><c:tx><c:v>${xmlEscape(series.name)}</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val="${series.color}"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="${series.color}"/></a:solidFill></a:ln></c:spPr><c:invertIfNegative val="0"/>${marker}${dataLabels}<c:cat><c:strRef><c:f>${xmlEscape(categoryRange)}</c:f>${strCache(categories)}</c:strRef></c:cat><c:val><c:numRef><c:f>${xmlEscape(series.range)}</c:f>${numCache(series.values)}</c:numRef></c:val></c:ser>`;
@@ -654,7 +656,7 @@ function chartSeriesXml(series: ExcelDashboardSeries, categoryRange: string, cat
 
 function chartDataLabels(showValues: boolean, formatCode = "#,##0.00", position?: "t" | "b" | "outEnd"): string {
   const positionXml = position ? `<c:dLblPos val="${position}"/>` : "";
-  return `<c:dLbls><c:numFmt formatCode="${xmlEscape(formatCode)}" sourceLinked="0"/>${positionXml}<c:showLegendKey val="0"/><c:showVal val="${showValues ? 1 : 0}"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/><c:showLeaderLines val="0"/></c:dLbls>`;
+  return `<c:dLbls><c:numFmt formatCode="${xmlEscape(formatCode)}" sourceLinked="0"/>${positionXml}<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="950" b="1"/></a:pPr><a:endParaRPr lang="en-US" sz="950" b="1"/></a:p></c:txPr><c:showLegendKey val="0"/><c:showVal val="${showValues ? 1 : 0}"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/><c:showLeaderLines val="0"/></c:dLbls>`;
 }
 
 function chartLegend(): string {
@@ -667,7 +669,7 @@ function chartXml(chart: ExcelDashboardChart): string {
   const plot = chart.kind === "bar"
     ? `<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>${chart.series.map((series, index) => chartSeriesXml(series, chart.categoryRange, chart.categories, index, chart.kind)).join("")}${chartDataLabels(true, excelCompactChartFormat(chart.series.flatMap(series => series.values)), "outEnd")}<c:gapWidth val="80"/><c:axId val="${axisCategory}"/><c:axId val="${axisValue}"/></c:barChart>`
     : `<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>${chart.series.map((series, index) => chartSeriesXml(series, chart.categoryRange, chart.categories, index, chart.kind)).join("")}<c:marker val="1"/><c:smooth val="0"/><c:axId val="${axisCategory}"/><c:axId val="${axisValue}"/></c:lineChart>`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/><c:chart><c:autoTitleDeleted val="0"/><c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr/></a:pPr><a:r><a:rPr lang="en-US" sz="1200"/><a:t>${xmlEscape(chart.title)}</a:t></a:r><a:endParaRPr lang="en-US"/></a:p></c:rich></c:tx><c:layout/></c:title><c:plotArea><c:layout/>${plot}<c:catAx><c:axId val="${axisCategory}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="${axisValue}"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="${axisValue}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:numFmt formatCode="${xmlEscape(excelCompactChartFormat(chart.series.flatMap(series => series.values), chart.series.every(series => (series.labelFormat ?? "").includes("%"))))}" sourceLinked="0"/><c:crossAx val="${axisCategory}"/><c:crosses val="autoZero"/><c:crossBetween val="${chart.kind === "line" ? "between" : "midCat"}"/></c:valAx></c:plotArea>${chartLegend()}<c:plotVisOnly val="0"/><c:dispBlanksAs val="gap"/><c:showDLblsOverMax val="0"/></c:chart><c:printSettings><c:headerFooter/><c:pageMargins b="0.75" l="0.7" r="0.7" t="0.75" header="0.3" footer="0.3"/><c:pageSetup/></c:printSettings></c:chartSpace>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/><c:chart><c:autoTitleDeleted val="0"/><c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr/></a:pPr><a:r><a:rPr lang="en-US" sz="1500" b="1"/><a:t>${xmlEscape(chart.title)}</a:t></a:r><a:endParaRPr lang="en-US"/></a:p></c:rich></c:tx><c:layout/></c:title><c:plotArea><c:layout/>${plot}<c:catAx><c:axId val="${axisCategory}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="${axisValue}"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1000"/></a:pPr><a:endParaRPr lang="en-US" sz="1000"/></a:p></c:txPr></c:catAx><c:valAx><c:axId val="${axisValue}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:numFmt formatCode="${xmlEscape(excelCompactChartFormat(chart.series.flatMap(series => series.values), chart.series.every(series => (series.labelFormat ?? "").includes("%"))))}" sourceLinked="0"/><c:crossAx val="${axisCategory}"/><c:crosses val="autoZero"/><c:crossBetween val="${chart.kind === "line" ? "between" : "midCat"}"/><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1000"/></a:pPr><a:endParaRPr lang="en-US" sz="1000"/></a:p></c:txPr></c:valAx></c:plotArea>${chartLegend()}<c:plotVisOnly val="0"/><c:dispBlanksAs val="gap"/><c:showDLblsOverMax val="0"/></c:chart><c:printSettings><c:headerFooter/><c:pageMargins b="0.75" l="0.7" r="0.7" t="0.75" header="0.3" footer="0.3"/><c:pageSetup/></c:printSettings></c:chartSpace>`;
 }
 
 function drawingXml(charts: Array<{ relationshipId: string; chartId: number; anchor: ExcelDashboardChart }>): string {
