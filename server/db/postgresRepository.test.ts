@@ -54,7 +54,7 @@ assert.deepEqual(airInsert?.values?.[4], { code: "eb42b", reading: 9.325173 }, "
 const readBack = await repository.getMonthlyLogs(1, ["2026-07"]);
 assert.equal(readBack[0]?.lastSavedUps, "2026-07-15T06:30:00.000Z");
 assert.equal(readBack[0]?.lastSavedEnergyCost, "2026-07-15T06:30:00.000Z");
-assert.equal(readBack[0]?.air.eb42b, 9.247858, "legacy DB Air readings are normalized to six decimals on read");
+assert.equal(readBack[0]?.air.eb42b, 9.2478576, "legacy imported Air readings preserve source precision on read");
 
 const selectSource = await import("node:fs/promises").then(fs => fs.readFile(new URL("./postgresRepository.ts", import.meta.url), "utf8"));
 assert.match(selectSource, /p\.last_saved_ups/);

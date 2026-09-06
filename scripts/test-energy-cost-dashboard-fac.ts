@@ -5,7 +5,6 @@
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { promises as fs } from "node:fs";
-import { roundAirMeterReading } from "../src/domain/airMeterPrecision";
 import { readWorkbookFromFile } from "../src/excel/WorkbookReader";
 import { patchWorkbookBuffer } from "../src/excel/WorkbookWriter";
 import {
@@ -62,32 +61,8 @@ const dashboardFloorCost = formulaResult(dashboard.getCell("E32").value);
 if (dashboardAverageRate !== null && dashboardFloorEnergy !== null && dashboardFloorCost !== null) {
   assert("Average rate matches Dashboard-FAC F32", equal(calculation.averageElectricityRateThbPerKwh, dashboardAverageRate));
 
-  // Legacy Desktop workbooks can contain Air meter values beyond six decimals
-  // even though the user-facing entry contract is six decimals. Rebuild the Air
-  // energy independently from the visible six-decimal values; Web/PDF/Excel must
-  // follow this normalized result rather than the old cached Dashboard-FAC residue.
-  const currentLog = parsed.logs.find(log => log.month === month);
-  const previousLog = parsed.logs.find(log => log.month === "2025-12");
-  if (!currentLog || !previousLog) throw new Error("Missing Air precision regression logs.");
-  const airFields = currentLog.energyCalculation?.airFields?.length
-    ? currentLog.energyCalculation.airFields
-    : ["eb41a", "eb41b", "eb42a", "eb42b"];
-  const rawAir = (log: typeof currentLog, field: string): number | null => {
-    const fixed = log.air as unknown as Record<string, number | null | undefined>;
-    return fixed[field] ?? log.air.meters?.[field] ?? null;
-  };
-  const normalizedDeltas = airFields.map(field => {
-    const current = rawAir(currentLog, field);
-    const previous = rawAir(previousLog, field);
-    if (current === null || previous === null) throw new Error("Missing Air reading " + field + ".");
-    return roundAirMeterReading(roundAirMeterReading(current) - roundAirMeterReading(previous));
-  });
-  const expectedAirEnergy = roundAirMeterReading(normalizedDeltas.reduce((sum, value) => sum + value, 0)) * 1_000_000;
-  assert("Air Energy uses the six-decimal entry contract instead of legacy hidden precision", equal(calculation.airEnergyKwh, expectedAirEnergy));
-  const expectedFloorEnergy = (calculation.upsEnergyKwh ?? 0) + expectedAirEnergy + (calculation.dcEnergyKwh ?? 0);
-  assert("4th Floor Energy is rebuilt from normalized six-decimal Air readings", equal(calculation.floorEnergyKwh, expectedFloorEnergy));
-  assert("4th Floor Electricity Cost uses the normalized 4th Floor Energy", equal(calculation.floorElectricityCostThb, calculateFloorElectricityCost(calculation.buildingEnergyKwh, calculation.buildingElectricityCostThb, expectedFloorEnergy)));
-  assert("Legacy cached Dashboard-FAC floor energy differs because it predates the six-decimal Air contract", !equal(dashboardFloorEnergy, calculation.floorEnergyKwh));
+  assert("Historical workbook 4th Floor Energy remains source-faithful before user edits", equal(calculation.floorEnergyKwh, dashboardFloorEnergy));
+  assert("Historical workbook 4th Floor Electricity Cost remains source-faithful before user edits", equal(calculation.floorElectricityCostThb, dashboardFloorCost));
 } else {
   console.log("SKIP  Dashboard-FAC cached results are #VALUE! in the source workbook");
 }

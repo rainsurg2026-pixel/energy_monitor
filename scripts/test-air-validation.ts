@@ -76,12 +76,14 @@ assert("7th decimal rounds to the stored 6-decimal value", roundAirMeterReading(
 
 const julySix = createEmptyLog("2026-07", { upsIds: [], dcIds: [], airFields: rangsitFields });
 julySix.air = { eb41a: 19.678136, eb41b: 21.904596, eb42a: 10.287741, eb42b: 9.2478576, meters: {} };
+julySix.lastSavedAir = null;
 const augustSix = createEmptyLog("2026-08", { upsIds: [], dcIds: [], airFields: rangsitFields });
 augustSix.air = { eb41a: 19.763672, eb41b: 21.993352, eb42a: 10.367957, eb42b: 9.3251728, meters: {} };
+augustSix.lastSavedAir = "2026-09-05T09:48:13.239Z";
 const parsedAugust = parseMonthlyLog(augustSix, "2026-08");
 assert("API validation persists Air values at exactly 6 decimals", parsedAugust.air.eb42b === 9.325173);
-const roundedAirEnergy = calculateEnergyCostForMonth([julySix, augustSix], "2026-08").airEnergyKwh;
-assert("Web Air calculation uses the same six-decimal values the user entered", roundedAirEnergy === 331823);
+const roundedAirEnergy = calculateEnergyCostForMonth([julySix, parsedAugust], "2026-08").airEnergyKwh;
+assert("Web Air calculation keeps imported historical source precision while current user entry is six-decimal", roundedAirEnergy !== null && Math.abs(roundedAirEnergy - 331823.4) < 1e-6);
 
 assert("AC input allows exactly 6 decimal places", !exceedsDecimalPlaces("9.325173", 6));
 assert("AC input rejects a 7th decimal digit", exceedsDecimalPlaces("9.3251738", 6));
