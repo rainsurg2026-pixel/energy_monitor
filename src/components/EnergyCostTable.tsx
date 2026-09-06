@@ -181,7 +181,7 @@ export default function EnergyCostTable({
       {/* Inputs Layout. Scrollable on mobile; clips (not scrolls) from md up so
           the sticky thead resolves against the viewport, not this wrapper. */}
       <div className="overflow-x-auto md:overflow-x-clip">
-        <table className="entry-data-table w-full text-left border-collapse">
+        <table className="entry-data-table w-full min-w-[700px] text-left border-collapse">
           <thead>
             <tr className="bg-emerald-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-emerald-300 border-b border-slate-800/80">
               <th className="py-3.5 px-4 font-normal">{copy.month}</th>
@@ -219,16 +219,15 @@ export default function EnergyCostTable({
               </td>
 
               {/* Calculated Rate (THB/kWh) */}
-              <td className="py-5 px-4 text-right">
-                <span className={`text-xs px-2.5 py-1 rounded-md font-mono ${
-                  averageRate !== null 
-                    ? "bg-slate-800 text-emerald-400 font-semibold border border-slate-750" 
-                    : "text-slate-600 italic"
-                }`}>
-                  {averageRate !== null
-                    ? `${formatNumber2(averageRate)} ฿/kWh`
-                    : copy.enterBoth}
-                </span>
+              <td className="py-5 px-3 text-center">
+                {averageRate !== null ? (
+                  <span data-testid="energy-average-rate-value" className="mx-auto inline-flex min-w-[6.25rem] flex-col items-center justify-center whitespace-nowrap rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 font-mono">
+                    <span className="text-sm font-semibold leading-none text-emerald-300">{formatNumber2(averageRate)}</span>
+                    <span className="mt-1 text-[10px] leading-none text-slate-400">THB/kWh</span>
+                  </span>
+                ) : (
+                  <span className="text-xs italic text-slate-600">{copy.enterBoth}</span>
+                )}
               </td>
             </tr>
           </tbody>

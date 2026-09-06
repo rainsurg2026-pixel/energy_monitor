@@ -121,7 +121,7 @@ if (!html.includes("<h2>Rack Unit Capacity and Utilization</h2>")) throw new Err
 const rucSummaryOrder = html.indexOf("<h2>Rack Unit Capacity and Utilization</h2>");
 const rucImageOrder = html.indexOf("<h2>Monthly Rack Unit Capacity Image</h2>");
 const rucTrendOrder = html.indexOf("<h2>Rack Unit Capacity Trend</h2>");
-if (rucImageOrder !== -1 && !(rucImageOrder > rucSummaryOrder && (rucTrendOrder === -1 || rucTrendOrder > rucImageOrder))) throw new Error("Monthly Rack Unit Capacity Image must appear after the summary and before the six-month trend.");
+if (rucImageOrder !== -1 && !(rucImageOrder > rucSummaryOrder && (rucTrendOrder === -1 || rucTrendOrder > rucImageOrder))) throw new Error("Monthly Rack Unit Capacity Image must appear after the summary and before the selected-range trend.");
 {
   const rackHeadingIndex = html.indexOf("<h2>Rack Capacity and Utilization</h2>");
   const unitHeadingIndex = html.indexOf("<h2>Rack Unit Capacity and Utilization</h2>");

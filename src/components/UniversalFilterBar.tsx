@@ -111,7 +111,7 @@ export default function UniversalFilterBar({
 
   const advancedFilters = <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid={`advanced-filters-${selectedReportView}`}>
     {selectedReportView === "executive" && <>
-      <label><span className={labelClass}>{copy.trend}</span><SelectShell><select value={selectedTrend} onChange={event => setSelectedTrend(event.target.value)} className={selectClass}><option>Last 3 Months</option><option>Last 6 Months</option><option>Last 12 Months</option></select></SelectShell></label>
+      <label><span className={labelClass}>{copy.trend}</span><SelectShell><select value={selectedTrend} onChange={event => setSelectedTrend(event.target.value)} className={selectClass}><option>Last 3 Months</option><option>Last 6 Months</option><option>Last 12 Months</option><option>All</option></select></SelectShell></label>
       <label><span className={labelClass}>{copy.compare}</span><SelectShell><select value={compareMode} onChange={event => setCompareMode(event.target.value as typeof compareMode)} className={selectClass}><option value="none">{th ? "ไม่เปรียบเทียบ" : "No Comparison"}</option><option value="prev_month">{th ? "เดือนก่อนหน้า" : "Previous Month"}</option><option value="prev_year">{th ? "ปีก่อนหน้า" : "Previous Year"}</option><option value="rolling_avg">{th ? "ค่าเฉลี่ย 3 เดือน" : "3-Month Rolling Average"}</option><option value="best_worst">{th ? "ดีที่สุด / แย่ที่สุด" : "Best / Worst Month"}</option></select></SelectShell></label>
     </>}
     {selectedReportView === "dashboard" && <>

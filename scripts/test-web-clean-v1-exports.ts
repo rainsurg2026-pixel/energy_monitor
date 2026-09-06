@@ -155,6 +155,7 @@ check("Interactive Excel export contains a worksheet drawing relationship", inte
   }
   const allChartXml = chartXmlParts.join("\n");
   check("Interactive Excel line-series labels alternate above/below to reduce collisions", allChartXml.includes('dLblPos val="t"') && allChartXml.includes('dLblPos val="b"'));
+  check("Interactive Excel line charts leave category-edge breathing room", allChartXml.includes('crossBetween val="between"'));
   check("Interactive Excel charts use compact K/M label formats when the plotted scale is long", allChartXml.includes('&quot;K&quot;') || allChartXml.includes('&quot;M&quot;') || allChartXml.includes('&quot;B&quot;'));
   check("Interactive Excel export charts mirror the PDF trend set in order", JSON.stringify(chartTitles) === JSON.stringify(["4th Floor Estimated Cost Trend (THB)", "4th Floor Total Energy Trend (kWh)", "4th Floor Average Electricity Rate Trend (THB/kWh)", "4th Floor UPS Energy Trend (kWh)", "4th Floor Air Conditioning Energy Trend (kWh)", "4th Floor DC Power Energy Trend (kWh)", "Rack Capacity Trend", "Rack Unit Capacity Trend"]));
   check("Interactive Excel export embeds rack image media", interactiveParts.some(name => /^xl\/media\/image\d+\.(png|jpe?g)$/.test(name)));
@@ -199,6 +200,30 @@ const twoMonthWorkbook = await workbookForFacilities([{
 }] as any);
 const twoMonthTrendData = twoMonthWorkbook.getWorksheet("98_Trend_Data")!;
 check("Multi-month Excel charts follow Quick Period instead of expanding to 12 months", twoMonthTrendData.rowCount === 3 && twoMonthTrendData.getCell(2, 1).value === "2026-04" && twoMonthTrendData.getCell(3, 1).value === "2026-05");
+const extendedTrendMonths = ["2025-04", "2025-05", ...trailingTwelveMonths];
+const extendedTrendLogs = extendedTrendMonths.map((month, index) => ({ ...log(month), energyCost: { buildingEnergyKwh: 900 + index, buildingElectricityCostThb: 4500 + index } }));
+for (const [label, count] of [["3 Months", 3], ["6 Months", 6], ["12 Months", 12]] as const) {
+  const selectedMonths = extendedTrendMonths.slice(-count);
+  const scopedWorkbook = await workbookForFacilities([{
+    siteName: "Rangsit",
+    selectedMonth: extendedTrendMonths.at(-1),
+    reportingMonths: selectedMonths,
+    logs: extendedTrendLogs.slice(-count),
+    calculationLogs: extendedTrendLogs
+  }] as any);
+  const trendData = scopedWorkbook.getWorksheet("98_Trend_Data")!;
+  check(`Excel ${label} trend contains exactly ${count} reporting months`, trendData.rowCount === count + 1 && trendData.getCell(2, 1).value === selectedMonths[0] && trendData.getCell(count + 1, 1).value === selectedMonths.at(-1));
+}
+const fullTrendWorkbook = await workbookForFacilities([{
+  siteName: "Rangsit",
+  selectedMonth: extendedTrendMonths.at(-1),
+  reportingMonths: extendedTrendMonths,
+  logs: extendedTrendLogs,
+  calculationLogs: extendedTrendLogs
+}] as any);
+const fullTrendData = fullTrendWorkbook.getWorksheet("98_Trend_Data")!;
+check("Excel Full History trend keeps all reporting months instead of truncating to 12", fullTrendData.rowCount === extendedTrendMonths.length + 1 && fullTrendData.getCell(2, 1).value === extendedTrendMonths[0] && fullTrendData.getCell(extendedTrendMonths.length + 1, 1).value === extendedTrendMonths.at(-1));
+
 const multiAuditWorkbook = await workbookForFacilities([
   { siteName: "Rangsit", siteCode: "RST", generatedBy: auditUser, generatedAt: auditTimestamp, logs: [log("2026-05")] },
   { siteName: "Srinakarin", siteCode: "SNK", generatedBy: auditUser, generatedAt: auditTimestamp, logs: [log("2026-05")] }

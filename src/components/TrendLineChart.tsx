@@ -94,8 +94,8 @@ export default function TrendLineChart({ labels, series, unit, height = 360, com
   const bottomY = height - bottom;
   const labelYsByPoint = labels.map((_, pointIndex) => pointLabelYs(series, pointIndex, y, top, bottomY));
 
-  const svgWidthClass = compact ? (labels.length > 6 ? "min-w-[720px]" : "min-w-0") : (labels.length > 6 ? "min-w-[720px] sm:min-w-[1080px]" : "min-w-0 sm:min-w-[1080px]");
-  return <div className="trend-line-chart w-full overflow-x-auto"><svg viewBox={`0 0 ${width} ${height}`} className={`${svgWidthClass} w-full text-xs`} role="img" aria-label={`${unit} trend`}>
+  const svgMinWidth = labels.length > 6 ? (compact ? Math.max(720, labels.length * 88) : Math.max(1080, labels.length * 80)) : undefined;
+  return <div className="trend-line-chart w-full overflow-x-auto"><svg viewBox={`0 0 ${width} ${height}`} className="w-full text-xs" style={svgMinWidth ? { minWidth: `${svgMinWidth}px` } : undefined} role="img" aria-label={`${unit} trend`}>
     <line x1={left} y1={top} x2={left} y2={bottomY} stroke="currentColor" className="text-slate-400" strokeWidth="1" />
     <line x1={left} y1={bottomY} x2={width - right} y2={bottomY} stroke="currentColor" className="text-slate-400" strokeWidth="1" />
     {[0, 1, 2, 3, 4].map(step => { const value = max - range * step / 4; const yy = y(value); return <text key={step} x={left - 8} y={yy + 4} textAnchor="end" className="fill-slate-300">{formatCompactChartValue(value)}</text>; })}

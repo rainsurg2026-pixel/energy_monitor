@@ -176,7 +176,7 @@ export default function DcTable({
       {/* Table Container. Scrollable on mobile; clips (not scrolls) from md up so
           the sticky thead resolves against the viewport, not this wrapper. */}
       <div className="overflow-x-auto md:overflow-x-clip">
-        <table className="entry-data-table w-full text-left border-collapse">
+        <table className="entry-data-table w-full min-w-[760px] text-left border-collapse">
           <thead>
             <tr className="bg-amber-950/20 text-[11px] font-mono font-semibold uppercase tracking-wider text-amber-300 border-b border-slate-800/80">
               <th className="py-3.5 px-4 font-normal">{copy.month}</th>
@@ -235,16 +235,15 @@ export default function DcTable({
                   </td>
 
                   {/* Calculated Power (Display Only) */}
-                  <td className="py-3.5 px-4 text-right">
-                    <span className={`text-xs px-2.5 py-1 rounded-md font-mono ${
-                      calculatedPowerKw !== null 
-                        ? "bg-slate-800 text-amber-400 font-semibold border border-slate-750" 
-                        : "text-slate-600 italic"
-                    }`}>
-                      {calculatedPowerKw !== null 
-                        ? `${formatNumber2(calculatedPowerKw)} kW`
-                        : copy.waiting}
-                    </span>
+                  <td className="py-3.5 px-3 text-center">
+                    {calculatedPowerKw !== null ? (
+                      <span data-testid="dc-calculated-value" className="mx-auto inline-flex min-w-[5.5rem] flex-col items-center justify-center whitespace-nowrap rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 font-mono">
+                        <span className="text-sm font-semibold leading-none text-amber-300">{formatNumber2(calculatedPowerKw)}</span>
+                        <span className="mt-1 text-[10px] leading-none text-slate-400">kW</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs italic text-slate-600">{copy.waiting}</span>
+                    )}
                   </td>
                 </tr>
               );

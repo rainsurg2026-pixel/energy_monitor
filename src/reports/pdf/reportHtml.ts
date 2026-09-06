@@ -108,12 +108,12 @@ function rackPositionsTable(records: NonNullable<ReportData["rack"]>["records"])
 
 function rackUnitTrendRows(data: ReportData): RackUnitCapacityRow[] {
   const endMonth = data.reportingMonth;
+  const reportTrendRows = data.monthlyRows.length === 1 ? (data.executiveTrendRows ?? data.monthlyRows) : data.monthlyRows;
+  const selectedMonths = new Set(reportTrendRows.map(row => row.month));
   return [...data.rackUnitCapacity]
-    .filter(row => !endMonth || row.month <= endMonth)
-    .sort((left, right) => left.month.localeCompare(right.month))
-    .slice(-6);
+    .filter(row => (!endMonth || row.month <= endMonth) && selectedMonths.has(row.month))
+    .sort((left, right) => left.month.localeCompare(right.month));
 }
-
 
 function rackUnitTrendPage(data: ReportData): string {
   const rows = rackUnitTrendRows(data);
@@ -126,10 +126,17 @@ function rackUnitTrendPage(data: ReportData): string {
     formatUsagePercent1(usagePercent(row)),
     formatRatioPercent1(row.availabilityPct)
   ]);
+  const labels = rows.map(row => formatMonth(row.month));
+  const chart = compactExecutiveTrendChart("Rack Unit Capacity Trend", labels, [
+    { name: "Total U", color: REPORT_PALETTE.rackTotal, values: rows.map(row => row.totalU) },
+    { name: "Used U", color: REPORT_PALETTE.rackInUse, values: rows.map(row => row.usedU) },
+    { name: "Available U", color: REPORT_PALETTE.rackAvailable, values: rows.map(row => row.availableU) }
+  ], "U");
   return '<section class="page" data-report-section="rack-unit-capacity"><h2>Rack Unit Capacity Trend</h2><p class="note">' +
     escapeHtml(data.facility) + ' · ' + escapeHtml(formatMonth(data.reportingMonth)) +
-    '</p>' + table(["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], renderedRows) +
-    '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p>' +
+    ' · ' + rows.length + ' persisted month' + (rows.length === 1 ? '' : 's') + '</p>' + chart +
+    table(["Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], renderedRows) +
+    '<p class="note">Trend range follows the selected export reporting window. Missing months are never fabricated.</p>' +
     '<p class="note">' + escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE) + '</p></section>';
 }
 
@@ -138,33 +145,20 @@ function rackUnitComparisonPage(data: ReportData): string {
   const populated = sites.filter(site => site.rows.length > 0);
   if (populated.length === 0) return "";
   const selectedRows = populated.flatMap(site => site.rows.filter(row => row.month === data.reportingMonth).map(row => [
-    escapeHtml(site.label),
-    escapeHtml(formatMonth(row.month)),
-    formatInteger(row.totalU),
-    formatInteger(row.usedU),
-    formatInteger(row.availableU),
-    formatUsagePercent1(usagePercent(row)),
-    formatRatioPercent1(row.availabilityPct)
+    escapeHtml(site.label), escapeHtml(formatMonth(row.month)), formatInteger(row.totalU), formatInteger(row.usedU), formatInteger(row.availableU), formatUsagePercent1(usagePercent(row)), formatRatioPercent1(row.availabilityPct)
   ]));
+  const reportTrendRows = data.monthlyRows.length === 1 ? (data.executiveTrendRows ?? data.monthlyRows) : data.monthlyRows;
+  const selectedTrendMonths = new Set(reportTrendRows.map(row => row.month));
   const trendRows = populated.flatMap(site => [...site.rows]
-    .filter(row => !data.reportingMonth || row.month <= data.reportingMonth)
+    .filter(row => (!data.reportingMonth || row.month <= data.reportingMonth) && selectedTrendMonths.has(row.month))
     .sort((left, right) => left.month.localeCompare(right.month))
-    .slice(-6)
-    .map(row => [
-      escapeHtml(site.label),
-      escapeHtml(formatMonth(row.month)),
-      formatInteger(row.totalU),
-      formatInteger(row.usedU),
-      formatInteger(row.availableU),
-      formatUsagePercent1(usagePercent(row)),
-      formatRatioPercent1(row.availabilityPct)
-    ]));
+    .map(row => [escapeHtml(site.label), escapeHtml(formatMonth(row.month)), formatInteger(row.totalU), formatInteger(row.usedU), formatInteger(row.availableU), formatUsagePercent1(usagePercent(row)), formatRatioPercent1(row.availabilityPct)]));
   return '<section class="page" data-report-section="site-rack-comparison"><h2>Rack Unit Capacity Comparison</h2><p class="note">Reference month: ' +
     escapeHtml(formatMonth(data.reportingMonth)) + '</p>' +
     table(["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], selectedRows) +
-    '<h3>Six-Month Trend</h3>' +
+    '<h3>Selected Trend Range</h3>' +
     table(["Site", "Month", "Total (U)", "Used (U)", "Available (U)", "Usage (%)", "Availability (%)"], trendRows) +
-    '<p class="note">Six-month trend uses the selected reporting month and up to five preceding persisted monthly Rack Unit snapshots.</p>' +
+    '<p class="note">Trend follows the selected export reporting window; missing months remain unavailable.</p>' +
     '<p class="note">' + escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE) + '</p></section>';
 }
 function compactNumber(value: number, values: Array<number | null>): string {
@@ -806,7 +800,8 @@ function crossSiteRackUnitPage(model: SiteComparisonReportModel): string {
       const availability = current.totalU > 0 ? current.availableU / current.totalU : null;
       currentRows.push([escapeHtml(comparisonFacilityLabel(site.label)), formatInteger(current.totalU), formatInteger(current.usedU), formatInteger(current.availableU), formatUsagePercent1(usage), formatRatioPercent1(availability)]);
     }
-    for (const row of validRows.slice(-6)) {
+    const selectedMonths = new Set(model.months);
+    for (const row of validRows.filter(row => selectedMonths.has(row.month))) {
       const usage = row.totalU > 0 ? row.usedU / row.totalU * 100 : null;
       const availability = row.totalU > 0 ? row.availableU / row.totalU : null;
       trendRows.push([escapeHtml(comparisonFacilityLabel(site.label)), escapeHtml(formatMonth(row.month)), formatInteger(row.totalU), formatInteger(row.usedU), formatInteger(row.availableU), formatUsagePercent1(usage), formatRatioPercent1(availability)]);
@@ -814,7 +809,7 @@ function crossSiteRackUnitPage(model: SiteComparisonReportModel): string {
   }
   if (currentRows.length === 0 && trendRows.length === 0 && excluded.length === 0) return "";
   const excludedNote = excluded.length ? `<p class="note">Excluded invalid Rack Unit rows: ${escapeHtml(excluded.join(", "))}.</p>` : "";
-  return `<section class="page" data-report-section="site-rack-comparison"><h2>Rack Unit Capacity Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(model.referenceMonth))}</p>${currentRows.length ? table(["Facility", "Total U", "Used U", "Available U", "Usage %", "Availability %"], currentRows) : '<p class="note">No valid Rack Unit Capacity row is available for the reference month.</p>'}<h3>Six-Month Trend</h3>${trendRows.length ? table(["Site", "Month", "Total U", "Used U", "Available U", "Usage %", "Availability %"], trendRows) : '<p class="note">No valid Rack Unit Capacity trend rows are available.</p>'}${excludedNote}<p class="note">${escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE)}</p></section>`;
+  return `<section class="page" data-report-section="site-rack-comparison"><h2>Rack Unit Capacity Comparison</h2><p class="note">Reference month: ${escapeHtml(formatMonth(model.referenceMonth))}</p>${currentRows.length ? table(["Facility", "Total U", "Used U", "Available U", "Usage %", "Availability %"], currentRows) : '<p class="note">No valid Rack Unit Capacity row is available for the reference month.</p>'}<h3>Selected Trend Range</h3>${trendRows.length ? table(["Site", "Month", "Total U", "Used U", "Available U", "Usage %", "Availability %"], trendRows) : '<p class="note">No valid Rack Unit Capacity trend rows are available.</p>'}${excludedNote}<p class="note">${escapeHtml(RACK_UNIT_CAPACITY_TREND_NOTE)}</p></section>`;
 }
 
 function crossSiteRackPages(model: SiteComparisonReportModel): string {
@@ -874,7 +869,7 @@ function compactExecutiveTrendChart(title: string, labels: string[], series: Tre
   const min = Math.min(0, ...values), max = Math.max(0, ...values), range = max - min || 1;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const x = (index: number) => left + (labels.length <= 1 ? plotWidth / 2 : index / (labels.length - 1) * plotWidth);
+  const x = (index: number) => left + (labels.length <= 1 ? plotWidth / 2 : (index + 1) / (labels.length + 1) * plotWidth);
   const y = (value: number) => top + (max - value) / range * plotHeight;
   const pathFor = (row: TrendSeries): string => {
     let path = "";

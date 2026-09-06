@@ -248,7 +248,7 @@ export interface ReportData {
    *  own unavailable-data gate). */
   rackComparison: { self: ReportRackComparisonFacility; other: ReportRackComparisonFacility | null } | null;
   /** Selected-month Rack Unit Capacity comparison plus each site's history for
-   * the six-month trend. Optional for legacy report callers. */
+   * the selected trend range. Optional for legacy report callers. */
   rackUnitComparison?: { sites: ReportRackUnitComparisonFacility[] } | null;
 }
 

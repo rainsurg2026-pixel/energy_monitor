@@ -65,7 +65,12 @@ assert.match(views, /You are using .* of total capacity\. Available capacity is/
 assert.match(views, /Normal: < 80%/);
 assert.match(views, /Zones \$\{labels\.slice\(0, -1\)\.join\("[, ]*"\)\}, and \$\{labels\.at\(-1\)\} are over 85% utilized/);
 assert.match(views, /85% utilized/);
-assert.match(views, /Six-month Rack Unit Capacity Trend/);
+assert.match(views, /Rack Unit Capacity Trend/);
+assert.match(views, /data-testid="rack-unit-trend-range"/);
+assert.match(views, /TREND_RANGE_OPTIONS.map/);
+assert.match(views, /setSelectedTrend\(option\)/);
+assert.match(views, /<TrendLineChart/);
+assert.doesNotMatch(views, /Six-month Rack Unit Capacity Trend/);
 assert.match(views, /Overall U Capacity Mix/);
 
 console.log("web-clean-v1 Rack workspace: split Rack Capacity and Rack Unit Capacity views with protected edits");

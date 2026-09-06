@@ -3,10 +3,10 @@ import { useReport } from "../ReportContext";
 import type { MonthlyLog } from "../types";
 import { formatMonthYear } from "../utils";
 import { calculateEnergyCostForMonth } from "../utils/energyCost";
-import { recentMonthsThroughSelected } from "../utils/historyWindow";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 import { shiftMonth } from "../utils/monthUtils";
 import { selectedDashboardMonth } from "../utils/reportPeriodSelection";
+import { availableMonthsForTrendRange } from "../utils/trendRange";
 import TrendLineChart from "./TrendLineChart";
 
 interface EngineeringTrendChartsProps {
@@ -26,12 +26,6 @@ interface EngineeringTrendPoint {
   floorCost: number | null;
   averageRate: number | null;
 }
-
-const TREND_WINDOW_SIZE: Record<string, number> = {
-  "Last 3 Months": 3,
-  "Last 6 Months": 6,
-  "Last 12 Months": 12,
-};
 
 const CHARTS = [
   { id: "floor-cost", title: "4th Floor Estimated Cost", unit: "THB", color: "#10b981", key: "floorCost" as const, subtitle: "Estimated cost" },
@@ -65,12 +59,11 @@ export default function EngineeringTrendCharts({ logs, lang, selectedMonth: sele
   }), [logs]);
 
   const anchorMonth = selectedMonthProp ?? (processed.length ? selectedDashboardMonth(processed, selectedYear, selectedPeriod, processed.at(-1)!.month) : "");
-  const windowSize = TREND_WINDOW_SIZE[selectedTrend] ?? 3;
   const trendData = useMemo(() => {
     if (!anchorMonth || processed.length === 0) return [];
-    const months = new Set(recentMonthsThroughSelected(processed.map(row => row.month), anchorMonth, windowSize));
+    const months = new Set(availableMonthsForTrendRange(processed.map(row => row.month), anchorMonth, selectedTrend));
     return processed.filter(row => months.has(row.month));
-  }, [anchorMonth, processed, windowSize]);
+  }, [anchorMonth, processed, selectedTrend]);
   const current = processed.find(row => row.month === anchorMonth) ?? null;
   const previous = processed.find(row => row.month === shiftMonth(anchorMonth, -1)) ?? null;
 

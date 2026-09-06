@@ -4,8 +4,8 @@ import { useReport } from "../ReportContext";
 import { RACK_CAPACITY_HISTORY_TOTAL_ZONE, type RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import { formatMonthYear } from "../utils";
-import { recentMonthsThroughSelected } from "../utils/historyWindow";
 import { formatNumber2 } from "../utils/numberFormatBridge";
+import { availableMonthsForTrendRange } from "../utils/trendRange";
 import TrendLineChart from "./TrendLineChart";
 
 interface Props {
@@ -17,8 +17,6 @@ interface Props {
   onViewRackCapacity?: () => void;
   onViewRackUnitCapacity?: () => void;
 }
-
-const TREND_WINDOW_SIZE: Record<string, number> = { "Last 3 Months": 3, "Last 6 Months": 6, "Last 12 Months": 12 };
 
 type Health = { label: string; className: string };
 function health(usage: number | null): Health {
@@ -39,14 +37,13 @@ function CapacityKpi({ label, value, unit, state, compact }: { label: string; va
 
 export default function ExecutiveCapacityOverview({ selectedMonth, rackCapacityHistory, rackUnitCapacity, lang, layout, onViewRackCapacity, onViewRackUnitCapacity }: Props) {
   const { selectedTrend } = useReport();
-  const windowSize = TREND_WINDOW_SIZE[selectedTrend] ?? 12;
   const totalRackRows = useMemo(() => rackCapacityHistory.filter(row => row.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE && row.snapshotMonth <= selectedMonth).sort((a, b) => a.snapshotMonth.localeCompare(b.snapshotMonth)), [rackCapacityHistory, selectedMonth]);
   const unitRows = useMemo(() => rackUnitCapacity.filter(row => row.month <= selectedMonth).sort((a, b) => a.month.localeCompare(b.month)), [rackUnitCapacity, selectedMonth]);
   const rackCurrent = totalRackRows.find(row => row.snapshotMonth === selectedMonth) ?? null;
   const unitCurrent = unitRows.find(row => row.month === selectedMonth) ?? null;
   const unitUsage = unitCurrent && unitCurrent.totalU > 0 ? unitCurrent.usedU / unitCurrent.totalU : null;
-  const rackMonths = new Set(recentMonthsThroughSelected(totalRackRows.map(row => row.snapshotMonth), selectedMonth, windowSize));
-  const unitMonths = new Set(recentMonthsThroughSelected(unitRows.map(row => row.month), selectedMonth, windowSize));
+  const rackMonths = new Set(availableMonthsForTrendRange(totalRackRows.map(row => row.snapshotMonth), selectedMonth, selectedTrend));
+  const unitMonths = new Set(availableMonthsForTrendRange(unitRows.map(row => row.month), selectedMonth, selectedTrend));
   const rackTrend = totalRackRows.filter(row => rackMonths.has(row.snapshotMonth));
   const unitTrend = unitRows.filter(row => unitMonths.has(row.month));
   const compact = layout === "mobile";
