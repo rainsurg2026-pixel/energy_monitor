@@ -7,11 +7,14 @@ const filterBar = readFileSync(new URL("../src/components/UniversalFilterBar.tsx
 const reportContext = readFileSync(new URL("../src/ReportContext.tsx", import.meta.url), "utf8");
 const benchmark = readFileSync(new URL("../src/components/BenchmarkDashboard.tsx", import.meta.url), "utf8");
 const engineering = readFileSync(new URL("../src/components/DashboardSummary.tsx", import.meta.url), "utf8");
+const executive = readFileSync(new URL("../src/components/ExecutiveDashboard.tsx", import.meta.url), "utf8");
+const historical = readFileSync(new URL("../src/components/HistoricalCharts.tsx", import.meta.url), "utf8");
 const analytics = readFileSync(new URL("../src/domain/analytics.ts", import.meta.url), "utf8");
 const rackContext = readFileSync(new URL("../src/components/rack/RackCapacityContext.tsx", import.meta.url), "utf8");
 
 assert.match(app, /const BenchmarkDashboard = lazy\(\(\) => import\("\.\.\/components\/BenchmarkDashboard"\)\)/);
 assert.match(app, /const DASHBOARD_REPORT_VIEWS = \["executive", "dashboard", "benchmark"\] as const/);
+assert.doesNotMatch(app, /SmartInsightPanel/, "Executive View no longer renders Smart Facility Analytics Panel");
 assert.match(app, /selectedReportView === "benchmark" && <BenchmarkDashboard logs=\{logs\} lang=\{lang\} \/>/);
 
 // Forecast is removed from both hosted Web and Desktop, not merely hidden.
@@ -57,6 +60,15 @@ assert.doesNotMatch(benchmark, /industryPueTarget|companyPueTarget|assume 5%|ass
 assert.doesNotMatch(filterBar, /value="carbonEmissionKg"/);
 assert.match(analytics, /const carbonEmissionKg = null/);
 assert.doesNotMatch(analytics, /totalEnergyKwh \* 0\.4991/);
+
+// Executive and Engineering summary cards stay data-backed and cross-view aligned.
+assert.match(executive, /buildingEnergyKwh/);
+assert.match(executive, /buildingElectricityCostThb/);
+assert.match(executive, /grid grid-cols-2 gap-4 lg:grid-cols-4/);
+assert.match(engineering, /data-testid="engineering-operational-totals"/);
+for (const label of ["2.1 Total UPS and PPC Load Status – DCM 4th Floor", "2.2 Total Air", "2.3 Total DC Power Panels"]) assert.ok(engineering.includes(label), `Engineering summary includes ${label}`);
+assert.match(historical, /4th Floor Total Accumulation/);
+assert.match(historical, /4th Floor Monthly Average/);
 
 // Engineering remains expanded and adds a Web-only sticky section navigator.
 assert.match(engineering, /data-testid="engineering-sticky-nav"/);

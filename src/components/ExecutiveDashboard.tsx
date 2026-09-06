@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Coins, Download, Gauge, RefreshCw, TrendingDown, TrendingUp, Zap } from "lucide-react";
+import { Coins, Download, RefreshCw, Zap } from "lucide-react";
 import { useReport } from "../ReportContext";
 import type { MonthlyLog } from "../types";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
@@ -28,7 +28,7 @@ interface ExecutiveDashboardProps {
   onExport?: (format: "pdf" | "excel" | "csv") => void;
 }
 
-type MetricKey = "floorEnergyKwh" | "floorElectricityCostThb" | "energySharePercent" | "averageElectricityRateThbPerKwh";
+type MetricKey = "buildingEnergyKwh" | "buildingElectricityCostThb" | "floorEnergyKwh" | "floorElectricityCostThb";
 type EnergyMetrics = ReturnType<typeof calculateEnergyCostForMonth>;
 
 interface KpiDefinition {
@@ -36,7 +36,7 @@ interface KpiDefinition {
   label: string;
   unit: string;
   icon: typeof Zap;
-  tone: "energy" | "cost" | "share" | "rate";
+  tone: "energy" | "cost";
   format: (value: number) => string;
 }
 
@@ -90,28 +90,25 @@ function metricValue(metrics: EnergyMetrics | null, key: MetricKey): number | nu
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function deltaBadge(key: MetricKey, current: number | null, previous: number | null, previousMonth: string): { label: string; className: string; up: boolean } | null {
+function deltaBadge(current: number | null, previous: number | null, previousMonth: string): { label: string; className: string; up: boolean } | null {
   const delta = comparisonDelta(current, previous);
   if (delta === null) return null;
   const up = delta > 0;
-  const neutral = key === "energySharePercent";
-  const positive = !neutral && !up;
+  const positive = !up;
   return {
     label: `${up ? "▲" : delta < 0 ? "▼" : "•"} ${formatNumber2(Math.abs(delta))}% vs ${monthLabel(previousMonth).split("-")[0]}`,
-    className: neutral ? "border-slate-700 bg-slate-800/60 text-slate-300" : positive ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-300",
+    className: positive ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-300",
     up,
   };
 }
 
 function kpiTone(tone: KpiDefinition["tone"]): string {
   if (tone === "cost") return "text-emerald-400";
-  if (tone === "share") return "text-teal-400";
-  if (tone === "rate") return "text-blue-400";
   return "text-indigo-400";
 }
 
 function DesktopKpiCard({ definition, current, previous, previousMonth }: { definition: KpiDefinition; current: number | null; previous: number | null; previousMonth: string }) {
-  const badge = deltaBadge(definition.key, current, previous, previousMonth);
+  const badge = deltaBadge(current, previous, previousMonth);
   const Icon = definition.icon;
   return <article className="min-w-0 rounded-2xl border border-slate-800/70 bg-slate-900 p-5 shadow-sm">
     <div className="flex items-start justify-between gap-3">
@@ -127,7 +124,7 @@ function DesktopKpiCard({ definition, current, previous, previousMonth }: { defi
 }
 
 function MobileKpiCard({ definition, current, previous, previousMonth }: { definition: KpiDefinition; current: number | null; previous: number | null; previousMonth: string }) {
-  const badge = deltaBadge(definition.key, current, previous, previousMonth);
+  const badge = deltaBadge(current, previous, previousMonth);
   const Icon = definition.icon;
   return <article className="min-w-0 rounded-2xl border border-slate-800/70 bg-slate-900 p-3.5 shadow-sm">
     <div className="flex items-start justify-between gap-2">
@@ -178,23 +175,23 @@ export default function ExecutiveDashboard({ logs, lang, selectedMonth: selected
 
   const copy = lang === "th" ? {
     empty: "ไม่มีข้อมูลของเดือนรายงานที่เลือก",
+    buildingEnergy: "พลังงานทั้งอาคาร",
+    buildingCost: "ค่าไฟทั้งอาคาร",
     floorEnergy: "พลังงานชั้น 4",
     floorCost: "ประมาณการค่าไฟชั้น 4",
-    share: "สัดส่วนพลังงานชั้น 4",
-    rate: "อัตราค่าไฟเฉลี่ย",
   } : {
     empty: "No data is available for the selected reporting month.",
+    buildingEnergy: "Building Energy",
+    buildingCost: "Building Cost",
     floorEnergy: "4th Floor Energy",
     floorCost: "Estimated 4th Floor Cost",
-    share: "4th Floor Energy Share",
-    rate: "Avg Electricity Rate",
   };
 
   const definitions: KpiDefinition[] = [
+    { key: "buildingEnergyKwh", label: copy.buildingEnergy, unit: "kWh", icon: Zap, tone: "energy", format: formatNumber2 },
+    { key: "buildingElectricityCostThb", label: copy.buildingCost, unit: "THB", icon: Coins, tone: "cost", format: value => `฿${formatNumber2(value)}` },
     { key: "floorEnergyKwh", label: copy.floorEnergy, unit: "kWh", icon: Zap, tone: "energy", format: formatNumber2 },
     { key: "floorElectricityCostThb", label: copy.floorCost, unit: "THB", icon: Coins, tone: "cost", format: value => `฿${formatNumber2(value)}` },
-    { key: "energySharePercent", label: copy.share, unit: "% of building", icon: TrendingUp, tone: "share", format: value => `${formatNumber2(value)}%` },
-    { key: "averageElectricityRateThbPerKwh", label: copy.rate, unit: "THB/kWh", icon: Gauge, tone: "rate", format: formatNumber2 },
   ];
 
   if (!selectedLog || !currentMetrics) {
@@ -206,21 +203,21 @@ export default function ExecutiveDashboard({ logs, lang, selectedMonth: selected
 
   if (desktop) {
     return <div className="space-y-6 animate-fadeIn" data-testid="executive-desktop-v2">
-      <DesktopHeader {...headerProps} />
-      <section className="grid grid-cols-4 gap-4" aria-label="Executive KPI summary">
+      <section className="grid grid-cols-2 gap-4 lg:grid-cols-4" aria-label="Executive KPI summary">
         {kpiValues.map(item => <div key={item.definition.key}><DesktopKpiCard {...item} previousMonth={previousMonth} /></div>)}
       </section>
       <EngineeringTrendCharts logs={logs} lang={lang} selectedMonth={selectedMonth} layout="desktop" />
       <ExecutiveCapacityOverview selectedMonth={selectedMonth} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} lang={lang} layout="desktop" onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} />
+      <DesktopHeader {...headerProps} />
     </div>;
   }
 
   return <div className="space-y-4 animate-fadeIn" data-testid="executive-mobile-v2">
-    <MobileHeader {...headerProps} />
     <section className="grid grid-cols-2 gap-2.5" aria-label="Executive KPI summary">
       {kpiValues.map(item => <div key={item.definition.key}><MobileKpiCard {...item} previousMonth={previousMonth} /></div>)}
     </section>
     <EngineeringTrendCharts logs={logs} lang={lang} selectedMonth={selectedMonth} layout="mobile" />
     <ExecutiveCapacityOverview selectedMonth={selectedMonth} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} lang={lang} layout="mobile" onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} />
+    <MobileHeader {...headerProps} />
   </div>;
 }

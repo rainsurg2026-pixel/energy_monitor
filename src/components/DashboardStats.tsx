@@ -1,22 +1,24 @@
 import { MonthlyLog } from "../types";
-import { calculateEnergyCostForMonth, getAirFields, getAirValue } from "../utils/energyCost";
+import { monthLabelShort, shiftMonth } from "../utils/monthUtils";
+import { calculateEnergyCostForMonth } from "../utils/energyCost";
 import { formatFixedNumber, formatNumber2 } from "../utils/numberFormatBridge";
 import { Zap, Thermometer, Database, Cpu } from "lucide-react";
 
 interface DashboardStatsProps {
   log: MonthlyLog;
+  logs?: readonly MonthlyLog[];
   lang?: "th" | "en";
 }
 
-export default function DashboardStats({ log, lang = "en" }: DashboardStatsProps) {
+export default function DashboardStats({ log, logs = [], lang = "en" }: DashboardStatsProps) {
   const th = lang === "th";
   const copy = th ? {
     ups: "โหลด UPS รวม", apparent: "กำลังปรากฏ", pf: "PF", ac: "พลังงานระบบปรับอากาศรวม",
-    noAc: "ยังไม่มีการบันทึกค่าแอร์", equivalent: "เทียบเท่า", dc: "กำลังไฟ DC รวม", panels: "แผงที่บันทึกแล้ว",
+    noAc: "ยังคำนวณพลังงานแอร์รายเดือนไม่ได้", equivalent: "เทียบเท่า", acNote: "ผลรวมผลต่างมิเตอร์เดือนปัจจุบันเทียบเดือนก่อน", dc: "กำลังไฟ DC รวม", panels: "แผงที่บันทึกแล้ว",
     rate: "อัตราค่าไฟฟ้า", cost: "ค่าใช้จ่าย", noCost: "ยังไม่มีการบันทึกค่าไฟฟ้า", noEnergy: "ยังไม่มีการบันทึกพลังงาน", formula: "อัตรา = ค่าใช้จ่าย / ปริมาณการใช้ (kWh)"
   } : {
     ups: "Total UPS Load", apparent: "Apparent", pf: "PF", ac: "Total AC Energy",
-    noAc: "No AC logs saved", equivalent: "Equivalent", dc: "Total DC Power", panels: "panels logged",
+    noAc: "Monthly AC consumption is unavailable", equivalent: "Equivalent", acNote: "Sum of current-month minus previous-month AC meter readings", dc: "Total DC Power", panels: "panels logged",
     rate: "AVERAGE UNIT RATE", cost: "Cost", noCost: "No energy cost logged", noEnergy: "No energy consumption logged", formula: "Average rate = Cost ÷ Energy"
   };
   // 1. UPS calculations
@@ -31,11 +33,12 @@ export default function DashboardStats({ log, lang = "en" }: DashboardStatsProps
 
   const overallUpsPf = totalUpsKva > 0 ? totalUpsKw / totalUpsKva : null;
 
-  // 2. Air Conditioning calculations
-  const airMeters = getAirFields(log).map(field => getAirValue(log, field));
-  const totalAirGwh = airMeters.every(value => value !== null)
-    ? airMeters.reduce((sum, value) => sum + (value as number), 0)
-    : null;
+  // 2. Air Conditioning monthly consumption = Σ(current meter - previous meter).
+  const calculationLogs = [...logs.filter(item => item.month !== log.month), log];
+  const airEnergyKwh = calculateEnergyCostForMonth(calculationLogs, log.month).airEnergyKwh;
+  const totalAirGwh = airEnergyKwh === null ? null : airEnergyKwh / 1_000_000;
+  const previousMonth = shiftMonth(log.month, -1);
+  const acPeriodNote = `${monthLabelShort(log.month, lang)} − ${monthLabelShort(previousMonth, lang)}`;
 
   // 3. DC Power calculations
   let totalDcKw = 0;
@@ -83,8 +86,9 @@ export default function DashboardStats({ log, lang = "en" }: DashboardStatsProps
               {totalAirGwh === null ? "—" : `${formatNumber2(totalAirGwh)} GWh`}
             </h3>
             <p className="text-xs text-slate-500">
-              {totalAirGwh === null ? copy.noAc : `${copy.equivalent}: ${formatNumber2(totalAirGwh * 1000)} MWh`}
+              {totalAirGwh === null ? copy.noAc : `${copy.equivalent}: ${formatNumber2(totalAirGwh * 1_000_000)} kWh`}
             </p>
+            <p className="text-[10px] leading-snug text-slate-500">{copy.acNote} · {acPeriodNote}</p>
           </div>
           <div className="p-3 bg-teal-500/10 rounded-xl text-teal-400">
             <Thermometer className="w-5 h-5" />

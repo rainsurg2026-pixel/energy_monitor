@@ -35,7 +35,7 @@ export function mergeEntryDraft(draft: MonthlyLog, updates: LiveDrafts): Monthly
 /** Full browser implementation of Desktop's entry workspace.
  * Save All first combines every in-page draft into one MonthlyLog and calls
  * the Web API once, preserving its row-version concurrency contract. */
-export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, months, month, draft, rackUnitInitialRow, busy, readOnly = false, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onRackUnitSaved, onRackCapacitySaved, onNotice, onDirtyChange, onRegisterActions }: {
+export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, months, month, draft, historyLogs = [], rackUnitInitialRow, busy, readOnly = false, allowedStartMonth, allowedEndMonth, onSave, onSelectMonth, onRackUnitSaved, onRackCapacitySaved, onNotice, onDirtyChange, onRegisterActions }: {
   lang: "th" | "en";
   siteId: number;
   siteName: string;
@@ -43,6 +43,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
   months: string[];
   month: string;
   draft: MonthlyLog;
+  historyLogs?: readonly MonthlyLog[];
   rackUnitInitialRow: RackUnitCapacityRow | null;
   busy: boolean;
   readOnly?: boolean;
@@ -152,7 +153,7 @@ export default function WebEntryWorkspace({ lang, siteId, siteName, siteCode, mo
     <WebEntryWorkflowHeader lang={lang} facilityName={siteName} months={months} selectedMonth={month} draft={liveDraft} allowedStartMonth={allowedStartMonth} allowedEndMonth={allowedEndMonth} onSelectMonth={onSelectMonth} />
     <WebHistoricalEditNotice lang={lang} selectedMonth={month} latestMonth={latestMonth} onReturnToLatest={() => { if (latestMonth) onSelectMonth(latestMonth, true); }} />
     {readOnly && <p role="status" className="rounded-2xl border border-amber-500/20 bg-amber-500/10 p-3 text-xs text-amber-200">{th ? "ระบบอยู่ในโหมดอ่านอย่างเดียว — กรอกและตรวจสอบข้อมูลได้ แต่ยังบันทึกไม่ได้" : "The system is in read-only mode — you can enter and review data, but saving is disabled."}</p>}
-    <DashboardStats lang={lang} log={liveDraft} />
+    <DashboardStats lang={lang} log={liveDraft} logs={historyLogs} />
     <section className="space-y-5"><div><h2 className="font-display text-2xl font-bold">{th ? "กรอกข้อมูลรายเดือน" : "Monthly Data Entry"}</h2><p className="mt-1 text-sm text-slate-400">{th ? `กรอกและตรวจสอบค่าการทำงานรายเดือนของ UPS สำหรับ ${monthLabel} แล้วบันทึกข้อมูลทั้งหมด` : `Enter and verify the monthly UPS operating readings for ${monthLabel}, then save all records.`}</p></div>
       <div id="entry-section-ups">{siteCode === "srinakarin" ? <SrinakarinPowerPhaseTable lang={lang} monthStr={month} initialLog={draft} lastSaved={formatWebSavedTimestamp(draft.lastSavedUps)} onSave={(ups, srinakarinInputs) => requestSectionSave("ups", { ups, srinakarinInputs })} registerApi={register("ups")} onDraftChange={(ups, srinakarinInputs) => { reportDraft("ups", ups); reportDraft("srinakarinInputs", srinakarinInputs); }} /> : <UpsTable lang={lang} monthStr={month} initialRecords={draft.ups} lastSaved={formatWebSavedTimestamp(draft.lastSavedUps)} onSave={ups => requestSectionSave("ups", { ups })} registerApi={register("ups")} onDraftChange={ups => reportDraft("ups", ups)} />}</div>
       <div id="entry-section-air"><AirTable lang={lang} monthStr={month} initialRecord={draft.air} lastSaved={formatWebSavedTimestamp(draft.lastSavedAir)} meterFields={draft.energyCalculation?.airFields} onSave={air => requestSectionSave("air", { air })} registerApi={register("air")} onDraftChange={air => reportDraft("air", air)} /></div>

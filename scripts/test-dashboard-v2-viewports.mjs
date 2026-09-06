@@ -39,7 +39,14 @@ page.on("request", request => {
   if (url.pathname === "/api/v1/auth/session") data = session;
   else if (url.pathname === "/api/v1/auth/csrf") data = { csrfToken: "qa" };
   else if (url.pathname === "/api/v1/bootstrap") data = bootstrap;
-  else if (/\/api\/v1\/sites\/1\/history$/.test(url.pathname)) data = history;
+  else if (/\/api\/v1\/sites\/1\/history$/.test(url.pathname)) {
+    const scope = url.searchParams.get("scope") ?? "full";
+    data = scope === "dashboard"
+      ? { months, logs, upsGroupHistory: history.upsGroupHistory }
+      : scope === "rack"
+        ? { months, logs: [], rackCapacityHistory, rackUnitCapacity }
+        : history;
+  }
   else if (/\/api\/v1\/sites\/1\/periods\//.test(url.pathname)) {
     const month = decodeURIComponent(url.pathname.split("/").at(-1));
     data = { rowVersion: 1, log: logs.find(row => row.month === month) ?? null };
@@ -95,7 +102,8 @@ for (const viewport of viewports) {
     };
   }, { width: viewport.width, mobile: viewport.mobile });
   assert.ok(executive.overflow <= 1, `${viewport.name}: no horizontal overflow (${executive.overflow}px)`);
-  assert.equal(executive.columns, viewport.mobile ? 2 : 4, `${viewport.name}: KPI columns`);
+  const expectedExecutiveColumns = viewport.width >= 1024 ? 4 : 2;
+  assert.equal(executive.columns, expectedExecutiveColumns, `${viewport.name}: KPI columns`);
   assert.equal(executive.mobileNavVisible, viewport.mobile, `${viewport.name}: mobile nav visibility`);
   assert.equal(executive.desktopNavVisible, !viewport.mobile, `${viewport.name}: desktop nav visibility`);
   assert.equal(executive.trendCards, 6, `${viewport.name}: six energy trend cards`);
@@ -120,13 +128,39 @@ for (const viewport of viewports) {
     const nav = document.querySelector('[data-testid="engineering-sticky-nav"]');
     const rect = nav?.getBoundingClientRect();
     const style = nav ? getComputedStyle(nav) : null;
-    return { overflow: document.documentElement.scrollWidth - width, navWidth: rect?.width ?? 0, position: style?.position ?? "", sectionCount: nav?.querySelectorAll("button").length ?? 0 };
+    const operational = document.querySelector('[data-testid="engineering-operational-totals"]');
+    return { overflow: document.documentElement.scrollWidth - width, navWidth: rect?.width ?? 0, position: style?.position ?? "", sectionCount: nav?.querySelectorAll("button").length ?? 0, operationalCards: operational?.querySelectorAll("article").length ?? 0, operationalText: operational?.textContent ?? "" };
   }, viewport.width);
   assert.ok(engineering.overflow <= 1, `${viewport.name}: Engineering has no horizontal overflow (${engineering.overflow}px)`);
   assert.ok(engineering.navWidth <= viewport.width, `${viewport.name}: sticky Engineering nav fits viewport`);
   assert.equal(engineering.position, "sticky", `${viewport.name}: Engineering nav is sticky`);
   assert.equal(engineering.sectionCount, 4, `${viewport.name}: Engineering nav has four sections`);
-  results.push({ viewport: viewport.name, ...executive, engineeringOverflow: engineering.overflow, engineeringSections: engineering.sectionCount });
+  assert.equal(engineering.operationalCards, 3, `${viewport.name}: Engineering shows three operational total cards`);
+  for (const label of ["2.1 Total UPS and PPC Load Status", "2.2 Total Air", "2.3 Total DC Power Panels"]) assert.ok(engineering.operationalText.includes(label), `${viewport.name}: Engineering operational card ${label}`);
+  // Navigate to History and verify Facility Trend Analytics now exposes Building + 4th Floor summaries.
+  await page.evaluate(mobile => {
+    const nav = document.querySelector(mobile ? 'nav[aria-label="Mobile primary navigation"]' : 'nav[aria-label="Desktop primary navigation"]');
+    const reports = [...(nav?.querySelectorAll('button') ?? [])].find(button => button.textContent?.trim() === 'Reports');
+    if (!reports) throw new Error('Reports navigation not found');
+    reports.click();
+  }, viewport.mobile);
+  if (viewport.mobile) await page.waitForSelector('[role="dialog"]', { timeout: 5_000 });
+  await page.evaluate(mobile => {
+    const root = mobile ? document.querySelector('[role="dialog"]') : document.querySelector('nav[aria-label="Desktop primary navigation"]');
+    const historyButton = [...(root?.querySelectorAll('button') ?? [])].find(button => button.textContent?.trim() === 'History');
+    if (!historyButton) throw new Error('History navigation not found');
+    historyButton.click();
+  }, viewport.mobile);
+  await page.waitForSelector('[data-testid="facility-trend-summary-cards"]', { timeout: 10_000 });
+  const historySummary = await page.evaluate(width => {
+    const cards = document.querySelector('[data-testid="facility-trend-summary-cards"]');
+    return { cardCount: cards?.children.length ?? 0, text: cards?.textContent ?? '', overflow: document.documentElement.scrollWidth - width };
+  }, viewport.width);
+  assert.equal(historySummary.cardCount, 5, `${viewport.name}: Energy Facility Trend summary has selected metric + four Building/4th Floor cards`);
+  for (const label of ['Building Total Accumulation', '4th Floor Total Accumulation', 'Building Monthly Average', '4th Floor Monthly Average']) assert.ok(historySummary.text.includes(label), `${viewport.name}: History includes ${label}`);
+  assert.ok(historySummary.overflow <= 1, `${viewport.name}: History summary has no horizontal overflow (${historySummary.overflow}px)`);
+
+  results.push({ viewport: viewport.name, ...executive, engineeringOverflow: engineering.overflow, engineeringSections: engineering.sectionCount, historyCards: historySummary.cardCount, historyOverflow: historySummary.overflow });
   await page.evaluate(() => localStorage.setItem("report_pref_report_view", "executive"));
 }
 await browser.close();

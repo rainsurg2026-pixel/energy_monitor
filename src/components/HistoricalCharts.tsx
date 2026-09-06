@@ -69,9 +69,16 @@ export default function HistoricalCharts({ logs, isGoogleConnected = false, goog
     [monthlyData, trendPeriod, displayPeriod, selectedMonth]
   );
   const selectedValues = visibleData.map(point => activeMetric === "energy" ? point.buildingEnergy : activeMetric === "cost" ? point.buildingCost : point.upsEnergy);
-  const total = selectedValues.reduce((sum, value) => value === null ? sum : sum + value, 0);
-  const presentCount = selectedValues.filter((value): value is number => value !== null).length;
-  const average = presentCount > 0 ? total / presentCount : null;
+  const floorValues = visibleData.map(point => activeMetric === "energy" ? point.floorEnergy : activeMetric === "cost" ? point.floorCost : point.upsEnergy);
+  const summarize = (values: Array<number | null>) => {
+    const present = values.filter((value): value is number => value !== null && Number.isFinite(value));
+    const total = present.reduce((sum, value) => sum + value, 0);
+    return { total, average: present.length > 0 ? total / present.length : null };
+  };
+  const buildingSummary = summarize(selectedValues);
+  const floorSummary = summarize(floorValues);
+  const total = buildingSummary.total;
+  const average = buildingSummary.average;
   const chartSeries = activeMetric === "energy" ? [
     { name: copy.buildingEnergy, color: "#5d7fa8", values: visibleData.map(point => point.buildingEnergy) },
     { name: th ? "พลังงานชั้น 4" : "4th Floor Energy", color: "#d9776a", values: visibleData.map(point => point.floorEnergy) }
@@ -97,7 +104,7 @@ export default function HistoricalCharts({ logs, isGoogleConnected = false, goog
         </div>
       </div>
     </div>
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 border-b border-slate-800 pb-5"><div className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl"><span className="text-[10px] uppercase tracking-wider text-slate-400">{copy.selectedMetric}</span><p className="text-xs text-slate-300 font-semibold mt-1">{activeMetric === "energy" ? (th ? "พลังงานอาคาร" : "Building Energy") : activeMetric === "cost" ? (th ? "ค่าไฟฟ้าอาคาร" : "Building Cost") : (th ? "พลังงานระบบ UPS" : "UPS Energy")}</p></div><div className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl"><span className="text-[10px] uppercase tracking-wider text-slate-400">{copy.total}</span><p className="text-base font-semibold text-indigo-400 font-mono mt-1">{formatNumber2(total)} {activeMetric === "cost" ? "THB" : "kWh"}</p></div><div className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl"><span className="text-[10px] uppercase tracking-wider text-slate-400">{copy.average}</span><p className="text-base font-semibold text-emerald-400 font-mono mt-1">{average === null ? "—" : `${formatNumber2(average)} ${activeMetric === "cost" ? "THB" : "kWh"}`}</p></div></div>
+    <div data-testid="facility-trend-summary-cards" className={`grid grid-cols-1 gap-4 border-b border-slate-800 pb-5 ${activeMetric === "subsystems" ? "sm:grid-cols-3" : "sm:grid-cols-2 xl:grid-cols-5"}`}> <div className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl"><span className="text-[10px] uppercase tracking-wider text-slate-400">{copy.selectedMetric}</span><p className="text-xs text-slate-300 font-semibold mt-1">{activeMetric === "energy" ? (th ? "พลังงานอาคารและชั้น 4" : "Building & 4th Floor Energy") : activeMetric === "cost" ? (th ? "ค่าไฟอาคารและชั้น 4" : "Building & 4th Floor Cost") : (th ? "พลังงานระบบ UPS" : "UPS Energy")}</p></div><div className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl"><span className="text-[10px] uppercase tracking-wider text-slate-400">{activeMetric === "subsystems" ? copy.total : (th ? "ยอดสะสมทั้งอาคาร" : "Building Total Accumulation")}</span><p className="text-base font-semibold text-indigo-400 font-mono mt-1">{formatNumber2(total)} {activeMetric === "cost" ? "THB" : "kWh"}</p></div>{activeMetric !== "subsystems" && <div className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl"><span className="text-[10px] uppercase tracking-wider text-slate-400">{th ? "ยอดสะสมชั้น 4" : "4th Floor Total Accumulation"}</span><p className="text-base font-semibold text-orange-300 font-mono mt-1">{formatNumber2(floorSummary.total)} {activeMetric === "cost" ? "THB" : "kWh"}</p></div>}<div className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl"><span className="text-[10px] uppercase tracking-wider text-slate-400">{activeMetric === "subsystems" ? copy.average : (th ? "ค่าเฉลี่ยรายเดือนทั้งอาคาร" : "Building Monthly Average")}</span><p className="text-base font-semibold text-emerald-400 font-mono mt-1">{average === null ? "—" : `${formatNumber2(average)} ${activeMetric === "cost" ? "THB" : "kWh"}`}</p></div>{activeMetric !== "subsystems" && <div className="bg-slate-950/40 border border-slate-800 p-4 rounded-xl"><span className="text-[10px] uppercase tracking-wider text-slate-400">{th ? "ค่าเฉลี่ยรายเดือนชั้น 4" : "4th Floor Monthly Average"}</span><p className="text-base font-semibold text-teal-300 font-mono mt-1">{floorSummary.average === null ? "—" : `${formatNumber2(floorSummary.average)} ${activeMetric === "cost" ? "THB" : "kWh"}`}</p></div>}</div>
     {visibleData.length < 2 ? <div className="h-40 flex items-center justify-center text-xs text-slate-500 italic">{copy.needTwo}</div> : <TrendLineChart labels={visibleData.map(point => point.label)} unit={activeMetric === "cost" ? "THB" : "kWh"} series={chartSeries} />}
   </div>;
 }
