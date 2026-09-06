@@ -6,6 +6,7 @@ const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.m
 const navigation = readFileSync(new URL("../src/web-clean-v1/AppNavigationV2.tsx", import.meta.url), "utf8");
 const executive = readFileSync(new URL("../src/components/ExecutiveDashboard.tsx", import.meta.url), "utf8");
 const capacity = readFileSync(new URL("../src/components/ExecutiveCapacityOverview.tsx", import.meta.url), "utf8");
+const rackViews = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityViews.tsx", import.meta.url), "utf8");
 
 // The shell reserves content space for the fixed mobile navigation and uses
 // the V2 navigation component rather than the legacy duplicated nav arrays.
@@ -63,5 +64,7 @@ assert.match(executive, /grid grid-cols-4 gap-4/);
 assert.match(executive, /grid grid-cols-2 gap-2\.5/);
 assert.match(capacity, /layout: "desktop" \| "mobile"/);
 assert.match(capacity, /compact = layout === "mobile"/);
+assert.ok(executive.indexOf("<EngineeringTrendCharts") < executive.indexOf("<ExecutiveCapacityOverview"), "Executive Dashboard keeps Capacity at the bottom after Energy trends");
+assert.match(rackViews, /height=\{300\} compact minPointSlots=\{12\}/);
 
 console.log("web-clean-v1 responsive shell: Navigation V2 separates desktop/mobile layouts, fixed mobile nav has five items, and Executive V2 has dedicated mobile/desktop renderers");

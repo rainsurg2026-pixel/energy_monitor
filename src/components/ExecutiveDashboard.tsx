@@ -210,8 +210,8 @@ export default function ExecutiveDashboard({ logs, lang, selectedMonth: selected
       <section className="grid grid-cols-4 gap-4" aria-label="Executive KPI summary">
         {kpiValues.map(item => <div key={item.definition.key}><DesktopKpiCard {...item} previousMonth={previousMonth} /></div>)}
       </section>
-      <ExecutiveCapacityOverview selectedMonth={selectedMonth} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} lang={lang} layout="desktop" onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} />
       <EngineeringTrendCharts logs={logs} lang={lang} selectedMonth={selectedMonth} layout="desktop" />
+      <ExecutiveCapacityOverview selectedMonth={selectedMonth} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} lang={lang} layout="desktop" onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} />
     </div>;
   }
 
@@ -220,7 +220,7 @@ export default function ExecutiveDashboard({ logs, lang, selectedMonth: selected
     <section className="grid grid-cols-2 gap-2.5" aria-label="Executive KPI summary">
       {kpiValues.map(item => <div key={item.definition.key}><MobileKpiCard {...item} previousMonth={previousMonth} /></div>)}
     </section>
-    <ExecutiveCapacityOverview selectedMonth={selectedMonth} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} lang={lang} layout="mobile" onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} />
     <EngineeringTrendCharts logs={logs} lang={lang} selectedMonth={selectedMonth} layout="mobile" />
+    <ExecutiveCapacityOverview selectedMonth={selectedMonth} rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} lang={lang} layout="mobile" onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} />
   </div>;
 }

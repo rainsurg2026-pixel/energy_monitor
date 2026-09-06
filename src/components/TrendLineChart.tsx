@@ -1,7 +1,7 @@
 import React from "react";
 
 export interface TrendLineSeries { name: string; color: string; values: Array<number | null>; }
-interface TrendLineChartProps { labels: string[]; series: TrendLineSeries[]; unit: string; height?: number; compact?: boolean; }
+interface TrendLineChartProps { labels: string[]; series: TrendLineSeries[]; unit: string; height?: number; compact?: boolean; minPointSlots?: number; }
 
 function pathFor(values: Array<number | null>, x: (i: number) => number, y: (v: number) => number): string {
   let path = "";
@@ -78,8 +78,9 @@ function pointLabelYs(
   return result;
 }
 
-export default function TrendLineChart({ labels, series, unit, height = 360, compact = false }: TrendLineChartProps) {
-  const width = compact ? Math.max(640, labels.length * 90) : Math.max(1320, labels.length * 90);
+export default function TrendLineChart({ labels, series, unit, height = 360, compact = false, minPointSlots = 0 }: TrendLineChartProps) {
+  const displayPointCount = Math.max(labels.length, minPointSlots);
+  const width = compact ? Math.max(640, displayPointCount * 90) : Math.max(1320, displayPointCount * 90);
   const left = compact ? 64 : 88, right = compact ? 24 : 36, top = compact ? 46 : 48, bottom = compact ? 68 : 72;
   const plotWidth = width - left - right, plotHeight = height - top - bottom;
   const values = series.flatMap(item => item.values.filter((value): value is number => value !== null && Number.isFinite(value)));
@@ -89,7 +90,7 @@ export default function TrendLineChart({ labels, series, unit, height = 360, com
   const y = (value: number) => top + (max - value) / range * plotHeight;
   const bottomY = height - bottom;
   const labelYsByPoint = labels.map((_, pointIndex) => pointLabelYs(series, pointIndex, y, top, bottomY));
-  const svgMinWidth = labels.length > 6 ? (compact ? Math.max(720, labels.length * 88) : Math.max(1180, labels.length * 92)) : undefined;
+  const svgMinWidth = displayPointCount > 6 ? (compact ? Math.max(720, displayPointCount * 88) : Math.max(1180, displayPointCount * 92)) : undefined;
   const svgTextClass = compact ? "w-full text-xs" : "w-full text-[13px]";
   const pointLabelClass = compact ? "fill-slate-200 font-medium" : "fill-slate-100 font-semibold";
 
