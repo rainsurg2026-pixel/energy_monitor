@@ -583,18 +583,14 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   addCard(sheet, 13, 14, 11, "Average Rate", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_AMBER);
 
   sectionHeading(sheet, 15, "Executive View");
-  addCard(sheet, 1, 2, 17, "Building Energy", lookup("C", "buildingEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 3, 4, 17, "Building Cost", lookup("D", "buildingCostThb"), "#,##0.00", LIGHT_TEAL);
-  addCard(sheet, 5, 6, 17, "4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 7, 8, 17, "Estimated 4th Floor Cost", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
-  addCard(sheet, 9, 11, 17, "4th Floor Energy Share", lookup("H", "floorSharePercent"), "0.00", LIGHT_TEAL);
-  addCard(sheet, 12, 14, 17, "Average Electricity Rate", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_BLUE);
-  addNote(1, 2, 20, previousLookupFormula("C", metricValue(selected, "buildingEnergyKwh"), metricValue(previous, "buildingEnergyKwh")));
-  addNote(3, 4, 20, previousLookupFormula("D", metricValue(selected, "buildingCostThb"), metricValue(previous, "buildingCostThb")));
-  addNote(5, 6, 20, previousLookupFormula("E", metricValue(selected, "floorEnergyKwh"), metricValue(previous, "floorEnergyKwh")));
-  addNote(7, 8, 20, previousLookupFormula("F", metricValue(selected, "floorCostThb"), metricValue(previous, "floorCostThb")));
-  addNote(9, 11, 20, previousLookupFormula("H", metricValue(selected, "floorSharePercent"), metricValue(previous, "floorSharePercent")));
-  addNote(12, 14, 20, previousLookupFormula("G", metricValue(selected, "averageRateThbPerKwh"), metricValue(previous, "averageRateThbPerKwh")));
+  addCard(sheet, 1, 3, 17, "Building Energy", lookup("C", "buildingEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 4, 7, 17, "Building Cost", lookup("D", "buildingCostThb"), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 8, 10, 17, "4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 11, 14, 17, "Estimated 4th Floor Cost", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
+  addNote(1, 3, 20, previousLookupFormula("C", metricValue(selected, "buildingEnergyKwh"), metricValue(previous, "buildingEnergyKwh")));
+  addNote(4, 7, 20, previousLookupFormula("D", metricValue(selected, "buildingCostThb"), metricValue(previous, "buildingCostThb")));
+  addNote(8, 10, 20, previousLookupFormula("E", metricValue(selected, "floorEnergyKwh"), metricValue(previous, "floorEnergyKwh")));
+  addNote(11, 14, 20, previousLookupFormula("F", metricValue(selected, "floorCostThb"), metricValue(previous, "floorCostThb")));
 
   const energyHeadingRow = 22;
   sectionHeading(sheet, energyHeadingRow, "Energy & Cost Trends");

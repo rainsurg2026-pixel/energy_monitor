@@ -101,8 +101,11 @@ assert.ok(!body.includes("UPS System Energy Trend"));
 assert.ok(!body.includes("<h2>Air Conditioning Energy Trend</h2>"));
 assert.ok(!body.includes("DC Power Panel Energy Trend"));
 
-const executivePage = body.slice(body.indexOf('data-report-section="executive"'), body.indexOf('data-report-section="executive"') + 5000);
-for (const label of ["Building Energy", "Building Cost", "4th Floor Energy", "Estimated 4th Floor Cost", "4th Floor Energy Share", "Average Electricity Rate"]) assert.ok(executivePage.includes(label));
+const executiveStart = body.indexOf('data-report-section="executive"');
+const executiveEnd = body.indexOf("</section>", executiveStart) + "</section>".length;
+const executivePage = body.slice(executiveStart, executiveEnd);
+for (const label of ["Building Energy", "Building Cost", "4th Floor Energy", "Estimated 4th Floor Cost"]) assert.ok(executivePage.includes(label));
+for (const label of ["4th Floor Energy Share", "Average Electricity Rate"]) assert.ok(!executivePage.includes(label), `Executive View excludes ${label}`);
 for (const label of ["2.1 Total UPS and PPC Load Status – DCM 4th Floor", "2.2 Total Air", "2.3 Total DC Power Panels"]) assert.ok(body.includes(label), `Engineering PDF includes ${label}`);
 assert.ok(body.includes("Facility Trend Analytics Summary"));
 for (const label of ["Building Energy Total", "4th Floor Energy Total", "Building Cost Total", "4th Floor Cost Total"]) assert.ok(body.includes(label), `Facility trend PDF includes ${label}`);

@@ -102,7 +102,7 @@ for (const viewport of viewports) {
     };
   }, { width: viewport.width, mobile: viewport.mobile });
   assert.ok(executive.overflow <= 1, `${viewport.name}: no horizontal overflow (${executive.overflow}px)`);
-  const expectedExecutiveColumns = viewport.mobile ? 2 : viewport.width >= 1280 ? 6 : 3;
+  const expectedExecutiveColumns = viewport.width >= 1024 ? 4 : 2;
   assert.equal(executive.columns, expectedExecutiveColumns, `${viewport.name}: KPI columns`);
   assert.equal(executive.mobileNavVisible, viewport.mobile, `${viewport.name}: mobile nav visibility`);
   assert.equal(executive.desktopNavVisible, !viewport.mobile, `${viewport.name}: desktop nav visibility`);

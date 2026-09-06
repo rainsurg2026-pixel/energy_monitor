@@ -180,7 +180,7 @@ const selectionSurface = selectionDashboardText.join("|");
 check("Current Facility 01_Dashboard starts with Building Energy Dashboard before Executive View", selectionDashboard.getCell("A5").value === "Engineering View · Building Energy Dashboard" && selectionDashboard.getCell("A15").value === "Executive View");
 check("Current Facility 01_Dashboard keeps Capacity/Rack after Energy trends", selectionDashboard.getCell("A22").value === "Energy & Cost Trends" && selectionDashboard.getCell("A145").value === "Capacity Overview" && selectionDashboard.getCell("A153").value === "Rack Capacity Trends");
 check("Current Facility Excel Engineering cards include UPS/PPC, Air and DC totals", ["2.1 Total UPS/PPC Load - DCM 4th Floor", "2.2 Total Air", "2.3 Total DC Power Panels"].every(label => selectionSurface.includes(label)));
-check("Current Facility Excel Executive includes building Energy and Cost alongside 4th Floor KPIs", selectionDashboard.getCell("A17").value === "Building Energy" && selectionDashboard.getCell("C17").value === "Building Cost" && selectionSurface.includes("4th Floor Energy"));
+check("Current Facility Excel Executive contains exactly the four approved KPI cards", [selectionDashboard.getCell("A17").value, selectionDashboard.getCell("D17").value, selectionDashboard.getCell("H17").value, selectionDashboard.getCell("K17").value].join("|") === "Building Energy|Building Cost|4th Floor Energy|Estimated 4th Floor Cost");
 check("Current Facility Excel includes Facility Trend Analytics building and 4th Floor summary cards", selectionSurface.includes("Facility Trend Analytics Summary") && selectionSurface.includes("Building Energy Total") && selectionSurface.includes("4th Floor Energy Total") && selectionSurface.includes("Building Energy Monthly Average") && selectionSurface.includes("4th Floor Energy Monthly Average") && selectionSurface.includes("Building Cost Total") && selectionSurface.includes("4th Floor Cost Total") && selectionSurface.includes("Building Cost Monthly Average") && selectionSurface.includes("4th Floor Cost Monthly Average"));
 
 // Quick Period contract: Dashboard/report data follows the selected report scope.
@@ -324,6 +324,9 @@ check("Month Range includes both boundary months", rangeScoped.some(l => l.month
 check("Month Range excludes a month outside the range", !rangeScoped.some(l => l.month === "2026-08"));
 const rangeReport = facilityReportData(rangeScoped, "Rangsit", "2026-07", null, [], [], threeMonthLogs);
 const rangeReportHtml = buildReportHtml(rangeReport);
+const executiveOnlyHtml = buildReportHtml(rangeReport, ["executive"]);
+const executiveKpiHtml = executiveOnlyHtml.match(/data-report-section="executive"[\s\S]*?<\/section>/)?.[0] ?? "";
+check("HTML Executive export keeps only the four approved KPI cards", ["Building Energy", "Building Cost", "4th Floor Energy", "Estimated 4th Floor Cost"].every(label => executiveKpiHtml.includes(label)) && !executiveKpiHtml.includes("4th Floor Energy Share") && !executiveKpiHtml.includes("Average Electricity Rate"));
 check("Month Range changes the actual PDF report scope, not only the UI label", rangeReport.monthlyRows.map(row => row.month).join(",") === "2026-06,2026-07" && !rangeReportHtml.includes(humanMonthLabel("2026-08")));
 check("PDF cover omits the internal source workbook label", !rangeReportHtml.includes("Source workbook:"));
 check("PDF cover omits the application version label", !rangeReportHtml.includes("Application version:"));
@@ -356,7 +359,7 @@ const reportWithDashboardData = facilityReportData(
 );
 const reportWithDashboardHtml = buildReportHtml(reportWithDashboardData);
 check("PDF engineering analysis receives the persisted UPS status", reportWithDashboardData.engineeringDashboard?.upsGroups.some(group => group.name === "UPS 11") === true && reportWithDashboardHtml.includes("UPS Load Status"));
-check("PDF includes the executive dashboard card page", reportWithDashboardHtml.includes("Executive Dashboard") && reportWithDashboardHtml.includes("Total Building Energy"));
+check("PDF includes the executive dashboard card page", reportWithDashboardHtml.includes("Executive Dashboard") && reportWithDashboardHtml.includes("Building Energy"));
 check("Executive report selection includes the dashboard trend charts", buildReportHtml(reportWithDashboardData, ["executive"]).includes("Monthly Energy Consumption Trend"));
 
 const reportWithRackUnitImage = facilityReportData(

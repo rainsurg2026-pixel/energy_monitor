@@ -63,7 +63,7 @@ assert.doesNotMatch(analytics, /totalEnergyKwh \* 0\.4991/);
 // Executive and Engineering summary cards stay data-backed and cross-view aligned.
 assert.match(executive, /buildingEnergyKwh/);
 assert.match(executive, /buildingElectricityCostThb/);
-assert.match(executive, /grid grid-cols-3 gap-4 xl:grid-cols-6/);
+assert.match(executive, /grid grid-cols-2 gap-4 lg:grid-cols-4/);
 assert.match(engineering, /data-testid="engineering-operational-totals"/);
 for (const label of ["2.1 Total UPS and PPC Load Status – DCM 4th Floor", "2.2 Total Air", "2.3 Total DC Power Panels"]) assert.ok(engineering.includes(label), `Engineering summary includes ${label}`);
 assert.match(historical, /4th Floor Total Accumulation/);
