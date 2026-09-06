@@ -55,6 +55,10 @@ assert.match(editors, /Discard Changes/);
 assert.match(editors, /Your edits will be lost/);
 
 assert.match(views, /Rack Capacity (?:&|&amp;) Utilization/);
+assert.match(views, /data-testid="rack-capacity-dashboard-v3"/);
+for (const label of ["Overall Rack Utilization", "Operational Health", "Zone Health Overview", "Available for Deployment", "Rack Zone Breakdown", "Overall Rack Utilization Trend", "Available Rack Trend", "Pending Dismantle Trend"]) assert.match(views, new RegExp(label));
+assert.match(views, /RackHeroBackground/);
+assert.match(views, /conic-gradient/);
 assert.match(views, /No confirmed Rack Capacity snapshot/);
 assert.match(views, /Go to Monthly Data Entry/);
 assert.doesNotMatch(views, /<WebRackCapacityEditor/);

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
-import { AlertTriangle, Boxes, CheckCircle2, Clock3, Gauge, ImagePlus, Info, Server, ShieldCheck, TrendingUp } from "lucide-react";
+import { Activity, AlertTriangle, ArrowRight, BarChart3, Boxes, CheckCircle2, Clock3, Gauge, ImagePlus, Info, MapPin, Server, ShieldCheck, TrendingUp, Wrench } from "lucide-react";
 import type { IDataProvider } from "../data/IDataProvider";
 import type { StoredImageMeta } from "../storage/ImageStorageProvider";
 import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
@@ -78,18 +78,174 @@ function zoneGrammar(zones: string[]): string {
   return `Zones ${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)} are over 85% utilized.`;
 }
 
+function levelColors(level: ReturnType<typeof rackUtilizationLevel>) {
+  if (level === "High") return { text: "text-rose-300", border: "border-rose-500/50", bg: "bg-rose-500/10", solid: "#fb7185" };
+  if (level === "Attention") return { text: "text-amber-300", border: "border-amber-500/50", bg: "bg-amber-500/10", solid: "#f59e0b" };
+  return { text: "text-emerald-300", border: "border-emerald-500/50", bg: "bg-emerald-500/10", solid: "#34d399" };
+}
+
+function RackHeroBackground() {
+  return <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden rounded-[22px]">
+    <div className="absolute inset-0 bg-[radial-gradient(circle_at_22%_20%,rgba(79,70,229,0.22),transparent_32%),linear-gradient(110deg,rgba(2,6,23,0.2),rgba(2,6,23,0.82))]" />
+    <svg className="absolute -right-8 bottom-0 h-full w-[52%] opacity-35" viewBox="0 0 520 220" preserveAspectRatio="xMidYMax meet">
+      <defs>
+        <linearGradient id="rackHeroFill" x1="0" x2="1">
+          <stop offset="0%" stopColor="#0f2b50" />
+          <stop offset="100%" stopColor="#07172d" />
+        </linearGradient>
+      </defs>
+      {[0, 72, 144, 216, 288, 360].map((x, index) => <g key={x} transform={`translate(${x} ${index % 2 ? 8 : 0})`}>
+        <rect x="18" y="38" width="58" height="174" rx="4" fill="url(#rackHeroFill)" stroke="#2563eb" strokeOpacity="0.55" />
+        <rect x="25" y="50" width="44" height="148" rx="2" fill="#061325" stroke="#38bdf8" strokeOpacity="0.2" />
+        {Array.from({ length: 12 }).map((_, slot) => <g key={slot}>
+          <rect x="30" y={56 + slot * 11} width="34" height="6" rx="1" fill={slot % 4 === 0 ? "#0f766e" : "#123258"} opacity="0.8" />
+          <circle cx="59" cy={59 + slot * 11} r="1.2" fill={slot % 3 === 0 ? "#22d3ee" : "#3b82f6"} />
+        </g>)}
+      </g>)}
+    </svg>
+  </div>;
+}
+
+function OperationalHealthCard({ icon: Icon, value, label, accent, tone = "slate" }: { icon: LucideIcon; value: string; label: string; accent: string; tone?: "slate" | "rose" | "amber" | "teal" | "blue" }) {
+  const toneClass = {
+    slate: "border-slate-700/80 bg-slate-950/35",
+    rose: "border-rose-500/45 bg-rose-500/10",
+    amber: "border-amber-500/45 bg-amber-500/10",
+    teal: "border-teal-500/45 bg-teal-500/10",
+    blue: "border-blue-500/45 bg-blue-500/10"
+  }[tone];
+  return <article className={`group rounded-xl border p-4 transition-transform duration-200 hover:-translate-y-0.5 ${toneClass}`}>
+    <div className="flex items-start justify-between gap-3">
+      <div className="rounded-lg p-2.5" style={{ color: accent, backgroundColor: `${accent}18` }}><Icon className="h-5 w-5" /></div>
+      <ArrowRight className="h-4 w-4 text-slate-600 transition-transform group-hover:translate-x-0.5" />
+    </div>
+    <p className="mt-4 font-mono text-3xl font-bold" style={{ color: accent }}>{value}</p>
+    <p className="mt-1 text-xs leading-relaxed text-slate-400">{label}</p>
+  </article>;
+}
+
+function ZoneHealthCards({ metrics }: { metrics: ReturnType<typeof calculateRackCapacityMetrics> }) {
+  return <section data-testid="rack-zone-health" className="rounded-2xl border border-slate-800/80 bg-slate-900/75 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.24)]">
+    <div className="mb-4 flex items-center gap-2"><Boxes className="h-5 w-5 text-indigo-400" /><h3 className="font-display text-base font-bold text-slate-100">Zone Health Overview</h3></div>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{metrics.zoneMetrics.map(zone => {
+      const usage = ratioPercent(zone.inUse.ratio);
+      const level = rackUtilizationLevel(usage);
+      const colors = levelColors(level);
+      const zoneLabel = zone.zone.replace(/^zone\s+/iu, "").trim() || zone.zone;
+      return <article key={zone.zone} className={`relative overflow-hidden rounded-xl border p-4 ${colors.border} ${colors.bg}`}>
+        <div className="absolute right-0 top-0 h-20 w-20 rounded-full opacity-10 blur-2xl" style={{ backgroundColor: colors.solid }} />
+        <div className="relative flex items-center justify-between"><span className="inline-flex items-center gap-2 text-xs font-semibold text-slate-300"><Server className="h-4 w-4" />Zone {zoneLabel}</span><ArrowRight className="h-4 w-4 text-slate-500" /></div>
+        <div className="relative mt-4 flex items-center gap-2"><span className={`font-mono text-3xl font-bold ${colors.text}`}>{safePercent(usage)}</span><span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${colors.border} ${colors.text}`}>{level}</span></div>
+        <p className="relative mt-3 text-sm"><span className="font-mono font-semibold text-teal-300">{zone.available.count}</span> <span className="text-slate-400">racks available</span></p>
+        <p className="relative mt-1 text-[11px] text-slate-500">{zone.total} total racks · {zone.inUse.count} in use</p>
+      </article>;
+    })}</div>
+  </section>;
+}
+
+function AvailableDeploymentCard({ metrics }: { metrics: ReturnType<typeof calculateRackCapacityMetrics> }) {
+  return <section className="rounded-2xl border border-teal-500/25 bg-gradient-to-br from-teal-500/10 via-slate-900/90 to-slate-900 p-5">
+    <div className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-teal-300" /><h3 className="font-display text-base font-bold text-slate-100">Available for Deployment</h3></div>
+    <div className="mt-5 flex items-end gap-3"><span className="font-mono text-4xl font-bold text-teal-300">{metrics.available.count}</span><span className="pb-1 text-sm text-slate-400">racks across {metrics.zoneMetrics.filter(zone => zone.available.count > 0).length} zones</span></div>
+    <div className="mt-5 grid grid-cols-2 gap-2 sm:grid-cols-4">{metrics.zoneMetrics.map(zone => {
+      const label = zone.zone.replace(/^zone\s+/iu, "").trim() || zone.zone;
+      const available = zone.available.count;
+      return <div key={zone.zone} className={`rounded-xl border px-3 py-3 text-center ${available > 0 ? "border-teal-500/35 bg-teal-500/10" : "border-rose-500/35 bg-rose-500/10"}`}>
+        <p className={`text-xs font-bold ${available > 0 ? "text-teal-300" : "text-rose-300"}`}>{label}</p>
+        <p className={`mt-1 font-mono text-2xl font-bold ${available > 0 ? "text-teal-200" : "text-rose-200"}`}>{available}</p>
+      </div>;
+    })}</div>
+  </section>;
+}
+
 function ZoneBreakdown({ metrics }: { metrics: ReturnType<typeof calculateRackCapacityMetrics> }) {
-  return <Section title="Rack Zone Breakdown"><div className="mb-3 flex items-center gap-2 text-[11px] text-slate-500"><Info className="h-3.5 w-3.5" />Utilization status: <span title={UTILIZATION_TOOLTIP}>{UTILIZATION_TOOLTIP}</span></div><div className="overflow-x-auto"><table className="w-full min-w-[760px] border-collapse text-xs"><thead className="text-left text-[10px] uppercase tracking-wider text-slate-500"><tr>{["Zone", "Total", "In Use", "Available", "Reserved", "Pending Dismantle", "Utilization"].map(label => <th key={label} className="border-b border-slate-800 px-3 py-3 font-semibold">{label}</th>)}</tr></thead><tbody>{metrics.zoneMetrics.map(zone => { const usage = ratioPercent(zone.inUse.ratio); const level = rackUtilizationLevel(usage); const levelClass = level === "High" ? "bg-rose-500/15 text-rose-300" : level === "Attention" ? "bg-amber-500/15 text-amber-300" : "bg-emerald-500/15 text-emerald-300"; return <tr key={zone.zone} className="border-b border-slate-800/70 last:border-0"><td className="px-3 py-3 font-semibold text-slate-200">{zone.zone}</td><td className="px-3 py-3 font-mono text-slate-300">{zone.total}</td><td className="px-3 py-3"><div className="font-mono text-slate-200">{zone.inUse.count}</div><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full" style={{ width: `${clampPercent(ratioPercent(zone.inUse.ratio))}%`, backgroundColor: STATUS_COLORS.inUse }} /></div></td><td className="px-3 py-3 font-mono text-emerald-300">{zone.available.count}</td><td className="px-3 py-3 font-mono text-blue-300">{zone.reserved.count}</td><td className="px-3 py-3 font-mono text-amber-300">{zone.pendingDismantle.count}</td><td className="px-3 py-3"><div className="flex items-center gap-2"><span className="font-mono text-slate-100">{safePercent(usage)}</span><span title={UTILIZATION_TOOLTIP} className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${levelClass}`}>{level}</span></div><div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full" style={{ width: `${clampPercent(usage)}%`, backgroundColor: level === "High" ? "#fb7185" : level === "Attention" ? "#f59e0b" : "#34d399" }} /></div></td></tr>; })}</tbody></table></div>{metrics.zoneMetrics.length === 0 && <p className="py-5 text-center text-sm text-slate-500">No rack zones exist for this month.</p>}</Section>;
+  return <section className="overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/80 shadow-[0_18px_50px_rgba(2,6,23,0.2)]">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-5 py-4"><div><div className="flex items-center gap-2"><MapPin className="h-5 w-5 text-indigo-400" /><h3 className="font-display text-base font-bold text-slate-100">Rack Zone Breakdown</h3></div><p className="mt-1 text-[11px] text-slate-500">{UTILIZATION_TOOLTIP}</p></div></div>
+    <div className="overflow-x-auto"><table className="w-full min-w-[820px] border-collapse text-xs"><thead className="bg-slate-950/35 text-left text-[10px] uppercase tracking-wider text-slate-500"><tr>{["Zone", "Total Racks", "In Use", "Available", "Reserved", "Pending Dismantle", "Utilization"].map(label => <th key={label} className="border-b border-slate-800 px-4 py-3 font-semibold">{label}</th>)}</tr></thead><tbody>{metrics.zoneMetrics.map(zone => {
+      const usage = ratioPercent(zone.inUse.ratio);
+      const level = rackUtilizationLevel(usage);
+      const colors = levelColors(level);
+      const zoneLabel = zone.zone.replace(/^zone\s+/iu, "").trim() || zone.zone;
+      return <tr key={zone.zone} className={`border-b border-slate-800/70 last:border-0 ${level === "High" ? "bg-rose-500/[0.035]" : ""}`}>
+        <td className="px-4 py-3"><span className={`inline-flex min-w-9 justify-center rounded-md border px-2 py-1 font-mono font-bold ${colors.border} ${colors.text} ${colors.bg}`}>{zoneLabel}</span></td>
+        <td className="px-4 py-3 font-mono font-semibold text-slate-200">{zone.total}</td>
+        <td className="px-4 py-3"><div className="font-mono font-semibold text-indigo-200">{zone.inUse.count}</div><div className="mt-1.5 h-1.5 w-24 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full bg-indigo-500" style={{ width: `${clampPercent(ratioPercent(zone.inUse.ratio))}%` }} /></div></td>
+        <td className="px-4 py-3 font-mono font-semibold text-teal-300">{zone.available.count}</td>
+        <td className="px-4 py-3 font-mono font-semibold text-blue-300">{zone.reserved.count}</td>
+        <td className="px-4 py-3 font-mono font-semibold text-amber-300">{zone.pendingDismantle.count}</td>
+        <td className="px-4 py-3"><div className="flex items-center gap-2"><span className="font-mono font-semibold text-slate-100">{safePercent(usage)}</span><span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${colors.border} ${colors.text} ${colors.bg}`}>{level}</span></div><div className="mt-1.5 h-1.5 w-full max-w-44 overflow-hidden rounded-full bg-slate-800"><div className="h-full rounded-full" style={{ width: `${clampPercent(usage)}%`, backgroundColor: colors.solid }} /></div></td>
+      </tr>;
+    })}</tbody></table></div>{metrics.zoneMetrics.length === 0 && <p className="py-5 text-center text-sm text-slate-500">No rack zones exist for this month.</p>}
+  </section>;
+}
+
+function RackMiniTrends({ rows }: { rows: RackCapacityHistoryRow[] }) {
+  const trendRows = rows.slice(-6);
+  const labels = trendRows.map(row => monthLabelShort(row.snapshotMonth, "en"));
+  const totals = trendRows.map(row => row.inUse + row.available + row.reserved + row.pendingDismantle);
+  const usage = trendRows.map((row, index) => totals[index] > 0 ? (row.inUse / totals[index]) * 100 : null);
+  const available = trendRows.map(row => row.available);
+  const pending = trendRows.map(row => row.pendingDismantle);
+  const cards = [
+    { title: "Overall Rack Utilization Trend", icon: Activity, color: "#fb7185", unit: "%", values: usage },
+    { title: "Available Rack Trend", icon: TrendingUp, color: "#2dd4bf", unit: "racks", values: available },
+    { title: "Pending Dismantle Trend", icon: Wrench, color: "#f59e0b", unit: "racks", values: pending }
+  ];
+  return <div className="grid gap-4 xl:grid-cols-3">{cards.map(card => <section key={card.title} className="rounded-2xl border border-slate-800/80 bg-slate-900/80 p-4"><div className="mb-3 flex items-center gap-2"><card.icon className="h-4 w-4" style={{ color: card.color }} /><h3 className="text-sm font-bold text-slate-200">{card.title}</h3></div>{labels.length >= 2 ? <TrendLineChart labels={labels} unit={card.unit} height={190} compact minPointSlots={6} series={[{ name: card.title, color: card.color, values: card.values }]} /> : <div className="flex h-40 items-center justify-center text-xs text-slate-500">Not enough saved history for this trend.</div>}</section>)}</div>;
 }
 
 function RackCapacityDashboardInner({ month, history }: { month: string; history: RackCapacityHistoryRow[] }) {
   const { metrics } = useRackCapacity();
-  const qualifyingZones = metrics.zoneMetrics.filter(zone => (ratioPercent(zone.inUse.ratio) ?? 0) >= 85).map(zone => zone.zone);
-  const highestPending = [...metrics.zoneMetrics].sort((a, b) => b.pendingDismantle.count - a.pendingDismantle.count)[0];
   const totalHistory = [...history].filter(row => row.rackZone === "(Total)").sort((a, b) => a.snapshotMonth.localeCompare(b.snapshotMonth));
   const updatedAt = history.find(row => row.snapshotMonth === month && row.rackZone === "(Total)")?.generatedAt;
+  const usage = ratioPercent(metrics.inUse.ratio);
+  const usageLevel = rackUtilizationLevel(usage);
+  const usageColors = levelColors(usageLevel);
+  const qualifyingZones = metrics.zoneMetrics.filter(zone => (ratioPercent(zone.inUse.ratio) ?? 0) >= 85);
+  const highestPending = [...metrics.zoneMetrics].sort((a, b) => b.pendingDismantle.count - a.pendingDismantle.count)[0];
+  const highestUtilized = [...metrics.zoneMetrics].sort((a, b) => (ratioPercent(b.inUse.ratio) ?? -1) - (ratioPercent(a.inUse.ratio) ?? -1))[0];
   const pct = (ratio: number | null) => safePercent(ratioPercent(ratio));
-  return <div className="space-y-5"><div className="space-y-5 rounded-2xl border border-slate-800 bg-slate-950/40 p-4 shadow-sm sm:p-6"><header className="rounded-xl border border-slate-800 bg-slate-900 p-5"><div className="flex items-start gap-3"><div className="rounded-xl bg-rose-500/10 p-2.5 text-rose-300"><Server className="h-5 w-5" /></div><div><h2 className="font-display text-2xl font-bold tracking-tight text-slate-100">Rack Capacity &amp; Utilization — {monthLabelLong(month, "en")}</h2><p className="mt-1 text-sm text-slate-400">Rack capacity, status and utilization summary</p></div></div></header><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5"><MetricCard icon={Server} label="Total Racks" value={formatFixedNumber(metrics.total, 0)} sub="Racks" accent="#64748b" sparkline={totalHistory.map(row => row.inUse + row.available + row.reserved + row.pendingDismantle)} /><MetricCard icon={CheckCircle2} label="In Use" value={formatFixedNumber(metrics.inUse.count, 0)} sub={`${pct(metrics.inUse.ratio)} of total`} accent={STATUS_COLORS.inUse} sparkline={totalHistory.map(row => row.inUse)} /><MetricCard icon={ShieldCheck} label="Available" value={formatFixedNumber(metrics.available.count, 0)} sub={`${pct(metrics.available.ratio)} of total`} accent={STATUS_COLORS.available} sparkline={totalHistory.map(row => row.available)} /><MetricCard icon={Clock3} label="Reserved" value={formatFixedNumber(metrics.reserved.count, 0)} sub={`${pct(metrics.reserved.ratio)} of total`} accent={STATUS_COLORS.reserved} sparkline={totalHistory.map(row => row.reserved)} /><MetricCard icon={AlertTriangle} label="Pending Dismantle" value={formatFixedNumber(metrics.pendingDismantle.count, 0)} sub={`${pct(metrics.pendingDismantle.ratio)} of total`} accent={STATUS_COLORS.pending} sparkline={totalHistory.map(row => row.pendingDismantle)} /></div><div className="grid gap-5 xl:grid-cols-[1.12fr_0.88fr]"><Section title="Overall Capacity Mix"><CapacityMix metrics={metrics} /></Section><Section title="Key Insights"><InsightRow icon={Gauge} accent="#60a5fa">Utilization is {safePercent(ratioPercent(metrics.inUse.ratio))} ({metrics.inUse.count} / {metrics.total} racks).</InsightRow><InsightRow icon={TrendingUp} accent="#f472b6">{zoneGrammar(qualifyingZones)}</InsightRow><InsightRow icon={Clock3} accent="#f59e0b">{highestPending && highestPending.pendingDismantle.count > 0 ? `${highestPending.zone} has the highest pending dismantle count (${highestPending.pendingDismantle.count} racks).` : "No racks are pending dismantle."}</InsightRow><InsightRow icon={AlertTriangle} accent="#f59e0b">{metrics.available.count} racks are available for allocation.</InsightRow></Section></div><ZoneBreakdown metrics={metrics} /><p className="text-center text-[11px] text-slate-500">Last updated: {safeDate(updatedAt)}</p></div></div>;
+  const heroProgress = clampPercent(usage);
+  return <div data-testid="rack-capacity-dashboard-v3" className="space-y-5">
+    <div className="rounded-[26px] border border-slate-800/80 bg-[#061427] p-3 shadow-[0_28px_90px_rgba(2,6,23,0.4)] sm:p-5">
+      <header className="relative min-h-[245px] overflow-hidden rounded-[22px] border border-blue-500/20 bg-[#081b33] p-5 sm:p-7">
+        <RackHeroBackground />
+        <div className="relative z-10 flex h-full flex-col justify-between gap-8 xl:flex-row xl:items-center">
+          <div className="max-w-3xl">
+            <div className="flex items-center gap-3"><div className="rounded-xl border border-cyan-500/25 bg-cyan-500/10 p-2.5 text-cyan-300"><Server className="h-6 w-6" /></div><div><h2 className="font-display text-2xl font-bold tracking-tight text-slate-50 sm:text-3xl">Rack Capacity &amp; Utilization — {monthLabelLong(month, "en")}</h2><p className="mt-1 text-sm text-slate-400">Rack capacity, status and utilization summary</p></div></div>
+            <div className="mt-8 flex flex-wrap items-end gap-5">
+              <div className="relative grid h-36 w-36 place-items-center rounded-full" style={{ background: `conic-gradient(${usageColors.solid} ${heroProgress}%, #17304e ${heroProgress}% 100%)` }}><div className="grid h-[108px] w-[108px] place-items-center rounded-full border border-slate-700/70 bg-[#071629] text-center"><div><p className="font-mono text-3xl font-bold text-slate-50">{safePercent(usage)}</p><p className="mt-1 text-[10px] uppercase tracking-[0.14em] text-slate-400">Overall Utilization</p></div></div></div>
+              <div className="min-w-[240px] flex-1"><div className="flex flex-wrap items-center gap-3"><h3 className="font-display text-xl font-bold text-slate-100">Overall Rack Utilization</h3><span className={`rounded-full border px-3 py-1 text-xs font-bold ${usageColors.border} ${usageColors.bg} ${usageColors.text}`}>{usageLevel}</span></div><p className="mt-2 text-base text-slate-300"><span className="font-mono font-semibold text-slate-50">{metrics.inUse.count}</span> of <span className="font-mono font-semibold text-slate-50">{metrics.total}</span> racks are in use</p><div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-800/90"><div className="h-full rounded-full shadow-[0_0_18px_currentColor]" style={{ width: `${heroProgress}%`, backgroundColor: usageColors.solid, color: usageColors.solid }} /></div><p className="mt-2 text-[11px] text-slate-500">{UTILIZATION_TOOLTIP}</p></div>
+            </div>
+          </div>
+          <div className="hidden max-w-[250px] rounded-2xl border border-blue-400/15 bg-blue-950/45 p-5 backdrop-blur-sm xl:block"><BarChart3 className="h-7 w-7 text-blue-400" /><p className="mt-3 text-sm font-semibold text-slate-200">Capacity at a glance</p><p className="mt-2 text-xs leading-relaxed text-slate-400">{metrics.available.count} racks are immediately available; {qualifyingZones.length} zone{qualifyingZones.length === 1 ? "" : "s"} are at or above 85% utilization.</p></div>
+        </div>
+      </header>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <MetricCard icon={Server} label="Total Racks" value={formatFixedNumber(metrics.total, 0)} sub="Physical rack positions" accent="#64748b" sparkline={totalHistory.map(row => row.inUse + row.available + row.reserved + row.pendingDismantle)} />
+        <MetricCard icon={Activity} label="In Use" value={formatFixedNumber(metrics.inUse.count, 0)} sub={`${pct(metrics.inUse.ratio)} of total`} accent="#6366f1" sparkline={totalHistory.map(row => row.inUse)} />
+        <MetricCard icon={CheckCircle2} label="Available" value={formatFixedNumber(metrics.available.count, 0)} sub={`${pct(metrics.available.ratio)} of total`} accent="#14b8a6" sparkline={totalHistory.map(row => row.available)} />
+        <MetricCard icon={Clock3} label="Reserved" value={formatFixedNumber(metrics.reserved.count, 0)} sub={`${pct(metrics.reserved.ratio)} of total`} accent="#3b82f6" sparkline={totalHistory.map(row => row.reserved)} />
+        <MetricCard icon={AlertTriangle} label="Pending Dismantle" value={formatFixedNumber(metrics.pendingDismantle.count, 0)} sub={`${pct(metrics.pendingDismantle.ratio)} of total`} accent="#f59e0b" sparkline={totalHistory.map(row => row.pendingDismantle)} />
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1.25fr_0.75fr]">
+        <section className="rounded-2xl border border-slate-800/80 bg-slate-900/80 p-5"><h3 className="font-display text-base font-bold text-slate-100">Overall Capacity Mix</h3><div className="mt-5"><CapacityMix metrics={metrics} /></div></section>
+        <section className="rounded-2xl border border-slate-800/80 bg-slate-900/80 p-5"><h3 className="font-display text-base font-bold text-slate-100">Operational Health</h3><div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <OperationalHealthCard icon={ShieldCheck} value={String(metrics.available.count)} label="Racks available for deployment" accent="#2dd4bf" tone="teal" />
+          <OperationalHealthCard icon={AlertTriangle} value={String(qualifyingZones.length)} label="Zones at or above 85% utilization" accent="#fb7185" tone="rose" />
+          <OperationalHealthCard icon={Wrench} value={String(metrics.pendingDismantle.count)} label="Racks pending dismantle" accent="#f59e0b" tone="amber" />
+          <OperationalHealthCard icon={Gauge} value={highestUtilized ? highestUtilized.zone.replace(/^zone\s+/iu, "") : "—"} label={highestUtilized ? `Highest risk zone (${safePercent(ratioPercent(highestUtilized.inUse.ratio))} utilized)` : "No zone utilization data"} accent="#60a5fa" tone="blue" />
+        </div>{highestPending && highestPending.pendingDismantle.count > 0 && <p className="mt-3 text-[11px] text-slate-500">{highestPending.zone} has the highest pending dismantle count ({highestPending.pendingDismantle.count} racks).</p>}</section>
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-[1.55fr_0.75fr]"><ZoneHealthCards metrics={metrics} /><AvailableDeploymentCard metrics={metrics} /></div>
+      <div className="mt-4"><ZoneBreakdown metrics={metrics} /></div>
+      <div className="mt-4"><RackMiniTrends rows={totalHistory} /></div>
+      <footer className="mt-4 flex flex-col gap-2 rounded-xl border border-slate-800/80 bg-slate-950/45 px-4 py-3 text-[11px] text-slate-500 sm:flex-row sm:items-center sm:justify-between"><span>Source: Production API · Snapshot: {monthLabelLong(month, "en")}</span><span>Last updated: {safeDate(updatedAt)}</span></footer>
+    </div>
+  </div>;
 }
 
 export function WebRackCapacityDashboard({ siteId, siteName, month, snapshot, rackCapacityHistory, rackUnitCapacity, onGoToEntry }: { siteId: number; siteName: string | null; month: string; snapshot: RackApiSnapshot | null; rackCapacityHistory: RackCapacityHistoryRow[]; rackUnitCapacity: RackUnitCapacityRow[]; onGoToEntry?: () => void }) {
