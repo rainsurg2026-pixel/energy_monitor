@@ -7,6 +7,7 @@ import { formatMonthYear } from "../utils";
 import { formatNumber2 } from "../utils/numberFormatBridge";
 import { availableMonthsForTrendRange } from "../utils/trendRange";
 import TrendLineChart from "./TrendLineChart";
+import TrendRangeSelector from "./TrendRangeSelector";
 
 interface Props {
   selectedMonth: string;
@@ -36,7 +37,7 @@ function CapacityKpi({ label, value, unit, state, compact }: { label: string; va
 }
 
 export default function ExecutiveCapacityOverview({ selectedMonth, rackCapacityHistory, rackUnitCapacity, lang, layout, onViewRackCapacity, onViewRackUnitCapacity }: Props) {
-  const { selectedTrend } = useReport();
+  const { selectedTrend, setSelectedTrend } = useReport();
   const totalRackRows = useMemo(() => rackCapacityHistory.filter(row => row.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE && row.snapshotMonth <= selectedMonth).sort((a, b) => a.snapshotMonth.localeCompare(b.snapshotMonth)), [rackCapacityHistory, selectedMonth]);
   const unitRows = useMemo(() => rackUnitCapacity.filter(row => row.month <= selectedMonth).sort((a, b) => a.month.localeCompare(b.month)), [rackUnitCapacity, selectedMonth]);
   const rackCurrent = totalRackRows.find(row => row.snapshotMonth === selectedMonth) ?? null;
@@ -50,31 +51,31 @@ export default function ExecutiveCapacityOverview({ selectedMonth, rackCapacityH
   const copy = lang === "th" ? {
     title: "Capacity & Availability", subtitle: "สถานะ Rack และ Rack Unit ของเดือนรายงาน",
     rackUsage: "Rack Usage", availableRack: "Available Racks", unitUsage: "Rack Unit Usage", availableU: "Available U",
-    rackTrend: "Rack Capacity Trend", unitTrend: "Rack Unit Capacity Trend", viewRack: "ดู Rack Capacity", viewUnit: "ดู Rack Unit Capacity",
+    rackTrend: "Rack Capacity Trend", unitTrend: "Rack Unit Capacity Trend", rackSub: "Monthly rack usage and availability rate", unitSub: "Total, used and available rack units", viewRack: "ดู Rack Capacity", viewUnit: "ดู Rack Unit Capacity",
     noTrend: "ยังไม่มีประวัติเพียงพอสำหรับกราฟ"
   } : {
     title: "Capacity & Availability", subtitle: "Rack and rack-unit status for the reporting month.",
     rackUsage: "Rack Usage", availableRack: "Available Racks", unitUsage: "Rack Unit Usage", availableU: "Available U",
-    rackTrend: "Rack Capacity Trend", unitTrend: "Rack Unit Capacity Trend", viewRack: "View Rack Capacity", viewUnit: "View Rack Unit Capacity",
+    rackTrend: "Rack Capacity Trend", unitTrend: "Rack Unit Capacity Trend", rackSub: "Monthly rack usage and availability rate", unitSub: "Total, used and available rack units", viewRack: "View Rack Capacity", viewUnit: "View Rack Unit Capacity",
     noTrend: "Not enough saved history for this trend."
   };
 
   return <section className="space-y-3" data-testid={`executive-capacity-${layout}`}>
-    <div className="flex items-end justify-between gap-3"><div><h2 className="font-display text-base font-bold text-slate-100">{copy.title}</h2><p className="mt-1 text-xs text-slate-500">{copy.subtitle}</p></div></div>
+    <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="font-display text-base font-bold text-slate-100">{copy.title}</h2><p className="mt-1 text-xs text-slate-500">{copy.subtitle}</p></div><TrendRangeSelector value={selectedTrend} onChange={setSelectedTrend} compact={compact} /></div>
     <div className={compact ? "grid grid-cols-2 gap-2.5" : "grid grid-cols-4 gap-4"}>
       <CapacityKpi compact={compact} label={copy.rackUsage} value={pct(rackCurrent?.usagePct ?? null)} state={health(rackCurrent?.usagePct ?? null)} />
       <CapacityKpi compact={compact} label={copy.availableRack} value={rackCurrent ? String(rackCurrent.available) : "—"} unit="racks" />
       <CapacityKpi compact={compact} label={copy.unitUsage} value={pct(unitUsage)} state={health(unitUsage)} />
       <CapacityKpi compact={compact} label={copy.availableU} value={unitCurrent ? formatNumber2(unitCurrent.availableU) : "—"} unit="U" />
     </div>
-    <div className={compact ? "space-y-3" : "grid grid-cols-2 gap-4"}>
-      <article className={`min-w-0 rounded-2xl border border-slate-800/70 bg-slate-900 shadow-sm ${compact ? "p-4" : "p-5"}`}>
-        <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Server className="h-4 w-4 text-teal-400"/><h3 className="text-sm font-bold text-slate-100">{copy.rackTrend}</h3></div>{onViewRackCapacity && <button type="button" onClick={onViewRackCapacity} className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-300 hover:text-indigo-200">{copy.viewRack}<ChevronRight className="h-3 w-3"/></button>}</div>
-        {rackTrend.length ? <div className="mt-3"><TrendLineChart labels={rackTrend.map(row => formatMonthYear(row.snapshotMonth))} unit="%" height={compact ? 230 : 270} compact={compact} series={[{ name: "Usage %", color: "#6366f1", values: rackTrend.map(row => row.usagePct === null ? null : row.usagePct * 100) }, { name: "Availability %", color: "#14b8a6", values: rackTrend.map(row => row.availabilityPct === null ? null : row.availabilityPct * 100) }]} /></div> : <p className="mt-5 text-sm text-slate-500">{copy.noTrend}</p>}
+    <div className={compact ? "space-y-3" : "space-y-4"}>
+      <article className={`min-w-0 rounded-2xl border border-slate-800/70 bg-slate-900 shadow-sm ${compact ? "p-4" : "p-6"}`}>
+        <div className="flex items-center justify-between gap-4"><div className="flex min-w-0 items-center gap-3"><span className={`inline-flex shrink-0 items-center justify-center rounded-xl border border-cyan-400/30 bg-cyan-400/10 text-cyan-300 ${compact ? "h-8 w-8" : "h-10 w-10"}`}><Server className={compact ? "h-4 w-4" : "h-5 w-5"}/></span><div className="min-w-0"><h3 className={`${compact ? "text-sm" : "text-lg"} font-bold text-slate-100`}>{copy.rackTrend}</h3><p className={`${compact ? "text-[10px]" : "text-xs"} mt-1 text-slate-400`}>{copy.rackSub}</p></div></div>{onViewRackCapacity && <button type="button" onClick={onViewRackCapacity} className={`${compact ? "text-[10px]" : "text-xs"} inline-flex shrink-0 items-center gap-1 font-bold text-indigo-300 hover:text-indigo-200`}>{copy.viewRack}<ChevronRight className="h-3.5 w-3.5"/></button>}</div>
+        {rackTrend.length ? <div className={compact ? "mt-3" : "mt-4"}><TrendLineChart labels={rackTrend.map(row => formatMonthYear(row.snapshotMonth))} unit="%" height={compact ? 230 : 330} compact={compact} series={[{ name: "Usage %", color: "#6366f1", values: rackTrend.map(row => row.usagePct === null ? null : row.usagePct * 100) }, { name: "Availability %", color: "#14b8a6", values: rackTrend.map(row => row.availabilityPct === null ? null : row.availabilityPct * 100) }]} /></div> : <p className="mt-5 text-sm text-slate-500">{copy.noTrend}</p>}
       </article>
-      <article className={`min-w-0 rounded-2xl border border-slate-800/70 bg-slate-900 shadow-sm ${compact ? "p-4" : "p-5"}`}>
-        <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><Boxes className="h-4 w-4 text-teal-400"/><h3 className="text-sm font-bold text-slate-100">{copy.unitTrend}</h3></div>{onViewRackUnitCapacity && <button type="button" onClick={onViewRackUnitCapacity} className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-300 hover:text-indigo-200">{copy.viewUnit}<ChevronRight className="h-3 w-3"/></button>}</div>
-        {unitTrend.length ? <div className="mt-3"><TrendLineChart labels={unitTrend.map(row => formatMonthYear(row.month))} unit="U" height={compact ? 230 : 270} compact={compact} series={[{ name: "Total U", color: "#64748b", values: unitTrend.map(row => row.totalU) }, { name: "Used U", color: "#6366f1", values: unitTrend.map(row => row.usedU) }, { name: "Available U", color: "#14b8a6", values: unitTrend.map(row => row.availableU) }]} /></div> : <p className="mt-5 text-sm text-slate-500">{copy.noTrend}</p>}
+      <article className={`min-w-0 rounded-2xl border border-slate-800/70 bg-slate-900 shadow-sm ${compact ? "p-4" : "p-6"}`}>
+        <div className="flex items-center justify-between gap-4"><div className="flex min-w-0 items-center gap-3"><span className={`inline-flex shrink-0 items-center justify-center rounded-xl border border-teal-400/30 bg-teal-400/10 text-teal-300 ${compact ? "h-8 w-8" : "h-10 w-10"}`}><Boxes className={compact ? "h-4 w-4" : "h-5 w-5"}/></span><div className="min-w-0"><h3 className={`${compact ? "text-sm" : "text-lg"} font-bold text-slate-100`}>{copy.unitTrend}</h3><p className={`${compact ? "text-[10px]" : "text-xs"} mt-1 text-slate-400`}>{copy.unitSub}</p></div></div>{onViewRackUnitCapacity && <button type="button" onClick={onViewRackUnitCapacity} className={`${compact ? "text-[10px]" : "text-xs"} inline-flex shrink-0 items-center gap-1 font-bold text-indigo-300 hover:text-indigo-200`}>{copy.viewUnit}<ChevronRight className="h-3.5 w-3.5"/></button>}</div>
+        {unitTrend.length ? <div className={compact ? "mt-3" : "mt-4"}><TrendLineChart labels={unitTrend.map(row => formatMonthYear(row.month))} unit="U" height={compact ? 230 : 330} compact={compact} series={[{ name: "Total U", color: "#94a3b8", values: unitTrend.map(row => row.totalU) }, { name: "Used U", color: "#6366f1", values: unitTrend.map(row => row.usedU) }, { name: "Available U", color: "#14b8a6", values: unitTrend.map(row => row.availableU) }]} /></div> : <p className="mt-5 text-sm text-slate-500">{copy.noTrend}</p>}
       </article>
     </div>
   </section>;

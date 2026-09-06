@@ -14,8 +14,8 @@ function pathFor(values: Array<number | null>, x: (i: number) => number, y: (v: 
   return path;
 }
 
-/** Compact chart labels keep the exact KPI/header values untouched while
- * making dense plot labels readable on mobile and printable exports. */
+/** Compact chart labels keep exact KPI/header values untouched while making
+ * dense plot labels readable on mobile and printable exports. */
 export function formatCompactChartValue(value: number): string {
   const absolute = Math.abs(value);
   const scaled = (divisor: number, suffix: string) => `${(value / divisor).toFixed(2).replace(/\.00$/, "").replace(/(\.\d)0$/, "$1")}${suffix}`;
@@ -30,8 +30,8 @@ function finiteValue(series: TrendLineSeries, index: number): number | null {
   return value === null || value === undefined || !Number.isFinite(value) ? null : value;
 }
 
-/** If multiple series land close together at the same month, stagger their
- * labels above/below the lines instead of stacking text in one position. */
+/** If multiple series land close together at the same month, stagger labels
+ * above/below the lines instead of stacking text in one position. */
 function pointLabelYs(
   series: TrendLineSeries[],
   pointIndex: number,
@@ -60,13 +60,9 @@ function pointLabelYs(
     return { ...entry, labelY: Math.max(upperLimit, Math.min(lowerLimit, entry.pointY + offset)) };
   });
 
-  // Resolve collisions after above/below placement. This catches cases where a
-  // label moved below one line meets a label moved above a distant line.
   const ordered = [...desired].sort((left, right) => left.labelY - right.labelY);
   for (let index = 1; index < ordered.length; index++) {
-    if (ordered[index].labelY < ordered[index - 1].labelY + minimumLabelGap) {
-      ordered[index].labelY = ordered[index - 1].labelY + minimumLabelGap;
-    }
+    if (ordered[index].labelY < ordered[index - 1].labelY + minimumLabelGap) ordered[index].labelY = ordered[index - 1].labelY + minimumLabelGap;
   }
   if (ordered.length && ordered.at(-1)!.labelY > lowerLimit) {
     const overflow = ordered.at(-1)!.labelY - lowerLimit;
@@ -83,8 +79,8 @@ function pointLabelYs(
 }
 
 export default function TrendLineChart({ labels, series, unit, height = 360, compact = false }: TrendLineChartProps) {
-  const width = compact ? Math.max(640, labels.length * 90) : Math.max(1200, labels.length * 80);
-  const left = compact ? 64 : 78, right = 24, top = compact ? 46 : 36, bottom = 68;
+  const width = compact ? Math.max(640, labels.length * 90) : Math.max(1320, labels.length * 90);
+  const left = compact ? 64 : 88, right = compact ? 24 : 36, top = compact ? 46 : 48, bottom = compact ? 68 : 72;
   const plotWidth = width - left - right, plotHeight = height - top - bottom;
   const values = series.flatMap(item => item.values.filter((value): value is number => value !== null && Number.isFinite(value)));
   if (values.length === 0) return <div className="h-48 flex items-center justify-center text-base text-slate-400">No valid {unit} values are available.</div>;
@@ -93,24 +89,36 @@ export default function TrendLineChart({ labels, series, unit, height = 360, com
   const y = (value: number) => top + (max - value) / range * plotHeight;
   const bottomY = height - bottom;
   const labelYsByPoint = labels.map((_, pointIndex) => pointLabelYs(series, pointIndex, y, top, bottomY));
+  const svgMinWidth = labels.length > 6 ? (compact ? Math.max(720, labels.length * 88) : Math.max(1180, labels.length * 92)) : undefined;
+  const svgTextClass = compact ? "w-full text-xs" : "w-full text-[13px]";
+  const pointLabelClass = compact ? "fill-slate-200 font-medium" : "fill-slate-100 font-semibold";
 
-  const svgMinWidth = labels.length > 6 ? (compact ? Math.max(720, labels.length * 88) : Math.max(1080, labels.length * 80)) : undefined;
-  return <div className="trend-line-chart w-full overflow-x-auto"><svg viewBox={`0 0 ${width} ${height}`} className="w-full text-xs" style={svgMinWidth ? { minWidth: `${svgMinWidth}px` } : undefined} role="img" aria-label={`${unit} trend`}>
-    <line x1={left} y1={top} x2={left} y2={bottomY} stroke="currentColor" className="text-slate-400" strokeWidth="1" />
-    <line x1={left} y1={bottomY} x2={width - right} y2={bottomY} stroke="currentColor" className="text-slate-400" strokeWidth="1" />
-    {[0, 1, 2, 3, 4].map(step => { const value = max - range * step / 4; const yy = y(value); return <text key={step} x={left - 8} y={yy + 4} textAnchor="end" className="fill-slate-300">{formatCompactChartValue(value)}</text>; })}
-    {series.map((item, seriesIndex) => <g key={item.name}>
-      <path d={pathFor(item.values, x, y)} fill="none" stroke={item.color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-      {item.values.map((value, index) => {
-        if (value === null || !Number.isFinite(value)) return null;
-        const pointY = y(value);
-        const labelY = labelYsByPoint[index]?.[seriesIndex] ?? Math.max(14, pointY - 20);
-        return <g key={index}>
-          <circle cx={x(index)} cy={pointY} r="3.5" fill="currentColor" className="text-slate-50" stroke={item.color} strokeWidth="1.5"/>
-          <text x={x(index)} y={labelY} textAnchor="middle" className="fill-slate-200" data-chart-point-label="true">{formatCompactChartValue(value)}</text>
+  return <div className="trend-line-chart w-full overflow-x-auto">
+    <svg viewBox={`0 0 ${width} ${height}`} className={svgTextClass} style={svgMinWidth ? { minWidth: `${svgMinWidth}px` } : undefined} role="img" aria-label={`${unit} trend`}>
+      {[0, 1, 2, 3, 4].map(step => {
+        const value = max - range * step / 4;
+        const yy = y(value);
+        return <g key={step}>
+          <line x1={left} y1={yy} x2={width - right} y2={yy} stroke="currentColor" className="text-slate-700/80" strokeWidth="1" strokeDasharray="5 7" />
+          <text x={left - 10} y={yy + 4} textAnchor="end" className="fill-slate-300 font-medium">{formatCompactChartValue(value)}</text>
         </g>;
       })}
-    </g>)}
-    {labels.map((label, index) => <text key={label + index} x={x(index)} y={height - 38} textAnchor="middle" className="fill-slate-300">{label}</text>)}
-  </svg><div className="flex flex-wrap gap-5 mt-3 text-sm text-slate-300">{series.map(item => <span key={item.name} className="inline-flex items-center gap-2"><i className="w-4 h-1.5 rounded" style={{ backgroundColor: item.color }} />{item.name}</span>)}<span className="ml-auto font-medium">{unit}</span></div></div>;
+      <line x1={left} y1={top} x2={left} y2={bottomY} stroke="currentColor" className="text-slate-400" strokeWidth="1.2" />
+      <line x1={left} y1={bottomY} x2={width - right} y2={bottomY} stroke="currentColor" className="text-slate-400" strokeWidth="1.2" />
+      {series.map((item, seriesIndex) => <g key={item.name}>
+        <path d={pathFor(item.values, x, y)} fill="none" stroke={item.color} strokeWidth={compact ? 2.5 : 3.25} strokeLinecap="round" strokeLinejoin="round"/>
+        {item.values.map((value, index) => {
+          if (value === null || !Number.isFinite(value)) return null;
+          const pointY = y(value);
+          const labelY = labelYsByPoint[index]?.[seriesIndex] ?? Math.max(14, pointY - 20);
+          return <g key={index}>
+            <circle cx={x(index)} cy={pointY} r={compact ? 3.5 : 4.5} fill="#f8fafc" stroke={item.color} strokeWidth={compact ? 1.5 : 2}/>
+            <text x={x(index)} y={labelY} textAnchor="middle" className={pointLabelClass} data-chart-point-label="true">{formatCompactChartValue(value)}</text>
+          </g>;
+        })}
+      </g>)}
+      {labels.map((label, index) => <text key={label + index} x={x(index)} y={height - 38} textAnchor="middle" className="fill-slate-200 font-medium">{label}</text>)}
+    </svg>
+    <div className={`mt-3 flex flex-wrap items-center gap-5 text-slate-300 ${compact ? "text-sm" : "text-[15px]"}`}>{series.map(item => <span key={item.name} className="inline-flex items-center gap-2"><i className="h-2 w-5 rounded-full" style={{ backgroundColor: item.color }} />{item.name}</span>)}<span className="ml-auto font-semibold text-slate-400">{unit}</span></div>
+  </div>;
 }
