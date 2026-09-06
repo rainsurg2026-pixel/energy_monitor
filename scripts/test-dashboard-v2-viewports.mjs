@@ -39,7 +39,14 @@ page.on("request", request => {
   if (url.pathname === "/api/v1/auth/session") data = session;
   else if (url.pathname === "/api/v1/auth/csrf") data = { csrfToken: "qa" };
   else if (url.pathname === "/api/v1/bootstrap") data = bootstrap;
-  else if (/\/api\/v1\/sites\/1\/history$/.test(url.pathname)) data = history;
+  else if (/\/api\/v1\/sites\/1\/history$/.test(url.pathname)) {
+    const scope = url.searchParams.get("scope") ?? "full";
+    data = scope === "dashboard"
+      ? { months, logs, upsGroupHistory: history.upsGroupHistory }
+      : scope === "rack"
+        ? { months, logs: [], rackCapacityHistory, rackUnitCapacity }
+        : history;
+  }
   else if (/\/api\/v1\/sites\/1\/periods\//.test(url.pathname)) {
     const month = decodeURIComponent(url.pathname.split("/").at(-1));
     data = { rowVersion: 1, log: logs.find(row => row.month === month) ?? null };

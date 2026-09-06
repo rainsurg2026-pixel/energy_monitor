@@ -280,12 +280,15 @@ export default function CleanWebApp() {
       if (!first) { setFacilityError("No facility is available for this account."); return; }
       const initialMonth = first.latestAvailableMonth ?? (result.displayPeriod.endMonth < todayMonth() ? result.displayPeriod.endMonth : todayMonth());
       setInitialHistoryLoading(true); setBusy(true); setFacilityLoading(false);
-      const historyPromise = loadHistory(first.id, { scope: scopeForView("entry") });
+      // The app opens on Dashboard. Prime the exact scope Dashboard renders from.
+      // Loading the lighter Entry scope here can race the Dashboard full-scope
+      // effect and overwrite rack/rack-unit history after it has already loaded.
+      const historyPromise = loadHistory(first.id, { scope: scopeForView("dashboard") });
       const monthPromise = loadMonth(first.id, initialMonth);
       const [initialHistory] = await Promise.all([historyPromise, monthPromise]);
       const energyMonth = latestEnergyMonth(initialHistory.logs, initialMonth);
       if (energyMonth !== initialMonth) await loadMonth(first.id, energyMonth, initialHistory);
-      loadedPageKeyRef.current = `${first.id}:entry`;
+      loadedPageKeyRef.current = `${first.id}:dashboard`;
       prefetchHistoryScopes(first.id);
     } catch (error) {
       if (activeSiteIdRef.current === null) setFacilityError(`Unable to load facilities: ${readError(error)}`);
