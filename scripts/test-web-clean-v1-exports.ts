@@ -143,6 +143,11 @@ check("Interactive Dashboard chart references the exported native Trend_Data ran
 check("Interactive line charts show value labels without noisy series/category names", chartXml.includes("showCatName val=\"0\"") && chartXml.includes("showSerName val=\"0\"") && chartXml.includes("showVal val=\"1\"") && chartXml.includes("dLblPos val=\"t\""));
 check("Interactive charts provide a bottom legend", chartXml.includes("legendPos val=\"b\"") && chartXml.includes("overlay val=\"0\""));
 check("Interactive Excel export contains a worksheet drawing relationship", interactiveParts.some(name => /xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(name)) && interactiveParts.some(name => /xl\/drawings\/drawing\d+\.xml$/.test(name)));
+const dashboardDrawingParts: string[] = [];
+for (const name of interactiveParts.filter(item => /^xl\/drawings\/drawing\d+\.xml$/.test(item))) { const file = interactiveZip.file(name); if (file) dashboardDrawingParts.push(await file.async("string")); }
+const dashboardChartDrawing = dashboardDrawingParts.find(xml => xml.includes("<xdr:graphicFrame")) ?? "";
+const dashboardChartAnchors = [...dashboardChartDrawing.matchAll(/<xdr:twoCellAnchor[\s\S]*?<c:chart r:id="[^"]+"\/>[\s\S]*?<\/xdr:twoCellAnchor>/g)].map(match => match[0]);
+check("Interactive Excel V2 uses one full-width chart per row", dashboardChartAnchors.length === 8 && dashboardChartAnchors.every(anchor => /<xdr:from><xdr:col>0<\/xdr:col>/.test(anchor) && /<xdr:to><xdr:col>14<\/xdr:col>/.test(anchor)));
   const chartTitles: string[] = [];
   const chartXmlParts: string[] = [];
   for (const name of chartParts) {
@@ -156,6 +161,7 @@ check("Interactive Excel export contains a worksheet drawing relationship", inte
   const allChartXml = chartXmlParts.join("\n");
   check("Interactive Excel line-series labels alternate above/below to reduce collisions", allChartXml.includes('dLblPos val="t"') && allChartXml.includes('dLblPos val="b"'));
   check("Interactive Excel line charts leave category-edge breathing room", allChartXml.includes('crossBetween val="between"'));
+  check("Interactive Excel trend colors align with the approved Web palette", ["10B981","2563EB","F59E0B","4F46E5","06B6D4","8B5CF6"].every(color => allChartXml.includes(`srgbClr val="${color}"`)));
   check("Interactive Excel charts use compact K/M label formats when the plotted scale is long", allChartXml.includes('&quot;K&quot;') || allChartXml.includes('&quot;M&quot;') || allChartXml.includes('&quot;B&quot;'));
   check("Interactive Excel export charts mirror the PDF trend set in order", JSON.stringify(chartTitles) === JSON.stringify(["4th Floor Estimated Cost Trend (THB)", "4th Floor Total Energy Trend (kWh)", "4th Floor Average Electricity Rate Trend (THB/kWh)", "4th Floor UPS Energy Trend (kWh)", "4th Floor Air Conditioning Energy Trend (kWh)", "4th Floor DC Power Energy Trend (kWh)", "Rack Capacity Trend", "Rack Unit Capacity Trend"]));
   check("Interactive Excel export embeds rack image media", interactiveParts.some(name => /^xl\/media\/image\d+\.(png|jpe?g)$/.test(name)));
