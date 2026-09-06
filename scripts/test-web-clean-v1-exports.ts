@@ -176,7 +176,9 @@ check("Current Facility Excel first sheet shows the authenticated display name",
 check("Current Facility Excel first sheet shows the export timestamp", selectionDashboard.getCell("K3").value === auditTimestampDisplay);
 check("Current Facility retains the shared Dashboard-FAC Air source used by report calculations", Boolean(selectionWorkbook.getWorksheet("31 Dashboard-FAC Air")));
 const selectionDashboardText = selectionDashboard.getSheetValues().flat().map(String);
-check("Current Facility 01_Dashboard follows Executive V2 section order", selectionDashboardText.includes("Executive View") && selectionDashboardText.includes("Capacity Overview") && selectionDashboardText.includes("Energy & Cost Trends") && selectionDashboardText.includes("Rack Capacity Trends") && !selectionDashboardText.includes("Engineering View"));
+const selectionSurface = selectionDashboardText.join("|");
+check("Current Facility 01_Dashboard starts with Building Energy Dashboard before Executive View", selectionDashboard.getCell("A5").value === "Engineering View · Building Energy Dashboard" && selectionDashboard.getCell("A15").value === "Executive View");
+check("Current Facility 01_Dashboard keeps Capacity/Rack after Energy trends", selectionDashboard.getCell("A22").value === "Energy & Cost Trends" && selectionDashboard.getCell("A145").value === "Capacity Overview" && selectionDashboard.getCell("A153").value === "Rack Capacity Trends");
 
 // Quick Period contract: Dashboard/report data follows the selected report scope.
 // Saved/Input/Calculation/History sheets retain the full visible history payload; when
@@ -676,8 +678,9 @@ for (const sourceCase of [
     && visibleCalculationRow?.[9] === canonicalSnapshot?.airEnergyKwh
     && visibleCalculationRow?.[10] === canonicalSnapshot?.totalDcPowerW
     && visibleCalculationRow?.[13] === canonicalSnapshot?.totalDcEnergyKwh);
-  const dashboardSurfaceText = workbook.getWorksheet("01_Dashboard")?.getSheetValues().flat().map(String).join("|") ?? "";
-  check(`${sourceCase.site}: Excel Executive V2 surface exposes Executive and Capacity sections`, dashboardSurfaceText.includes("Executive View") && dashboardSurfaceText.includes("Capacity Overview") && dashboardSurfaceText.includes("Energy & Cost Trends") && dashboardSurfaceText.includes("Rack Capacity Trends"));
+  const dashboardSurface = workbook.getWorksheet("01_Dashboard");
+  const dashboardSurfaceText = dashboardSurface?.getSheetValues().flat().map(String).join("|") ?? "";
+  check(`${sourceCase.site}: Excel report surface exposes Engineering before Executive and Capacity sections`, dashboardSurface?.getCell("A5").value === "Engineering View · Building Energy Dashboard" && dashboardSurface?.getCell("A15").value === "Executive View" && dashboardSurfaceText.includes("Capacity Overview") && dashboardSurfaceText.includes("Energy & Cost Trends") && dashboardSurfaceText.includes("Rack Capacity Trends"));
   if ((canonicalSnapshot?.upsOverallGroups.length ?? 0) > 0) {
     check(`${sourceCase.site}: Excel retains UPS Overall and UPS/PPC source groups outside the Executive dashboard`, (sheet("Dashboard-FAC UPS Overall")?.rowCount ?? 1) > 1 && (sheet("Dashboard-FAC UPS")?.rowCount ?? 1) > 1);
   }

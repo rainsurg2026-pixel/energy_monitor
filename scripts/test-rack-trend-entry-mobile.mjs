@@ -82,7 +82,7 @@ for (const [label, expectedLabels] of Object.entries(expected)) {
     const firstGap = centers.length ? centers[0] - leftAxis : 0;
     const lastGap = centers.length ? plotRight - centers.at(-1) : 0;
     const interval = centers.length > 1 ? centers[1] - centers[0] : firstGap;
-    return { labels: pointLabels.length, overlaps, firstGap, lastGap, interval, compact: rects.map(x=>x.text), bodyOverflow: document.documentElement.scrollWidth - innerWidth };
+    return { labels: pointLabels.length, overlaps, firstGap, lastGap, interval, viewBoxWidth: viewBox?.width ?? 0, renderedWidth: svg?.getBoundingClientRect().width ?? 0, compact: rects.map(x=>x.text), bodyOverflow: document.documentElement.scrollWidth - innerWidth };
   });
   assert.equal(result.labels, expectedLabels, `${label}: point-label count`);
   assert.equal(result.overlaps, 0, `${label}: labels do not overlap`);
@@ -92,6 +92,8 @@ for (const [label, expectedLabels] of Object.entries(expected)) {
   assert.ok(result.bodyOverflow <= 1, `${label}: no document overflow`);
   rangeResults[label] = result;
 }
+const twelveMonthWidth = rangeResults["12M"].viewBoxWidth;
+for (const label of ["3M", "6M", "12M", "All"]) assert.equal(rangeResults[label].viewBoxWidth, twelveMonthWidth, `${label}: Rack Unit chart uses the same 12M visual canvas width`);
 
 await clickText('nav[aria-label="Mobile primary navigation"] button', 'Entry');
 await page.waitForSelector('[data-testid="dc-calculated-value"]', { timeout: 10_000 });

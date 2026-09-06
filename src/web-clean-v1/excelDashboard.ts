@@ -535,7 +535,7 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   sheet.views = [{ state: "frozen", ySplit: 4, showGridLines: false }];
   sheet.properties.tabColor = { argb: TEAL };
   sheet.mergeCells("A1:N1");
-  sheet.getCell("A1").value = "Data Center Energy & Facility Monitor — Executive Dashboard V2";
+  sheet.getCell("A1").value = "Data Center Energy & Facility Monitor — Engineering & Executive Dashboard";
   sheet.getCell("A1").font = { name: "Aptos Display", size: 22, bold: true, color: { argb: NAVY } };
   sheet.getCell("A1").border = { bottom: { style: "medium", color: { argb: TEAL } } };
   sheet.getRow(1).height = 38;
@@ -565,48 +565,64 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   sheet.getCell("B4").value = trendMetrics.length ? `${monthLabelShort(trendMetrics[0].month, "en")} - ${monthLabelShort(trendMetrics.at(-1)!.month, "en")}` : "N/A";
   sheet.getCell("F4").value = "Layout";
   sheet.mergeCells("G4:N4");
-  sheet.getCell("G4").value = "Executive KPI -> Capacity Overview -> Energy Trends -> Rack Trends";
+  sheet.getCell("G4").value = "Engineering View -> Executive View -> Energy Trends -> Capacity Overview -> Rack Trends";
   sheet.getCell("A4").font = sheet.getCell("F4").font = { name: "Aptos", size: 9, bold: true, color: { argb: NAVY } };
   sheet.getCell("B4").font = sheet.getCell("G4").font = { name: "Aptos", size: 9, color: { argb: MUTED } };
 
-  sectionHeading(sheet, 5, "Executive View");
-  addCard(sheet, 1, 3, 7, "4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_BLUE);
-  addCard(sheet, 4, 6, 7, "Estimated 4th Floor Cost", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
-  addCard(sheet, 7, 10, 7, "4th Floor Energy Share", lookup("H", "floorSharePercent"), "0.00", LIGHT_TEAL);
-  addCard(sheet, 11, 14, 7, "Average Electricity Rate", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_BLUE);
-  addNote(1, 3, 10, previousLookupFormula("E", metricValue(selected, "floorEnergyKwh"), metricValue(previous, "floorEnergyKwh")));
-  addNote(4, 6, 10, previousLookupFormula("F", metricValue(selected, "floorCostThb"), metricValue(previous, "floorCostThb")));
-  addNote(7, 10, 10, previousLookupFormula("H", metricValue(selected, "floorSharePercent"), metricValue(previous, "floorSharePercent")));
-  addNote(11, 14, 10, previousLookupFormula("G", metricValue(selected, "averageRateThbPerKwh"), metricValue(previous, "averageRateThbPerKwh")));
+  // Engineering View is deliberately first in Current Facility exports.
+  sectionHeading(sheet, 5, "Engineering View · Building Energy Dashboard");
+  addCard(sheet, 1, 3, 7, "Building Energy", lookup("C", "buildingEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 4, 6, 7, "Building Electricity Cost", lookup("D", "buildingCostThb"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 7, 9, 7, "4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 10, 12, 7, "Estimated 4th Floor Cost", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 13, 14, 7, "4th Floor Share", lookup("H", "floorSharePercent"), "0.00", LIGHT_AMBER);
+  addCard(sheet, 1, 3, 11, "UPS Status", currentLookup(upsStatusData.sheetName, "B", upsStatusData.rowEnd, upsStatusCached), "@", LIGHT_TEAL);
+  addCard(sheet, 4, 6, 11, "UPS Energy", lookup("I", "upsEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 7, 9, 11, "Air Conditioning Energy", lookup("J", "airEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 10, 12, 11, "DC Power Energy", lookup("K", "dcEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 13, 14, 11, "Average Rate", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_AMBER);
 
-  sectionHeading(sheet, 12, "Capacity Overview");
-  const rackUsage = rackSelected?.usage ?? null;
-  const unitUsage = unitSelected?.usage ?? null;
-  addCard(sheet, 1, 3, 14, "Rack Usage", rackLookup("J", rackUsage), "0.0%", LIGHT_AMBER);
-  addCard(sheet, 4, 6, 14, "Available Racks", rackLookup("F", rackSelected?.available ?? null), "#,##0", LIGHT_TEAL);
-  addCard(sheet, 7, 10, 14, "Rack Unit Usage", currentLookup(options.rackUnitSheetName, "E", unitEnd, unitUsage), "0.0%", LIGHT_AMBER);
-  addCard(sheet, 11, 14, 14, "Available U", currentLookup(options.rackUnitSheetName, "D", unitEnd, unitSelected?.available ?? null), "#,##0.00", LIGHT_TEAL);
-  addNote(1, 3, 17, statusText("A15", rackUsage));
-  addNote(4, 6, 17, "Persisted selected-month Rack snapshot");
-  addNote(7, 10, 17, statusText("G15", unitUsage));
-  addNote(11, 14, 17, "Physical rack space only");
-  sheet.mergeCells("A18:N18");
-  sheet.getCell("A18").value = "Capacity thresholds: Normal <80% · Attention 80–84.9% · High ≥85%. Missing snapshots remain blank and are not treated as zero.";
-  sheet.getCell("A18").font = { name: "Aptos", size: 8, italic: true, color: { argb: MUTED } };
+  sectionHeading(sheet, 15, "Executive View");
+  addCard(sheet, 1, 3, 17, "4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_BLUE);
+  addCard(sheet, 4, 6, 17, "Estimated 4th Floor Cost", lookup("F", "floorCostThb"), "#,##0.00", LIGHT_TEAL);
+  addCard(sheet, 7, 10, 17, "4th Floor Energy Share", lookup("H", "floorSharePercent"), "0.00", LIGHT_TEAL);
+  addCard(sheet, 11, 14, 17, "Average Electricity Rate", lookup("G", "averageRateThbPerKwh"), "#,##0.00", LIGHT_BLUE);
+  addNote(1, 3, 20, previousLookupFormula("E", metricValue(selected, "floorEnergyKwh"), metricValue(previous, "floorEnergyKwh")));
+  addNote(4, 6, 20, previousLookupFormula("F", metricValue(selected, "floorCostThb"), metricValue(previous, "floorCostThb")));
+  addNote(7, 10, 20, previousLookupFormula("H", metricValue(selected, "floorSharePercent"), metricValue(previous, "floorSharePercent")));
+  addNote(11, 14, 20, previousLookupFormula("G", metricValue(selected, "averageRateThbPerKwh"), metricValue(previous, "averageRateThbPerKwh")));
 
-  const energyHeadingRow = 20;
+  const energyHeadingRow = 22;
   sectionHeading(sheet, energyHeadingRow, "Energy & Cost Trends");
   const energyChartRow = energyHeadingRow + 2;
   const fullWidthChartHeight = 18;
   const fullWidthChartStep = fullWidthChartHeight + 2;
-  const rackHeadingRow = energyChartRow + fullWidthChartStep * 6 + 1;
+  const capacityHeadingRow = energyChartRow + fullWidthChartStep * 6 + 1;
+  sectionHeading(sheet, capacityHeadingRow, "Capacity Overview");
+  const rackUsage = rackSelected?.usage ?? null;
+  const unitUsage = unitSelected?.usage ?? null;
+  const capacityCardRow = capacityHeadingRow + 2;
+  addCard(sheet, 1, 3, capacityCardRow, "Rack Usage", rackLookup("J", rackUsage), "0.0%", LIGHT_AMBER);
+  addCard(sheet, 4, 6, capacityCardRow, "Available Racks", rackLookup("F", rackSelected?.available ?? null), "#,##0", LIGHT_TEAL);
+  addCard(sheet, 7, 10, capacityCardRow, "Rack Unit Usage", currentLookup(options.rackUnitSheetName, "E", unitEnd, unitUsage), "0.0%", LIGHT_AMBER);
+  addCard(sheet, 11, 14, capacityCardRow, "Available U", currentLookup(options.rackUnitSheetName, "D", unitEnd, unitSelected?.available ?? null), "#,##0.00", LIGHT_TEAL);
+  const capacityNoteRow = capacityCardRow + 3;
+  addNote(1, 3, capacityNoteRow, statusText(`A${capacityCardRow + 1}`, rackUsage));
+  addNote(4, 6, capacityNoteRow, "Persisted selected-month Rack snapshot");
+  addNote(7, 10, capacityNoteRow, statusText(`G${capacityCardRow + 1}`, unitUsage));
+  addNote(11, 14, capacityNoteRow, "Physical rack space only");
+  const thresholdRow = capacityNoteRow + 1;
+  sheet.mergeCells(thresholdRow, 1, thresholdRow, 14);
+  sheet.getCell(thresholdRow, 1).value = "Capacity thresholds: Normal <80% · Attention 80–84.9% · High ≥85%. Missing snapshots remain blank and are not treated as zero.";
+  sheet.getCell(thresholdRow, 1).font = { name: "Aptos", size: 8, italic: true, color: { argb: MUTED } };
+  const rackHeadingRow = thresholdRow + 2;
   sectionHeading(sheet, rackHeadingRow, "Rack Capacity Trends");
   const rackChartRow = rackHeadingRow + 2;
 
   sheet.columns = Array.from({ length: 14 }, (_, index) => ({ key: excelColumnName(index + 1).toLowerCase(), width: index === 0 ? 22 : 16 }));
-  for (const row of [1, 3, 5, 12, energyHeadingRow, rackHeadingRow]) sheet.getRow(row).height = row === 1 ? 38 : 25;
+  for (const row of [1, 3, 5, 15, energyHeadingRow, capacityHeadingRow, rackHeadingRow]) sheet.getRow(row).height = row === 1 ? 38 : 25;
   sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9, margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
-  sheet.pageSetup.rowBreaks = [{ id: energyHeadingRow - 1 }, { id: rackHeadingRow - 1 }];
+  sheet.pageSetup.rowBreaks = [{ id: 14 }, { id: energyHeadingRow - 1 }, { id: capacityHeadingRow - 1 }];
 
   const categoryRange = chartRange(trendDataSheetName, "B", chartFirstRow, chartLastRow);
   const categories = trendMetrics.map(metric => monthLabelShort(metric.month, "en"));
@@ -614,14 +630,14 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
     const values = trendMetrics.map(metric => metricValue(metric, key));
     return { name, range: chartRange(trendDataSheetName, column, chartFirstRow, chartLastRow), values, color, labelFormat: chartLabelFormat(key, values) };
   };
-  const chart = (title: string, column: string, key: keyof ExcelDashboardMetric, color: string, fromCol: number, fromRow: number, toCol: number, toRow: number): ExcelDashboardChart => ({ title, kind: "line", categoryRange, categories, series: [chartSeries(title.replace(" Trend", ""), column, key, color)], fromCol, fromRow, toCol, toRow });
+  const chart = (title: string, column: string, key: keyof ExcelDashboardMetric, color: string, fromRow: number): ExcelDashboardChart => ({ title, kind: "line", categoryRange, categories, series: [chartSeries(title.replace(" Trend", ""), column, key, color)], fromCol: 0, fromRow, toCol: 14, toRow: fromRow + fullWidthChartHeight });
   const charts: ExcelDashboardChart[] = trendMetrics.length === 0 ? [] : [
-    chart("4th Floor Estimated Cost Trend (THB)", "F", "floorCostThb", "10B981", 0, energyChartRow, 14, energyChartRow + fullWidthChartHeight),
-    chart("4th Floor Total Energy Trend (kWh)", "E", "floorEnergyKwh", "2563EB", 0, energyChartRow + fullWidthChartStep, 14, energyChartRow + fullWidthChartStep + fullWidthChartHeight),
-    chart("4th Floor Average Electricity Rate Trend (THB/kWh)", "G", "averageRateThbPerKwh", "F59E0B", 0, energyChartRow + fullWidthChartStep * 2, 14, energyChartRow + fullWidthChartStep * 2 + fullWidthChartHeight),
-    chart("4th Floor UPS Energy Trend (kWh)", "I", "upsEnergyKwh", "4F46E5", 0, energyChartRow + fullWidthChartStep * 3, 14, energyChartRow + fullWidthChartStep * 3 + fullWidthChartHeight),
-    chart("4th Floor Air Conditioning Energy Trend (kWh)", "J", "airEnergyKwh", "06B6D4", 0, energyChartRow + fullWidthChartStep * 4, 14, energyChartRow + fullWidthChartStep * 4 + fullWidthChartHeight),
-    chart("4th Floor DC Power Energy Trend (kWh)", "K", "dcEnergyKwh", "8B5CF6", 0, energyChartRow + fullWidthChartStep * 5, 14, energyChartRow + fullWidthChartStep * 5 + fullWidthChartHeight),
+    chart("4th Floor Estimated Cost Trend (THB)", "F", "floorCostThb", "10B981", energyChartRow),
+    chart("4th Floor Total Energy Trend (kWh)", "E", "floorEnergyKwh", "2563EB", energyChartRow + fullWidthChartStep),
+    chart("4th Floor Average Electricity Rate Trend (THB/kWh)", "G", "averageRateThbPerKwh", "F59E0B", energyChartRow + fullWidthChartStep * 2),
+    chart("4th Floor UPS Energy Trend (kWh)", "I", "upsEnergyKwh", "4F46E5", energyChartRow + fullWidthChartStep * 3),
+    chart("4th Floor Air Conditioning Energy Trend (kWh)", "J", "airEnergyKwh", "06B6D4", energyChartRow + fullWidthChartStep * 4),
+    chart("4th Floor DC Power Energy Trend (kWh)", "K", "dcEnergyKwh", "8B5CF6", energyChartRow + fullWidthChartStep * 5),
     { title: "Rack Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Usage %", "U", "rackPositionUsagePercent", "6366F1"), chartSeries("Availability %", "V", "rackPositionAvailabilityPercent", "14B8A6")], fromCol: 0, fromRow: rackChartRow, toCol: 14, toRow: rackChartRow + fullWidthChartHeight },
     { title: "Rack Unit Capacity Trend", kind: "line", categoryRange, categories, series: [chartSeries("Total U", "N", "rackTotalU", "64748B"), chartSeries("Used U", "O", "rackUsedU", "6366F1"), chartSeries("Available U", "P", "rackAvailableU", "14B8A6")], fromCol: 0, fromRow: rackChartRow + fullWidthChartStep, toCol: 14, toRow: rackChartRow + fullWidthChartStep + fullWidthChartHeight }
   ];

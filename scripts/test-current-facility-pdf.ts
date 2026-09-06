@@ -65,10 +65,10 @@ const headingIndex = (value: string): number => body.indexOf(value);
 
 assert.equal(data.monthlyRows.length, 2);
 assert.equal(data.executiveTrendRows?.length, 2);
-assert.ok(headingIndex("Executive View") < headingIndex("Engineering View"));
-assert.ok(headingIndex("Executive View") < headingIndex("Capacity Overview"));
-assert.ok(headingIndex("Capacity Overview") < headingIndex("Engineering View"));
-assert.ok(headingIndex("Engineering View") < headingIndex("Rack Capacity and Utilization"));
+assert.ok(headingIndex("Engineering View") < headingIndex("Executive View"));
+assert.ok(headingIndex("Executive View") < headingIndex("4th Floor Estimated Cost Trend (THB)"));
+assert.ok(headingIndex("4th Floor DC Power Energy Trend (kWh)") < headingIndex("Capacity Overview"));
+assert.ok(headingIndex("Capacity Overview") < headingIndex("Rack Capacity and Utilization"));
 assert.ok(headingIndex("Rack Capacity and Utilization") < headingIndex("Rack Unit Capacity and Utilization"));
 
 const trendTitles = [
@@ -88,6 +88,8 @@ for (const title of trendTitles) {
 }
 assert.equal((body.match(/latest 2-month window ending at Jul 2026/g) ?? []).length, 6);
 assert.ok(body.includes("SELECTED QUICK PERIOD"));
+assert.ok(body.includes("executive-summary-flow"));
+assert.ok(body.includes("executive-first-trend-continuation"));
 assert.match(body, /persisted selected-month snapshots only/);
 assert.ok(body.includes("Rack Capacity Details"));
 assert.ok(body.includes("Rack Positions"));
@@ -109,7 +111,7 @@ assert.ok(body.includes("Trend range follows the selected export reporting windo
 assert.match(body, /Rack Unit Capacity Trend[\s\S]*font-size="9" font-weight="700"/, "PDF Rack Unit trend shows compact point labels.");
 assert.doesNotMatch(body, /Six-month trend uses/, "PDF no longer hard-codes a six-month Rack Unit trend.");
 const capacityPageStart = body.indexOf("Capacity Overview");
-const capacityPageEnd = body.indexOf("Engineering View");
+const capacityPageEnd = body.indexOf("Rack Capacity and Utilization");
 const capacityPage = body.slice(capacityPageStart, capacityPageEnd);
 assert.match(capacityPage, /font-size="9" font-weight="700"/, "PDF compact Capacity charts keep point value labels.");
 assert.match(capacityPage, />70(?:\.00)?<\/text>/, "PDF Rack Unit trend prints a compact point value.");
