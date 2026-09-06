@@ -17,6 +17,8 @@ import { readUpsGroupHistoryFromBuffer } from "../src/reports/upsGroupHistoryRea
 import { readUpsMappingFromBuffer } from "../src/reports/upsMappingReader";
 import { readRackCapacityFromBuffer } from "../src/reports/rackCapacityReader";
 import { readRackCapacityHistoryFromBuffer } from "../src/excel/RackCapacityHistoryWriter";
+import { buildEngineeringDashboardSnapshot } from "../src/domain/engineeringDashboard";
+import { buildDashboardUpsMapping } from "../src/web-clean-v1/dashboardUpsMapping";
 
 
 const log = (month: string): MonthlyLog => ({
@@ -87,9 +89,15 @@ const completeExportWorkbook = await workbookForFacilities([{
 const completeSheetNames = completeExportWorkbook.worksheets.map(sheet => sheet.name);
 check("Current Facility workbook starts with 01_Dashboard", completeSheetNames[0] === "01_Dashboard");
 check("Current Facility workbook activates 01_Dashboard", (completeExportWorkbook as any).views?.[0]?.activeTab === 0);
-const groupedNames = ["02_Saved_Energy", "03_Saved_Rack", "04_Saved_RackUnit", "05_Input_UPS", "06_Input_AirConditioning", "07_Input_DCPower", "08_Input_Rack", "09_History_Energy", "10_History_Rack"];
-check("Current Facility workbook uses Saved -> Input -> History sheet order", groupedNames.every((name, index) => completeSheetNames.indexOf(name) > completeSheetNames.indexOf("01_Dashboard") && (index === 0 || completeSheetNames.indexOf(name) > completeSheetNames.indexOf(groupedNames[index - 1]))));
+const groupedNames = ["02_Saved_Energy", "03_Saved_Rack", "04_Saved_RackUnit", "05_Input_UPS", "06_Input_AirConditioning", "07_Input_DCPower", "08_Input_EnergyCost", "09_Input_Rack", "10_Calculation_Energy", "11_History_Energy", "12_History_Rack", "13_History_RackUnit", "14_History_UPS"];
+check("Current Facility workbook uses Saved -> Input -> Calculation -> History sheet order", groupedNames.every((name, index) => completeSheetNames.indexOf(name) > completeSheetNames.indexOf("01_Dashboard") && (index === 0 || completeSheetNames.indexOf(name) > completeSheetNames.indexOf(groupedNames[index - 1]))));
 check("Current Facility source sheets are native Excel Tables", groupedNames.every(name => Object.keys((completeExportWorkbook.getWorksheet(name) as any)?.tables ?? {}).length === 1));
+check("Excel V2 tab colors distinguish report, saved, input, calculation, and history", completeExportWorkbook.getWorksheet("01_Dashboard")?.properties.tabColor?.argb === "FF007A75" && completeExportWorkbook.getWorksheet("02_Saved_Energy")?.properties.tabColor?.argb === "FF2563EB" && completeExportWorkbook.getWorksheet("05_Input_UPS")?.properties.tabColor?.argb === "FFF59E0B" && completeExportWorkbook.getWorksheet("10_Calculation_Energy")?.properties.tabColor?.argb === "FF7C3AED" && completeExportWorkbook.getWorksheet("11_History_Energy")?.properties.tabColor?.argb === "FF16A34A");
+check("Excel V2 includes a visible Energy Cost input sheet", (completeExportWorkbook.getWorksheet("08_Input_EnergyCost")?.getSheetValues().flat().map(String).join("|") ?? "").includes("Building Energy (kWh)"));
+check("Excel V2 includes a visible calculation sheet using dashboard values", (completeExportWorkbook.getWorksheet("10_Calculation_Energy")?.getSheetValues().flat().map(String).join("|") ?? "").includes("100"));
+check("Excel V2 includes Rack Unit and UPS history sheets", Boolean(completeExportWorkbook.getWorksheet("13_History_RackUnit")) && Boolean(completeExportWorkbook.getWorksheet("14_History_UPS")));
+const visibleCurrentNames = completeExportWorkbook.worksheets.filter((sheet: any) => sheet.state !== "hidden").map((sheet: any) => sheet.name);
+check("Excel V2 hides legacy compatibility sheets from the normal workbook view", !visibleCurrentNames.some((name: string) => /^(20 |21 |22 |23 |24 |25 |26 |27 |28 |29 |30 |31 |32 |33 |34 |35 |36 )/.test(name)));
 for (const fragment of ["UPS_Loads", "Air_Inputs", "DC_Inputs", "Energy_Cost", "Saved_Records", "Saved_Values", "Raw_Inputs", "Calculated_Energy", "Dashboard-FAC", "Dashboard-FAC UPS", "Dashboard-FAC Air", "Dashboard-FAC DC", "Rack Unit Capacity", "Rack Capacity History", "UPS Group History", "Rack Capacity Raw"]) {
   check(`complete Excel export has ${fragment} table`, completeSheetNames.some(name => name.includes(fragment)));
 }
@@ -108,6 +116,9 @@ check("Saved RackUnit source sheet embeds the selected image", ((savedRackUnitSo
 const savedValuesSheet = completeExportWorkbook.worksheets.find(sheet => sheet.name.includes("Saved_Values"));
 check("Saved Values export contains Rack Unit image metadata column", (savedValuesSheet?.getSheetValues().flat().map(String).join("|") ?? "").includes("Rack Unit Image JSON"));
 const interactiveXlsx = await writeInteractiveExcelWorkbook(completeExportWorkbook);
+const serializedV2Workbook = new ExcelJS.Workbook();
+await serializedV2Workbook.xlsx.load(interactiveXlsx);
+check("Serialized Excel V2 retains category tab colors", serializedV2Workbook.getWorksheet("01_Dashboard")?.properties.tabColor?.argb === "FF007A75" && serializedV2Workbook.getWorksheet("02_Saved_Energy")?.properties.tabColor?.argb === "FF2563EB" && serializedV2Workbook.getWorksheet("05_Input_UPS")?.properties.tabColor?.argb === "FFF59E0B" && serializedV2Workbook.getWorksheet("10_Calculation_Energy")?.properties.tabColor?.argb === "FF7C3AED" && serializedV2Workbook.getWorksheet("11_History_Energy")?.properties.tabColor?.argb === "FF16A34A");
 const interactiveZip = await JSZip.loadAsync(interactiveXlsx);
 const interactiveParts = Object.keys(interactiveZip.files);
 const chartParts = interactiveParts.filter(name => /^xl\/charts\/chart\d+\.xml$/.test(name));
@@ -443,7 +454,7 @@ check("Rack Positions status display mapping: Pending Dismantle renders as Pendi
   && positionStatusMappingRows.map(row => String(row[3])).join("|") === "P-AVAIL|P-RESV|P-PEND");
 check("facility CSV has no object serialization defect", !completeFacilityCsv.includes("[object Object]") && !completeFacilityCsv.includes("undefined"));
 const completeRackWorkbook = await workbookForFacilities([completeFacility]);
-const semanticUnitSheet = completeRackWorkbook.worksheets.find(sheet => sheet.name.startsWith("05 "));
+const semanticUnitSheet = completeRackWorkbook.getWorksheet("15_History_RackImage");
 const semanticUnitValues = semanticUnitSheet?.getSheetValues() ?? [];
 const selectedUnitRow = semanticUnitValues.find(row => Array.isArray(row) && row[2] === "2026-06") as unknown[] | undefined;
 check("XLSX Rack Unit semantic sheet contains the selected row", Boolean(selectedUnitRow));
@@ -543,6 +554,8 @@ for (const sourceCase of [
     ["Dashboard-FAC Details", source.logs.length * (dashboardMapping?.mapping.length ?? 0) + 1],
     ["Dashboard-FAC Air", 2],
     ["Dashboard-FAC DC", 2],
+    ["Dashboard-FAC UPS Overall", 2],
+    ["Dashboard-FAC Totals", source.logs.length + 1],
     ["Rack Unit Capacity", source.rackUnitCapacityRows.length + 1],
     ["Rack Capacity History", (rackHistory?.length ?? 0) + 1],
     ["UPS Group History", (upsGroupHistory?.rows.length ?? 0) + 1],
@@ -577,8 +590,46 @@ for (const sourceCase of [
   check(`${sourceCase.site}: UPS Group History export contains every persisted source row`, (sheet("UPS Group History")?.rowCount ?? 1) === Math.max(2, (upsGroupHistory?.rows.length ?? 0) + 1));
   check(`${sourceCase.site}: Dashboard-FAC Air table contains source rows`, (sheet("Dashboard-FAC Air")?.rowCount ?? 1) > 1);
   check(`${sourceCase.site}: Dashboard-FAC DC table contains source rows`, (sheet("Dashboard-FAC DC")?.rowCount ?? 1) > 1);
+  const latestSourceLog = source.logs.at(-1);
+  const canonicalMapping = latestSourceLog ? buildDashboardUpsMapping(upsGroupHistory, latestSourceLog.month, dashboardMapping?.mapping ?? []) : null;
+  const canonicalSnapshot = latestSourceLog ? buildEngineeringDashboardSnapshot(source.logs, latestSourceLog.month, canonicalMapping) : null;
+  const totalsRows = arraySheetValues(sheet("Dashboard-FAC Totals"));
+  const canonicalTotalsRow = latestSourceLog ? totalsRows.find(row => Array.isArray(row) && row[1] === latestSourceLog.month) : undefined;
+  check(`${sourceCase.site}: Dashboard-FAC Totals contains every source log month`, source.logs.every(log => totalsRows.some(row => Array.isArray(row) && row[1] === log.month)));
+  check(`${sourceCase.site}: Excel totals use the same canonical Web Engineering snapshot`, Boolean(canonicalSnapshot && canonicalTotalsRow)
+    && canonicalTotalsRow?.[2] === canonicalSnapshot?.daysInMonth
+    && canonicalTotalsRow?.[3] === canonicalSnapshot?.previousMonth
+    && canonicalTotalsRow?.[4] === canonicalSnapshot?.totalUpsKw
+    && canonicalTotalsRow?.[5] === canonicalSnapshot?.totalUpsKva
+    && canonicalTotalsRow?.[6] === canonicalSnapshot?.totalUpsEnergyKwh
+    && canonicalTotalsRow?.[7] === canonicalSnapshot?.detailedVoltageAvg
+    && canonicalTotalsRow?.[8] === canonicalSnapshot?.detailedCurrentSum
+    && canonicalTotalsRow?.[9] === canonicalSnapshot?.airEnergyKwh
+    && canonicalTotalsRow?.[10] === canonicalSnapshot?.totalDcPowerW
+    && canonicalTotalsRow?.[11] === canonicalSnapshot?.totalDcAcCurrentA
+    && canonicalTotalsRow?.[12] === canonicalSnapshot?.totalDcAcPowerW
+    && canonicalTotalsRow?.[13] === canonicalSnapshot?.totalDcEnergyKwh
+    && canonicalTotalsRow?.[14] === canonicalSnapshot?.buildingEnergyKwh
+    && canonicalTotalsRow?.[15] === canonicalSnapshot?.buildingCostThb
+    && canonicalTotalsRow?.[16] === canonicalSnapshot?.floorEnergyKwh
+    && canonicalTotalsRow?.[17] === canonicalSnapshot?.floorCostThb
+    && canonicalTotalsRow?.[18] === canonicalSnapshot?.averageRateThbPerKwh
+    && canonicalTotalsRow?.[19] === canonicalSnapshot?.floorSharePercent);
+  const visibleCalculation = workbook.getWorksheet("10_Calculation_Energy");
+  const visibleCalculationRow = latestSourceLog ? arraySheetValues(visibleCalculation).find(row => Array.isArray(row) && row[1] === latestSourceLog.month) : undefined;
+  check(`${sourceCase.site}: visible Calculation sheet exposes Web UPS/Air/DC totals`, Boolean(visibleCalculationRow && canonicalSnapshot)
+    && visibleCalculationRow?.[4] === canonicalSnapshot?.totalUpsKw
+    && visibleCalculationRow?.[6] === canonicalSnapshot?.totalUpsEnergyKwh
+    && visibleCalculationRow?.[9] === canonicalSnapshot?.airEnergyKwh
+    && visibleCalculationRow?.[10] === canonicalSnapshot?.totalDcPowerW
+    && visibleCalculationRow?.[13] === canonicalSnapshot?.totalDcEnergyKwh);
+  const dashboardSurfaceText = workbook.getWorksheet("01_Dashboard")?.getSheetValues().flat().map(String).join("|") ?? "";
+  check(`${sourceCase.site}: Excel Engineering surface mirrors Web Air and total-row labels`, dashboardSurfaceText.includes("Monthly Difference") && dashboardSurfaceText.includes("Total"));
+  if ((canonicalSnapshot?.upsOverallGroups.length ?? 0) > 0) {
+    check(`${sourceCase.site}: Excel separates Web UPS Overall from UPS/PPC groups`, dashboardSurfaceText.includes("1.1 UPS Load Status - Overall") && dashboardSurfaceText.includes("1.2 UPS and PPC Load Status - DCM 4th Floor") && (sheet("Dashboard-FAC UPS Overall")?.rowCount ?? 1) > 1);
+  }
   check(`${sourceCase.site}: Rack Unit Capacity contains every Desktop row`, (sheet("Rack Unit Capacity")?.rowCount ?? 0) === Math.max(2, source.rackUnitCapacityRows.length + 1));
-  const sourceImageSheet = workbook.worksheets.find(item => item.name.includes("05 Rack Unit Capacity"));
+  const sourceImageSheet = workbook.getWorksheet("15_History_RackImage");
   check(`${sourceCase.site}: Rack Unit export preserves image metadata even when no numeric row matches`, (source.rackUnitCapacityImages ?? []).length === 0 ? !Boolean(sourceImageSheet) : (sourceImageSheet?.rowCount ?? 0) >= (source.rackUnitCapacityImages?.length ?? 0) + 1);
   check(`${sourceCase.site}: Rack Capacity Raw contains the Desktop snapshot rows`, (sheet("Rack Capacity Raw")?.rowCount ?? 1) === Math.max(2, (rack?.records.length ?? 0) + 1));
   check(`${sourceCase.site}: Rack Capacity History preserves source rows when present`, (sheet("Rack Capacity History")?.rowCount ?? 1) === Math.max(2, (rackHistory?.length ?? 0) + 1));
@@ -676,7 +727,7 @@ for (const sourceCase of [
   const singleWorkbook = await workbookForFacilities([{ siteName: "Rangsit", siteCode: "RST", logs: [log("2026-06")] }] as any);
   const visibleNames = singleWorkbook.worksheets.filter((sheet: any) => sheet.state !== "hidden").map((sheet: any) => sheet.name);
   check("single-facility starts with the native Current Facility dashboard", visibleNames[0] === "01_Dashboard");
-  const currentGroups = ["02_Saved_Energy", "03_Saved_Rack", "04_Saved_RackUnit", "05_Input_UPS", "06_Input_AirConditioning", "07_Input_DCPower", "08_Input_Rack", "09_History_Energy", "10_History_Rack"];
+  const currentGroups = ["02_Saved_Energy", "03_Saved_Rack", "04_Saved_RackUnit", "05_Input_UPS", "06_Input_AirConditioning", "07_Input_DCPower", "08_Input_EnergyCost", "09_Input_Rack", "10_Calculation_Energy", "11_History_Energy", "12_History_Rack", "13_History_RackUnit", "14_History_UPS"];
   check("single-facility grouped source sheets follow dashboard", currentGroups.every((name, index) => visibleNames.indexOf(name) > visibleNames.indexOf("01_Dashboard") && (index === 0 || visibleNames.indexOf(name) > visibleNames.indexOf(currentGroups[index - 1]))));
   check("raw sheets follow presentation sheets", singleWorkbook.worksheets.findIndex((sheet: any) => sheet.name.includes("20 UPS_Loads")) >= 7);
   const singleLast = singleWorkbook.worksheets.at(-1);
