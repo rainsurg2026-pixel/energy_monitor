@@ -78,7 +78,9 @@ export function computeMetricsForMonth(
   const totalEnergyKwh = energyCost.floorEnergyKwh;
   const itEquipmentEnergyKwh = upsEnergyKwh === null || dcEnergyKwh === null ? null : upsEnergyKwh + dcEnergyKwh;
   const pue = totalEnergyKwh !== null && itEquipmentEnergyKwh !== null && itEquipmentEnergyKwh > 0 ? totalEnergyKwh / itEquipmentEnergyKwh : null;
-  const carbonEmissionKg = totalEnergyKwh === null ? null : totalEnergyKwh * 0.4991;
+  // Carbon stays unavailable until an approved, persisted emission factor is configured.
+  // Do not synthesize report values from an application constant.
+  const carbonEmissionKg = null;
   const buildingEnergyKwh = energyCost.buildingEnergyKwh;
   const buildingCostThb = energyCost.buildingElectricityCostThb;
   const avgElectricityRate = energyCost.averageElectricityRateThbPerKwh;

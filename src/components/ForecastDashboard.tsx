@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useMemo } from "react";
 import { MonthlyLog } from "../types";
 import { useReport } from "../ReportContext";
 import { computeAllMetrics, generateForecast } from "../utils/analytics";
@@ -10,11 +10,6 @@ import {
   Calendar, 
   HelpCircle, 
   LineChart as LineChartIcon,
-  ArrowUpRight, 
-  Zap, 
-  Coins, 
-  Flame, 
-  Percent 
 } from "lucide-react";
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, LabelList } from "recharts";
 
@@ -23,13 +18,9 @@ interface ForecastDashboardProps {
   lang: "th" | "en";
 }
 
-type ForecastMetric = "totalEnergyKwh" | "actualCostThb" | "carbonEmissionKg" | "pue";
-type ForecastHorizon = 3 | 6 | 12;
 
 export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps) {
-  const { selectedYear } = useReport();
-  const [metric, setMetric] = useState<ForecastMetric>("totalEnergyKwh");
-  const [horizon, setHorizon] = useState<ForecastHorizon>(3);
+  const { selectedYear, forecastMetric: metric, forecastHorizon: horizon, setForecastMetric: setMetric, setForecastHorizon: setHorizon } = useReport();
 
   // Compute all metrics chronologically
   const historyMetrics = useMemo(() => {
@@ -61,7 +52,6 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
       
       totalEnergyKwh: "ความต้องการพลังงานไฟฟ้า (kWh)",
       actualCostThb: "ประมาณการค่าใช้จ่ายพลังงาน (THB)",
-      carbonEmissionKg: "ปริมาณการปล่อยก๊าซคาร์บอน (kg CO2)",
       pue: "ดัชนีประสิทธิภาพ PUE"
     },
     en: {
@@ -77,7 +67,6 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
       
       totalEnergyKwh: "Total Energy Demand (kWh)",
       actualCostThb: "Energy Operations Cost (THB)",
-      carbonEmissionKg: "Estimated Carbon Footprint (kgCO2)",
       pue: "Power Usage Effectiveness (PUE)"
     }
   };
@@ -107,25 +96,11 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
     "Confidence Upper": p.confidenceUpper
     }));
 
-  const metricsOptions = [
-    { value: "totalEnergyKwh", label: t.totalEnergyKwh, icon: Zap, color: "text-indigo-400" },
-    { value: "actualCostThb", label: t.actualCostThb, icon: Coins, color: "text-emerald-400" },
-    { value: "carbonEmissionKg", label: t.carbonEmissionKg, icon: Flame, color: "text-amber-400" },
-    { value: "pue", label: t.pue, icon: Percent, color: "text-teal-400" }
-  ];
-
-  const horizonOptions = [
-    { value: 3, label: lang === "th" ? "3 เดือนข้างหน้า" : "Next 3 Months" },
-    { value: 6, label: lang === "th" ? "6 เดือนข้างหน้า" : "Next 6 Months" },
-    { value: 12, label: lang === "th" ? "12 เดือนข้างหน้า" : "Next 12 Months" }
-  ];
-
   // Pick color based on metric
   const getThemeColors = () => {
     switch(metric) {
       case "totalEnergyKwh": return { stroke: "#6366f1", fill: "#818cf8" };
       case "actualCostThb": return { stroke: "#10b981", fill: "#34d399" };
-      case "carbonEmissionKg": return { stroke: "#f59e0b", fill: "#fbbf24" };
       case "pue": return { stroke: "#0d9488", fill: "#2dd4bf" };
     }
   };
@@ -194,54 +169,7 @@ export default function ForecastDashboard({ logs, lang }: ForecastDashboardProps
         </div>
       </div>
 
-      {/* FILTERS ZONE */}
       <div className="space-y-6" data-testid="forecast-layout">
-        
-        {/* Metric Selector Rail */}
-        <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl w-full flex flex-col gap-2.5" data-testid="forecast-filters">
-          <h4 className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">{t.metricLabel}</h4>
-          {metricsOptions.map((opt) => {
-            const Icon = opt.icon;
-            const isSelected = metric === opt.value;
-            return (
-              <button
-                key={opt.value}
-                onClick={() => setMetric(opt.value as any)}
-                className={`p-3.5 rounded-xl border text-left cursor-pointer flex items-center justify-between transition-all ${
-                  isSelected 
-                    ? "bg-indigo-600/15 border-indigo-500 text-indigo-300 font-bold" 
-                    : "bg-slate-950/40 border-slate-850 hover:border-slate-800 text-slate-400 hover:text-slate-300"
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Icon className={`w-4 h-4 ${isSelected ? "text-indigo-400" : "text-slate-500"}`} />
-                  <span className="text-xs">{opt.label}</span>
-                </div>
-                {isSelected && <ArrowUpRight className="w-4 h-4 text-indigo-400" />}
-              </button>
-            );
-          })}
-
-          <div className="mt-4 border-t border-slate-850 pt-4">
-            <h4 className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">{t.horizonLabel}</h4>
-            <div className="grid grid-cols-3 gap-2">
-              {horizonOptions.map((opt) => (
-                <button
-                  key={opt.value}
-                  onClick={() => setHorizon(opt.value as any)}
-                  className={`py-2 px-1 text-[10px] font-bold rounded-lg border text-center transition-all cursor-pointer ${
-                    horizon === opt.value
-                      ? "bg-indigo-600 text-white border-indigo-500"
-                      : "bg-slate-950/40 border-slate-850 hover:border-slate-800 text-slate-400 hover:text-slate-300"
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
         {/* Forecast Visualization Chart */}
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl w-full min-w-0 flex flex-col justify-between" data-testid="forecast-confidence-band">
           <div>

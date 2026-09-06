@@ -2,7 +2,9 @@ import type { EngineeringDashboardSnapshot, ReportComparisonFacility, ReportData
 import { RACK_UNIT_CAPACITY_TREND_NOTE, type ComparisonMetric, type SiteComparisonReportModel } from "../reportTypes";
 import { formatGWh, formatNumber } from "../../utils/numberFormatBridge";
 import { formatBangkokReportTimestamp, formatTimestamp } from "../../utils";
+import { shiftMonth } from "../../utils/monthUtils";
 import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics, rackPositionExportRows } from "../../utils/rackCapacity";
+import { RACK_CAPACITY_HISTORY_TOTAL_ZONE } from "../../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
 import { calculateCapacityHealthScore, utilizationColorHex } from "../../utils/capacityHealth";
 import { getCapacityHealth } from "../../utils/capacityForecast";
@@ -842,19 +844,87 @@ function currentExecutiveDashboardPage(data: ReportData): string {
     return `<section class="page executive-dashboard-page" data-report-section="executive"><p class="eyebrow">EXECUTIVE VIEW</p><h2>Executive View</h2><p class="note">No monthly record is available for the selected reporting month.</p></section>`;
   }
   const trendRows = data.executiveTrendRows ?? data.monthlyRows;
-  const previous = trendRows.filter(row => row.month < current.month).at(-1) ?? null;
-  const latestDelta = current.floorEnergyKwh !== null && previous?.floorEnergyKwh !== null && previous
-    ? current.floorEnergyKwh - previous.floorEnergyKwh
-    : null;
-  const upsGroups = data.engineeringDashboard?.upsGroups ?? [];
-  const maxUpsLoad = upsGroups.reduce<number | null>((maximum, group) => group.loadPercent === null ? maximum : maximum === null ? group.loadPercent : Math.max(maximum, group.loadPercent), null);
-  const upsStatus = upsGroups.length === 0 ? "No UPS status" : `${upsGroups.length} group(s) · max ${format2(maxUpsLoad)}% load`;
-  const insights = [
-    latestDelta === null ? "Month-over-month floor energy comparison is unavailable." : `Selected month 4th Floor energy ${latestDelta >= 0 ? "increased" : "decreased"} by ${format2(Math.abs(latestDelta))} kWh versus the previous month.`,
-    current.status === "Complete" ? "Selected month passed the report completeness check." : "Selected month is partial; review missing source readings before making operational decisions.",
-    upsGroups.length === 0 ? "UPS group status is unavailable for the selected month." : `UPS status loaded from Dashboard-FAC group history for ${formatMonth(current.month)}.`
-  ];
-  return `<section class="page executive-dashboard-page" data-report-section="executive"><div class="dashboard-head"><div><p class="eyebrow">EXECUTIVE VIEW</p><h2>Executive View</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(current.month))} · selected month only</p></div><div class="dashboard-tag">Management summary<br>${escapeHtml(formatMonth(current.month))}</div></div><div class="kpis-3col">${kpi("Building Energy · Selected Month", format2(current.buildingEnergyKwh), "kWh", "Selected reporting month only")}${kpi("4th Floor Energy · Selected Month", format2(current.floorEnergyKwh), "kWh", "UPS + AC + DC power panels")}${kpi("Building Cost · Selected Month", format2(current.buildingCostThb), "THB", "Stored/calculated building cost")}${kpi("4th Floor Cost · Selected Month", format2(current.floorCostThb), "THB", "Calculated at building average rate")}${kpi("4th Floor Energy Share", `${format2(current.floorSharePercent)}%`, "of building energy", "Selected reporting month")}${kpi("UPS Status", upsStatus, "Dashboard-FAC", "Persisted group status for selected month")}</div><article class="block"><h3>Management insights</h3><ul class="insight-list">${insights.map(item => `<li>${escapeHtml(item)}</li>`).join("")}</ul></article></section>`;
+  const previousMonth = shiftMonth(current.month, -1);
+  const previous = trendRows.find(row => row.month === previousMonth) ?? null;
+  const pctDelta = (value: number | null, previousValue: number | null): string => {
+    if (value === null || previousValue === null || previousValue === 0) return "No prior-month comparison";
+    const delta = (value - previousValue) / Math.abs(previousValue) * 100;
+    const marker = delta > 0 ? "▲" : delta < 0 ? "▼" : "•";
+    return `${marker} ${format2(Math.abs(delta))}% vs ${formatMonth(previousMonth)}`;
+  };
+  const monthDays = (() => {
+    const [year, month] = current.month.split("-").map(Number);
+    return Number.isInteger(year) && Number.isInteger(month) ? new Date(year, month, 0).getDate() : null;
+  })();
+  const source = data.sourceWorkbook || "Report source";
+  return `<section class="page executive-dashboard-page" data-report-section="executive"><div class="dashboard-head"><div><p class="eyebrow">EXECUTIVE VIEW</p><h2>Executive View</h2><p>${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(current.month))} · ${monthDays ?? "—"} Days · ${escapeHtml(source)}</p></div><div class="dashboard-tag">Generated<br>${escapeHtml(formatBangkokReportTimestamp(data.generatedAt))}</div></div><div class="kpis">${kpi("4th Floor Energy", format2(current.floorEnergyKwh), "kWh", pctDelta(current.floorEnergyKwh, previous?.floorEnergyKwh ?? null))}${kpi("Estimated 4th Floor Cost", format2(current.floorCostThb), "THB", pctDelta(current.floorCostThb, previous?.floorCostThb ?? null))}${kpi("4th Floor Energy Share", `${format2(current.floorSharePercent)}%`, "of building energy", pctDelta(current.floorSharePercent, previous?.floorSharePercent ?? null))}${kpi("Average Electricity Rate", format2(current.averageRateThbPerKwh), "THB/kWh", pctDelta(current.averageRateThbPerKwh, previous?.averageRateThbPerKwh ?? null))}</div></section>`;
+}
+
+function executiveCapacityStatus(usage: number | null): string {
+  if (usage === null || !Number.isFinite(usage)) return "No data";
+  if (usage >= 0.85) return "High";
+  if (usage >= 0.8) return "Attention";
+  return "Normal";
+}
+
+function compactExecutiveTrendChart(title: string, labels: string[], series: TrendSeries[], unit: string): string {
+  const width = 480, height = 190, left = 48, right = 14, top = 26, bottom = 38;
+  const values = series.flatMap(item => item.values).filter((value): value is number => value !== null && Number.isFinite(value));
+  if (!values.length) return `<article class="block" style="flex:1"><h3>${escapeHtml(title)}</h3><p class="note">No persisted trend values are available.</p></article>`;
+  const min = Math.min(0, ...values), max = Math.max(0, ...values), range = max - min || 1;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const x = (index: number) => left + (labels.length <= 1 ? plotWidth / 2 : index / (labels.length - 1) * plotWidth);
+  const y = (value: number) => top + (max - value) / range * plotHeight;
+  const pathFor = (row: TrendSeries): string => {
+    let path = "";
+    let open = false;
+    row.values.forEach((value, index) => {
+      if (value === null || !Number.isFinite(value)) { open = false; return; }
+      path += `${open ? " L" : "M"} ${x(index).toFixed(1)} ${y(value).toFixed(1)}`;
+      open = true;
+    });
+    return path;
+  };
+  const ticks = [0, 1, 2, 3].map(step => {
+    const value = max - range * step / 3;
+    const yy = y(value);
+    return `<line x1="${left}" y1="${yy}" x2="${width - right}" y2="${yy}" stroke="#e2e8f0"/><text x="${left - 5}" y="${yy + 3}" text-anchor="end" font-size="8" fill="#64748b">${escapeHtml(compactNumber(value, values))}</text>`;
+  }).join("");
+  const paths = series.map(item => `<path d="${pathFor(item)}" fill="none" stroke="${item.color}" stroke-width="2" stroke-linecap="round"/>`).join("");
+  const labelIndexes = labels.length <= 3 ? labels.map((_, index) => index) : [0, Math.floor((labels.length - 1) / 2), labels.length - 1];
+  const xLabels = labelIndexes.map(index => `<text x="${x(index)}" y="${height - 9}" text-anchor="middle" font-size="8" fill="#64748b">${escapeHtml(labels[index] ?? "")}</text>`).join("");
+  const legend = series.map(item => `<span><i style="background:${item.color}"></i>${escapeHtml(item.name)}</span>`).join("");
+  return `<article class="block" style="flex:1;min-width:0"><h3>${escapeHtml(title)}</h3><p class="note">Last ${labels.length} persisted month${labels.length === 1 ? "" : "s"} · ${escapeHtml(unit)}</p><svg viewBox="0 0 ${width} ${height}" style="width:100%;height:175px">${ticks}<line x1="${left}" y1="${height - bottom}" x2="${width - right}" y2="${height - bottom}" stroke="#94a3b8"/>${paths}${xLabels}</svg><div class="trend-legend">${legend}</div></article>`;
+}
+
+function currentExecutiveCapacityPage(data: ReportData): string {
+  const current = data.currentRow;
+  if (!current) return "";
+  const rackRows = [...data.rackHistory]
+    .filter(row => row.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE && row.snapshotMonth <= current.month)
+    .sort((left, right) => left.snapshotMonth.localeCompare(right.snapshotMonth))
+    .slice(-12);
+  const rackHistoryCurrent = rackRows.find(row => row.snapshotMonth === current.month) ?? null;
+  const rackSnapshotMetrics = data.rack?.sourceSnapshot === current.month ? calculateRackCapacityMetrics(data.rack.records) : null;
+  const rackUsage = rackHistoryCurrent?.usagePct ?? (rackSnapshotMetrics && rackSnapshotMetrics.total > 0 ? rackSnapshotMetrics.inUse.count / rackSnapshotMetrics.total : null);
+  const rackAvailability = rackHistoryCurrent?.availabilityPct ?? (rackSnapshotMetrics && rackSnapshotMetrics.total > 0 ? rackSnapshotMetrics.available.count / rackSnapshotMetrics.total : null);
+  const availableRacks = rackHistoryCurrent?.available ?? rackSnapshotMetrics?.available.count ?? null;
+  const unitRows = [...data.rackUnitCapacity].filter(row => row.month <= current.month).sort((left, right) => left.month.localeCompare(right.month)).slice(-12);
+  const unitCurrent = unitRows.find(row => row.month === current.month) ?? null;
+  const unitUsage = unitCurrent && unitCurrent.totalU > 0 ? unitCurrent.usedU / unitCurrent.totalU : null;
+  const rackChartLabels = rackRows.map(row => formatMonth(row.snapshotMonth));
+  const unitChartLabels = unitRows.map(row => formatMonth(row.month));
+  const rackChart = compactExecutiveTrendChart("Rack Capacity Trend", rackChartLabels, [
+    { name: "Usage %", color: REPORT_PALETTE.rackInUse, values: rackRows.map(row => row.usagePct === null ? null : row.usagePct * 100) },
+    { name: "Availability %", color: REPORT_PALETTE.rackAvailable, values: rackRows.map(row => row.availabilityPct === null ? null : row.availabilityPct * 100) }
+  ], "%");
+  const unitChart = compactExecutiveTrendChart("Rack Unit Capacity Trend", unitChartLabels, [
+    { name: "Total U", color: REPORT_PALETTE.rackTotal, values: unitRows.map(row => row.totalU) },
+    { name: "Used U", color: REPORT_PALETTE.rackInUse, values: unitRows.map(row => row.usedU) },
+    { name: "Available U", color: REPORT_PALETTE.rackAvailable, values: unitRows.map(row => row.availableU) }
+  ], "U");
+  return `<section class="page executive-dashboard-page" data-report-section="executive"><p class="eyebrow">EXECUTIVE VIEW · CAPACITY &amp; AVAILABILITY</p><h2>Capacity Overview</h2><p class="note">${escapeHtml(data.facility)} · ${escapeHtml(formatMonth(current.month))} · persisted selected-month snapshots only</p><div class="kpis">${kpi("Rack Usage", formatRatioPercent1(rackUsage), "of rack positions", `${executiveCapacityStatus(rackUsage)} · Normal <80%, Attention 80–84.9%, High ≥85%`)}${kpi("Available Racks", availableRacks === null ? "—" : formatInteger(availableRacks), "racks", "Selected reporting month")}${kpi("Rack Unit Usage", formatRatioPercent1(unitUsage), "of total U", `${executiveCapacityStatus(unitUsage)} · Normal <80%, Attention 80–84.9%, High ≥85%`)}${kpi("Available U", unitCurrent ? format2(unitCurrent.availableU) : "—", "U", "Physical rack space only")}</div><div style="display:flex;gap:12px;align-items:stretch;margin-top:10px">${rackChart}${unitChart}</div></section>`;
 }
 
 function currentExecutiveTrendPages(data: ReportData): string {
@@ -880,16 +950,16 @@ function currentFacilitySelectedSections(selectedSections?: readonly ReportSecti
   return [...selected];
 }
 
-/** Current Facility PDF only: four deliberate major groups. Other formats
+/** Current Facility PDF only: Executive -> Engineering -> Rack Capacity -> Rack Unit Capacity. Other formats
  *  continue to use buildReportBodyPages/buildReportHtml unchanged. */
 export function buildCurrentFacilityPdfBody(data: ReportData, selectedSections?: readonly ReportSectionId[]): string {
   const engineering = data.engineeringDashboard
     ? engineeringDashboard(data, data.engineeringDashboard, true)
     : `<section class="page dashboard-page" data-report-section="dashboard"><h2>Engineering View</h2><p class="note">Engineering data is unavailable for the selected month.</p></section>`;
-  const executive = currentExecutiveDashboardPage(data) + currentExecutiveTrendPages(data);
+  const executive = currentExecutiveDashboardPage(data) + currentExecutiveCapacityPage(data) + currentExecutiveTrendPages(data);
   const rack = rackCapacityPage(data) + capacityHealthPage(data);
   const rackUnit = renderRackUnitCapacityExecutivePage(data);
-  const body = `${engineering}${executive}${rack}${rackUnit}`;
+  const body = `${executive}${engineering}${rack}${rackUnit}`;
   const sections = currentFacilitySelectedSections(selectedSections);
   return sections !== undefined ? filterReportBodySections(body, sections) : body;
 }

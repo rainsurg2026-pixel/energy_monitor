@@ -25,7 +25,7 @@ interface BenchmarkDashboardProps {
 }
 
 export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardProps) {
-  const { selectedYear, selectedPeriod } = useReport();
+  const { selectedYear, selectedPeriod, selectedBenchmarkReference } = useReport();
 
   // Compute all history metrics
   const allMetrics = useMemo(() => {
@@ -59,76 +59,33 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
       .map(metric => ({ month: formatMonthYear(metric.month), pue: metric.pue, sourceMonth: metric.month }));
   }, [displayMetrics, currentMonthMetric]);
 
-  // Benchmark metrics
+  // Data-backed benchmark references only. No industry/company target is shown
+  // unless the product later receives a persisted reference configuration.
   const benchmarks = useMemo(() => {
     if (!currentMonthMetric || allMetrics.length === 0) return null;
-
     const usableMetrics = displayMetrics.filter(m => m.pue !== null && m.totalEnergyKwh !== null);
     if (usableMetrics.length === 0 || currentMonthMetric.pue === null || currentMonthMetric.totalEnergyKwh === null) return null;
 
-    const curVal = currentMonthMetric;
-
-    // 1. Find Best Month (lowest PUE or lowest total energy in all history)
-    const bestMonth = [...usableMetrics].reduce((best, m) => {
-      if (m.pue > 1.0 && m.pue < best.pue) return m;
-      return best;
-    }, usableMetrics[0]);
-
-    // 2. Find Worst Month (highest PUE in all history)
-    const worstMonth = [...usableMetrics].reduce((worst, m) => {
-      if (m.pue > worst.pue) return m;
-      return worst;
-    }, usableMetrics[0]);
-
-    // 3. Find Rolling Average of previous 3 months
-    const curIdx = usableMetrics.findIndex(m => m.month === curVal.month);
-    let rollingAvgPue = 1.5;
-    let rollingAvgEnergy = 120000;
-    if (curIdx >= 3) {
-      const last3 = usableMetrics.slice(Math.max(0, curIdx - 3), curIdx);
-      rollingAvgPue = last3.reduce((acc, m) => acc + m.pue, 0) / 3;
-      rollingAvgEnergy = last3.reduce((acc, m) => acc + m.totalEnergyKwh, 0) / 3;
-    } else {
-      // fallback to global average
-      rollingAvgPue = usableMetrics.reduce((acc, m) => acc + (m.pue as number), 0) / usableMetrics.length;
-      rollingAvgEnergy = usableMetrics.reduce((acc, m) => acc + (m.totalEnergyKwh as number), 0) / usableMetrics.length;
-    }
-
-    // 4. Industry Standard PUE Target
-    const industryPueTarget = 1.50;
-    // 5. Company PUE Target
-    const companyPueTarget = 1.40;
+    const bestMonth = [...usableMetrics].reduce((best, metric) => metric.pue! < best.pue! ? metric : best, usableMetrics[0]);
+    const worstMonth = [...usableMetrics].reduce((worst, metric) => metric.pue! > worst.pue! ? metric : worst, usableMetrics[0]);
+    const previousRows = usableMetrics.filter(metric => metric.month < currentMonthMetric.month).slice(-3);
+    const rolling = previousRows.length > 0 ? {
+      pue: previousRows.reduce((sum, metric) => sum + metric.pue!, 0) / previousRows.length,
+      energy: previousRows.reduce((sum, metric) => sum + metric.totalEnergyKwh!, 0) / previousRows.length,
+      count: previousRows.length,
+    } : null;
 
     return {
-      best: {
-        month: bestMonth.month,
-        pue: bestMonth.pue,
-        energy: bestMonth.totalEnergyKwh
-      },
-      worst: {
-        month: worstMonth.month,
-        pue: worstMonth.pue,
-        energy: worstMonth.totalEnergyKwh
-      },
-      rolling: {
-        pue: rollingAvgPue,
-        energy: rollingAvgEnergy
-      },
-      industry: {
-        pue: industryPueTarget,
-        energy: rollingAvgEnergy * 0.95 // assume 5% saving target
-      },
-      company: {
-        pue: companyPueTarget,
-        energy: rollingAvgEnergy * 0.90 // assume 10% saving target
-      }
+      best: { month: bestMonth.month, pue: bestMonth.pue!, energy: bestMonth.totalEnergyKwh! },
+      worst: { month: worstMonth.month, pue: worstMonth.pue!, energy: worstMonth.totalEnergyKwh! },
+      rolling,
     };
-  }, [displayMetrics, currentMonthMetric]);
+  }, [allMetrics.length, currentMonthMetric, displayMetrics]);
 
   const dict = {
     th: {
       title: "เปรียบเทียบเกณฑ์มาตรฐาน (Benchmark)",
-      desc: "วิเคราะห์และเปรียบเทียบประสิทธิภาพพลังงาน (PUE) ของรอบระยะเวลาปัจจุบันกับเกณฑ์อ้างอิงและกลุ่มประวัติข้อมูล",
+      desc: "วิเคราะห์ PUE และพลังงานของเดือนปัจจุบันเทียบกับข้อมูลประวัติที่บันทึกจริง",
       parameter: "พารามิเตอร์",
       current: "ปัจจุบัน",
       target: "เปรียบเทียบเกณฑ์",
@@ -137,18 +94,16 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
       bestMonth: "เดือนที่ดีที่สุด (Best Month)",
       worstMonth: "เดือนที่แย่ที่สุด (Worst Month)",
       rollingAvg: "ค่าเฉลี่ยเคลื่อนที่ย้อนหลัง 3 เดือน",
-      industryStd: "มาตรฐานอุตสาหกรรม (Industry Target)",
-      companyGoal: "เป้าหมายองค์กร (Company Goal)",
       better: "ดีกว่าเกณฑ์",
       worse: "ต่ำกว่าเกณฑ์",
       matchesWorst: "Matches Worst Month",
       suggestionTitle: "ข้อแนะนำทางวิศวกรรมเพื่อความยั่งยืน",
-      pueTitle: "กราฟเปรียบเทียบ PUE เทียบกับเป้าหมาย",
+      pueTitle: "กราฟเปรียบเทียบ PUE กับประวัติข้อมูล",
       pueLegend: "ประสิทธิภาพ PUE"
     },
     en: {
       title: "Energy Benchmarking Dashboard",
-      desc: "Analyze and benchmark current operations (PUE & Energy) against historical extremes, rolling averages, and carbon-reduction targets.",
+      desc: "Analyze current PUE and energy against persisted historical extremes and rolling averages.",
       parameter: "Benchmark Indicator",
       current: "Current",
       target: "Reference Value",
@@ -157,54 +112,40 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
       bestMonth: "Best Month (Lowest PUE)",
       worstMonth: "Worst Month (Highest PUE)",
       rollingAvg: "Rolling 3-Month Average",
-      industryStd: "Industry Standard Target",
-      companyGoal: "Company Efficiency Goal",
       better: "Better / Within Target",
       worse: "Exceeds Threshold / Worse",
       matchesWorst: "Matches Worst Month",
       suggestionTitle: "Engineering Actionable Insights",
-      pueTitle: "PUE Performance Benchmarking",
+      pueTitle: "Historical PUE Comparison",
       pueLegend: "PUE Rating"
     }
   };
 
   const t = dict[lang];
 
-  // Declared before the early return below so the hook count stays stable when
-  // a facility switch removes the data (React "rendered fewer hooks" crash).
+  // Actionable insights are derived from persisted history only. Do not attach
+  // unsourced industry/company PUE thresholds to the current value.
   const smartInsights = useMemo(() => {
-    if (!currentMonthMetric || currentMonthMetric.pue === null) return [];
+    if (!currentMonthMetric || currentMonthMetric.pue === null || !benchmarks) return [];
     const list: string[] = [];
-    if (currentMonthMetric.pue > 1.6) {
-      list.push(
-        lang === "th"
-          ? "ค่า PUE สูงเกินเกณฑ์มาตรฐาน 1.5: ควรตรวจสอบประสิทธิภาพระบายความร้อนของระบบปรับอากาศ ชั้น 4 (EB41A-B, EB42A-B) ว่ามีปริมาณความต้องการลมเย็นเกินสภาวะปกติหรือไม่"
-          : "PUE exceeds standard threshold (>1.5): Audit 4th floor cooling subsystems (EB41A-B, EB42A-B) to verify if air-flow velocity or ambient setpoints are misaligned with IT heat loads."
-      );
-      list.push(
-        lang === "th"
-          ? "แนะนำระบบปิดกั้นช่องทางลมร้อน/ลมเย็น (Hot/Cold Aisle Containment) เพื่อป้องกันการผสมกันของอากาศและเพิ่มประสิทธิภาพพัดลมคอยล์เย็น"
-          : "Implement Hot/Cold Aisle Containment protocols to prevent bypass cold air mixing and optimize chillers coil return temperature."
-      );
-    } else {
-      list.push(
-        lang === "th"
-          ? "ค่าประสิทธิภาพ PUE อยู่ในเกณฑ์ดีเยี่ยม: แนะนำให้รักษาระดับอุณหภูมิห้องเครื่องไว้ที่ 22-24°C และรักษามาตรฐานพฤติกรรมการบันทึกข้อมูลอย่างสมบูรณ์แบบ"
-          : "PUE meets high-efficiency targets: Maintain current temperature setpoints (22-24°C) and secure consistent historical log data accuracy."
-      );
+    if (benchmarks.rolling) {
+      const delta = currentMonthMetric.pue - benchmarks.rolling.pue;
+      const direction = delta > 0 ? "higher" : delta < 0 ? "lower" : "unchanged";
+      list.push(lang === "th"
+        ? `PUE เดือนปัจจุบัน ${direction === "higher" ? "สูงกว่า" : direction === "lower" ? "ต่ำกว่า" : "เท่ากับ"} ค่าเฉลี่ยย้อนหลัง ${benchmarks.rolling.count} เดือนอยู่ ${formatNumber2(Math.abs(delta))} จุด`
+        : `Current PUE is ${direction} than the prior ${benchmarks.rolling.count}-month average by ${formatNumber2(Math.abs(delta))} points.`);
     }
-
-    const ups11 = currentMonthMetric.alerts.some(a => a.includes("UPS 11"));
-    const ups15 = currentMonthMetric.alerts.some(a => a.includes("UPS 15"));
-    if (ups11 || ups15) {
-      list.push(
-        lang === "th"
-          ? "ตรวจพบโหลดไม่สมมาตรในกลุ่ม UPS: ตรวจสอบการกระจายโหลดแผงจ่ายไฟฟ้ากระแสสลับ (A/B lines) เพื่อยืดอายุการทำงานของแบตเตอรี่และคาปาซิเตอร์"
-          : "Unbalanced UPS load distribution detected: Verify branch circuits across dual-corded servers (A/B feeds) to protect long-term battery lifespan."
-      );
+    if (currentMonthMetric.month === benchmarks.best.month) {
+      list.push(lang === "th" ? "เดือนที่เลือกมี PUE ต่ำสุดในประวัติที่มองเห็นอยู่ขณะนี้" : "The selected month has the lowest PUE in the visible persisted history.");
+    } else if (currentMonthMetric.month === benchmarks.worst.month) {
+      list.push(lang === "th" ? "เดือนที่เลือกมี PUE สูงสุดในประวัติที่มองเห็นอยู่ขณะนี้ ควรตรวจสอบสาเหตุเทียบกับเดือนก่อนหน้า" : "The selected month has the highest PUE in the visible persisted history; review the month-over-month drivers.");
+    }
+    const upsAlerts = currentMonthMetric.alerts.filter(alert => alert.includes("UPS"));
+    if (upsAlerts.length > 0) {
+      list.push(lang === "th" ? `พบการแจ้งเตือน UPS จากข้อมูลเดือนนี้ ${upsAlerts.length} รายการ ควรตรวจสอบรายละเอียดใน Engineering View` : `${upsAlerts.length} UPS alert(s) are present in this month's data; review the Engineering View for details.`);
     }
     return list;
-  }, [currentMonthMetric, lang]);
+  }, [benchmarks, currentMonthMetric, lang]);
 
   if (!currentMonthMetric || !benchmarks) {
     return (
@@ -218,7 +159,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
   const cur = currentMonthMetric;
   const b = benchmarks;
 
-  // Comparison Rows
+  // Comparison rows are persisted-history references only.
   const benchmarkRows = [
     {
       id: "best",
@@ -230,36 +171,16 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
       targetEnergy: b.best.energy,
       type: "lower-better"
     },
-    {
+    ...(b.rolling ? [{
       id: "rolling",
       name: t.rollingAvg,
-      refLabel: "(Prev 3 Months)",
+      refLabel: `(Prev ${b.rolling.count} Month${b.rolling.count === 1 ? "" : "s"})`,
       currentPue: cur.pue,
       targetPue: b.rolling.pue,
       currentEnergy: cur.totalEnergyKwh,
       targetEnergy: b.rolling.energy,
       type: "lower-better"
-    },
-    {
-      id: "industry",
-      name: t.industryStd,
-      refLabel: "(Green DC Standard)",
-      currentPue: cur.pue,
-      targetPue: b.industry.pue,
-      currentEnergy: cur.totalEnergyKwh,
-      targetEnergy: b.industry.energy,
-      type: "lower-better"
-    },
-    {
-      id: "company",
-      name: t.companyGoal,
-      refLabel: "(ESG Target)",
-      currentPue: cur.pue,
-      targetPue: b.company.pue,
-      currentEnergy: cur.totalEnergyKwh,
-      targetEnergy: b.company.energy,
-      type: "lower-better"
-    },
+    }] : []),
     {
       id: "worst",
       name: t.worstMonth,
@@ -272,15 +193,19 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
     }
   ];
 
-  // Chart data
+  const visibleBenchmarkRows = selectedBenchmarkReference === "all" ? benchmarkRows : benchmarkRows.filter(row => row.id === selectedBenchmarkReference);
+
   const chartData = [
     { name: "Current Month", PUE: cur.pue },
     { name: "Best Month", PUE: b.best.pue },
-    { name: "3-Mo Rolling Avg", PUE: b.rolling.pue },
-    { name: "Industry Standard", PUE: b.industry.pue },
-    { name: "Company ESG Target", PUE: b.company.pue },
+    ...(b.rolling ? [{ name: `${b.rolling.count}-Mo Rolling Avg`, PUE: b.rolling.pue }] : []),
     { name: "Worst Month", PUE: b.worst.pue },
-  ];
+  ].filter(item => {
+    if (selectedBenchmarkReference === "all" || item.name === "Current Month") return true;
+    if (selectedBenchmarkReference === "best") return item.name === "Best Month";
+    if (selectedBenchmarkReference === "rolling") return item.name.includes("Rolling Avg");
+    return item.name === "Worst Month";
+  });
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -314,7 +239,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
             </h3>
             
             <div className="space-y-3.5">
-              {benchmarkRows.map((row) => {
+              {visibleBenchmarkRows.map((row) => {
                 const diffPue = row.currentPue - row.targetPue;
                 const isPueBetter = diffPue <= 0; // lower PUE is better
                 const matchesWorstMonth = row.id === "worst" && Math.abs(diffPue) < 0.0001;
@@ -366,7 +291,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
         <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl shadow-xl lg:col-span-5 flex flex-col justify-between">
           <div>
             <h3 className="font-display font-bold text-sm text-slate-200 uppercase tracking-wider mb-1">{t.pueTitle}</h3>
-            <p className="text-[11px] text-slate-400">Comparing PUE against industry guidelines and targets.</p>
+            <p className="text-[11px] text-slate-400">Comparing the selected month with persisted historical references.</p>
           </div>
 
           <div className="h-64 my-4 w-full">
@@ -384,7 +309,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
                   {chartData.map((entry, index) => {
                     let fill = "#6366f1"; // base default
                     if (entry.name === "Current Month") fill = "#818cf8";
-                    else if (entry.name === "Best Month" || entry.name === "Company ESG Target") fill = "#10b981";
+                    else if (entry.name === "Best Month") fill = "#10b981";
                     else if (entry.name === "Worst Month") fill = "#ef4444";
                     return <Cell key={`cell-${index}`} fill={fill} />;
                   })}
@@ -395,7 +320,7 @@ export default function BenchmarkDashboard({ logs, lang }: BenchmarkDashboardPro
 
           <div className="flex items-center gap-1 bg-slate-950 p-2.5 rounded-xl border border-slate-850 text-[10px] text-slate-400">
             <Info className="w-4 h-4 text-indigo-400 shrink-0" />
-            <span>PUE = 1.0 represents perfect efficiency (zero auxiliary power overhead). Green standard threshold is &lt; 1.5.</span>
+            <span>PUE values shown here are calculated from persisted energy data; no external target is assumed.</span>
           </div>
         </div>
 

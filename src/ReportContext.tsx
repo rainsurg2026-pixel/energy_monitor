@@ -27,6 +27,10 @@ export function resolveReportYear(requested: string, availableYears: readonly st
   return availableYears[0] ?? fallbackYear;
 }
 
+export type BenchmarkReference = "all" | "best" | "rolling" | "worst";
+export type ForecastMetric = "totalEnergyKwh" | "actualCostThb" | "pue";
+export type ForecastHorizon = 3 | 6 | 12;
+
 export interface ReportContextType {
   // Filters
   selectedYear: string; // e.g. "2026", "All", "Current Year"
@@ -39,6 +43,9 @@ export interface ReportContextType {
   selectedSite: string; // default "Site A" (Future Ready)
   selectedUPSGroup: "All" | "Group 11" | "Group 13" | "Group 15" | string;
   selectedReportView: "executive" | "dashboard" | "benchmark" | "forecast" | "history";
+  selectedBenchmarkReference: BenchmarkReference;
+  forecastMetric: ForecastMetric;
+  forecastHorizon: ForecastHorizon;
   
   // Setters
   setSelectedYear: (val: string) => void;
@@ -49,6 +56,9 @@ export interface ReportContextType {
   setSelectedSite: (val: string) => void;
   setSelectedUPSGroup: (val: string) => void;
   setSelectedReportView: (val: "executive" | "dashboard" | "benchmark" | "forecast" | "history") => void;
+  setSelectedBenchmarkReference: (val: BenchmarkReference) => void;
+  setForecastMetric: (val: ForecastMetric) => void;
+  setForecastHorizon: (val: ForecastHorizon) => void;
 
   // Dynamic Options from logs
   availableYears: string[];
@@ -118,6 +128,9 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
   const [selectedReportView, setSelectedReportViewState] = useState<"executive" | "dashboard" | "benchmark" | "forecast" | "history">(() => {
     return (localStorage.getItem("report_pref_report_view") as any) || "executive";
   });
+  const [selectedBenchmarkReference, setSelectedBenchmarkReferenceState] = useState<BenchmarkReference>(() => (localStorage.getItem("report_pref_benchmark_reference") as BenchmarkReference) || "all");
+  const [forecastMetric, setForecastMetricState] = useState<ForecastMetric>(() => (localStorage.getItem("report_pref_forecast_metric") as ForecastMetric) || "totalEnergyKwh");
+  const [forecastHorizon, setForecastHorizonState] = useState<ForecastHorizon>(() => Number(localStorage.getItem("report_pref_forecast_horizon") || 3) as ForecastHorizon);
   const [darkMode, setDarkModeState] = useState<boolean>(() => {
     return localStorage.getItem("report_pref_dark_mode") === "true";
   });
@@ -161,6 +174,9 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     setSelectedReportViewState(val);
     localStorage.setItem("report_pref_report_view", val);
   };
+  const setSelectedBenchmarkReference = (val: BenchmarkReference) => { setSelectedBenchmarkReferenceState(val); localStorage.setItem("report_pref_benchmark_reference", val); };
+  const setForecastMetric = (val: ForecastMetric) => { setForecastMetricState(val); localStorage.setItem("report_pref_forecast_metric", val); };
+  const setForecastHorizon = (val: ForecastHorizon) => { setForecastHorizonState(val); localStorage.setItem("report_pref_forecast_horizon", String(val)); };
   const setDarkMode = (val: boolean) => {
     setDarkModeState(val);
     localStorage.setItem("report_pref_dark_mode", String(val));
@@ -196,6 +212,9 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     selectedSite,
     selectedUPSGroup,
     selectedReportView,
+    selectedBenchmarkReference,
+    forecastMetric,
+    forecastHorizon,
     
     setSelectedYear,
     setSelectedPeriod,
@@ -205,6 +224,9 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     setSelectedSite,
     setSelectedUPSGroup,
     setSelectedReportView,
+    setSelectedBenchmarkReference,
+    setForecastMetric,
+    setForecastHorizon,
     
     availableYears,
     darkMode,
@@ -224,6 +246,9 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     selectedSite,
     selectedUPSGroup,
     selectedReportView,
+    selectedBenchmarkReference,
+    forecastMetric,
+    forecastHorizon,
     availableYears,
     onYearChange,
     darkMode,

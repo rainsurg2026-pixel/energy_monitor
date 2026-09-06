@@ -10,6 +10,7 @@ const rackComparison = readFileSync(new URL("../src/web-clean-v1/WebSiteRackCapa
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const unitView = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityViews.tsx", import.meta.url), "utf8");
 const apiService = readFileSync(new URL("../server/services/apiService.ts", import.meta.url), "utf8");
+const navigation = readFileSync(new URL("../src/web-clean-v1/AppNavigationV2.tsx", import.meta.url), "utf8");
 
 assert.match(comparison, /api<SiteComparisonExport>\("\/site-comparison"\)/);
 assert.match(comparison, /Site Energy & Cost Comparison/);
@@ -34,8 +35,8 @@ assert.match(comparison, /function chartLabel/);
 assert.doesNotMatch(comparison, /Rack Unit Utilization Trend|Rack Capacity and Utilization|Rack Unit Capacity and Utilization|\/racks\?siteId|\/rack-unit-capacity\?siteId/);
 
 assert.match(app, /const WebSiteRackCapacityComparison = lazy\(\(\) => import\("\.\/WebSiteRackCapacityComparison"\)\)/);
-assert.match(app, /id: "comparison"[^\n]*Site Energy & Cost Comparison/);
-assert.match(app, /id: "rack-comparison"[^\n]*Site Rack Capacity & Availability Comparison/);
+assert.match(navigation, /Site Energy & Cost Comparison/);
+assert.match(navigation, /Site Rack Capacity & Availability/);
 assert.ok(app.includes('view === "comparison" && <WebSiteComparison lang={lang} />'), "comparison view is not scoped by the Reports-local Quick Range");
 assert.ok(app.includes('view === "rack-comparison" && <WebSiteRackCapacityComparison month={displayMonth} />'), "rack comparison uses the global Selected Reporting Month");
 // The "Create Monthly Record" prompt is entry-only, so rack-comparison (and

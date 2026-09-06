@@ -8,7 +8,7 @@ import type { ComparisonMetric, ReportData, ReportMonthlyRow, RackCapacityReport
 export type { ComparisonMetric, SiteComparisonReportModel, SiteComparisonReportSite } from "../reports/reportTypes";
 import { RACK_UNIT_CAPACITY_TREND_NOTE } from "../reports/reportTypes";
 import { deriveRackCapacityReport } from "../reports/rackCapacityReportBuilder";
-import type { RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
+import { RACK_CAPACITY_HISTORY_TOTAL_ZONE, type RackCapacityHistoryRow } from "../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../excel/RackUnitCapacityWriter";
 import type { DashboardUpsMappingReport } from "../reports/reportTypes";
 import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
@@ -302,6 +302,7 @@ function buildExcelDashboardModel(logs: MonthlyLog[], calculationLogs: MonthlyLo
     const dashboard = buildEngineeringDashboardSnapshot(calculationLogs, log.month, mapping);
     const calculated = calculateEnergyCostForMonth(calculationLogs, log.month);
     const rackUnit = facility.rackUnitCapacity?.find(row => row.month === log.month) ?? null;
+    const rackPosition = facility.rackHistory?.find(row => row.snapshotMonth === log.month && row.rackZone === RACK_CAPACITY_HISTORY_TOTAL_ZONE) ?? null;
     const upsGroups = dashboard?.upsGroups ?? [];
     const upsCapacity = upsGroups.reduce((sum, row) => sum + (row.capacity ?? 0), 0);
     const upsLoadKva = upsGroups.reduce((sum, row) => sum + row.totalKva, 0);
@@ -327,7 +328,12 @@ function buildExcelDashboardModel(logs: MonthlyLog[], calculationLogs: MonthlyLo
       rackTotalU: rackUnit?.totalU ?? null,
       rackUsedU: rackUnit?.usedU ?? null,
       rackAvailableU: rackUnit?.availableU ?? null,
-      rackUsagePercent: rackUnit && rackUnit.totalU > 0 ? (rackUnit.usedU / rackUnit.totalU) * 100 : null
+      rackUsagePercent: rackUnit && rackUnit.totalU > 0 ? (rackUnit.usedU / rackUnit.totalU) * 100 : null,
+      rackTotalPositions: rackPosition?.totalRacks ?? null,
+      rackInUsePositions: rackPosition?.inUse ?? null,
+      rackAvailablePositions: rackPosition?.available ?? null,
+      rackPositionUsagePercent: rackPosition?.usagePct == null ? null : rackPosition.usagePct * 100,
+      rackPositionAvailabilityPercent: rackPosition?.availabilityPct == null ? null : rackPosition.availabilityPct * 100
     });
     dashboardRows.push([
       log.month,
@@ -417,7 +423,8 @@ function emptyDashboardMetric(month: string): ExcelDashboardMetric {
   return {
     month, buildingEnergyKwh: null, buildingCostThb: null, floorEnergyKwh: null, floorCostThb: null, averageRateThbPerKwh: null,
     floorSharePercent: null, upsEnergyKwh: null, airEnergyKwh: null, dcEnergyKwh: null, upsLoadKw: null, upsLoadPercent: null,
-    rackTotalU: null, rackUsedU: null, rackAvailableU: null, rackUsagePercent: null
+    rackTotalU: null, rackUsedU: null, rackAvailableU: null, rackUsagePercent: null,
+    rackTotalPositions: null, rackInUsePositions: null, rackAvailablePositions: null, rackPositionUsagePercent: null, rackPositionAvailabilityPercent: null
   };
 }
 

@@ -6,6 +6,7 @@ const editors = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityEditors
 const views = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityViews.tsx", import.meta.url), "utf8");
 const entryWorkspace = readFileSync(new URL("../src/web-clean-v1/WebEntryWorkspace.tsx", import.meta.url), "utf8");
 const rackData = readFileSync(new URL("../src/web-clean-v1/rackCapacityData.ts", import.meta.url), "utf8");
+const navigation = readFileSync(new URL("../src/web-clean-v1/AppNavigationV2.tsx", import.meta.url), "utf8");
 
 assert.match(app, /WebRackCapacityDashboard/);
 assert.match(app, /WebRackUnitCapacityDashboard/);
@@ -23,7 +24,7 @@ assert.match(app, /rack\.persisted \? rack\.snapshot : null/);
 assert.match(app, /view === "rack-units"/);
 // Dashboard navigation is restored: the sidebar item exists and setView no
 // longer redirects "dashboard" to "entry".
-assert.match(app, /\{ id: "dashboard", label: lang === "th" \? "แดชบอร์ด" : "Dashboard", icon: BarChart3 \}/);
+assert.match(navigation, /label=\{th \? "แดชบอร์ด" : "Dashboard"\} icon=\{BarChart3\}/);
 assert.doesNotMatch(app, /next === "dashboard" \? "entry"/);
 assert.match(app, /window\.addEventListener\("beforeunload"/);
 assert.match(app, /window\.addEventListener\("popstate"/);

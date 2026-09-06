@@ -65,8 +65,10 @@ const headingIndex = (value: string): number => body.indexOf(value);
 
 assert.equal(data.monthlyRows.length, 2);
 assert.equal(data.executiveTrendRows?.length, 2);
-assert.ok(headingIndex("Engineering View") < headingIndex("Executive View"));
-assert.ok(headingIndex("Executive View") < headingIndex("Rack Capacity and Utilization"));
+assert.ok(headingIndex("Executive View") < headingIndex("Engineering View"));
+assert.ok(headingIndex("Executive View") < headingIndex("Capacity Overview"));
+assert.ok(headingIndex("Capacity Overview") < headingIndex("Engineering View"));
+assert.ok(headingIndex("Engineering View") < headingIndex("Rack Capacity and Utilization"));
 assert.ok(headingIndex("Rack Capacity and Utilization") < headingIndex("Rack Unit Capacity and Utilization"));
 
 const trendTitles = [
@@ -86,7 +88,7 @@ for (const title of trendTitles) {
 }
 assert.equal((body.match(/latest 2-month window ending at Jul 2026/g) ?? []).length, 6);
 assert.ok(body.includes("SELECTED QUICK PERIOD"));
-assert.match(body, /selected month only/);
+assert.match(body, /persisted selected-month snapshots only/);
 assert.ok(body.includes("Rack Capacity Details"));
 assert.ok(body.includes("Rack Positions"));
 assert.ok(body.includes("Rack Unit Capacity and Utilization"));
@@ -98,8 +100,10 @@ assert.ok(!body.includes("<h2>Air Conditioning Energy Trend</h2>"));
 assert.ok(!body.includes("DC Power Panel Energy Trend"));
 
 const executivePage = body.slice(body.indexOf('data-report-section="executive"'), body.indexOf('data-report-section="executive"') + 5000);
-assert.ok(executivePage.includes("Building Energy · Selected Month"));
-assert.ok(executivePage.includes("Selected reporting month only"));
+for (const label of ["4th Floor Energy", "Estimated 4th Floor Cost", "4th Floor Energy Share", "Average Electricity Rate"]) assert.ok(executivePage.includes(label));
+assert.ok(body.includes("Capacity Overview"));
+assert.ok(body.includes("Rack Capacity Trend"));
+assert.ok(body.includes("Rack Unit Capacity Trend"));
 assert.ok(!executivePage.includes("2,500.00"), "Executive summary must not sum the quick-range rows.");
 
 // One-month reports are the deliberate exception: report data stays on the
