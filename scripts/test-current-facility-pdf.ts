@@ -104,6 +104,11 @@ for (const label of ["4th Floor Energy", "Estimated 4th Floor Cost", "4th Floor 
 assert.ok(body.includes("Capacity Overview"));
 assert.ok(body.includes("Rack Capacity Trend"));
 assert.ok(body.includes("Rack Unit Capacity Trend"));
+const capacityPageStart = body.indexOf("Capacity Overview");
+const capacityPageEnd = body.indexOf("Engineering View");
+const capacityPage = body.slice(capacityPageStart, capacityPageEnd);
+assert.match(capacityPage, /font-size="7" font-weight="600"/, "PDF compact Capacity charts keep point value labels.");
+assert.match(capacityPage, />70(?:\.00)?<\/text>/, "PDF Rack Unit trend prints a compact point value.");
 assert.ok(!executivePage.includes("2,500.00"), "Executive summary must not sum the quick-range rows.");
 
 // One-month reports are the deliberate exception: report data stays on the
@@ -135,4 +140,4 @@ const exportSource = readFileSync("src/web-clean-v1/exports.ts", "utf8");
 assert.match(exportSource, /buildCurrentFacilityPdfHtml\(data, sections\)/);
 assert.match(exportSource, /exportHtml[\s\S]*buildReportHtml\(facilityReportData/);
 
-console.log("Current Facility PDF structure: 34 assertions passed");
+console.log("Current Facility PDF structure and chart labels passed");

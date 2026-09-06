@@ -891,7 +891,26 @@ function compactExecutiveTrendChart(title: string, labels: string[], series: Tre
     const yy = y(value);
     return `<line x1="${left}" y1="${yy}" x2="${width - right}" y2="${yy}" stroke="#e2e8f0"/><text x="${left - 5}" y="${yy + 3}" text-anchor="end" font-size="8" fill="#64748b">${escapeHtml(compactNumber(value, values))}</text>`;
   }).join("");
-  const paths = series.map(item => `<path d="${pathFor(item)}" fill="none" stroke="${item.color}" stroke-width="2" stroke-linecap="round"/>`).join("");
+  const paths = series.map((item, seriesIndex) => {
+    const points = item.values.map((value, index) => {
+      if (value === null || !Number.isFinite(value)) return "";
+      const pointY = y(value);
+      const nearby = series
+        .map((candidate, candidateIndex) => {
+          const candidateValue = candidate.values[index];
+          return candidateValue === null || candidateValue === undefined || !Number.isFinite(candidateValue) ? null : { index: candidateIndex, y: y(candidateValue) };
+        })
+        .filter((candidate): candidate is { index: number; y: number } => candidate !== null)
+        .filter(candidate => Math.abs(candidate.y - pointY) < 15)
+        .sort((left, right) => left.index - right.index);
+      const rank = Math.max(0, nearby.findIndex(candidate => candidate.index === seriesIndex));
+      const tier = Math.floor(rank / 2);
+      const offset = nearby.length > 1 ? (rank % 2 === 0 ? -(8 + tier * 9) : 12 + tier * 9) : -8;
+      const labelY = Math.max(top + 8, Math.min(height - bottom - 5, pointY + offset));
+      return `<circle cx="${x(index)}" cy="${pointY}" r="2.8" fill="#fff" stroke="${item.color}" stroke-width="1.5"/><text x="${x(index)}" y="${labelY}" text-anchor="middle" font-size="7" font-weight="600" fill="${item.color}">${escapeHtml(compactNumber(value, values))}</text>`;
+    }).join("");
+    return `<path d="${pathFor(item)}" fill="none" stroke="${item.color}" stroke-width="2" stroke-linecap="round"/>${points}`;
+  }).join("");
   const labelIndexes = labels.length <= 3 ? labels.map((_, index) => index) : [0, Math.floor((labels.length - 1) / 2), labels.length - 1];
   const xLabels = labelIndexes.map(index => `<text x="${x(index)}" y="${height - 9}" text-anchor="middle" font-size="8" fill="#64748b">${escapeHtml(labels[index] ?? "")}</text>`).join("");
   const legend = series.map(item => `<span><i style="background:${item.color}"></i>${escapeHtml(item.name)}</span>`).join("");

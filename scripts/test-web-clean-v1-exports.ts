@@ -140,11 +140,22 @@ check("Interactive Dashboard cards use the selected month", dashboardSheetXml.in
 const chartFile = chartParts.length > 0 ? interactiveZip.file(chartParts[0]) : null;
 const chartXml = chartFile ? await chartFile.async("string") : "";
 check("Interactive Dashboard chart references the exported native Trend_Data range", chartXml.includes("98_Trend_Data") && chartXml.includes("4th Floor Estimated Cost Trend (THB)"));
-check("Interactive line charts suppress per-point series and category labels", chartXml.includes("showCatName val=\"0\"") && chartXml.includes("showSerName val=\"0\"") && chartXml.includes("showVal val=\"0\""));
+check("Interactive line charts show value labels without noisy series/category names", chartXml.includes("showCatName val=\"0\"") && chartXml.includes("showSerName val=\"0\"") && chartXml.includes("showVal val=\"1\"") && chartXml.includes("dLblPos val=\"t\""));
 check("Interactive charts provide a bottom legend", chartXml.includes("legendPos val=\"b\"") && chartXml.includes("overlay val=\"0\""));
 check("Interactive Excel export contains a worksheet drawing relationship", interactiveParts.some(name => /xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(name)) && interactiveParts.some(name => /xl\/drawings\/drawing\d+\.xml$/.test(name)));
   const chartTitles: string[] = [];
-  for (const name of chartParts) { const file = interactiveZip.file(name); if (file) chartTitles.push((await file.async("string")).match(/<a:t>([^<]+)<\/a:t>/)?.[1] ?? ""); }
+  const chartXmlParts: string[] = [];
+  for (const name of chartParts) {
+    const file = interactiveZip.file(name);
+    if (file) {
+      const xml = await file.async("string");
+      chartXmlParts.push(xml);
+      chartTitles.push(xml.match(/<a:t>([^<]+)<\/a:t>/)?.[1] ?? "");
+    }
+  }
+  const allChartXml = chartXmlParts.join("\n");
+  check("Interactive Excel line-series labels alternate above/below to reduce collisions", allChartXml.includes('dLblPos val="t"') && allChartXml.includes('dLblPos val="b"'));
+  check("Interactive Excel charts use compact K/M label formats when the plotted scale is long", allChartXml.includes('&quot;K&quot;') || allChartXml.includes('&quot;M&quot;') || allChartXml.includes('&quot;B&quot;'));
   check("Interactive Excel export charts mirror the PDF trend set in order", JSON.stringify(chartTitles) === JSON.stringify(["4th Floor Estimated Cost Trend (THB)", "4th Floor Total Energy Trend (kWh)", "4th Floor Average Electricity Rate Trend (THB/kWh)", "4th Floor UPS Energy Trend (kWh)", "4th Floor Air Conditioning Energy Trend (kWh)", "4th Floor DC Power Energy Trend (kWh)", "Rack Capacity Trend", "Rack Unit Capacity Trend"]));
   check("Interactive Excel export embeds rack image media", interactiveParts.some(name => /^xl\/media\/image\d+\.(png|jpe?g)$/.test(name)));
   check("Interactive Excel export contains no macro project", !interactiveParts.includes("xl/vbaProject.bin"));

@@ -77,6 +77,21 @@ for (const viewport of viewports) {
       mainPaddingBottom: main ? parseFloat(getComputedStyle(main).paddingBottom) : 0,
       trendCards: document.querySelectorAll('[data-testid^="executive-trend-"]').length,
       capacityPresent: Boolean(document.querySelector('[data-testid^="executive-capacity-"]')),
+      rackUnitLabels: (() => {
+        const article = [...document.querySelectorAll("article")].find(item => item.querySelector("h3")?.textContent?.trim() === "Rack Unit Capacity Trend");
+        const labels = article ? [...article.querySelectorAll('[data-chart-point-label="true"]')] : [];
+        const rects = labels.map(label => {
+          const rect = label.getBoundingClientRect();
+          return { text: label.textContent ?? "", left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+        });
+        let overlaps = 0;
+        for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
+          const a = rects[i], b = rects[j];
+          const intersects = Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5;
+          if (intersects) overlaps++;
+        }
+        return { count: rects.length, overlaps, texts: rects.map(item => item.text) };
+      })(),
     };
   }, { width: viewport.width, mobile: viewport.mobile });
   assert.ok(executive.overflow <= 1, `${viewport.name}: no horizontal overflow (${executive.overflow}px)`);
@@ -85,6 +100,9 @@ for (const viewport of viewports) {
   assert.equal(executive.desktopNavVisible, !viewport.mobile, `${viewport.name}: desktop nav visibility`);
   assert.equal(executive.trendCards, 6, `${viewport.name}: six energy trend cards`);
   assert.equal(executive.capacityPresent, true, `${viewport.name}: capacity overview present`);
+  assert.ok(executive.rackUnitLabels.count >= 9, `${viewport.name}: Rack Unit chart keeps per-point labels`);
+  assert.equal(executive.rackUnitLabels.overlaps, 0, `${viewport.name}: Rack Unit point labels do not overlap`);
+  assert.ok(executive.rackUnitLabels.texts.some(text => /K$/.test(text)), `${viewport.name}: long Rack Unit values use compact K labels`);
   if (viewport.mobile) {
     assert.ok((executive.mobileNavBottomGap ?? 99) <= 1, `${viewport.name}: bottom nav fixed to viewport`);
     assert.ok(executive.mainPaddingBottom >= 80, `${viewport.name}: main content reserves bottom-nav space`);

@@ -31,6 +31,7 @@ interface ExcelDashboardSeries {
   range: string;
   values: Array<number | null>;
   color: string;
+  labelFormat?: string;
 }
 
 interface ExcelDashboardChart {
@@ -119,6 +120,21 @@ function setFormulaCell(sheet: any, address: string, value: { formula: string; r
 function metricValue(metric: ExcelDashboardMetric | undefined, key: keyof ExcelDashboardMetric): number | null {
   const value = metric?.[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function excelCompactChartFormat(values: Array<number | null>, percent = false): string {
+  if (percent) return '0.0"%"';
+  const maximum = Math.max(0, ...values.filter((value): value is number => value !== null && Number.isFinite(value)).map(value => Math.abs(value)));
+  if (maximum >= 1_000_000_000) return '0.00,,,"B"';
+  if (maximum >= 1_000_000) return '0.00,,"M"';
+  if (maximum >= 1_000) return '0.00,"K"';
+  return '0.00';
+}
+
+function chartLabelFormat(key: keyof ExcelDashboardMetric, values: Array<number | null>): string {
+  if (key === "rackPositionUsagePercent" || key === "rackPositionAvailabilityPercent" || key === "rackUsagePercent" || key === "upsLoadPercent" || key === "floorSharePercent") return excelCompactChartFormat(values, true);
+  if (key === "averageRateThbPerKwh") return "0.00";
+  return excelCompactChartFormat(values);
 }
 
 function chartRange(sheetName: string, column: string, firstRow: number, lastRow: number): string {
@@ -306,7 +322,10 @@ export function addInteractiveDashboard(workbook: any, prefix: string, siteName:
   const lastDataRow = Math.max(firstDataRow, trendMetrics.length + 1);
   const categoryRange = chartRange(trendDataSheetName, "B", firstDataRow, lastDataRow);
   const categories = trendMetrics.map(metric => monthLabelShort(metric.month, "en"));
-  const series = (name: string, column: string, key: keyof ExcelDashboardMetric, color: string): ExcelDashboardSeries => ({ name, range: chartRange(trendDataSheetName, column, firstDataRow, lastDataRow), values: trendMetrics.map(metric => metricValue(metric, key)), color });
+  const series = (name: string, column: string, key: keyof ExcelDashboardMetric, color: string): ExcelDashboardSeries => {
+    const values = trendMetrics.map(metric => metricValue(metric, key));
+    return { name, range: chartRange(trendDataSheetName, column, firstDataRow, lastDataRow), values, color, labelFormat: chartLabelFormat(key, values) };
+  };
   return {
     dashboardSheetName,
     charts: trendMetrics.length === 0 ? [] : [
@@ -589,7 +608,10 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
 
   const categoryRange = chartRange(trendDataSheetName, "B", chartFirstRow, chartLastRow);
   const categories = trendMetrics.map(metric => monthLabelShort(metric.month, "en"));
-  const chartSeries = (name: string, column: string, key: keyof ExcelDashboardMetric, color: string): ExcelDashboardSeries => ({ name, range: chartRange(trendDataSheetName, column, chartFirstRow, chartLastRow), values: trendMetrics.map(metric => metricValue(metric, key)), color });
+  const chartSeries = (name: string, column: string, key: keyof ExcelDashboardMetric, color: string): ExcelDashboardSeries => {
+    const values = trendMetrics.map(metric => metricValue(metric, key));
+    return { name, range: chartRange(trendDataSheetName, column, chartFirstRow, chartLastRow), values, color, labelFormat: chartLabelFormat(key, values) };
+  };
   const chart = (title: string, column: string, key: keyof ExcelDashboardMetric, color: string, fromCol: number, fromRow: number, toCol: number, toRow: number): ExcelDashboardChart => ({ title, kind: "line", categoryRange, categories, series: [chartSeries(title.replace(" Trend", ""), column, key, color)], fromCol, fromRow, toCol, toRow });
   const charts: ExcelDashboardChart[] = trendMetrics.length === 0 ? [] : [
     chart("4th Floor Estimated Cost Trend (THB)", "F", "floorCostThb", "10B981", 0, energyChartRow, 6, energyChartRow + 15),
@@ -625,14 +647,14 @@ function numCache(values: Array<number | null>): string {
 
 function chartSeriesXml(series: ExcelDashboardSeries, categoryRange: string, categories: string[], index: number, kind: "line" | "bar"): string {
   const marker = kind === "line" ? `<c:marker><c:symbol val="circle"/><c:size val="5"/><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="${series.color}"/></a:solidFill></a:ln></c:spPr></c:marker>` : "";
-  return `<c:ser><c:idx val="${index}"/><c:order val="${index}"/><c:tx><c:v>${xmlEscape(series.name)}</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val="${series.color}"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="${series.color}"/></a:solidFill></a:ln></c:spPr><c:invertIfNegative val="0"/>${marker}<c:cat><c:strRef><c:f>${xmlEscape(categoryRange)}</c:f>${strCache(categories)}</c:strRef></c:cat><c:val><c:numRef><c:f>${xmlEscape(series.range)}</c:f>${numCache(series.values)}</c:numRef></c:val></c:ser>`;
+  const position = index % 2 === 0 ? "t" : "b";
+  const dataLabels = kind === "line" ? chartDataLabels(true, series.labelFormat ?? excelCompactChartFormat(series.values), position) : "";
+  return `<c:ser><c:idx val="${index}"/><c:order val="${index}"/><c:tx><c:v>${xmlEscape(series.name)}</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val="${series.color}"/></a:solidFill><a:ln><a:solidFill><a:srgbClr val="${series.color}"/></a:solidFill></a:ln></c:spPr><c:invertIfNegative val="0"/>${marker}${dataLabels}<c:cat><c:strRef><c:f>${xmlEscape(categoryRange)}</c:f>${strCache(categories)}</c:strRef></c:cat><c:val><c:numRef><c:f>${xmlEscape(series.range)}</c:f>${numCache(series.values)}</c:numRef></c:val></c:ser>`;
 }
 
-function chartDataLabels(showValues: boolean): string {
-  // Excel defaults omitted label flags differently across versions. Set every
-  // label flag explicitly so line charts never render a noisy
-  // "Series, Month" label at every point.
-  return `<c:dLbls><c:showLegendKey val="0"/><c:showVal val="${showValues ? 1 : 0}"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/><c:showLeaderLines val="0"/></c:dLbls>`;
+function chartDataLabels(showValues: boolean, formatCode = "#,##0.00", position?: "t" | "b" | "outEnd"): string {
+  const positionXml = position ? `<c:dLblPos val="${position}"/>` : "";
+  return `<c:dLbls><c:numFmt formatCode="${xmlEscape(formatCode)}" sourceLinked="0"/>${positionXml}<c:showLegendKey val="0"/><c:showVal val="${showValues ? 1 : 0}"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/><c:showLeaderLines val="0"/></c:dLbls>`;
 }
 
 function chartLegend(): string {
@@ -643,9 +665,9 @@ function chartXml(chart: ExcelDashboardChart): string {
   const axisCategory = 100000000 + chart.fromCol;
   const axisValue = 200000000 + chart.fromCol;
   const plot = chart.kind === "bar"
-    ? `<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>${chart.series.map((series, index) => chartSeriesXml(series, chart.categoryRange, chart.categories, index, chart.kind)).join("")}${chartDataLabels(true)}<c:gapWidth val="80"/><c:axId val="${axisCategory}"/><c:axId val="${axisValue}"/></c:barChart>`
-    : `<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>${chart.series.map((series, index) => chartSeriesXml(series, chart.categoryRange, chart.categories, index, chart.kind)).join("")}${chartDataLabels(false)}<c:marker val="1"/><c:smooth val="0"/><c:axId val="${axisCategory}"/><c:axId val="${axisValue}"/></c:lineChart>`;
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/><c:chart><c:autoTitleDeleted val="0"/><c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr/></a:pPr><a:r><a:rPr lang="en-US" sz="1200"/><a:t>${xmlEscape(chart.title)}</a:t></a:r><a:endParaRPr lang="en-US"/></a:p></c:rich></c:tx><c:layout/></c:title><c:plotArea><c:layout/>${plot}<c:catAx><c:axId val="${axisCategory}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="${axisValue}"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="${axisValue}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:numFmt formatCode="#,##0.00" sourceLinked="0"/><c:crossAx val="${axisCategory}"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/></c:valAx></c:plotArea>${chartLegend()}<c:plotVisOnly val="0"/><c:dispBlanksAs val="gap"/><c:showDLblsOverMax val="0"/></c:chart><c:printSettings><c:headerFooter/><c:pageMargins b="0.75" l="0.7" r="0.7" t="0.75" header="0.3" footer="0.3"/><c:pageSetup/></c:printSettings></c:chartSpace>`;
+    ? `<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>${chart.series.map((series, index) => chartSeriesXml(series, chart.categoryRange, chart.categories, index, chart.kind)).join("")}${chartDataLabels(true, excelCompactChartFormat(chart.series.flatMap(series => series.values)), "outEnd")}<c:gapWidth val="80"/><c:axId val="${axisCategory}"/><c:axId val="${axisValue}"/></c:barChart>`
+    : `<c:lineChart><c:grouping val="standard"/><c:varyColors val="0"/>${chart.series.map((series, index) => chartSeriesXml(series, chart.categoryRange, chart.categories, index, chart.kind)).join("")}<c:marker val="1"/><c:smooth val="0"/><c:axId val="${axisCategory}"/><c:axId val="${axisValue}"/></c:lineChart>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/><c:chart><c:autoTitleDeleted val="0"/><c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr/></a:pPr><a:r><a:rPr lang="en-US" sz="1200"/><a:t>${xmlEscape(chart.title)}</a:t></a:r><a:endParaRPr lang="en-US"/></a:p></c:rich></c:tx><c:layout/></c:title><c:plotArea><c:layout/>${plot}<c:catAx><c:axId val="${axisCategory}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:crossAx val="${axisValue}"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="${axisValue}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:majorTickMark val="out"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:numFmt formatCode="${xmlEscape(excelCompactChartFormat(chart.series.flatMap(series => series.values), chart.series.every(series => (series.labelFormat ?? "").includes("%"))))}" sourceLinked="0"/><c:crossAx val="${axisCategory}"/><c:crosses val="autoZero"/><c:crossBetween val="midCat"/></c:valAx></c:plotArea>${chartLegend()}<c:plotVisOnly val="0"/><c:dispBlanksAs val="gap"/><c:showDLblsOverMax val="0"/></c:chart><c:printSettings><c:headerFooter/><c:pageMargins b="0.75" l="0.7" r="0.7" t="0.75" header="0.3" footer="0.3"/><c:pageSetup/></c:printSettings></c:chartSpace>`;
 }
 
 function drawingXml(charts: Array<{ relationshipId: string; chartId: number; anchor: ExcelDashboardChart }>): string {

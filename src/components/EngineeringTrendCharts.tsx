@@ -97,7 +97,7 @@ export default function EngineeringTrendCharts({ logs, lang, selectedMonth: sele
             <div className="min-w-0"><h3 className="truncate text-sm font-bold text-slate-100">{chart.title}</h3><p className="mt-1 text-[10px] text-slate-500">{chart.subtitle} · {rangeLabel}</p></div>
             <div className="shrink-0 text-right"><p className="font-mono text-sm font-black text-slate-100">{currentValue === null ? "—" : formatNumber2(currentValue)}</p><p className="mt-0.5 text-[9px] text-slate-500">{chart.unit}</p>{delta !== null && <p className={`mt-1 text-[9px] font-bold ${delta > 0 ? "text-amber-300" : delta < 0 ? "text-emerald-300" : "text-slate-400"}`}>{delta > 0 ? "▲" : delta < 0 ? "▼" : "•"} {formatNumber2(Math.abs(delta))}%</p>}</div>
           </div>
-          <div className="mt-3"><TrendLineChart labels={trendData.map(point => point.label)} unit={chart.unit} height={chartHeight} series={[{ name: chart.title, color: chart.color, values: trendData.map(point => point[chart.key]) }]} /></div>
+          <div className="mt-3"><TrendLineChart labels={trendData.map(point => point.label)} unit={chart.unit} height={chartHeight} compact={layout === "mobile"} series={[{ name: chart.title, color: chart.color, values: trendData.map(point => point[chart.key]) }]} /></div>
         </article>;
       })}
     </div>

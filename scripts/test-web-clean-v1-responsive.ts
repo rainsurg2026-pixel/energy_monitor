@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { formatCompactChartValue } from "../src/components/TrendLineChart";
 
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const navigation = readFileSync(new URL("../src/web-clean-v1/AppNavigationV2.tsx", import.meta.url), "utf8");
@@ -40,6 +41,17 @@ assert.match(navigation, /sheet === "more"/);
 assert.match(navigation, /pb-\[calc\(env\(safe-area-inset-bottom\)\+1rem\)\]/);
 assert.doesNotMatch(navigation, /overflow-x-auto/);
 assert.doesNotMatch(navigation, /min-w-\[5\.75rem\]/);
+
+// Shared chart labels remain visible but compact long values so mobile charts
+// do not repeat full 7-10 digit numbers inside the plot area.
+assert.equal(formatCompactChartValue(3_447_297.8), "3.45M");
+assert.equal(formatCompactChartValue(14_121), "14.12K");
+assert.equal(formatCompactChartValue(82.12), "82.12");
+const trendChart = readFileSync(new URL("../src/components/TrendLineChart.tsx", import.meta.url), "utf8");
+assert.match(trendChart, /function pointLabelY/);
+assert.match(trendChart, /nearby.length > 1/);
+assert.match(trendChart, /rank % 2 === 0/);
+assert.match(trendChart, /data-chart-point-label="true"/);
 
 // Executive V2 uses genuinely separate mobile/desktop renderers while
 // sharing the same data/calculation source.
