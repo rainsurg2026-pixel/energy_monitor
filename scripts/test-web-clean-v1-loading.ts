@@ -15,6 +15,7 @@ assert.deepEqual(recentMonthsThroughSelected([...months, "2026-01", "2026-02"], 
 const apiService = readFileSync(new URL("../server/services/apiService.ts", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const reportPreview = readFileSync(new URL("../src/web-clean-v1/WebReportPreview.tsx", import.meta.url), "utf8");
+const navigation = readFileSync(new URL("../src/web-clean-v1/AppNavigationV2.tsx", import.meta.url), "utf8");
 const historicalCharts = readFileSync(new URL("../src/components/HistoricalCharts.tsx", import.meta.url), "utf8");
 const historicalExplorer = readFileSync(new URL("../src/components/HistoricalExplorer.tsx", import.meta.url), "utf8");
 const rackUnitSummary = readFileSync(new URL("../src/components/rack/RackUnitCapacitySummary.tsx", import.meta.url), "utf8");
@@ -38,7 +39,7 @@ assert.match(reportPreview, /onRefresh\?: \(\) => Promise<void>/);
 assert.match(reportPreview, /Refreshing/);
 assert.ok(app.includes("selectedMonth={displayMonth}"), "non-Reports views use the global Selected Reporting Month, clamped to the Global Display Period");
 
-assert.match(app, /dataSourceLabel=\{lang === "th" \? "Production API" : "Source: Production API"\}/);
+assert.match(app, /dataSourceLabel=\{lang === "th" \? "แหล่งข้อมูล: Production API" : "Source: Production API"\}/);
 assert.ok(app.includes("const allFacilitiesCacheRef = useRef(new Map<string, Promise<ExportFacility[]>>());"), "All Facilities exports cache their request payload");
 assert.ok(app.includes("includeRack ? loadRack(site.id, selectedMonth) : Promise.resolve(null)"), "All Facilities loader uses the selected reporting month and skips rack requests when not needed");
 assert.ok(app.includes("includeImage ? loadReportImage(site.id, selectedMonth) : Promise.resolve(null)"), "All Facilities loader uses the selected reporting month and skips image requests when not needed");
@@ -46,7 +47,7 @@ assert.ok(app.includes("exportAllFacilitiesCsv(await loadAll({ includeRack: true
 assert.ok(app.includes("const facilities = (await loadAll({ includeRack: true, includeImage: true })).map") && app.includes("return exportAllFacilitiesExcel(facilities,"), "Excel export loads Rack Unit images, attaches audit metadata, and carries the cross-site model");
 assert.ok(app.includes("exportAllFacilitiesHtml(await loadAll({ includeRack: true, includeImage: true })"), "HTML export requests report assets with the cross-site model");
 assert.ok(app.includes("return exportAllFacilitiesPdf(facilities,") && app.includes("const audit = exportAudit()"), "PDF export requests report assets with audit metadata and the cross-site model");
-assert.ok(app.includes("Site Rack Capacity & Availability Comparison\", icon: Building2"), "site rack comparison has a distinct navigation icon");
+assert.ok(navigation.includes("Site Rack Capacity & Availability") && navigation.includes("icon={Building2}"), "site rack comparison has a distinct Navigation V2 icon");
 assert.ok(app.includes("displayPeriod={globalDisplayPeriodRange}"), "history views are bounded by the Global Display Period, not the Reports Quick Range");
 assert.match(historicalCharts, /selectedMonth: string/);
 assert.match(historicalCharts, /useState<TrendPeriod>\(6\)/);

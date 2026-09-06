@@ -65,8 +65,10 @@ const headingIndex = (value: string): number => body.indexOf(value);
 
 assert.equal(data.monthlyRows.length, 2);
 assert.equal(data.executiveTrendRows?.length, 2);
-assert.ok(headingIndex("Engineering View") < headingIndex("Executive View"));
-assert.ok(headingIndex("Executive View") < headingIndex("Rack Capacity and Utilization"));
+assert.ok(headingIndex("Executive View") < headingIndex("Engineering View"));
+assert.ok(headingIndex("Executive View") < headingIndex("Capacity Overview"));
+assert.ok(headingIndex("Capacity Overview") < headingIndex("Engineering View"));
+assert.ok(headingIndex("Engineering View") < headingIndex("Rack Capacity and Utilization"));
 assert.ok(headingIndex("Rack Capacity and Utilization") < headingIndex("Rack Unit Capacity and Utilization"));
 
 const trendTitles = [
@@ -86,7 +88,7 @@ for (const title of trendTitles) {
 }
 assert.equal((body.match(/latest 2-month window ending at Jul 2026/g) ?? []).length, 6);
 assert.ok(body.includes("SELECTED QUICK PERIOD"));
-assert.match(body, /selected month only/);
+assert.match(body, /persisted selected-month snapshots only/);
 assert.ok(body.includes("Rack Capacity Details"));
 assert.ok(body.includes("Rack Positions"));
 assert.ok(body.includes("Rack Unit Capacity and Utilization"));
@@ -98,8 +100,18 @@ assert.ok(!body.includes("<h2>Air Conditioning Energy Trend</h2>"));
 assert.ok(!body.includes("DC Power Panel Energy Trend"));
 
 const executivePage = body.slice(body.indexOf('data-report-section="executive"'), body.indexOf('data-report-section="executive"') + 5000);
-assert.ok(executivePage.includes("Building Energy · Selected Month"));
-assert.ok(executivePage.includes("Selected reporting month only"));
+for (const label of ["4th Floor Energy", "Estimated 4th Floor Cost", "4th Floor Energy Share", "Average Electricity Rate"]) assert.ok(executivePage.includes(label));
+assert.ok(body.includes("Capacity Overview"));
+assert.ok(body.includes("Rack Capacity Trend"));
+assert.ok(body.includes("Rack Unit Capacity Trend"));
+assert.ok(body.includes("Trend range follows the selected export reporting window."));
+assert.match(body, /Rack Unit Capacity Trend[\s\S]*font-size="7" font-weight="600"/, "PDF Rack Unit trend shows compact point labels.");
+assert.doesNotMatch(body, /Six-month trend uses/, "PDF no longer hard-codes a six-month Rack Unit trend.");
+const capacityPageStart = body.indexOf("Capacity Overview");
+const capacityPageEnd = body.indexOf("Engineering View");
+const capacityPage = body.slice(capacityPageStart, capacityPageEnd);
+assert.match(capacityPage, /font-size="7" font-weight="600"/, "PDF compact Capacity charts keep point value labels.");
+assert.match(capacityPage, />70(?:\.00)?<\/text>/, "PDF Rack Unit trend prints a compact point value.");
 assert.ok(!executivePage.includes("2,500.00"), "Executive summary must not sum the quick-range rows.");
 
 // One-month reports are the deliberate exception: report data stays on the
@@ -131,4 +143,4 @@ const exportSource = readFileSync("src/web-clean-v1/exports.ts", "utf8");
 assert.match(exportSource, /buildCurrentFacilityPdfHtml\(data, sections\)/);
 assert.match(exportSource, /exportHtml[\s\S]*buildReportHtml\(facilityReportData/);
 
-console.log("Current Facility PDF structure: 34 assertions passed");
+console.log("Current Facility PDF structure and chart labels passed");

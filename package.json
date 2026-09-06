@@ -1,7 +1,7 @@
 {
   "name": "monthly-power-energy-logger",
   "productName": "Data Center Energy & Facility Monitor",
-  "description": "Offline-first Windows desktop app for monthly data center power & energy logging, reporting and forecasting, backed by an Excel workbook.",
+  "description": "Offline-first Windows desktop app for monthly data center power & energy logging and reporting, backed by an Excel workbook.",
   "private": true,
   "version": "2.3.1",
   "type": "module",

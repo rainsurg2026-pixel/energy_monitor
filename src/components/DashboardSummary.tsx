@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { MonthlyLog, UpsRecord, AirRecord, DcRecord } from "../types";
 import { useReport } from "../ReportContext";
 import type { DashboardUpsMappingReport, RackCapacitySummary } from "../reports/reportTypes";
@@ -21,6 +21,34 @@ import {
   BarChart4,
   Activity
 } from "lucide-react";
+
+interface EngineeringNavSection {
+  id: string;
+  shortEn: string;
+  shortTh: string;
+}
+
+function EngineeringSectionNav({ sections, lang }: { sections: EngineeringNavSection[]; lang: "th" | "en" }) {
+  const [activeId, setActiveId] = useState(sections[0]?.id ?? "");
+  useEffect(() => {
+    if (sections.length === 0) return;
+    setActiveId(current => sections.some(section => section.id === current) ? current : sections[0].id);
+    const targets = sections.map(section => document.getElementById(section.id)).filter((element): element is HTMLElement => Boolean(element));
+    if (targets.length === 0 || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(entries => {
+      const visible = entries.filter(entry => entry.isIntersecting).sort((left, right) => left.boundingClientRect.top - right.boundingClientRect.top)[0];
+      if (visible?.target.id) setActiveId(visible.target.id);
+    }, { rootMargin: "-22% 0px -62% 0px", threshold: [0, 0.05, 0.2] });
+    targets.forEach(target => observer.observe(target));
+    return () => observer.disconnect();
+  }, [sections]);
+  if (sections.length === 0) return null;
+  return <nav aria-label={lang === "th" ? "นำทางส่วนวิศวกรรม" : "Engineering section navigation"} data-testid="engineering-sticky-nav" className="sticky top-[4.25rem] z-20 rounded-xl border border-slate-800 bg-slate-950/95 p-1.5 shadow-lg backdrop-blur md:top-[4.5rem]">
+    <div className={`grid gap-1 ${sections.length === 1 ? "grid-cols-1" : sections.length === 2 ? "grid-cols-2" : sections.length === 3 ? "grid-cols-3" : "grid-cols-4"}`}>
+      {sections.map(section => <button key={section.id} type="button" aria-current={activeId === section.id ? "location" : undefined} onClick={() => { setActiveId(section.id); document.getElementById(section.id)?.scrollIntoView({ behavior: "smooth", block: "start" }); }} className={`min-w-0 rounded-lg px-2 py-2 text-[10px] font-bold transition-colors sm:text-xs ${activeId === section.id ? "bg-indigo-600 text-white" : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"}`}><span className="block truncate">{lang === "th" ? section.shortTh : section.shortEn}</span></button>)}
+    </div>
+  </nav>;
+}
 
 interface DashboardSummaryProps {
   logs: MonthlyLog[];
@@ -350,6 +378,12 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
   const showOverallSection = selectedCategory === "All" || selectedCategory === "Energy Cost" || selectedCategory === "PUE" || selectedCategory === "Carbon";
 
   const comparisonReference = buildDashboardComparisonReference(logs, selectedMonth, compareMode);
+  const engineeringNavSections: EngineeringNavSection[] = [
+    ...(showUpsSection ? [{ id: "engineering-ups", shortEn: "UPS", shortTh: "UPS" }] : []),
+    ...(showAirSection ? [{ id: "engineering-air", shortEn: "Air Conditioning", shortTh: "ปรับอากาศ" }] : []),
+    ...(showDcSection ? [{ id: "engineering-dc", shortEn: "DC Power", shortTh: "DC Power" }] : []),
+    ...(showOverallSection ? [{ id: "engineering-overall", shortEn: "Overall", shortTh: "ภาพรวม" }] : []),
+  ];
 
   return (
     <div className="space-y-10">
@@ -461,12 +495,14 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
 
       {/* Rack Capacity now has its own dedicated tab (see RackCapacityEditor). */}
 
-      {/* DETAILED ACCORDION BLOCKS */}
+      <EngineeringSectionNav sections={engineeringNavSections} lang={lang} />
+
+      {/* Detailed Engineering blocks stay fully expanded; sticky navigation is additive. */}
       <div className="space-y-4">
         
         {/* SECTION 1: UPS LOAD STATUS */}
         {showUpsSection && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+        <div id="engineering-ups" className="scroll-mt-36 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
             type="button"
             className="w-full px-5 py-4 flex justify-between items-center bg-slate-900 hover:bg-slate-850 transition-colors text-left font-display font-bold text-slate-200 cursor-pointer text-sm"
@@ -641,7 +677,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
 
         {/* SECTION 2: AIR CONDITIONING */}
         {showAirSection && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+        <div id="engineering-air" className="scroll-mt-36 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
             type="button"
             className="w-full px-5 py-4 flex justify-between items-center bg-slate-900 hover:bg-slate-850 transition-colors text-left font-display font-bold text-slate-200 cursor-pointer text-sm"
@@ -705,7 +741,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
 
         {/* SECTION 3: DC POWER PANELS */}
         {showDcSection && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+        <div id="engineering-dc" className="scroll-mt-36 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
             type="button"
             className="w-full px-5 py-4 flex justify-between items-center bg-slate-900 hover:bg-slate-850 transition-colors text-left font-display font-bold text-slate-200 cursor-pointer text-sm"
@@ -766,7 +802,7 @@ export default function DashboardSummary({ logs, selectedMonth, lang, isGoogleCo
 
         {/* SECTION 4: OVERALL ENERGY & COST */}
         {showOverallSection && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+        <div id="engineering-overall" className="scroll-mt-36 bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
           <button 
             type="button"
             className="w-full px-5 py-4 flex justify-between items-center bg-slate-900 hover:bg-slate-850 transition-colors text-left font-display font-bold text-slate-200 cursor-pointer text-sm"

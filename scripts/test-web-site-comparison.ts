@@ -10,6 +10,7 @@ const rackComparison = readFileSync(new URL("../src/web-clean-v1/WebSiteRackCapa
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 const unitView = readFileSync(new URL("../src/web-clean-v1/WebRackCapacityViews.tsx", import.meta.url), "utf8");
 const apiService = readFileSync(new URL("../server/services/apiService.ts", import.meta.url), "utf8");
+const navigation = readFileSync(new URL("../src/web-clean-v1/AppNavigationV2.tsx", import.meta.url), "utf8");
 
 assert.match(comparison, /api<SiteComparisonExport>\("\/site-comparison"\)/);
 assert.match(comparison, /Site Energy & Cost Comparison/);
@@ -34,8 +35,8 @@ assert.match(comparison, /function chartLabel/);
 assert.doesNotMatch(comparison, /Rack Unit Utilization Trend|Rack Capacity and Utilization|Rack Unit Capacity and Utilization|\/racks\?siteId|\/rack-unit-capacity\?siteId/);
 
 assert.match(app, /const WebSiteRackCapacityComparison = lazy\(\(\) => import\("\.\/WebSiteRackCapacityComparison"\)\)/);
-assert.match(app, /id: "comparison"[^\n]*Site Energy & Cost Comparison/);
-assert.match(app, /id: "rack-comparison"[^\n]*Site Rack Capacity & Availability Comparison/);
+assert.match(navigation, /Site Energy & Cost Comparison/);
+assert.match(navigation, /Site Rack Capacity & Availability/);
 assert.ok(app.includes('view === "comparison" && <WebSiteComparison lang={lang} />'), "comparison view is not scoped by the Reports-local Quick Range");
 assert.ok(app.includes('view === "rack-comparison" && <WebSiteRackCapacityComparison month={displayMonth} />'), "rack comparison uses the global Selected Reporting Month");
 // The "Create Monthly Record" prompt is entry-only, so rack-comparison (and
@@ -97,7 +98,9 @@ assert.match(unitView, /formatFixedNumber\(row\.usedU, 0\)/);
 assert.match(unitView, /formatFixedNumber\(row\.availableU, 0\)/);
 assert.match(unitView, /formatFixedNumber\(item\.count, 0\)/, "Rack Unit Capacity Mix counts are whole numbers");
 assert.match(unitView, /function safePercent\(value: number \| null\): string \{ return formatFixedPercentage\(value, 1\); \}/);
-assert.ok(unitView.indexOf("Six-month Rack Unit Capacity Trend") < unitView.indexOf("rack-unit-capacity-trend-note"), "Trend note follows the trend section");
+assert.ok(unitView.indexOf("Rack Unit Capacity Trend") < unitView.indexOf("rack-unit-capacity-trend-note"), "Trend note follows the selectable trend section");
+assert.ok(unitView.includes('data-testid="rack-unit-trend-range"'));
+assert.ok(unitView.includes('option.replace("Last ", "").replace(" Months", "M")'));
 assert.ok(unitView.includes("Rack Unit Capacity Trend Note: Available U represents physical rack space only; actual deployment capacity depends on power, cooling, weight, and contiguous space availability."));
 assert.ok(unitView.includes("หมายเหตุแนวโน้มความจุ Rack Unit"));
 assert.ok(app.includes("rackUnitCapacity={historyRackUnitCapacity} lang={lang}"), "Rack Unit page receives the selected language");

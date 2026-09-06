@@ -5,7 +5,13 @@
  * into a single source. Every part of the Rack Capacity UI (gauges, KPI cards,
  * color-coding) must use this utility.
  */
-import { CAPACITY_HEALTH_LEVELS, CapacityHealthLevel, getCapacityHealth } from "./capacityForecast";
+export const CAPACITY_HEALTH_LEVELS = ["Healthy", "Warning", "Critical"] as const;
+export type CapacityHealthLevel = (typeof CAPACITY_HEALTH_LEVELS)[number];
+export function getCapacityHealth(value: number, warningThreshold: number, criticalThreshold: number): CapacityHealthLevel {
+  if (value >= criticalThreshold) return "Critical";
+  if (value >= warningThreshold) return "Warning";
+  return "Healthy";
+}
 
 /** Represents a capacity gauge's thresholds and current value. */
 export interface GaugeConfig {

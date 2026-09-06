@@ -1,26 +1,14 @@
-import React, { useMemo } from "react";
-import { useReport } from "../ReportContext";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Building2, Calendar, ChevronDown, Download, Gauge, RefreshCw, SlidersHorizontal, X } from "lucide-react";
+import { useReport, type BenchmarkReference } from "../ReportContext";
 import type { FacilityEntry } from "../desktop";
-import { 
-  Calendar, 
-  Layers, 
-  TrendingUp, 
-  Grid, 
-  SlidersHorizontal, 
-  RefreshCw, 
-  Download,
-  Check,
-  ChevronDown
-} from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
 
-type ReportViewId = "executive" | "dashboard" | "benchmark" | "forecast";
-const ALL_REPORT_VIEWS: readonly ReportViewId[] = ["executive", "dashboard", "benchmark", "forecast"];
+type ReportViewId = "executive" | "dashboard" | "benchmark";
+const ALL_REPORT_VIEWS: readonly ReportViewId[] = ["executive", "dashboard", "benchmark"];
 const REPORT_VIEW_TABS: ReadonlyArray<{ id: ReportViewId; labelEn: string; labelTh: string }> = [
-  { id: "executive", labelEn: "Executive View", labelTh: "1. แดชบอร์ดผู้บริหาร" },
-  { id: "dashboard", labelEn: "Engineering View", labelTh: "2. วิเคราะห์วิศวกรรม" },
-  { id: "benchmark", labelEn: "Benchmark View", labelTh: "3. เปรียบเทียบเกณฑ์" },
-  { id: "forecast", labelEn: "Forecast View", labelTh: "4. คาดการณ์เทรนด์" }
+  { id: "executive", labelEn: "Executive View", labelTh: "แดชบอร์ดผู้บริหาร" },
+  { id: "dashboard", labelEn: "Engineering View", labelTh: "วิเคราะห์วิศวกรรม" },
+  { id: "benchmark", labelEn: "Benchmark View", labelTh: "เปรียบเทียบเกณฑ์" },
 ];
 
 interface UniversalFilterBarProps {
@@ -28,318 +16,133 @@ interface UniversalFilterBarProps {
   exportFormats?: readonly ("pdf" | "excel" | "csv" | "png")[];
   lang: "th" | "en";
   facility?: FacilityEntry | null;
-  /** Web hosts can provide server-derived UPS group names when no desktop
-   * facility profile is available; labels remain data-backed, never guessed. */
+  siteName?: string;
+  selectedMonth?: string;
+  availableMonths?: readonly string[];
+  onReportingMonthChange?: (month: string) => void | Promise<void>;
+  onRefresh?: () => void | Promise<void>;
   upsGroupNames?: readonly string[];
-  /** Which of the 4 sub-view tabs to render, in order. Defaults to all 4
-   *  (Desktop's existing behavior, unchanged). A caller that only supports a
-   *  subset of views (e.g. a host with no Benchmark/Forecast implementation)
-   *  passes just the views it actually has - never a hidden/disabled tab for
-   *  a view that doesn't exist there. */
   reportViews?: readonly ReportViewId[];
+  /** Executive owns Refresh/Export in its compact metadata header. */
+  showUtilityActions?: boolean;
 }
 
-export default function UniversalFilterBar({ onExport, exportFormats = ["pdf", "excel", "csv", "png"], lang, facility = null, upsGroupNames = [], reportViews = ALL_REPORT_VIEWS }: UniversalFilterBarProps) {
-  const {
-    selectedYear,
-    selectedPeriod,
-    selectedTrend,
-    compareMode,
-    selectedCategory,
-    selectedUPSGroup,
-    selectedReportView,
-    availableYears,
-    
-    setSelectedYear,
-    setSelectedPeriod,
-    setSelectedTrend,
-    setCompareMode,
-    setSelectedCategory,
-    setSelectedUPSGroup,
-    setSelectedReportView,
-    
-    triggerRefresh
-  } = useReport();
+const selectClass = "w-full appearance-none rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 pr-8 text-xs font-semibold text-slate-100 outline-none transition-colors hover:border-slate-600 focus:border-indigo-500";
+const labelClass = "mb-1.5 block text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500";
 
-  const dict = {
-    th: {
-      year: "ปี",
-      period: "ระยะเวลา",
-      trend: "แนวโน้ม",
-      category: "หมวดหมู่",
-      upsGroup: "กลุ่ม UPS",
-      compare: "เปรียบเทียบ",
-      export: "ส่งออก",
-      refresh: "รีเฟรช",
-      
-      allYears: "ทุกปี",
-      currentYear: "ปีปัจจุบัน",
-      entireYear: "ตลอดทั้งปี",
-      ytd: "สะสมตั้งแต่ต้นปี (YTD)",
-      lastMonth: "เดือนล่าสุด",
-      
-      allCategories: "ทุกหมวดหมู่",
-      allUpsGroups: "ทุกกลุ่ม UPS",
-      
-      // Months
-      "01": "มกราคม", "02": "กุมภาพันธ์", "03": "มีนาคม", "04": "เมษายน",
-      "05": "พฤษภาคม", "06": "มิถุนายน", "07": "กรกฎาคม", "08": "สิงหาคม",
-      "09": "กันยายน", "10": "ตุลาคม", "11": "พฤศจิกายน", "12": "ธันวาคม",
-      
-      compareNone: "ไม่เปรียบเทียบ",
-      comparePrevMonth: "เดือนก่อนหน้า",
-      comparePrevYear: "ปีก่อนหน้า",
-      compareRollingAvg: "ค่าเฉลี่ยเคลื่อนที่",
-      compareBestWorst: "ดีที่สุด / แย่ที่สุด",
-      
-      last3: "ย้อนหลัง 3 เดือน",
-      last6: "ย้อนหลัง 6 เดือน",
-      last12: "ย้อนหลัง 12 เดือน",
-      rollingWindow: "หน้าต่างเลื่อน (Rolling)",
-    },
-    en: {
-      year: "Year",
-      period: "Period",
-      trend: "Trend",
-      category: "Category",
-      upsGroup: "UPS Group",
-      compare: "Compare",
-      export: "Export",
-      refresh: "Refresh",
-      
-      allYears: "All Years",
-      currentYear: "Current Year",
-      entireYear: "Entire Year",
-      ytd: "Year-To-Date (YTD)",
-      lastMonth: "Last Month",
-      
-      allCategories: "All Categories",
-      allUpsGroups: "All UPS Groups",
-      
-      // Months
-      "01": "January", "02": "February", "03": "March", "04": "April",
-      "05": "May", "06": "June", "07": "July", "08": "August",
-      "09": "September", "10": "October", "11": "November", "12": "December",
-      
-      compareNone: "No Comparison",
-      comparePrevMonth: "Previous Month",
-      comparePrevYear: "Previous Year",
-      compareRollingAvg: "Rolling Average",
-      compareBestWorst: "Best/Worst Month",
-      
-      last3: "Last 3 Months",
-      last6: "Last 6 Months",
-      last12: "Last 12 Months",
-      rollingWindow: "Rolling Window",
-    }
+function SelectShell({ children }: { children: ReactNode }) {
+  return <div className="relative">{children}<ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" /></div>;
+}
+
+export default function UniversalFilterBar({
+  onExport,
+  exportFormats = ["pdf", "excel", "csv", "png"],
+  lang,
+  facility = null,
+  siteName = "Facility",
+  selectedMonth = "",
+  availableMonths = [],
+  onReportingMonthChange,
+  onRefresh,
+  upsGroupNames = [],
+  reportViews = ALL_REPORT_VIEWS,
+  showUtilityActions = true,
+}: UniversalFilterBarProps) {
+  const {
+    selectedYear, selectedTrend, compareMode, selectedCategory, selectedUPSGroup, selectedReportView, availableYears,
+    selectedBenchmarkReference,
+    setSelectedYear, setSelectedPeriod, setSelectedTrend, setCompareMode, setSelectedCategory, setSelectedUPSGroup, setSelectedReportView,
+    setSelectedBenchmarkReference, triggerRefresh,
+  } = useReport();
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const th = lang === "th";
+
+  // PUE and Carbon are not Engineering categories in the current product.
+  // They must not survive as hidden Engineering filters from older releases.
+  useEffect(() => {
+    if (selectedReportView === "dashboard" && (selectedCategory === "PUE" || selectedCategory === "Carbon")) setSelectedCategory("All");
+  }, [selectedCategory, selectedReportView, setSelectedCategory]);
+
+  const copy = th ? {
+    site: "ไซต์", month: "เดือนรายงาน", view: "มุมมองรายงาน", filters: "ตัวกรอง", refresh: "รีเฟรช", export: "ส่งออก",
+    trend: "ช่วงแนวโน้ม", compare: "เปรียบเทียบ", category: "หมวดหมู่", ups: "กลุ่ม UPS", benchmark: "เกณฑ์อ้างอิง", period: "ปีอ้างอิง",
+    all: "ทั้งหมด", close: "ปิดตัวกรอง",
+  } : {
+    site: "Facility / Site", month: "Reporting Month", view: "Report View", filters: "Filters", refresh: "Refresh", export: "Export",
+    trend: "Trend Range", compare: "Compare With", category: "Category", ups: "UPS Group", benchmark: "Benchmark Reference", period: "Benchmark Period",
+    all: "All", close: "Close filters",
   };
 
-  const t = dict[lang];
-
-  // Static options for months
-  const months = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
-
-  // Config-driven only: group and individual-ID options come from the active
-  // facility's own dashboard config (facility.profile.dashboard). No facility
-  // id/name branching - a new facility needs a profile.json entry, not a
-  // component change.
   const upsGroupOptions = [
-    { value: "All", label: t.allUpsGroups },
-    ...(facility?.profile.dashboard.upsGroups ?? []).map(g => ({ value: g.name, label: g.name })),
-    ...(facility?.profile.dashboard.upsMapping ?? []).map(m => ({ value: m.upsId, label: m.upsId })),
-    ...upsGroupNames.map(name => ({ value: name, label: name }))
-  ].filter((item, index, options) => options.findIndex(candidate => candidate.value === item.value) === index);
+    { value: "All", label: th ? "ทุกกลุ่ม UPS" : "All UPS Groups" },
+    ...(facility?.profile.dashboard.upsGroups ?? []).map(group => ({ value: group.name, label: group.name })),
+    ...(facility?.profile.dashboard.upsMapping ?? []).map(mapping => ({ value: mapping.upsId, label: mapping.upsId })),
+    ...upsGroupNames.map(name => ({ value: name, label: name })),
+  ].filter((item, index, all) => all.findIndex(candidate => candidate.value === item.value) === index);
 
-  const categories = [
-    { value: "All", label: t.allCategories },
+  const engineeringCategories = [
+    { value: "All", label: th ? "ทุกหมวดหมู่" : "All Categories" },
     { value: "UPS", label: "UPS" },
-    { value: "Air Conditioning", label: lang === "th" ? "ระบบปรับอากาศ" : "Air Conditioning" },
+    { value: "Air Conditioning", label: th ? "ระบบปรับอากาศ" : "Air Conditioning" },
     { value: "DC", label: "DC Power" },
-    { value: "Energy Cost", label: lang === "th" ? "ค่าไฟฟ้า" : "Energy Cost" },
-    { value: "PUE", label: "PUE" },
-    { value: "Carbon", label: lang === "th" ? "คาร์บอน (Carbon)" : "Carbon Footprint" },
-  ];
+    { value: "Energy Cost", label: th ? "พลังงานและค่าไฟ" : "Energy & Cost" },
+  ] as const;
 
-  return (
-    <section className="bg-slate-900/90 border border-slate-800 p-3 sm:p-4 rounded-2xl shadow-xl flex flex-col gap-3 sm:gap-4 animate-fadeIn">
-      {/* Upper Filter Bar with Dropdowns */}
-      <div className="grid grid-cols-1 min-[430px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3">
-        
-        {/* Year Select */}
-        <div className="space-y-1">
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <Calendar className="w-3 h-3 text-indigo-400" />
-            {t.year}
-          </label>
-          <div className="relative">
-            <select
-              value={selectedYear}
-              onChange={(e) => setSelectedYear(e.target.value)}
-              className="w-full bg-slate-950 text-slate-100 font-semibold text-xs border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 cursor-pointer appearance-none transition-all"
-            >
-              {[...new Set([selectedYear, ...availableYears])]
-                .sort((left, right) => right.localeCompare(left))
-                .map(year => <option key={year} value={year}>{year}</option>)}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-        </div>
+  const monthOptions = useMemo(() => {
+    const months = [...new Set(availableMonths)].sort().reverse();
+    return selectedMonth && !months.includes(selectedMonth) ? [selectedMonth, ...months] : months;
+  }, [availableMonths, selectedMonth]);
 
-        {/* Period Select */}
-        <div className="space-y-1">
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <Grid className="w-3 h-3 text-teal-400" />
-            {t.period}
-          </label>
-          <div className="relative">
-            <select
-              value={selectedPeriod}
-              onChange={(e) => setSelectedPeriod(e.target.value)}
-              className="w-full bg-slate-950 text-slate-100 font-semibold text-xs border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 cursor-pointer appearance-none transition-all"
-            >
-              <option value="Entire Year">{t.entireYear}</option>
-              <option value="YTD">{t.ytd}</option>
-              <option value="Last Month">{t.lastMonth}</option>
-              {months.map(m => (
-                <option key={m} value={m}>{months.indexOf(m) + 1}. {t[m as keyof typeof t]}</option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-        </div>
+  const changeReportingMonth = (next: string) => {
+    const [year, month] = next.split("-");
+    if (/^\d{4}$/.test(year) && /^\d{2}$/.test(month)) {
+      setSelectedYear(year);
+      setSelectedPeriod(month);
+    }
+    void onReportingMonthChange?.(next);
+  };
+  const refresh = () => { triggerRefresh(); void onRefresh?.(); };
 
-        {/* Trend Filter */}
-        <div className="space-y-1">
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <TrendingUp className="w-3 h-3 text-amber-400" />
-            {t.trend}
-          </label>
-          <div className="relative">
-            <select
-              value={selectedTrend}
-              onChange={(e) => setSelectedTrend(e.target.value)}
-              className="w-full bg-slate-950 text-slate-100 font-semibold text-xs border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 cursor-pointer appearance-none transition-all"
-            >
-              <option value="Last 3 Months">{t.last3}</option>
-              <option value="Last 6 Months">{t.last6}</option>
-              <option value="Last 12 Months">{t.last12}</option>
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-        </div>
+  const activeAdvancedCount = selectedReportView === "executive"
+    ? Number(selectedTrend !== "Last 3 Months") + Number(compareMode !== "none")
+    : selectedReportView === "dashboard"
+      ? Number(selectedCategory !== "All") + Number(selectedUPSGroup !== "All") + Number(compareMode !== "none")
+      : Number(selectedBenchmarkReference !== "all");
 
-        {/* Category Select */}
-        <div className="space-y-1">
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <Layers className="w-3 h-3 text-purple-400" />
-            {t.category}
-          </label>
-          <div className="relative">
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value as any)}
-              className="w-full bg-slate-950 text-slate-100 font-semibold text-xs border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 cursor-pointer appearance-none transition-all"
-            >
-              {categories.map(c => (
-                <option key={c.value} value={c.value}>{c.label}</option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-        </div>
+  const advancedFilters = <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid={`advanced-filters-${selectedReportView}`}>
+    {selectedReportView === "executive" && <>
+      <label><span className={labelClass}>{copy.trend}</span><SelectShell><select value={selectedTrend} onChange={event => setSelectedTrend(event.target.value)} className={selectClass}><option>Last 3 Months</option><option>Last 6 Months</option><option>Last 12 Months</option><option>All</option></select></SelectShell></label>
+      <label><span className={labelClass}>{copy.compare}</span><SelectShell><select value={compareMode} onChange={event => setCompareMode(event.target.value as typeof compareMode)} className={selectClass}><option value="none">{th ? "ไม่เปรียบเทียบ" : "No Comparison"}</option><option value="prev_month">{th ? "เดือนก่อนหน้า" : "Previous Month"}</option><option value="prev_year">{th ? "ปีก่อนหน้า" : "Previous Year"}</option><option value="rolling_avg">{th ? "ค่าเฉลี่ย 3 เดือน" : "3-Month Rolling Average"}</option><option value="best_worst">{th ? "ดีที่สุด / แย่ที่สุด" : "Best / Worst Month"}</option></select></SelectShell></label>
+    </>}
+    {selectedReportView === "dashboard" && <>
+      <label><span className={labelClass}>{copy.category}</span><SelectShell><select value={selectedCategory} onChange={event => setSelectedCategory(event.target.value as typeof selectedCategory)} className={selectClass}>{engineeringCategories.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></SelectShell></label>
+      <label><span className={labelClass}>{copy.ups}</span><SelectShell><select value={selectedUPSGroup} onChange={event => setSelectedUPSGroup(event.target.value)} className={selectClass}>{upsGroupOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></SelectShell></label>
+      <label><span className={labelClass}>{copy.compare}</span><SelectShell><select value={compareMode} onChange={event => setCompareMode(event.target.value as typeof compareMode)} className={selectClass}><option value="none">{th ? "ไม่เปรียบเทียบ" : "No Comparison"}</option><option value="prev_month">{th ? "เดือนก่อนหน้า" : "Previous Month"}</option><option value="prev_year">{th ? "ปีก่อนหน้า" : "Previous Year"}</option><option value="rolling_avg">{th ? "ค่าเฉลี่ย 3 เดือน" : "3-Month Rolling Average"}</option><option value="best_worst">{th ? "ดีที่สุด / แย่ที่สุด" : "Best / Worst Month"}</option></select></SelectShell></label>
+    </>}
+    {selectedReportView === "benchmark" && <>
+      <label><span className={labelClass}>{copy.benchmark}</span><SelectShell><select value={selectedBenchmarkReference} onChange={event => setSelectedBenchmarkReference(event.target.value as BenchmarkReference)} className={selectClass}><option value="all">{th ? "ทุกเกณฑ์อ้างอิง" : "All References"}</option><option value="best">{th ? "เดือนที่ดีที่สุด" : "Best Month"}</option><option value="rolling">{th ? "ค่าเฉลี่ย 3 เดือน" : "3-Month Rolling Average"}</option><option value="worst">{th ? "เดือนที่แย่ที่สุด" : "Worst Month"}</option></select></SelectShell></label>
+      <label><span className={labelClass}>{copy.period}</span><SelectShell><select value={selectedYear} onChange={event => setSelectedYear(event.target.value)} className={selectClass}>{[...new Set([selectedYear, ...availableYears])].sort((a,b)=>b.localeCompare(a)).map(year => <option key={year}>{year}</option>)}</select></SelectShell></label>
+    </>}
+  </div>;
 
-        {/* UPS Group Filter */}
-        <div className="space-y-1">
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <SlidersHorizontal className="w-3 h-3 text-sky-400" />
-            {t.upsGroup}
-          </label>
-          <div className="relative">
-            <select
-              value={selectedUPSGroup}
-              onChange={(e) => setSelectedUPSGroup(e.target.value)}
-              className="w-full bg-slate-950 text-slate-100 font-semibold text-xs border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 cursor-pointer appearance-none transition-all"
-            >
-              {upsGroupOptions.map(o => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-        </div>
-
-        {/* Compare Mode */}
-        <div className="space-y-1">
-          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-            <SlidersHorizontal className="w-3 h-3 text-rose-400" />
-            {t.compare}
-          </label>
-          <div className="relative">
-            <select
-              value={compareMode}
-              onChange={(e) => setCompareMode(e.target.value as any)}
-              className="w-full bg-slate-950 text-slate-100 font-semibold text-xs border border-slate-800 hover:border-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 cursor-pointer appearance-none transition-all"
-            >
-              <option value="none">{t.compareNone}</option>
-              <option value="prev_month">{t.comparePrevMonth}</option>
-              <option value="prev_year">{t.comparePrevYear}</option>
-              <option value="rolling_avg">{t.compareRollingAvg}</option>
-              <option value="best_worst">{t.compareBestWorst}</option>
-            </select>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-          </div>
-        </div>
-
+  return <section className="relative rounded-2xl border border-slate-800 bg-slate-900/90 p-3 shadow-lg" data-testid="filter-bar-v2">
+    <div className="grid gap-2.5 md:grid-cols-[minmax(150px,1fr)_minmax(150px,1fr)_minmax(170px,1fr)_auto] md:items-end">
+      <div className="min-w-0">
+        <span className={labelClass}>{copy.site}</span>
+        <div className="flex min-h-[38px] items-center gap-2 rounded-xl border border-slate-800 bg-slate-950 px-3 text-xs font-semibold text-slate-200"><Building2 className="h-4 w-4 shrink-0 text-indigo-400"/><span className="truncate">{siteName}</span></div>
       </div>
-
-      {/* Action buttons (Export, Refresh) */}
-      <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center sm:justify-between border-t border-slate-800/80 pt-3 gap-2">
-        {/* Sub-view Segmented Tabs - only the views this host actually implements */}
-        <div className="grid w-full grid-cols-2 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-850 sm:flex sm:w-auto">
-          {REPORT_VIEW_TABS.filter(tab => reportViews.includes(tab.id)).map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setSelectedReportView(tab.id)}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-                selectedReportView === tab.id
-                  ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              {lang === "th" ? tab.labelTh : tab.labelEn}
-            </button>
-          ))}
-        </div>
-
-        {/* Refresh & Exports */}
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          {/* Refresh Button */}
-          <button
-            onClick={triggerRefresh}
-            className="p-2 bg-slate-950 hover:bg-slate-800 text-slate-400 hover:text-slate-200 rounded-xl border border-slate-800 hover:border-slate-700 flex items-center gap-1.5 text-xs font-semibold transition-all cursor-pointer"
-            title="Refresh Analysis State"
-          >
-            <RefreshCw className="w-3.5 h-3.5 text-indigo-400" />
-            <span>{t.refresh}</span>
-          </button>
-
-          {/* Export Dropdown Options */}
-          {onExport && (
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 sm:flex-none">
-              <span className="text-[10px] text-slate-400 font-bold px-2 uppercase tracking-wide">{t.export}:</span>
-              {exportFormats.map((fmt) => (
-                <button
-                  key={fmt}
-                  onClick={() => onExport(fmt as any)}
-                  className="px-2.5 py-1 bg-slate-900 hover:bg-indigo-600/20 hover:text-indigo-300 text-slate-300 hover:border-indigo-500/30 text-[10px] font-bold rounded-lg uppercase tracking-wider transition-all border border-transparent cursor-pointer"
-                >
-                  {fmt}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      <label className="min-w-0"><span className={labelClass}>{copy.month}</span><SelectShell><select aria-label={copy.month} value={selectedMonth} onChange={event => changeReportingMonth(event.target.value)} className={selectClass}>{monthOptions.length ? monthOptions.map(value => <option key={value} value={value}>{value}</option>) : <option value={selectedMonth}>{selectedMonth || "—"}</option>}</select></SelectShell></label>
+      <label className="min-w-0"><span className={labelClass}>{copy.view}</span><SelectShell><select value={selectedReportView} onChange={event => setSelectedReportView(event.target.value as ReportViewId)} className={selectClass}>{REPORT_VIEW_TABS.filter(tab => reportViews.includes(tab.id)).map(tab => <option key={tab.id} value={tab.id}>{th ? tab.labelTh : tab.labelEn}</option>)}</select></SelectShell></label>
+      <div className="flex flex-wrap items-center gap-2 md:justify-end">
+        <button type="button" onClick={() => setFiltersOpen(true)} aria-expanded={filtersOpen} className="inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 text-xs font-bold text-slate-300 hover:border-indigo-500/50 hover:text-indigo-300"><SlidersHorizontal className="h-4 w-4"/>{copy.filters}{activeAdvancedCount > 0 && <span className="rounded-full bg-indigo-500/20 px-1.5 py-0.5 text-[9px] text-indigo-300">{activeAdvancedCount}</span>}</button>
+        {showUtilityActions && <button type="button" onClick={refresh} className="inline-flex min-h-[38px] items-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-3 text-xs font-bold text-slate-300 hover:border-indigo-500/50 hover:text-indigo-300"><RefreshCw className="h-4 w-4"/>{copy.refresh}</button>}
+        {showUtilityActions && onExport && <div className="flex min-h-[38px] items-center rounded-xl border border-slate-700 bg-slate-950 p-1"><span className="hidden px-2 text-[9px] font-bold uppercase text-slate-500 xl:inline">{copy.export}</span>{exportFormats.map(format => <button key={format} type="button" onClick={() => onExport(format)} className="rounded-lg px-2 py-1.5 text-[10px] font-bold uppercase text-slate-300 hover:bg-indigo-500/15 hover:text-indigo-300">{format}</button>)}</div>}
       </div>
-    </section>
-  );
+    </div>
+
+    {filtersOpen && <>
+      <div className="mt-3 hidden rounded-xl border border-slate-800 bg-slate-950/70 p-4 md:block"><div className="mb-3 flex items-center justify-between"><div className="flex items-center gap-2 text-xs font-bold text-slate-300"><Gauge className="h-4 w-4 text-indigo-400"/>{copy.filters}</div><button type="button" onClick={() => setFiltersOpen(false)} aria-label={copy.close} className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 hover:bg-slate-800 hover:text-slate-200"><X className="h-4 w-4"/></button></div>{advancedFilters}</div>
+      <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label={copy.filters}><button type="button" aria-label={copy.close} onClick={() => setFiltersOpen(false)} className="absolute inset-0 bg-slate-950/75 backdrop-blur-sm"/><section className="absolute bottom-0 left-0 right-0 max-h-[75vh] overflow-y-auto rounded-t-3xl border-t border-slate-700 bg-slate-900 px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-4 shadow-2xl"><div className="mb-4 flex items-center justify-between"><h2 className="font-display text-base font-bold text-slate-100">{copy.filters}</h2><button type="button" onClick={() => setFiltersOpen(false)} aria-label={copy.close} className="grid h-9 w-9 place-items-center rounded-xl border border-slate-700 text-slate-300"><X className="h-4 w-4"/></button></div>{advancedFilters}</section></div>
+    </>}
+  </section>;
 }

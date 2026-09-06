@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createEmptyLog } from "../src/utils";
 import { mergeEntryDraft } from "../src/web-clean-v1/WebEntryWorkspace";
 
@@ -19,5 +20,14 @@ assert.equal(merged.energyCost.buildingEnergyKwh, 1200);
 assert.deepEqual(merged.energyCalculation?.airFields, ["eb41a"]);
 assert.equal(merged.srinakarinInputs, base.srinakarinInputs);
 assert.notEqual(merged, base);
+
+const dcTable = readFileSync(new URL("../src/components/DcTable.tsx", import.meta.url), "utf8");
+const energyTable = readFileSync(new URL("../src/components/EnergyCostTable.tsx", import.meta.url), "utf8");
+assert.match(dcTable, /min-w-\[760px\]/);
+assert.match(dcTable, /data-testid="dc-calculated-value"/);
+assert.match(dcTable, /whitespace-nowrap/);
+assert.match(energyTable, /min-w-\[700px\]/);
+assert.match(energyTable, /data-testid="energy-average-rate-value"/);
+assert.match(energyTable, /THB\/kWh/);
 
 console.log("web entry workspace: Save All merges every live section while preserving untouched log data");

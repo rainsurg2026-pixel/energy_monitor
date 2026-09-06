@@ -29,7 +29,7 @@ export const Timeline: React.FC<{
     const latest = availableMonths.length > 0 ? availableMonths[availableMonths.length - 1] : reportingMonth;
     const start = shiftMonth([earliest, reportingMonth].sort()[0], -PAST_PADDING_MONTHS);
     const end = shiftMonth([latest, reportingMonth].sort()[1], FUTURE_PADDING_MONTHS);
-    return generateMonthRange(start, end, 0);
+    return generateMonthRange(start, end);
   }, [availableMonths, reportingMonth]);
 
   return (

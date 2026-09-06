@@ -8,6 +8,7 @@ import {
   type ReportingPeriodSelection
 } from "../src/web-clean-v1/reportPeriod";
 import { clampMonthToDisplayPeriod } from "../src/web-clean-v1/facilityContext";
+import { availableMonthsForTrendRange } from "../src/utils/trendRange";
 
 const app = readFileSync(new URL("../src/web-clean-v1/CleanWebApp.tsx", import.meta.url), "utf8");
 
@@ -94,9 +95,9 @@ assert.match(app, /target === "racks" \|\| target === "rack-units" \? "rack" : t
 // ---------------------------------------------------------------------------
 const trend = readFileSync(new URL("../src/components/EngineeringTrendCharts.tsx", import.meta.url), "utf8");
 assert.doesNotMatch(trend, /processed\.filter\(row => row\.month\.startsWith\(`\$\{selectedYear\}-`\)\)/);
-assert.match(trend, /const anchorMonth = selectedDashboardMonth\(processed, selectedYear, selectedPeriod, processed\[processed\.length - 1\]!\.month\)/);
-assert.match(trend, /recentMonthsThroughSelected/);
-assert.match(trend, /return processed\.filter\(row => windowMonths\.has\(row\.month\)\)/);
+assert.match(trend, /const anchorMonth = selectedMonthProp \?\? \(processed\.length \? selectedDashboardMonth\(processed, selectedYear, selectedPeriod, processed\.at\(-1\)!\.month\) : ""\)/);
+assert.match(trend, /availableMonthsForTrendRange/);
+assert.match(trend, /return processed\.filter\(row => months\.has\(row\.month\)\)/);
 // missing metric stays null (a per-series gap), the month row is never dropped:
 assert.match(trend, /values: trendData\.map\(point => point\[chart\.key\]\)/);
 
@@ -111,6 +112,10 @@ const last6 = reportingPeriodForPreset("2026-07", 6, months);
 assert.deepEqual([last6.rangeStart, last6.rangeEnd], ["2026-02", "2026-07"]);
 const last12 = reportingPeriodForPreset("2026-07", 12, months);
 assert.deepEqual([last12.rangeStart, last12.rangeEnd], ["2025-08", "2026-07"]);
+assert.deepEqual(availableMonthsForTrendRange(months, "2026-07", "Last 3 Months"), months.slice(-3));
+assert.deepEqual(availableMonthsForTrendRange(months, "2026-07", "Last 6 Months"), months.slice(-6));
+assert.deepEqual(availableMonthsForTrendRange(months, "2026-07", "Last 12 Months"), months);
+assert.deepEqual(availableMonthsForTrendRange(months, "2026-07", "All"), months);
 
 // Global Display Period Jan..Jul 2026: "Last 12" ending Jul 2026 resolves to
 // Jan..Jul 2026 (only the months actually inside the window), NOT Aug 2025.

@@ -27,6 +27,8 @@ export function resolveReportYear(requested: string, availableYears: readonly st
   return availableYears[0] ?? fallbackYear;
 }
 
+export type BenchmarkReference = "all" | "best" | "rolling" | "worst";
+
 export interface ReportContextType {
   // Filters
   selectedYear: string; // e.g. "2026", "All", "Current Year"
@@ -38,7 +40,8 @@ export interface ReportContextType {
   selectedCategory: "All" | "UPS" | "Air Conditioning" | "DC" | "Energy Cost" | "PUE" | "Carbon";
   selectedSite: string; // default "Site A" (Future Ready)
   selectedUPSGroup: "All" | "Group 11" | "Group 13" | "Group 15" | string;
-  selectedReportView: "executive" | "dashboard" | "benchmark" | "forecast" | "history";
+  selectedReportView: "executive" | "dashboard" | "benchmark" | "history";
+  selectedBenchmarkReference: BenchmarkReference;
   
   // Setters
   setSelectedYear: (val: string) => void;
@@ -48,7 +51,8 @@ export interface ReportContextType {
   setSelectedCategory: (val: "All" | "UPS" | "Air Conditioning" | "DC" | "Energy Cost" | "PUE" | "Carbon") => void;
   setSelectedSite: (val: string) => void;
   setSelectedUPSGroup: (val: string) => void;
-  setSelectedReportView: (val: "executive" | "dashboard" | "benchmark" | "forecast" | "history") => void;
+  setSelectedReportView: (val: "executive" | "dashboard" | "benchmark" | "history") => void;
+  setSelectedBenchmarkReference: (val: BenchmarkReference) => void;
 
   // Dynamic Options from logs
   availableYears: string[];
@@ -115,9 +119,11 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
   const [selectedUPSGroup, setSelectedUPSGroupState] = useState<string>(() => {
     return localStorage.getItem("report_pref_ups_group") || "All";
   });
-  const [selectedReportView, setSelectedReportViewState] = useState<"executive" | "dashboard" | "benchmark" | "forecast" | "history">(() => {
-    return (localStorage.getItem("report_pref_report_view") as any) || "executive";
+  const [selectedReportView, setSelectedReportViewState] = useState<"executive" | "dashboard" | "benchmark" | "history">(() => {
+    const stored = localStorage.getItem("report_pref_report_view");
+    return stored === "dashboard" || stored === "benchmark" || stored === "history" ? stored : "executive";
   });
+  const [selectedBenchmarkReference, setSelectedBenchmarkReferenceState] = useState<BenchmarkReference>(() => (localStorage.getItem("report_pref_benchmark_reference") as BenchmarkReference) || "all");
   const [darkMode, setDarkModeState] = useState<boolean>(() => {
     return localStorage.getItem("report_pref_dark_mode") === "true";
   });
@@ -157,10 +163,11 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     setSelectedUPSGroupState(val);
     localStorage.setItem("report_pref_ups_group", val);
   };
-  const setSelectedReportView = (val: "executive" | "dashboard" | "benchmark" | "forecast" | "history") => {
+  const setSelectedReportView = (val: "executive" | "dashboard" | "benchmark" | "history") => {
     setSelectedReportViewState(val);
     localStorage.setItem("report_pref_report_view", val);
   };
+  const setSelectedBenchmarkReference = (val: BenchmarkReference) => { setSelectedBenchmarkReferenceState(val); localStorage.setItem("report_pref_benchmark_reference", val); };
   const setDarkMode = (val: boolean) => {
     setDarkModeState(val);
     localStorage.setItem("report_pref_dark_mode", String(val));
@@ -196,6 +203,7 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     selectedSite,
     selectedUPSGroup,
     selectedReportView,
+    selectedBenchmarkReference,
     
     setSelectedYear,
     setSelectedPeriod,
@@ -205,6 +213,7 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     setSelectedSite,
     setSelectedUPSGroup,
     setSelectedReportView,
+    setSelectedBenchmarkReference,
     
     availableYears,
     darkMode,
@@ -224,6 +233,7 @@ export const ReportProvider: React.FC<ReportProviderProps> = ({ children, synced
     selectedSite,
     selectedUPSGroup,
     selectedReportView,
+    selectedBenchmarkReference,
     availableYears,
     onYearChange,
     darkMode,

@@ -128,7 +128,7 @@ check("Serialized Excel V2 retains category tab colors", serializedV2Workbook.ge
 const interactiveZip = await JSZip.loadAsync(interactiveXlsx);
 const interactiveParts = Object.keys(interactiveZip.files);
 const chartParts = interactiveParts.filter(name => /^xl\/charts\/chart\d+\.xml$/.test(name));
-check("Interactive Excel export contains seven native editable charts including Rack Unit Capacity Trend", chartParts.length === 7);
+check("Interactive Excel export contains eight native editable Executive V2 charts", chartParts.length === 8);
 const dashboardXmlParts: string[] = [];
 for (const name of interactiveParts.filter(item => /^xl\/worksheets\/sheet\d+\.xml$/.test(item))) {
   const file = interactiveZip.file(name);
@@ -140,12 +140,24 @@ check("Interactive Dashboard cards use the selected month", dashboardSheetXml.in
 const chartFile = chartParts.length > 0 ? interactiveZip.file(chartParts[0]) : null;
 const chartXml = chartFile ? await chartFile.async("string") : "";
 check("Interactive Dashboard chart references the exported native Trend_Data range", chartXml.includes("98_Trend_Data") && chartXml.includes("4th Floor Estimated Cost Trend (THB)"));
-check("Interactive line charts suppress per-point series and category labels", chartXml.includes("showCatName val=\"0\"") && chartXml.includes("showSerName val=\"0\"") && chartXml.includes("showVal val=\"0\""));
+check("Interactive line charts show value labels without noisy series/category names", chartXml.includes("showCatName val=\"0\"") && chartXml.includes("showSerName val=\"0\"") && chartXml.includes("showVal val=\"1\"") && chartXml.includes("dLblPos val=\"t\""));
 check("Interactive charts provide a bottom legend", chartXml.includes("legendPos val=\"b\"") && chartXml.includes("overlay val=\"0\""));
 check("Interactive Excel export contains a worksheet drawing relationship", interactiveParts.some(name => /xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(name)) && interactiveParts.some(name => /xl\/drawings\/drawing\d+\.xml$/.test(name)));
   const chartTitles: string[] = [];
-  for (const name of chartParts) { const file = interactiveZip.file(name); if (file) chartTitles.push((await file.async("string")).match(/<a:t>([^<]+)<\/a:t>/)?.[1] ?? ""); }
-  check("Interactive Excel export charts mirror the PDF trend set in order", JSON.stringify(chartTitles) === JSON.stringify(["4th Floor Estimated Cost Trend (THB)", "4th Floor Total Energy Trend (kWh)", "4th Floor Average Electricity Rate Trend (THB/kWh)", "4th Floor UPS Energy Trend (kWh)", "4th Floor Air Conditioning Energy Trend (kWh)", "4th Floor DC Power Energy Trend (kWh)", "Rack Unit Capacity Trend"]));
+  const chartXmlParts: string[] = [];
+  for (const name of chartParts) {
+    const file = interactiveZip.file(name);
+    if (file) {
+      const xml = await file.async("string");
+      chartXmlParts.push(xml);
+      chartTitles.push(xml.match(/<a:t>([^<]+)<\/a:t>/)?.[1] ?? "");
+    }
+  }
+  const allChartXml = chartXmlParts.join("\n");
+  check("Interactive Excel line-series labels alternate above/below to reduce collisions", allChartXml.includes('dLblPos val="t"') && allChartXml.includes('dLblPos val="b"'));
+  check("Interactive Excel line charts leave category-edge breathing room", allChartXml.includes('crossBetween val="between"'));
+  check("Interactive Excel charts use compact K/M label formats when the plotted scale is long", allChartXml.includes('&quot;K&quot;') || allChartXml.includes('&quot;M&quot;') || allChartXml.includes('&quot;B&quot;'));
+  check("Interactive Excel export charts mirror the PDF trend set in order", JSON.stringify(chartTitles) === JSON.stringify(["4th Floor Estimated Cost Trend (THB)", "4th Floor Total Energy Trend (kWh)", "4th Floor Average Electricity Rate Trend (THB/kWh)", "4th Floor UPS Energy Trend (kWh)", "4th Floor Air Conditioning Energy Trend (kWh)", "4th Floor DC Power Energy Trend (kWh)", "Rack Capacity Trend", "Rack Unit Capacity Trend"]));
   check("Interactive Excel export embeds rack image media", interactiveParts.some(name => /^xl\/media\/image\d+\.(png|jpe?g)$/.test(name)));
   check("Interactive Excel export contains no macro project", !interactiveParts.includes("xl/vbaProject.bin"));
 const auditUser = "Patamin Thevase";
@@ -156,10 +168,9 @@ const selectionDashboard = selectionWorkbook.getWorksheet("01_Dashboard")!;
 check("Current Facility export keeps the UI-selected month", selectionDashboard.getCell("B3").value === "2026-05");
 check("Current Facility Excel first sheet shows the authenticated display name", selectionDashboard.getCell("H3").value === auditUser);
 check("Current Facility Excel first sheet shows the export timestamp", selectionDashboard.getCell("K3").value === auditTimestampDisplay);
-check("Current Facility Air GWh formulas use the shared Dashboard-FAC Air values used by PDF", (() => { let found = false; selectionDashboard.eachRow(row => row.eachCell(cell => { const formula = String((cell.value as any)?.formula ?? ""); if (formula.includes("31 Dashboard-FAC Air") && formula.includes("SUMIFS")) found = true; })); return found; })());
-check("Current Facility dashboard includes the same Engineering and Executive section sequence as PDF", selectionDashboard.getSheetValues().flat().map(String).includes("Engineering View") && selectionDashboard.getSheetValues().flat().map(String).includes("Executive View"));
-check("Current Facility multi-row dashboard lookups avoid AGGREGATE array formulas that blank after Excel FullCalcOnLoad", (() => { let usesMatchOffset = false; let usesAggregate = false; selectionDashboard.eachRow(row => row.eachCell(cell => { const formula = String((cell.value as any)?.formula ?? ""); if (formula.includes("MATCH($B$3") && formula.includes("INDEX(")) usesMatchOffset = true; if (formula.includes("AGGREGATE(")) usesAggregate = true; })); return usesMatchOffset && !usesAggregate; })());
-check("Current Facility dashboard excludes comparison-only sections", !selectionDashboard.getSheetValues().flat().map(String).some(value => value.includes("Electricity Consumption Comparison") || value.includes("Electricity Cost Comparison")));
+check("Current Facility retains the shared Dashboard-FAC Air source used by report calculations", Boolean(selectionWorkbook.getWorksheet("31 Dashboard-FAC Air")));
+const selectionDashboardText = selectionDashboard.getSheetValues().flat().map(String);
+check("Current Facility 01_Dashboard follows Executive V2 section order", selectionDashboardText.includes("Executive View") && selectionDashboardText.includes("Capacity Overview") && selectionDashboardText.includes("Energy & Cost Trends") && selectionDashboardText.includes("Rack Capacity Trends") && !selectionDashboardText.includes("Engineering View"));
 
 // Quick Period contract: Dashboard/report data follows the selected report scope.
 // Saved/Input/Calculation/History sheets retain the full visible history payload; when
@@ -189,6 +200,30 @@ const twoMonthWorkbook = await workbookForFacilities([{
 }] as any);
 const twoMonthTrendData = twoMonthWorkbook.getWorksheet("98_Trend_Data")!;
 check("Multi-month Excel charts follow Quick Period instead of expanding to 12 months", twoMonthTrendData.rowCount === 3 && twoMonthTrendData.getCell(2, 1).value === "2026-04" && twoMonthTrendData.getCell(3, 1).value === "2026-05");
+const extendedTrendMonths = ["2025-04", "2025-05", ...trailingTwelveMonths];
+const extendedTrendLogs = extendedTrendMonths.map((month, index) => ({ ...log(month), energyCost: { buildingEnergyKwh: 900 + index, buildingElectricityCostThb: 4500 + index } }));
+for (const [label, count] of [["3 Months", 3], ["6 Months", 6], ["12 Months", 12]] as const) {
+  const selectedMonths = extendedTrendMonths.slice(-count);
+  const scopedWorkbook = await workbookForFacilities([{
+    siteName: "Rangsit",
+    selectedMonth: extendedTrendMonths.at(-1),
+    reportingMonths: selectedMonths,
+    logs: extendedTrendLogs.slice(-count),
+    calculationLogs: extendedTrendLogs
+  }] as any);
+  const trendData = scopedWorkbook.getWorksheet("98_Trend_Data")!;
+  check(`Excel ${label} trend contains exactly ${count} reporting months`, trendData.rowCount === count + 1 && trendData.getCell(2, 1).value === selectedMonths[0] && trendData.getCell(count + 1, 1).value === selectedMonths.at(-1));
+}
+const fullTrendWorkbook = await workbookForFacilities([{
+  siteName: "Rangsit",
+  selectedMonth: extendedTrendMonths.at(-1),
+  reportingMonths: extendedTrendMonths,
+  logs: extendedTrendLogs,
+  calculationLogs: extendedTrendLogs
+}] as any);
+const fullTrendData = fullTrendWorkbook.getWorksheet("98_Trend_Data")!;
+check("Excel Full History trend keeps all reporting months instead of truncating to 12", fullTrendData.rowCount === extendedTrendMonths.length + 1 && fullTrendData.getCell(2, 1).value === extendedTrendMonths[0] && fullTrendData.getCell(extendedTrendMonths.length + 1, 1).value === extendedTrendMonths.at(-1));
+
 const multiAuditWorkbook = await workbookForFacilities([
   { siteName: "Rangsit", siteCode: "RST", generatedBy: auditUser, generatedAt: auditTimestamp, logs: [log("2026-05")] },
   { siteName: "Srinakarin", siteCode: "SNK", generatedBy: auditUser, generatedAt: auditTimestamp, logs: [log("2026-05")] }
@@ -636,9 +671,9 @@ for (const sourceCase of [
     && visibleCalculationRow?.[10] === canonicalSnapshot?.totalDcPowerW
     && visibleCalculationRow?.[13] === canonicalSnapshot?.totalDcEnergyKwh);
   const dashboardSurfaceText = workbook.getWorksheet("01_Dashboard")?.getSheetValues().flat().map(String).join("|") ?? "";
-  check(`${sourceCase.site}: Excel Engineering surface mirrors Web Air and total-row labels`, dashboardSurfaceText.includes("Monthly Difference") && dashboardSurfaceText.includes("Total"));
+  check(`${sourceCase.site}: Excel Executive V2 surface exposes Executive and Capacity sections`, dashboardSurfaceText.includes("Executive View") && dashboardSurfaceText.includes("Capacity Overview") && dashboardSurfaceText.includes("Energy & Cost Trends") && dashboardSurfaceText.includes("Rack Capacity Trends"));
   if ((canonicalSnapshot?.upsOverallGroups.length ?? 0) > 0) {
-    check(`${sourceCase.site}: Excel separates Web UPS Overall from UPS/PPC groups`, dashboardSurfaceText.includes("1.1 UPS Load Status - Overall") && dashboardSurfaceText.includes("1.2 UPS and PPC Load Status - DCM 4th Floor") && (sheet("Dashboard-FAC UPS Overall")?.rowCount ?? 1) > 1);
+    check(`${sourceCase.site}: Excel retains UPS Overall and UPS/PPC source groups outside the Executive dashboard`, (sheet("Dashboard-FAC UPS Overall")?.rowCount ?? 1) > 1 && (sheet("Dashboard-FAC UPS")?.rowCount ?? 1) > 1);
   }
   check(`${sourceCase.site}: Rack Unit Capacity contains every Desktop row`, (sheet("Rack Unit Capacity")?.rowCount ?? 0) === Math.max(2, source.rackUnitCapacityRows.length + 1));
   const sourceImageSheet = workbook.getWorksheet("18_History_RackImage");
