@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Building2, Calendar, ChevronDown, Download, Gauge, RefreshCw, SlidersHorizontal, X } from "lucide-react";
-import { useReport, type BenchmarkReference, type ForecastHorizon, type ForecastMetric } from "../ReportContext";
+import { useReport, type BenchmarkReference } from "../ReportContext";
 import type { FacilityEntry } from "../desktop";
 
-type ReportViewId = "executive" | "dashboard" | "benchmark" | "forecast";
-const ALL_REPORT_VIEWS: readonly ReportViewId[] = ["executive", "dashboard", "benchmark", "forecast"];
+type ReportViewId = "executive" | "dashboard" | "benchmark";
+const ALL_REPORT_VIEWS: readonly ReportViewId[] = ["executive", "dashboard", "benchmark"];
 const REPORT_VIEW_TABS: ReadonlyArray<{ id: ReportViewId; labelEn: string; labelTh: string }> = [
   { id: "executive", labelEn: "Executive View", labelTh: "แดชบอร์ดผู้บริหาร" },
   { id: "dashboard", labelEn: "Engineering View", labelTh: "วิเคราะห์วิศวกรรม" },
   { id: "benchmark", labelEn: "Benchmark View", labelTh: "เปรียบเทียบเกณฑ์" },
-  { id: "forecast", labelEn: "Forecast View", labelTh: "คาดการณ์เทรนด์" },
 ];
 
 interface UniversalFilterBarProps {
@@ -51,14 +50,14 @@ export default function UniversalFilterBar({
 }: UniversalFilterBarProps) {
   const {
     selectedYear, selectedTrend, compareMode, selectedCategory, selectedUPSGroup, selectedReportView, availableYears,
-    selectedBenchmarkReference, forecastMetric, forecastHorizon,
+    selectedBenchmarkReference,
     setSelectedYear, setSelectedPeriod, setSelectedTrend, setCompareMode, setSelectedCategory, setSelectedUPSGroup, setSelectedReportView,
-    setSelectedBenchmarkReference, setForecastMetric, setForecastHorizon, triggerRefresh,
+    setSelectedBenchmarkReference, triggerRefresh,
   } = useReport();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const th = lang === "th";
 
-  // PUE and Carbon are benchmark/forecast concepts in the current product.
+  // PUE and Carbon are not Engineering categories in the current product.
   // They must not survive as hidden Engineering filters from older releases.
   useEffect(() => {
     if (selectedReportView === "dashboard" && (selectedCategory === "PUE" || selectedCategory === "Carbon")) setSelectedCategory("All");
@@ -67,11 +66,11 @@ export default function UniversalFilterBar({
   const copy = th ? {
     site: "ไซต์", month: "เดือนรายงาน", view: "มุมมองรายงาน", filters: "ตัวกรอง", refresh: "รีเฟรช", export: "ส่งออก",
     trend: "ช่วงแนวโน้ม", compare: "เปรียบเทียบ", category: "หมวดหมู่", ups: "กลุ่ม UPS", benchmark: "เกณฑ์อ้างอิง", period: "ปีอ้างอิง",
-    forecastMetric: "ตัวชี้วัดพยากรณ์", forecastHorizon: "ช่วงพยากรณ์", all: "ทั้งหมด", close: "ปิดตัวกรอง",
+    all: "ทั้งหมด", close: "ปิดตัวกรอง",
   } : {
     site: "Facility / Site", month: "Reporting Month", view: "Report View", filters: "Filters", refresh: "Refresh", export: "Export",
     trend: "Trend Range", compare: "Compare With", category: "Category", ups: "UPS Group", benchmark: "Benchmark Reference", period: "Benchmark Period",
-    forecastMetric: "Forecast Metric", forecastHorizon: "Forecast Horizon", all: "All", close: "Close filters",
+    all: "All", close: "Close filters",
   };
 
   const upsGroupOptions = [
@@ -108,9 +107,7 @@ export default function UniversalFilterBar({
     ? Number(selectedTrend !== "Last 3 Months") + Number(compareMode !== "none")
     : selectedReportView === "dashboard"
       ? Number(selectedCategory !== "All") + Number(selectedUPSGroup !== "All") + Number(compareMode !== "none")
-      : selectedReportView === "benchmark"
-        ? Number(selectedBenchmarkReference !== "all")
-        : Number(forecastMetric !== "totalEnergyKwh") + Number(forecastHorizon !== 3);
+      : Number(selectedBenchmarkReference !== "all");
 
   const advancedFilters = <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid={`advanced-filters-${selectedReportView}`}>
     {selectedReportView === "executive" && <>
@@ -125,10 +122,6 @@ export default function UniversalFilterBar({
     {selectedReportView === "benchmark" && <>
       <label><span className={labelClass}>{copy.benchmark}</span><SelectShell><select value={selectedBenchmarkReference} onChange={event => setSelectedBenchmarkReference(event.target.value as BenchmarkReference)} className={selectClass}><option value="all">{th ? "ทุกเกณฑ์อ้างอิง" : "All References"}</option><option value="best">{th ? "เดือนที่ดีที่สุด" : "Best Month"}</option><option value="rolling">{th ? "ค่าเฉลี่ย 3 เดือน" : "3-Month Rolling Average"}</option><option value="worst">{th ? "เดือนที่แย่ที่สุด" : "Worst Month"}</option></select></SelectShell></label>
       <label><span className={labelClass}>{copy.period}</span><SelectShell><select value={selectedYear} onChange={event => setSelectedYear(event.target.value)} className={selectClass}>{[...new Set([selectedYear, ...availableYears])].sort((a,b)=>b.localeCompare(a)).map(year => <option key={year}>{year}</option>)}</select></SelectShell></label>
-    </>}
-    {selectedReportView === "forecast" && <>
-      <label><span className={labelClass}>{copy.forecastMetric}</span><SelectShell><select value={forecastMetric} onChange={event => setForecastMetric(event.target.value as ForecastMetric)} className={selectClass}><option value="totalEnergyKwh">{th ? "พลังงานรวม" : "Total Energy"}</option><option value="actualCostThb">{th ? "ค่าใช้จ่ายพลังงาน" : "Energy Cost"}</option><option value="pue">PUE</option></select></SelectShell></label>
-      <label><span className={labelClass}>{copy.forecastHorizon}</span><SelectShell><select value={forecastHorizon} onChange={event => setForecastHorizon(Number(event.target.value) as ForecastHorizon)} className={selectClass}><option value={3}>{th ? "3 เดือน" : "Next 3 Months"}</option><option value={6}>{th ? "6 เดือน" : "Next 6 Months"}</option><option value={12}>{th ? "12 เดือน" : "Next 12 Months"}</option></select></SelectShell></label>
     </>}
   </div>;
 

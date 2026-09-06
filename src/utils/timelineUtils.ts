@@ -15,22 +15,17 @@ export interface SnapshotMetadata {
 
 /**
  * Generates an ordered list of canonical month strings ("YYYY-MM") covering
- * a specified historical period and a number of future months.
+ * a specified historical period.
  *
  * @param startMonth "YYYY-MM" The earliest month to include.
- * @param endMonth "YYYY-MM" The latest month to include historically.
- * @param futureMonths How many months beyond `endMonth` to include for forecasting.
+ * @param endMonth "YYYY-MM" The latest historical month to include.
  * @returns An array of "YYYY-MM" strings, ordered earliest to latest.
  */
-export function generateMonthRange(startMonth: string, endMonth: string, futureMonths: number = 0): string[] {
+export function generateMonthRange(startMonth: string, endMonth: string): string[] {
   if (startMonth > endMonth) return [];
   const months: string[] = [];
   let current = startMonth;
   while (current <= endMonth) {
-    months.push(current);
-    current = shiftMonth(current, 1);
-  }
-  for (let i = 0; i < futureMonths; i++) {
     months.push(current);
     current = shiftMonth(current, 1);
   }

@@ -11,7 +11,7 @@ import { formatRatioPercent, RACK_CANONICAL_STATUSES, statusRatio } from "../../
 import { rackStatusColorForRatio, rackStatusLabel } from "../../utils/rackStatusConfig";
 import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
 import { calculateCapacityHealthScore, getHealthLabel, utilizationColorHex } from "../../utils/capacityHealth";
-import { getCapacityHealth } from "../../utils/capacityForecast";
+import { getCapacityHealth } from "../../utils/capacityHealth";
 import { formatFixedNumber, formatFixedPercentage } from "../../utils/numberFormatBridge";
 
 interface KpiTileProps {

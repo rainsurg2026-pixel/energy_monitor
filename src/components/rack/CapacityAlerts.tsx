@@ -3,7 +3,7 @@
  * exists in this app, so that's explicitly out of scope). Reuses the exact
  * same thresholds already established for the Capacity Health Gauge/
  * Executive Health Score (Warning >= 75, Critical >= 90 -
- * capacityForecast.getCapacityHealth) rather than inventing new ones.
+ * capacityHealth.getCapacityHealth) rather than inventing new ones.
  *
  * Facility-level alert uses the same weighted Executive Health Score as the
  * KPI tile/Gauge (single source). Per-zone alerts use each zone's own raw
@@ -17,7 +17,7 @@ import { useRackCapacity } from "./RackCapacityContext";
 import { formatRatioPercent } from "../../utils/rackCapacity";
 import { formatFixedNumber } from "../../utils/numberFormatBridge";
 import { calculateCapacityHealthScore, utilizationColorHex } from "../../utils/capacityHealth";
-import { getCapacityHealth, CapacityHealthLevel } from "../../utils/capacityForecast";
+import { getCapacityHealth, CapacityHealthLevel } from "../../utils/capacityHealth";
 
 const WARNING_THRESHOLD = 75;
 const CRITICAL_THRESHOLD = 90;

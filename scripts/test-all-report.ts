@@ -76,8 +76,8 @@ if (report.rack && report.rack.records.length > 0) {
   if (!/Total Racks/.test(html)) throw new Error("Rack Capacity KPI cards are missing.");
   if (!/rack-donut-row/.test(html)) throw new Error("Rack Capacity donut chart is missing.");
   if (/Rack Capacity and Utilization<\/h2><p class="note">Rack capacity data is unavailable/.test(html)) throw new Error("Rack Capacity data exists but the PDF shows the unavailable-data fallback.");
-  // v2.2.5 round 3: Gauge, Forecast, Zone Heatmap, and Rack Capacity Site
-  // Comparison were added to close the PDF/dashboard parity gap.
+  // Capacity Health Gauge, Zone Heatmap, and Rack Capacity Site Comparison remain
+  // report content; predictive Forecast output is deliberately absent.
   if (!html.includes("<h2>Capacity Health and Zone Heatmap</h2>")) throw new Error("Capacity Health and Zone Heatmap page is missing.");
   if (!html.includes("Capacity Health Gauge")) throw new Error("Capacity Health Gauge block is missing.");
   if (!html.includes("Zone Heatmap")) throw new Error("Zone Heatmap block is missing.");

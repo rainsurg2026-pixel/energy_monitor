@@ -36,7 +36,6 @@ import AppNavigationV2, { type AppViewV2 } from "./AppNavigationV2";
 const DashboardSummary = lazy(() => import("../components/DashboardSummary"));
 const ExecutiveDashboard = lazy(() => import("../components/ExecutiveDashboard"));
 const BenchmarkDashboard = lazy(() => import("../components/BenchmarkDashboard"));
-const ForecastDashboard = lazy(() => import("../components/ForecastDashboard"));
 const SmartInsightPanel = lazy(() => import("../components/SmartInsightPanel"));
 const HistoricalExplorer = lazy(() => import("../components/HistoricalExplorer"));
 const HistoricalCharts = lazy(() => import("../components/HistoricalCharts"));
@@ -544,15 +543,15 @@ export default function CleanWebApp() {
   </ReportProvider>;
 }
 
-const DASHBOARD_REPORT_VIEWS = ["executive", "dashboard", "benchmark", "forecast"] as const;
+const DASHBOARD_REPORT_VIEWS = ["executive", "dashboard", "benchmark"] as const;
 
 function sourceDashboardMapping(siteCode: string, source?: DashboardUpsMappingReport | null): DashboardUpsMappingReport {
   if (source?.mapping?.length) return source;
   return { sourceSheet: "Dashboard-FAC", summary: [], mapping: getDesktopDashboardMapping(siteCode) };
 }
 
-/** Dashboard: the same four Desktop views. Executive, Engineering,
- *  Benchmark, and Forecast all derive from the facility-scoped monthly logs
+/** Dashboard: the same three Desktop views. Executive, Engineering,
+ *  and Benchmark all derive from the facility-scoped monthly logs
  *  returned by the Web API; no Desktop filesystem or Google dependency is
  *  needed to render them.
  *
@@ -608,7 +607,6 @@ function DashboardView({ logs, month, displayPeriod, siteName = "Facility", site
       {selectedReportView === "dashboard" && <DashboardSummary logs={logs} selectedMonth={activeMonth} lang={lang} dataSourceLabel={lang === "th" ? "Production API" : "Source: Production API"} upsMapping={upsMapping} />}
       {selectedReportView === "executive" && <><ExecutiveDashboard logs={logs} lang={lang} selectedMonth={activeMonth} facilityName={siteName} sourceLabel="Production API" rackCapacityHistory={rackCapacityHistory} rackUnitCapacity={rackUnitCapacity} onViewRackCapacity={onViewRackCapacity} onViewRackUnitCapacity={onViewRackUnitCapacity} onRefresh={onRefresh} onExport={exportDashboard} /><SmartInsightPanel logs={logs} lang={lang} /></>}
       {selectedReportView === "benchmark" && <BenchmarkDashboard logs={logs} lang={lang} />}
-      {selectedReportView === "forecast" && <ForecastDashboard logs={logs} lang={lang} />}
     </div>
   );
 }

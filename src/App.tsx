@@ -51,7 +51,6 @@ import { ReportProvider, REPORTING_YEAR, useReport } from "./ReportContext";
 import UniversalFilterBar from "./components/UniversalFilterBar";
 import ExecutiveDashboard from "./components/ExecutiveDashboard";
 import BenchmarkDashboard from "./components/BenchmarkDashboard";
-import ForecastDashboard from "./components/ForecastDashboard";
 import SmartInsightPanel from "./components/SmartInsightPanel";
 import FacilityComparison from "./components/FacilityComparison";
 import RackCapacityEditor from "./components/rack/RackCapacityEditor";
@@ -63,7 +62,6 @@ import { StickyHeader as RackCapacityStickyHeader } from "./components/rack/Stic
 import { Timeline as RackCapacityTimeline } from "./components/rack/Timeline";
 import { ExecutiveKpiCards as RackCapacityExecutiveKpiCards } from "./components/rack/ExecutiveKpiCards";
 import { CapacityGauge } from "./components/rack/CapacityGauge";
-import { Forecast as RackCapacityForecast } from "./components/rack/Forecast";
 import { RackUnitCapacitySummary } from "./components/rack/RackUnitCapacitySummary";
 import { CapacityAlerts } from "./components/rack/CapacityAlerts";
 import {
@@ -178,11 +176,6 @@ function DashboardViewContainer({
         </div>
       )}
 
-      {selectedReportView === "forecast" && (
-        <div className="animate-fadeIn">
-          <ForecastDashboard logs={logs} lang={lang} />
-        </div>
-      )}
     </div>
   );
 }
@@ -1044,7 +1037,7 @@ export default function App() {
 
   /**
    * Switch the active facility (RC1): swaps the workbook and reloads every
-   * view (dashboard/reports/history/forecast/integrity) - no restart.
+   * view (dashboard/reports/history/integrity) - no restart.
    * Facility data is never mixed: the in-memory store is fully replaced by
    * the new facility's workbook snapshot.
    */
@@ -2532,9 +2525,8 @@ export default function App() {
               <RackCapacityTimeline />
               <CapacityAlerts />
               <RackCapacityExecutiveKpiCards />
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div>
                 <CapacityGauge />
-                <RackCapacityForecast />
               </div>
               {/* "Rack Capacity and Utilization": Donut + RackStatusDistribution +
                   Zone Table + Zone Heatmap + detail inspector. */}

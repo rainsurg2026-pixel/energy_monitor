@@ -4,12 +4,12 @@
  * total U), falling back to rack-count In Use % when no unit row exists.
  * The 0-100 health score blends usage/availability/reserved/pending
  * (capacityHealth.calculateCapacityHealthScore) - color/label come
- * exclusively from capacityHealth + capacityForecast, never re-derived here.
+ * exclusively from capacityHealth, never re-derived here.
  */
 import React from "react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { useRackCapacity } from "./RackCapacityContext";
-import { getCapacityHealth } from "../../utils/capacityForecast";
+import { getCapacityHealth } from "../../utils/capacityHealth";
 import { calculateCapacityHealthScore, getHealthLabel, utilizationColorHex } from "../../utils/capacityHealth";
 import { formatRatioPercent } from "../../utils/rackCapacity";
 import { formatFixedNumber, formatFixedPercentage } from "../../utils/numberFormatBridge";

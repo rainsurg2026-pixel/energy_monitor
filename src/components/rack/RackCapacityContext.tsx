@@ -2,13 +2,11 @@
  * RackCapacityContext - the single owner of the Rack Capacity Reporting
  * Month and of every shared derived value the Rack Capacity page renders.
  *
- * v2.2.5 rule: Summary / Editor / History / Timeline / Forecast / Charts
- * never manage the Reporting Month (or each other's derived data)
- * independently - they all read from this one provider. The provider itself
- * is dumb state + memoized derivation: all month math comes from
- * monthUtils/timelineUtils, all forecasting from capacityForecast, and all
- * status counting from rackCapacity's calculateRackCapacityMetrics - this
- * module never re-implements any of it.
+ * Summary / Editor / History / Timeline / Charts never manage the Reporting
+ * Month (or each other's derived data) independently - they all read from
+ * this one provider. The provider itself is state + memoized derivation:
+ * month math comes from monthUtils/timelineUtils and status counting from
+ * rackCapacity's calculateRackCapacityMetrics.
  */
 import React, { createContext, useContext, useMemo, useState } from "react";
 import type { RackCapacitySummary } from "../../reports/reportTypes";
@@ -17,7 +15,6 @@ import type { RackCapacityHistoryRow } from "../../excel/RackCapacityHistoryWrit
 import { RACK_CAPACITY_HISTORY_TOTAL_ZONE } from "../../excel/RackCapacityHistoryWriter";
 import { calculateRackCapacityMetrics, RackCapacityMetrics } from "../../utils/rackCapacity";
 import { currentMonth, yearOf } from "../../utils/monthUtils";
-import { linearRegression, extendWithForecast, RegressionResult, TimeSeriesPoint } from "../../utils/capacityForecast";
 
 export interface RackCapacityContextValue {
   lang: "th" | "en";
@@ -26,7 +23,7 @@ export interface RackCapacityContextValue {
   reportingMonth: string;
   setReportingMonth: (month: string) => void;
   /** Raw workbook summary (records + totals), null when the workbook has no
-   *  Rack Capacity sheet/table. */
+   * Rack Capacity sheet/table. */
   rackCapacity: RackCapacitySummary | null;
   rackUnitCapacity: RackUnitCapacityRow[];
   rackCapacityHistory: RackCapacityHistoryRow[];
@@ -38,14 +35,9 @@ export interface RackCapacityContextValue {
   /** Distinct months that have persisted history snapshots, ascending. */
   availableMonths: string[];
   reportingYear: string;
-  /** Usage % history (0-100) for the trend/forecast charts. */
-  usageHistory: TimeSeriesPoint[];
-  /** usageHistory extended with a 12-month regression forecast. */
-  usageForecast: TimeSeriesPoint[];
-  regression: RegressionResult | null;
-  /** The one Rack Zone filter every Rack Capacity view shares (e.g. Zone
-   *  Heatmap click -> Rack Capacity Editor filter). Never a per-component
-   *  copy. */
+  /** Usage % history (0-100) for historical trend/delta calculations. */
+  usageHistory: Array<{ month: string; value: number }>;
+  /** The one Rack Zone filter every Rack Capacity view shares. */
   selectedZone: string | null;
   setSelectedZone: (zone: string | null) => void;
 }
@@ -54,7 +46,7 @@ export interface RackCapacityProviderProps {
   lang: "th" | "en";
   facilityName?: string | null;
   /** Optional page-owned month used by hosted views to avoid first-rendering
-   *  the Rack Capacity widgets against the actual current month. */
+   * the Rack Capacity widgets against the actual current month. */
   initialReportingMonth?: string;
   rackCapacity: RackCapacitySummary | null;
   rackUnitCapacity: RackUnitCapacityRow[];
@@ -105,10 +97,6 @@ export const RackCapacityProvider: React.FC<RackCapacityProviderProps> = ({
     [historyTotalRows]
   );
 
-  const regression = useMemo(() => linearRegression(usageHistory), [usageHistory]);
-
-  const usageForecast = useMemo(() => extendWithForecast(usageHistory, 12), [usageHistory]);
-
   const value = useMemo<RackCapacityContextValue>(
     () => ({
       lang,
@@ -124,8 +112,6 @@ export const RackCapacityProvider: React.FC<RackCapacityProviderProps> = ({
       availableMonths,
       reportingYear: yearOf(reportingMonth),
       usageHistory,
-      usageForecast,
-      regression,
       selectedZone,
       setSelectedZone
     }),
@@ -141,8 +127,6 @@ export const RackCapacityProvider: React.FC<RackCapacityProviderProps> = ({
       historyTotalRows,
       availableMonths,
       usageHistory,
-      usageForecast,
-      regression,
       selectedZone
     ]
   );
@@ -152,8 +136,6 @@ export const RackCapacityProvider: React.FC<RackCapacityProviderProps> = ({
 
 export function useRackCapacity(): RackCapacityContextValue {
   const context = useContext(RackCapacityContext);
-  if (context === undefined) {
-    throw new Error("useRackCapacity must be used within a RackCapacityProvider");
-  }
+  if (context === undefined) throw new Error("useRackCapacity must be used within a RackCapacityProvider");
   return context;
 }

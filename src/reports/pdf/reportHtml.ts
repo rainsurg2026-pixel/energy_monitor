@@ -7,7 +7,7 @@ import { calculateRackCapacityMetrics, formatRatioPercent, RackCapacityMetrics, 
 import { RACK_CAPACITY_HISTORY_TOTAL_ZONE } from "../../excel/RackCapacityHistoryWriter";
 import type { RackUnitCapacityRow } from "../../excel/RackUnitCapacityWriter";
 import { calculateCapacityHealthScore, utilizationColorHex } from "../../utils/capacityHealth";
-import { getCapacityHealth } from "../../utils/capacityForecast";
+import { getCapacityHealth } from "../../utils/capacityHealth";
 import { getAccessibleTextColor } from "../../utils/colorContrast";
 import { findPreviousRackUnitCapacityRow, usagePercent } from "../../utils/rackUnitCapacity";
 import { calculatePercentageDelta, getTrendDirection, getTrendLabel } from "../../utils/trendCalculator";
@@ -458,7 +458,7 @@ function gaugeSvg(utilizationPct: number, color: string): string {
 }
 
 /** Capacity Health Gauge - color/label/score come exclusively from
- *  capacityHealth.ts + capacityForecast.ts (the exact functions the live
+ *  capacityHealth.ts (the exact functions the live
  *  dashboard's CapacityGauge.tsx uses), never re-derived here. Utilization
  *  prefers the Reporting Month's saved Rack Unit Capacity row, falling back
  *  to rack-count In Use % - same fallback order as the dashboard. */
