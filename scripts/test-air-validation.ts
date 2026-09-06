@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { createEmptyLog, logsToRows, parseSafeNumber, rowsToLogs } from "../src/excel/SheetMapper";
 import { roundAirMeterReading } from "../src/domain/airMeterPrecision";
 import { calculateEnergyCostForMonth } from "../src/domain/energyCost";
+import { buildEngineeringDashboardSnapshot } from "../src/domain/engineeringDashboard";
 import { parseMonthlyLog } from "../server/services/rawInputValidation";
 import { exceedsDecimalPlaces } from "../src/utils/numericInputValidation";
 
@@ -87,6 +88,16 @@ assert("API validation preserves a 7-decimal Air value", parsedSeven.air.eb42b =
 const parsedAugust = parseMonthlyLog(augustSix, "2026-08");
 const roundedAirEnergy = calculateEnergyCostForMonth([julySix, parsedAugust], "2026-08").airEnergyKwh;
 assert("Web Air calculation keeps historical source precision while allowing current 6-decimal entry", roundedAirEnergy !== null && Math.abs(roundedAirEnergy - 331823.4) < 1e-6);
+
+// Overall KPI must be derived from the same selected-month Engineering snapshot values.
+julySix.energyCalculation = { upsGroups: [], dcIds: [], airFields: rangsitFields };
+augustSix.energyCalculation = { upsGroups: [], dcIds: [], airFields: rangsitFields };
+augustSix.energyCost = { buildingEnergyKwh: 3_809_000, buildingElectricityCostThb: 14_383_474.32 };
+const paritySnapshot = buildEngineeringDashboardSnapshot([julySix, augustSix], "2026-08", null);
+assert("Engineering snapshot uses the displayed Air energy in Overall floor energy", paritySnapshot?.airEnergyKwh !== null && paritySnapshot?.floorEnergyKwh !== null && Math.abs((paritySnapshot?.floorEnergyKwh ?? 0) - (paritySnapshot?.airEnergyKwh ?? 0)) < 1e-6);
+
+const correctionMigration = readFileSync(new URL("../db/migrations/013_rangsit_aug_2026_eb42b_correction.sql", import.meta.url), "utf8");
+assert("Rangsit Aug-2026 EB42B correction is exact and guarded", correctionMigration.includes("9.3251728") && correctionMigration.includes("9.325173") && correctionMigration.includes("2026-08-01") && correctionMigration.includes("eb42b"));
 
 assert("AC input allows 6 decimal places", !exceedsDecimalPlaces("9.325173", 7));
 assert("AC input allows 7 decimal places", !exceedsDecimalPlaces("9.2478576", 7));
