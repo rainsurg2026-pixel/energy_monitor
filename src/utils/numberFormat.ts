@@ -15,6 +15,11 @@ export function formatFixedNumber(value: number | null | undefined, digits = 0):
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(value);
 }
 
+export function formatVariablePrecisionNumber(value: number | null | undefined, minimumDigits: number, maximumDigits: number): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "—";
+  return new Intl.NumberFormat("en-US", { minimumFractionDigits: minimumDigits, maximumFractionDigits: maximumDigits }).format(value);
+}
+
 export function formatFixedPercentage(value: number | null | undefined, digits = 1): string {
   const result = formatFixedNumber(value, digits);
   return result === "—" ? result : `${result}%`;
@@ -76,5 +81,5 @@ export function formatCompactLabel(value: number | null | undefined): string {
 
 /** Presentation-only formatting for configured Air/EB meter readings in GWh. */
 export function formatGWh(value: number | null | undefined): string {
-  return formatFixedNumber(value, 6);
+  return formatVariablePrecisionNumber(value, 6, 7);
 }

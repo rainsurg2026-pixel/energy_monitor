@@ -71,24 +71,28 @@ const rangsitAirMissing = listMissingFields(rangsitLog, rangsitFields)
   .map(field => field.label);
 assert("Rangsit validation ignores stale EB43/EB44 keys", rangsitAirMissing.length === 0 && !rangsitAirMissing.some(label => /EB43|EB44/.test(label)));
 
-// Six-decimal Air meter precision is a data contract, not display-only formatting.
-assert("7th decimal rounds to the stored 6-decimal value", roundAirMeterReading(9.2478576) === 9.247858 && roundAirMeterReading(9.3251728) === 9.325173);
+// Air meter precision accepts source/user readings up to seven decimal places.
+assert("7-decimal Air readings are preserved", roundAirMeterReading(9.2478576) === 9.2478576 && roundAirMeterReading(9.3251728) === 9.3251728);
 
 const julySix = createEmptyLog("2026-07", { upsIds: [], dcIds: [], airFields: rangsitFields });
 julySix.air = { eb41a: 19.678136, eb41b: 21.904596, eb42a: 10.287741, eb42b: 9.2478576, meters: {} };
 julySix.lastSavedAir = null;
 const augustSix = createEmptyLog("2026-08", { upsIds: [], dcIds: [], airFields: rangsitFields });
-augustSix.air = { eb41a: 19.763672, eb41b: 21.993352, eb42a: 10.367957, eb42b: 9.3251728, meters: {} };
+augustSix.air = { eb41a: 19.763672, eb41b: 21.993352, eb42a: 10.367957, eb42b: 9.325173, meters: {} };
 augustSix.lastSavedAir = "2026-09-05T09:48:13.239Z";
+const augustSeven = structuredClone(augustSix);
+augustSeven.air.eb42b = 9.3251728;
+const parsedSeven = parseMonthlyLog(augustSeven, "2026-08");
+assert("API validation preserves a 7-decimal Air value", parsedSeven.air.eb42b === 9.3251728);
 const parsedAugust = parseMonthlyLog(augustSix, "2026-08");
-assert("API validation persists Air values at exactly 6 decimals", parsedAugust.air.eb42b === 9.325173);
 const roundedAirEnergy = calculateEnergyCostForMonth([julySix, parsedAugust], "2026-08").airEnergyKwh;
-assert("Web Air calculation keeps imported historical source precision while current user entry is six-decimal", roundedAirEnergy !== null && Math.abs(roundedAirEnergy - 331823.4) < 1e-6);
+assert("Web Air calculation keeps historical source precision while allowing current 6-decimal entry", roundedAirEnergy !== null && Math.abs(roundedAirEnergy - 331823.4) < 1e-6);
 
-assert("AC input allows exactly 6 decimal places", !exceedsDecimalPlaces("9.325173", 6));
-assert("AC input rejects a 7th decimal digit", exceedsDecimalPlaces("9.3251738", 6));
-assert("AC input guard also rejects pasted values beyond 6 decimals", exceedsDecimalPlaces("19.7636729", 6));
+assert("AC input allows 6 decimal places", !exceedsDecimalPlaces("9.325173", 7));
+assert("AC input allows 7 decimal places", !exceedsDecimalPlaces("9.2478576", 7));
+assert("AC input rejects an 8th decimal digit", exceedsDecimalPlaces("9.24785768", 7));
+assert("AC input guard also rejects pasted values beyond 7 decimals", exceedsDecimalPlaces("19.76367291", 7));
 
 const airTableSource = readFileSync(new URL("../src/components/AirTable.tsx", import.meta.url), "utf8");
-assert("AirTable locks AC inputs to six decimals", airTableSource.includes("maxDecimalPlaces={6}"));
-assert("AirTable shows a precision warning popup when a 7th decimal is attempted", airTableSource.includes("onPrecisionViolation={() => setPrecisionWarning(true)}") && airTableSource.includes('role="dialog"') && airTableSource.includes("Maximum 6 decimal places"));
+assert("AirTable accepts six or seven decimals and blocks the eighth", airTableSource.includes("maxDecimalPlaces={7}") && airTableSource.includes("minimumPrecision={6}"));
+assert("AirTable shows a precision warning popup when an 8th decimal is attempted", airTableSource.includes("onPrecisionViolation={() => setPrecisionWarning(true)}") && airTableSource.includes('role="dialog"') && airTableSource.includes("Maximum 7 decimal places"));

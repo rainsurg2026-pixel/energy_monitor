@@ -15,11 +15,10 @@ const rackViewsSource = readFileSync(new URL("../src/web-clean-v1/WebRackCapacit
 const exportSource = readFileSync(new URL("../src/web-clean-v1/exports.ts", import.meta.url), "utf8");
 const browserE2eSource = readFileSync(new URL("./e2e-web-cdp.mjs", import.meta.url), "utf8");
 const dashboardSummarySource = readFileSync(new URL("../src/components/DashboardSummary.tsx", import.meta.url), "utf8");
-// Engineering View > Air Conditioning Energy Consumption: every EB meter GWh
-// display cell uses fixed six-decimal formatting, while the derived kWh total
-// keeps its own existing formatter.
-assert.match(dashboardSummarySource, /formatFixedNumber, formatNumber2/);
-assert.equal((dashboardSummarySource.match(/formatFixedNumber\(value, 6\)/g) ?? []).length, 3);
+// Engineering View > Air Conditioning Energy Consumption: GWh readings show six
+// decimals minimum and preserve a seventh digit when the source meter has one.
+assert.match(dashboardSummarySource, /formatFixedNumber, formatGWh, formatNumber2/);
+assert.equal((dashboardSummarySource.match(/formatGWh\(value\)/g) ?? []).length, 3);
 assert.match(dashboardSummarySource, /airEnergyKwh[^\n]*formatNumber2\(calcs\.airEnergyKwh\)/);
 assert.match(appSource, /HISTORY_DATA_VIEWS/);
 assert.match(appSource, /loadedPageKeyRef/);

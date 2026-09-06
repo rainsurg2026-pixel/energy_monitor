@@ -379,6 +379,34 @@ function maxRowsPerMonth(rows: unknown[][]): number {
   rows.forEach(row => { const month = String(row[0] ?? ""); counts.set(month, (counts.get(month) ?? 0) + 1); });
   return Math.max(1, ...counts.values());
 }
+function upsStatusForMonth(rows: unknown[][], month: string): { status: string; groupCount: number; maxLoadPercent: number | null } {
+  const selected = rowsForMonth(rows, month);
+  const maxLoadPercent = selected.reduce<number | null>((maximum, row) => {
+    const value = numberResult(row[5]);
+    return value === null ? maximum : maximum === null ? value : Math.max(maximum, value);
+  }, null);
+  return {
+    status: selected.length === 0 ? "No UPS status" : selected.length + " group(s) - max " + (maxLoadPercent ?? 0).toFixed(2) + "% load",
+    groupCount: selected.length,
+    maxLoadPercent
+  };
+}
+
+function addUpsStatusDataSheet(workbook: any, dashboardSheetName: string, months: readonly string[], upsRows: unknown[][]): { sheetName: string; rowEnd: number } {
+  const sheetName = safeSheetName(dashboardSheetName, "UPS_Status");
+  const sheet = workbook.addWorksheet(sheetName);
+  sheet.state = "hidden";
+  sheet.properties.tabColor = { argb: "FF7C3AED" };
+  sheet.addRow(["Month", "UPS Status", "Group Count", "Max Load (%)"]);
+  months.forEach(month => {
+    const summary = upsStatusForMonth(upsRows, month);
+    sheet.addRow([month, summary.status, summary.groupCount, summary.maxLoadPercent]);
+  });
+  sheet.getRow(1).font = { name: "Aptos", bold: true, color: { argb: WHITE } };
+  sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: DARK_BLUE } };
+  sheet.getColumn(4).numFmt = "0.00";
+  return { sheetName, rowEnd: Math.max(2, months.length + 1) };
+}
 
 function numberResult(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -457,6 +485,7 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   const trendPeriodLabel = trendMetrics.length > 0 ? `${monthLabelShort(trendMetrics[0].month, "en")} - ${monthLabelShort(trendMetrics.at(-1)!.month, "en")}` : "N/A";
   const upsSelectedRows = rowsForMonth(options.upsRows, options.selectedMonth);
   const upsOverallSelectedRows = rowsForMonth(options.upsOverallRows, options.selectedMonth);
+  const upsStatusData = addUpsStatusDataSheet(workbook, options.dashboardSheetName, metrics.map(metric => metric.month), options.upsRows);
   const selectedTotals = rowsForMonth(options.totalsRows, options.selectedMonth)[0] ?? [];
   const totalsLookup = (column: string, result: number | string | null) => currentLookup(options.totalsSheetName, column, totalsEnd, result);
   const detailSelectedRows = rowsForMonth(options.detailRows, options.selectedMonth);
@@ -626,7 +655,7 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   dashboardBodyRow(sheet, airStart + 2, airPrevValues);
   dashboardBodyRow(sheet, airStart + 3, airCurrentValues);
   dashboardBodyRow(sheet, airStart + 4, airDiffValues);
-  for (const row of [airStart + 2, airStart + 3, airStart + 4]) for (let col = 2; col <= options.airFields.length + 1; col++) sheet.getCell(row, col).numFmt = "0.000000";
+  for (const row of [airStart + 2, airStart + 3, airStart + 4]) for (let col = 2; col <= options.airFields.length + 1; col++) sheet.getCell(row, col).numFmt = "0.000000#";
   sheet.getCell(airStart + 4, options.airFields.length + 2).numFmt = "#,##0.00";
   const airNoteRow = airStart + 6;
   sheet.mergeCells(airNoteRow, 1, airNoteRow, 14);
@@ -671,12 +700,8 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   const executiveRow = overallStart + 5;
   sectionHeading(sheet, executiveRow, "Executive View");
   const upsSource = excelSheetRef(options.upsSheetName);
-  const maxUpsLoad = upsSelectedRows.reduce<number | null>((maximum, row) => {
-    const value = numberResult(row[5]);
-    return value === null ? maximum : maximum === null ? value : Math.max(maximum, value);
-  }, null);
-  const upsStatusResult = upsSelectedRows.length === 0 ? "No UPS status" : `${upsSelectedRows.length} group(s) - max ${(maxUpsLoad ?? 0).toFixed(2)}% load`;
-  const upsStatusFormula = cellFormula(`IF(COUNTIFS(${upsSource}!$A$2:$A$${upsEnd},$B$3)=0,\"No UPS status\",COUNTIFS(${upsSource}!$A$2:$A$${upsEnd},$B$3)&\" group(s) - max \"&TEXT(MAXIFS(${upsSource}!$F$2:$F$${upsEnd},${upsSource}!$A$2:$A$${upsEnd},$B$3),\"0.00\")&\"% load\")`, upsStatusResult);
+  const upsStatusResult = upsStatusForMonth(options.upsRows, options.selectedMonth).status;
+  const upsStatusFormula = currentLookup(upsStatusData.sheetName, "B", upsStatusData.rowEnd, upsStatusResult);
   addCard(sheet, 1, 4, executiveRow + 2, "Total Building Energy", lookup("C", "buildingEnergyKwh"), "#,##0.00", LIGHT_BLUE);
   addCard(sheet, 5, 8, executiveRow + 2, "Total 4th Floor Energy", lookup("E", "floorEnergyKwh"), "#,##0.00", LIGHT_TEAL);
   addCard(sheet, 9, 14, executiveRow + 2, "Total Building Cost", lookup("D", "buildingCostThb"), "#,##0.00", LIGHT_BLUE);

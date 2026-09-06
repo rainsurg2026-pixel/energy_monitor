@@ -1,11 +1,11 @@
 import type { AirRecord } from "../types";
 
-export const AIR_METER_DECIMAL_PLACES = 6;
+export const AIR_METER_DECIMAL_PLACES = 7;
 
 /**
- * Air-energy meters are entered and displayed to six decimal places (GWh).
- * Keep that precision as the persisted/calculation contract so hidden binary
- * floating-point residue or legacy 7+ decimal values cannot change reports.
+ * Air-energy meters can be read with six or seven decimal places (GWh).
+ * Preserve up to seven decimals as the persisted contract so the application
+ * stores the value exactly as far as the source meter can display.
  */
 export function roundAirMeterReading(value: number): number {
   if (!Number.isFinite(value)) return value;

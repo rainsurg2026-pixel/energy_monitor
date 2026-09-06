@@ -48,8 +48,8 @@ assert.match(timestampUpdate!.text, /last_saved_air = now\(\)/);
 assert.match(timestampUpdate!.text, /last_saved_dc = now\(\)/);
 assert.match(timestampUpdate!.text, /last_saved_energy_cost = now\(\)/);
 const airInsert = calls.find(call => call.text.includes("INSERT INTO air_meter_readings") && (call.values?.[4] as { code?: string } | undefined)?.code === "eb42b");
-assert.equal(airInsert?.values?.[3], 9.325173, "repository writes Air meter readings at six decimals");
-assert.deepEqual(airInsert?.values?.[4], { code: "eb42b", reading: 9.325173 }, "raw_inputs uses the same normalized six-decimal Air value");
+assert.equal(airInsert?.values?.[3], 9.3251728, "repository preserves Air meter readings up to seven decimals");
+assert.deepEqual(airInsert?.values?.[4], { code: "eb42b", reading: 9.3251728 }, "raw_inputs uses the same preserved seven-decimal Air value");
 
 const readBack = await repository.getMonthlyLogs(1, ["2026-07"]);
 assert.equal(readBack[0]?.lastSavedUps, "2026-07-15T06:30:00.000Z");
@@ -60,4 +60,4 @@ const selectSource = await import("node:fs/promises").then(fs => fs.readFile(new
 assert.match(selectSource, /p\.last_saved_ups/);
 assert.match(selectSource, /lastSavedEnergyCost: row\.last_saved_energy_cost/);
 
-console.log("postgres repository: timestamps and six-decimal Air precision are persisted/read back");
+console.log("postgres repository: timestamps and max-seven-decimal Air precision are persisted/read back");
