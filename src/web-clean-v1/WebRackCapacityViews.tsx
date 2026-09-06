@@ -185,11 +185,11 @@ function RackMiniTrends({ rows }: { rows: RackCapacityHistoryRow[] }) {
   const totals = trendRows.map(row => row.inUse + row.available + row.reserved + row.pendingDismantle);
   const usage = trendRows.map((row, index) => totals[index] > 0 ? (row.inUse / totals[index]) * 100 : null);
   const available = trendRows.map(row => row.available);
-  const pending = trendRows.map(row => row.pendingDismantle);
+  const reserved = trendRows.map(row => row.reserved);
   const cards = [
     { title: "Overall Rack Utilization Trend", icon: Activity, color: "#fb7185", unit: "%", values: usage },
     { title: "Available Rack Trend", icon: TrendingUp, color: "#2dd4bf", unit: "racks", values: available },
-    { title: "Pending Dismantle Trend", icon: Wrench, color: "#f59e0b", unit: "racks", values: pending }
+    { title: "Reserved Rack Trend", icon: Clock3, color: "#3b82f6", unit: "racks", values: reserved }
   ];
   return <div className="grid gap-4 xl:grid-cols-3">{cards.map(card => <section key={card.title} className="rounded-2xl border border-slate-800/80 bg-slate-900/80 p-4"><div className="mb-3 flex items-center gap-2"><card.icon className="h-4 w-4" style={{ color: card.color }} /><h3 className="text-sm font-bold text-slate-200">{card.title}</h3></div>{labels.length >= 2 ? <TrendLineChart labels={labels} unit={card.unit} height={190} compact minPointSlots={6} series={[{ name: card.title, color: card.color, values: card.values }]} /> : <div className="flex h-40 items-center justify-center text-xs text-slate-500">Not enough saved history for this trend.</div>}</section>)}</div>;
 }
