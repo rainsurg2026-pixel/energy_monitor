@@ -15,7 +15,7 @@ import { buildDashboardUpsMapping } from "./dashboardUpsMapping";
 import { getDesktopDashboardMapping } from "../domain/dashboardMapping";
 import type { ReportSectionId } from "../reporting/reportingTypes";
 import { recentMonthsThroughSelected } from "../utils/historyWindow";
-import { addDashboardDataSheet, addCurrentFacilityDashboard, injectInteractiveDashboardCharts, type CurrentFacilityDashboardOptions, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
+import { addDashboardDataSheet, addCurrentFacilityDashboard, injectInteractiveDashboardCharts, injectInternalWorkbookNavigationLinks, type CurrentFacilityDashboardOptions, type ExcelDashboardMetric, type ExcelDashboardPlan } from "./excelDashboard";
 import { defaultAllFacilitiesReportFilename } from "./reportFilename";
 import { formatBangkokReportTimestamp } from "../utils";
 
@@ -393,11 +393,12 @@ function buildExcelDashboardModel(logs: MonthlyLog[], calculationLogs: MonthlyLo
  */
 function workbookSheetRef(name: string): string { return "'" + name.replace(/'/g, "''") + "'"; }
 
+
 function addCurrentTableSheet(workbook: any, name: string, tableName: string, headers: unknown[], rows: unknown[][], category: Exclude<ExcelSheetCategory, "report" | "compatibility">): any {
   const sheet = workbook.addWorksheet(name);
   const home = sheet.getCell("A1");
-  home.value = { text: "⌂ Home", hyperlink: "#'01_Dashboard'!A1" };
-  home.font = { name: "Aptos", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+  home.value = "⌂ Home";
+  home.font = { name: "Aptos", size: 10, bold: true, underline: true, color: { argb: "FFFFFFFF" } };
   home.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
   home.alignment = { vertical: "middle", horizontal: "center" };
   sheet.getRow(1).height = 22;
@@ -410,18 +411,23 @@ function addCurrentWorkbookNavigation(workbook: any, dashboardSheetName: string)
   const dashboard = workbook.getWorksheet(dashboardSheetName);
   if (!dashboard) return;
   const visibleSheets = workbook.worksheets.filter((sheet: any) => sheet.name !== dashboardSheetName && sheet.state !== "hidden");
-  dashboard.getColumn(15).width = 24;
-  dashboard.getColumn(16).width = 6;
+  for (const column of [15, 16, 17]) dashboard.getColumn(column).width = 16;
+  dashboard.mergeCells(4, 15, 4, 17);
+  const navigationHeading = dashboard.getCell(4, 15);
+  navigationHeading.value = "SHEET NAVIGATION";
+  navigationHeading.font = { name: "Aptos", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+  navigationHeading.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
+  navigationHeading.alignment = { vertical: "middle", horizontal: "center" };
   visibleSheets.forEach((target: any, index: number) => {
     const row = 5 + index;
-    dashboard.mergeCells(row, 15, row, 16);
+    dashboard.mergeCells(row, 15, row, 17);
     const cell = dashboard.getCell(row, 15);
-    cell.value = { text: target.name, hyperlink: "#'" + target.name.replace(/'/g, "''") + "'!A1" };
-    cell.font = { name: "Aptos", size: 9, bold: true, color: { argb: "FFFFFFFF" } };
+    cell.value = target.name;
+    cell.font = { name: "Aptos", size: 9, bold: true, color: { argb: "FFFFFFFF" }, underline: true };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: index % 2 === 0 ? "FF1E3A5F" : "FF0F766E" } };
-    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.alignment = { vertical: "middle", horizontal: "left", shrinkToFit: true };
     cell.border = { top: { style: "thin", color: { argb: "FF334155" } }, left: { style: "thin", color: { argb: "FF334155" } }, bottom: { style: "thin", color: { argb: "FF334155" } }, right: { style: "thin", color: { argb: "FF334155" } } };
-    dashboard.getRow(row).height = 24;
+    dashboard.getRow(row).height = 22;
   });
 }
 
@@ -602,8 +608,8 @@ async function workbookForCurrentFacility(facility: ExportFacility): Promise<any
     imageMetadata.getCell("B1").value = "Rack Unit Capacity image metadata";
     imageMetadata.getCell("B1").font = { name: "Aptos Display", size: 16, bold: true, color: { argb: "FFFFFFFF" } };
     imageMetadata.getCell("B1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
-    imageMetadata.getCell("A1").value = { text: "⌂ Home", hyperlink: "#'01_Dashboard'!A1" };
-    imageMetadata.getCell("A1").font = { name: "Aptos", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+    imageMetadata.getCell("A1").value = "⌂ Home";
+    imageMetadata.getCell("A1").font = { name: "Aptos", size: 10, bold: true, underline: true, color: { argb: "FFFFFFFF" } };
     imageMetadata.getCell("A1").fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F766E" } };
     imageMetadata.getCell("A1").alignment = { vertical: "middle", horizontal: "center" };
     applyExcelSheetCategory(imageMetadata, "history");
@@ -763,7 +769,8 @@ type ExportAdditional = Omit<ExportFacility, "siteName" | "logs">;
 export async function writeInteractiveExcelWorkbook(workbook: any): Promise<Uint8Array> {
   workbook.calcProperties.fullCalcOnLoad = true;
   const buffer = await workbook.xlsx.writeBuffer();
-  return injectInteractiveDashboardCharts(buffer, workbookDashboardPlans.get(workbook) ?? []);
+  const withCharts = await injectInteractiveDashboardCharts(buffer, workbookDashboardPlans.get(workbook) ?? []);
+  return injectInternalWorkbookNavigationLinks(withCharts);
 }
 
 

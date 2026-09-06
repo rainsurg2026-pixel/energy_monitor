@@ -85,6 +85,24 @@ function cellFormula(formula: string, result: number | string | null): { formula
   return { formula, result: result ?? "" };
 }
 
+function cardCachedText(result: number, numberFormat: string): string {
+  if (numberFormat.includes("%")) {
+    const decimals = numberFormat.includes("0.0%") ? 1 : 2;
+    return (result * 100).toFixed(decimals) + "%";
+  }
+  if (numberFormat === "#,##0") return Math.round(result).toLocaleString("en-US");
+  if (numberFormat === "#,##0.00") return result.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (numberFormat === "0.00") return result.toFixed(2);
+  return String(result);
+}
+
+function cardDisplayFormula(value: { formula: string; result: number | string }, numberFormat: string): { formula: string; result: number | string } {
+  if (typeof value.result !== "number" || numberFormat === "@") return value;
+  const expression = '(' + value.formula + ')';
+  const textFormat = numberFormat.replace(/"/g, '""');
+  return cellFormula('IFERROR(IF(' + expression + '=\"\",\"\",TEXT(' + expression + ',\"' + textFormat + '\")),\"\")', cardCachedText(value.result, numberFormat));
+}
+
 function applyCellStyle(cell: any, fill: string, font: any, alignment: any = { vertical: "middle" }): void {
   cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
   cell.font = font;
@@ -106,12 +124,13 @@ function styleRange(sheet: any, fromRow: number, toRow: number, fromCol: number,
 function addCard(sheet: any, fromCol: number, toCol: number, topRow: number, label: string, formula: { formula: string; result: number | string }, numberFormat: string, _fill: string): void {
   sheet.mergeCells(topRow, fromCol, topRow, toCol);
   sheet.mergeCells(topRow + 1, fromCol, topRow + 2, toCol);
-  styleRange(sheet, topRow, topRow, fromCol, toCol, _fill, { name: "Aptos", size: 9, bold: true, color: { argb: MUTED } }, { vertical: "middle", horizontal: "left" });
-  styleRange(sheet, topRow + 1, topRow + 2, fromCol, toCol, _fill, { name: "Aptos Display", size: 18, bold: true, color: { argb: NAVY } }, { vertical: "middle", horizontal: "left" });
+  styleRange(sheet, topRow, topRow, fromCol, toCol, _fill, { name: "Aptos", size: 9, bold: true, color: { argb: MUTED } }, { vertical: "middle", horizontal: "left", wrapText: true, shrinkToFit: true });
+  styleRange(sheet, topRow + 1, topRow + 2, fromCol, toCol, _fill, { name: "Aptos Display", size: 16, bold: true, color: { argb: NAVY } }, { vertical: "middle", horizontal: "left", shrinkToFit: true });
   sheet.getCell(topRow, fromCol).value = label;
   const valueCell = sheet.getCell(topRow + 1, fromCol);
-  valueCell.value = formula;
-  valueCell.numFmt = numberFormat;
+  const displayValue = cardDisplayFormula(formula, numberFormat);
+  valueCell.value = displayValue;
+  valueCell.numFmt = typeof displayValue.result === "string" ? "@" : numberFormat;
 }
 
 function lookupFormula(dataSheetName: string, column: string, rowEnd: number, result: number | null): { formula: string; result: number | string } {
@@ -491,7 +510,8 @@ function addDarkCard(sheet: any, fromCol: number, toCol: number, topRow: number,
   const valueCell = sheet.getCell(topRow + 1, fromCol);
   valueCell.value = formula;
   valueCell.numFmt = numberFormat;
-  valueCell.font = { name: "Aptos Display", size: 18, bold: true, color: { argb: WHITE } };
+  valueCell.font = { name: "Aptos Display", size: 16, bold: true, color: { argb: WHITE } };
+  valueCell.alignment = { vertical: "middle", horizontal: "left", shrinkToFit: true };
   for (let row = topRow; row <= topRow + 2; row++) {
     sheet.getCell(row, fromCol).border = { top: { style: "thin", color: { argb: accent } }, left: { style: "medium", color: { argb: accent } }, bottom: { style: "thin", color: { argb: "FF1E293B" } }, right: { style: "thin", color: { argb: "FF1E293B" } } };
   }
@@ -674,7 +694,8 @@ export function addCurrentFacilityDashboard(workbook: any, siteName: string, met
   addDarkCard(sheet, 12, 14, rackUnitCardRow, "Availability (%)", currentTableLookup(options.rackUnitSheetName, "F", unitEnd, unitSelected?.availability ?? null), "0.0%", RACK_TEAL);
   sectionHeading(sheet, historyHeadingRow, "Facility Trend Analytics Summary");
 
-  sheet.columns = Array.from({ length: 14 }, (_, index) => ({ key: excelColumnName(index + 1).toLowerCase(), width: index === 0 ? 22 : 16 }));
+  const dashboardWidths = [20, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15, 15];
+  sheet.columns = dashboardWidths.map((width, index) => ({ key: excelColumnName(index + 1).toLowerCase(), width }));
   for (const row of [1, 3, 5, 15, energyHeadingRow, capacityHeadingRow, rackHeadingRow, rackUnitHeadingRow, historyHeadingRow]) sheet.getRow(row).height = row === 1 ? 38 : 25;
   sheet.pageSetup = { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9, margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
   sheet.pageSetup.rowBreaks = [{ id: 14 }, { id: energyHeadingRow - 1 }, { id: capacityHeadingRow - 1 }];
@@ -823,6 +844,59 @@ function resolveWorksheetPath(workbookXml: string, workbookRelsXml: string, shee
 function appendXmlBeforeClose(xml: string, closeTag: string, content: string): string {
   const index = xml.lastIndexOf(closeTag);
   return index < 0 ? xml : `${xml.slice(0, index)}${content}${xml.slice(index)}`;
+}
+
+interface WorkbookSheetEntry { name: string; state: string | null; }
+
+function workbookSheetEntries(workbookXml: string): WorkbookSheetEntry[] {
+  return [...workbookXml.matchAll(/<sheet\b[^>]*\/?>(?:<\/sheet>)?/g)].map(match => ({ name: xmlAttr(match[0], "name") ?? "", state: xmlAttr(match[0], "state") }));
+}
+
+function worksheetHyperlinkTag(ref: string, location: string, display: string): string {
+  return '<hyperlink ref="' + xmlEscape(ref) + '" location="' + xmlEscape(location) + '" display="' + xmlEscape(display) + '"/>';
+}
+
+function insertWorksheetHyperlinks(xml: string, tags: string[]): string {
+  if (tags.length === 0) return xml;
+  const content = tags.join("");
+  if (xml.includes("</hyperlinks>")) return xml.replace("</hyperlinks>", content + "</hyperlinks>");
+  const block = "<hyperlinks>" + content + "</hyperlinks>";
+  const anchors = ["<printOptions", "<pageMargins", "<pageSetup", "<headerFooter", "<rowBreaks", "<colBreaks", "<customProperties", "<cellWatches", "<ignoredErrors", "<smartTags", "<drawing", "<legacyDrawing", "<legacyDrawingHF", "<picture", "<oleObjects", "<controls", "<webPublishItems", "<tableParts", "<extLst", "</worksheet>"];
+  const positions = anchors.map(anchor => xml.indexOf(anchor)).filter(index => index >= 0);
+  const index = positions.length ? Math.min(...positions) : -1;
+  return index < 0 ? xml : xml.slice(0, index) + block + xml.slice(index);
+}
+
+/** Converts workbook navigation into native internal SpreadsheetML hyperlinks.
+ * ExcelJS serializes #Sheet!A1 targets as external relationships, which can
+ * fail to navigate in desktop Excel. Native location= links are reliable and
+ * are exposed through Excel's Hyperlinks collection. */
+export async function injectInternalWorkbookNavigationLinks(buffer: ArrayBuffer | Uint8Array, dashboardSheetName = "01_Dashboard"): Promise<Uint8Array> {
+  const source = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  const zip = await JSZip.loadAsync(source);
+  const workbookFile = zip.file("xl/workbook.xml");
+  const workbookRelsFile = zip.file("xl/_rels/workbook.xml.rels");
+  if (!workbookFile || !workbookRelsFile) return source;
+  const workbookXml = await workbookFile.async("string");
+  const workbookRelsXml = await workbookRelsFile.async("string");
+  const visibleSheets = workbookSheetEntries(workbookXml).filter(sheet => sheet.name && sheet.state !== "hidden" && sheet.state !== "veryHidden");
+  if (!visibleSheets.some(sheet => sheet.name === dashboardSheetName)) return source;
+  for (const sheet of visibleSheets) {
+    const worksheetPath = resolveWorksheetPath(workbookXml, workbookRelsXml, sheet.name);
+    const worksheetFile = worksheetPath ? zip.file(worksheetPath) : null;
+    if (!worksheetPath || !worksheetFile) continue;
+    let worksheetXml = await worksheetFile.async("string");
+    const tags: string[] = [];
+    if (sheet.name === dashboardSheetName) {
+      const targets = visibleSheets.filter(target => target.name !== dashboardSheetName);
+      targets.forEach((target, index) => tags.push(worksheetHyperlinkTag("O" + (5 + index), "'" + target.name.replace(/'/g, "''") + "'!A1", target.name)));
+    } else {
+      tags.push(worksheetHyperlinkTag("A1", "'" + dashboardSheetName.replace(/'/g, "''") + "'!A1", "Home"));
+    }
+    worksheetXml = insertWorksheetHyperlinks(worksheetXml, tags);
+    zip.file(worksheetPath, worksheetXml);
+  }
+  return zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 6 } });
 }
 
 /** Adds native OOXML charts after ExcelJS serializes the workbook. ExcelJS
